@@ -1,0 +1,38 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Kotlin
+.kotlin/
+*.class
+
+# Local configuration (machine-specific)
+testcontainers.properties
+application-local.yml
+*.local.yml
+
+# Frontend
+node_modules/
+frontend/node_modules/
+dist/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/

@@ -20,10 +20,6 @@ class AdaptiveRiskService(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    /**
-     * Kelly Criterion: f* = (p*b - q) / b
-     * half-Kelly для консервативности, максимум 50% от maxPositionRub.
-     */
     fun calculateOptimalPositionSize(ticker: String): BigDecimal {
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
         if (stats == null || stats.totalTrades < 5) {

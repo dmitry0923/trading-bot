@@ -46,7 +46,6 @@ class PerformanceFeedbackAgent(
 
         val statsHash = hashStats(stats)
 
-        // NEW: Check Redis cache first
         val cached = redisCache.getFeedback(ticker, statsHash)
         if (cached != null) {
             logger.info { "Using cached feedback for $ticker" }
@@ -58,10 +57,9 @@ class PerformanceFeedbackAgent(
 
         val prompt = buildPrompt(ticker, stats)
 
-        // NEW: Graceful degradation — try/catch around LLM call
         val feedback = try {
             val resp = llmClient.chat(
-                "Ты — Meta-Learning агент торгового бота. Анализируй статистику и давай конкретные числовые корректировки. Будь консервативен. Ответь ТОЛЬКО JSON.",
+                "You are a Meta-Learning trading bot agent. Analyze statistics and give specific numeric adjustments. Be conservative. Reply ONLY JSON.",
                 prompt
             )
             if (resp.content.startsWith("ERROR")) {
@@ -76,7 +74,6 @@ class PerformanceFeedbackAgent(
             defaultFeedback(ticker, stats)
         }
 
-        // NEW: Cache successful feedback
         redisCache.saveFeedback(ticker, feedback.rawJson, statsHash)
         saveAdjustments(feedback, stats)
         feedback
@@ -91,7 +88,7 @@ class PerformanceFeedbackAgent(
     }
 
     private fun defaultFeedback(ticker: String, stats: TradeStats? = null): StrategyFeedback {
-        val pause = stats?.maxConsecutiveLosses ?: 0 >= 3
+        val pause = (stats?.maxConsecutiveLosses ?: 0) >= 3
         return StrategyFeedback(
             ticker = ticker,
             confidenceAdjustment = 0.0,
@@ -106,21 +103,21 @@ class PerformanceFeedbackAgent(
 
     private fun buildPrompt(ticker: String, stats: TradeStats): String {
         return """
-            ТИКЕР: $ticker
-            СТАТИСТИКА ЗА 14 ДНЕЙ:
-            - Всего сделок: ${stats.totalTrades}
+            TICKER: $ticker
+            14-DAY STATISTICS:
+            - Total trades: ${stats.totalTrades}
             - Win Rate: ${String.format("%.1f", stats.winRate * 100)}%
             - Profit Factor: ${String.format("%.2f", stats.profitFactor)}
-            - Средняя прибыль: ${stats.avgWin}
-            - Средний убыток: ${stats.avgLoss}
-            - SL сработал: ${String.format("%.1f", stats.slHitRate * 100)}%
-            - TP сработал: ${String.format("%.1f", stats.tpHitRate * 100)}%
-            - Макс. серия убытков: ${stats.maxConsecutiveLosses}
-            - Лучший час входа: ${stats.bestEntryHour ?: "N/A"}
-            - Худший час входа: ${stats.worstEntryHour ?: "N/A"}
-            - Слепые зоны: ${stats.blindSpots.joinToString("; ") { it.conditionPattern }}
+            - Avg win: ${stats.avgWin}
+            - Avg loss: ${stats.avgLoss}
+            - SL hit: ${String.format("%.1f", stats.slHitRate * 100)}%
+            - TP hit: ${String.format("%.1f", stats.tpHitRate * 100)}%
+            - Max loss streak: ${stats.maxConsecutiveLosses}
+            - Best entry hour: ${stats.bestEntryHour ?: "N/A"}
+            - Worst entry hour: ${stats.worstEntryHour ?: "N/A"}
+            - Blind spots: ${stats.blindSpots.joinToString("; ") { it.conditionPattern }}
 
-            ЗАДАЧА: Выдай JSON:
+            TASK: Output JSON:
             {
               "confidenceAdjustment": double,
               "slAdjustmentPercent": double,
@@ -137,7 +134,7 @@ class PerformanceFeedbackAgent(
 
     private fun parseFeedback(content: String, ticker: String, stats: TradeStats): StrategyFeedback {
         return try {
-            val clean = content.replace("```json", "").replace("```", "").trim()
+            val clean = content.replace("\`\`\`json", "").replace("\`\`\`", "").trim()
             val j = objectMapper.readTree(clean)
             StrategyFeedback(
                 ticker = ticker,

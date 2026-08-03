@@ -66,8 +66,6 @@ class ApiController(
         tradingBotService.runBotCycle()
     }
 
-    // ========== ANALYTICS ENDPOINTS ==========
-
     @GetMapping("/analytics/trade-stats")
     fun getTradeStats(@RequestParam(defaultValue = "14") days: Int): Map<String, TradeStats> {
         meterRegistry.counter("api.analytics.trade-stats").increment()

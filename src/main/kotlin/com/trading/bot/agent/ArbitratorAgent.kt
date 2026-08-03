@@ -43,28 +43,25 @@ class ArbitratorAgent(
     ): Final = coroutineScope {
         val start = System.currentTimeMillis()
 
-        val memoryBlock = contextPrompt?.let { "
-
-КОНТЕКСТНАЯ ПАМЯТЬ (результаты последних сделок):
-$it" } ?: ""
+        val memoryBlock = contextPrompt?.let { "\n\nCONTEXT MEMORY (recent trades results):\n$it" } ?: ""
 
         val prompt = """
-            СТРАТЕГИЯ: ${draft.action} @ ${draft.targetPrice} conf=${String.format("%.2f", draft.confidence)}.
-            Обоснование: ${draft.reasoning}.
-            КОНТРАРГУМЕНТЫ: $challenge.
-            Тех: ${tech.trend}, RSI=${String.format("%.1f", tech.rsi)}.
-            Фунд: ${fund.conclusion}.
-            Цена: ${snapshot.currentPrice}.
+            STRATEGY: ${draft.action} @ ${draft.targetPrice} conf=${String.format("%.2f", draft.confidence)}.
+            Reasoning: ${draft.reasoning}.
+            COUNTERARGUMENTS: $challenge.
+            Tech: ${tech.trend}, RSI=${String.format("%.1f", tech.rsi)}.
+            Fund: ${fund.conclusion}.
+            Price: ${snapshot.currentPrice}.
             $memoryBlock
 
-            ПРАВИЛА:
-            1. Если контраргументы сильны ИЛИ conf < ${adaptiveConfidence} — HOLD.
-            2. Если серия убытков — дополнительная консервативность.
-            3. Ответь ТОЛЬКО JSON: action, targetPrice, quantity, stopLoss, takeProfit, trailingStop, confidence, reasoning.
+            RULES:
+            1. If counterarguments are strong OR conf < ${adaptiveConfidence} — HOLD.
+            2. If loss streak — additional conservatism.
+            3. Reply ONLY JSON: action, targetPrice, quantity, stopLoss, takeProfit, trailingStop, confidence, reasoning.
         """.trimIndent()
 
         val resp = llmClient.chat(
-            "Ты — главный арбитр. Будь консервативен. Лучше пропустить сделку, чем войти в плохую.",
+            "You are the chief arbitrator. Be conservative. Better to skip a trade than enter a bad one.",
             prompt
         )
         val dec = parseFinal(resp.content, draft)
@@ -88,7 +85,7 @@ $it" } ?: ""
 
     private fun parseFinal(c: String, fallback: StrategyAgent.Draft): Final {
         return try {
-            val j = objectMapper.readTree(c.replace("```json", "").replace("```", "").trim())
+            val j = objectMapper.readTree(c.replace("\`\`\`json", "").replace("\`\`\`", "").trim())
             Final(
                 StrategyAction.valueOf(j["action"]?.asText()?.uppercase() ?: "HOLD"),
                 j["targetPrice"]?.asText()?.toBigDecimalOrNull() ?: fallback.targetPrice,

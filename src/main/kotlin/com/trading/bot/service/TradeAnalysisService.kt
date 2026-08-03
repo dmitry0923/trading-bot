@@ -6,7 +6,6 @@ import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.PositionRepository
 import mu.KotlinLogging
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
@@ -20,7 +19,6 @@ class TradeAnalysisService(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    @Transactional(readOnly = true)
     fun analyzeLastNDays(days: Int = 14): Map<String, TradeStats> {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val closed = positionRepo.findClosedSince(since)
@@ -111,7 +109,6 @@ class TradeAnalysisService(
         return maxStreak
     }
 
-    @Transactional
     private fun detectAndPersistBlindSpots(ticker: String, trades: List<Position>): List<BlindSpot> {
         val losing = trades.filter { (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO }
         if (losing.size < 3) return emptyList()
@@ -124,7 +121,7 @@ class TradeAnalysisService(
                 conditionPattern = "Stop-Loss hit rate > 60% for $ticker",
                 lossRate = slLosses.toDouble() / losing.size,
                 occurrenceCount = slLosses,
-                recommendation = "Увеличить ATR-множитель стоп-лосса или пересмотреть точки входа"
+                recommendation = "Increase ATR multiplier for stop-loss or review entry points"
             )
             spots.add(spot)
             persistBlindSpot(ticker, spot)
@@ -137,7 +134,7 @@ class TradeAnalysisService(
                     conditionPattern = "Entry at hour $hour for $ticker",
                     lossRate = list.size.toDouble() / losing.size,
                     occurrenceCount = list.size,
-                    recommendation = "Избегать входов в $hour:00, возможно низкая ликвидность"
+                    recommendation = "Avoid entries at $hour:00, possibly low liquidity"
                 )
                 spots.add(spot)
                 persistBlindSpot(ticker, spot)

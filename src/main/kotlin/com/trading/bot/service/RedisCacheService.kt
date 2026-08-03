@@ -39,9 +39,8 @@ class RedisCacheService(
     }
 
     fun getAllStrategies(tickers: List<String>): Map<String, Strategy> =
-        tickers.mapNotNull { getStrategy(it)?.let { s -> it to s } }.toMap()
+        tickers.mapNotNull { ticker -> getStrategy(ticker)?.let { s -> ticker to s } }.toMap()
 
-    // NEW: Feedback caching
     fun saveFeedback(ticker: String, feedbackJson: String, statsHash: String) {
         try {
             val entry = FeedbackCacheEntry(ticker, feedbackJson, statsHash)

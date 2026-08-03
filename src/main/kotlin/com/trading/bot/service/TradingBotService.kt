@@ -110,7 +110,6 @@ class TradingBotService(
             return
         }
 
-        // NEW: Adaptive position sizing via Kelly Criterion
         val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(strat.ticker)
         val kellyQty = if (kellySizeRub > BigDecimal.ZERO) {
             kellySizeRub.divide(strat.targetPrice, 0, RoundingMode.DOWN).toInt().coerceAtLeast(1)

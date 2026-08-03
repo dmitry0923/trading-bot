@@ -45,7 +45,6 @@ class StrategyService(
         logger.info { "=== STRATEGY CYCLE $cycleId ===" }
         meterRegistry.counter("strategy.cycle").increment()
 
-        // Pre-fetch adaptive feedback for all tickers (cached in Redis)
         val globalFeedback = mutableMapOf<String, PerformanceFeedbackAgent.StrategyFeedback>()
         runBlocking {
             tradingConfig.tickers.forEach { ticker ->
@@ -87,7 +86,6 @@ class StrategyService(
                         adaptiveConfidence = adaptiveConf
                     )
 
-                    // NEW: Use BigDecimal ATR from TechnicalReport (updated agent)
                     val atr = BigDecimal.valueOf(tech.atr)
                     val direction = if (final.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
                     val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(final.targetPrice, direction, ticker, atr)

@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: trading-bot-db
+    environment:
+      POSTGRES_DB: trading_bot
+      POSTGRES_USER: trader
+      POSTGRES_PASSWORD: trader
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader -d trading_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: trading-bot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: trading-bot-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: trading_bot
+      DB_USER: trader
+      DB_PASS: trader
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ALOR_API_URL: https://api.alor.ru
+      ALOR_WS_URL: wss://api.alor.ru/ws
+      ALOR_TOKEN: ${ALOR_TOKEN:-}
+      ALOR_REFRESH_TOKEN: ${ALOR_REFRESH_TOKEN:-}
+      ALOR_PORTFOLIO: ${ALOR_PORTFOLIO:-D12345}
+      ALOR_EXCHANGE: ${ALOR_EXCHANGE:-MOEX}
+      KIMI_API_KEY: ${KIMI_API_KEY:-}
+      KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
+      KIMI_MODEL: ${KIMI_MODEL:-kimi-k3}
+      TRADING_MODE: ${TRADING_MODE:-SIMULATION}
+      BOT_INTERVAL_MS: ${BOT_INTERVAL_MS:-300000}
+      STRATEGY_INTERVAL_MS: ${STRATEGY_INTERVAL_MS:-600000}
+      MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-600000}
+      MAX_OPEN_POS: ${MAX_OPEN_POS:-0}
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  redis_data:

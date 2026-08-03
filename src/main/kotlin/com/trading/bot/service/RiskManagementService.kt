@@ -12,7 +12,13 @@ class RiskManagementService(
 ) {
     private var dailyPnL: BigDecimal = BigDecimal.ZERO
 
+    fun isDailyLossLimitReached(): Boolean =
+        dailyPnL <= riskConfig.maxDailyLossRub.negate()
+
     fun validateNewStrategy(strategy: Strategy, openPositions: List<Position>): RiskCheckResult {
+        if (isDailyLossLimitReached()) {
+            return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${riskConfig.maxDailyLossRub})", 0)
+        }
         if (openPositions.size >= riskConfig.maxOpenPositions) {
             return RiskCheckResult(false, "Max open positions reached", 0)
         }

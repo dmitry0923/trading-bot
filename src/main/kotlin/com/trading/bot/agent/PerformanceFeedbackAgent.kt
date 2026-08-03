@@ -62,7 +62,7 @@ class PerformanceFeedbackAgent(
                 "You are a Meta-Learning trading bot agent. Analyze statistics and give specific numeric adjustments. Be conservative. Reply ONLY JSON.",
                 prompt
             )
-            if (resp.content.startsWith("ERROR")) {
+            if (resp.isFallback) {
                 logger.warn { "LLM error for $ticker feedback, using defaults" }
                 defaultFeedback(ticker, stats)
             } else {

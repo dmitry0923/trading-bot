@@ -34,6 +34,11 @@ class TradingBotService(
         meterRegistry.counter("bot.cycle").increment()
         scope.launch {
             try {
+                if (risk.isDailyLossLimitReached()) {
+                    logger.warn { "Daily loss limit reached (${risk.getDailyPnL()}), trading halted" }
+                    meterRegistry.counter("bot.halted.daily_loss").increment()
+                    return@launch
+                }
                 val open = positionRepo.findByStatus(PositionStatus.OPEN)
                 if (open.size <= tradingConfig.maxOpenPositionsForNewEntry) {
                     val strategies = redis.getAllStrategies(tradingConfig.tickers)
@@ -133,14 +138,18 @@ class TradingBotService(
             return
         }
 
+        val execution = alorClient.verifyOrder(orderId)
+        val fillPrice = execution?.avgPrice ?: strat.targetPrice
+        logger.info { "Order $orderId for ${strat.ticker} verified: status=${execution?.status}, fillPrice=$fillPrice" }
+
         val pos = Position(
             ticker = strat.ticker,
             direction = dir,
             quantity = qty,
-            entryPrice = strat.targetPrice,
-            currentPrice = strat.targetPrice,
-            stopLoss = strat.stopLoss ?: risk.calcSL(strat.targetPrice, dir),
-            takeProfit = strat.takeProfit ?: risk.calcTP(strat.targetPrice, dir),
+            entryPrice = fillPrice,
+            currentPrice = fillPrice,
+            stopLoss = strat.stopLoss ?: risk.calcSL(fillPrice, dir),
+            takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
             trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
             alorOrderId = orderId
         )
@@ -153,11 +162,11 @@ class TradingBotService(
                 ticker = strat.ticker,
                 action = "OPEN",
                 confidence = strat.confidence,
-                reasoning = "Opened ${dir.name} $qty @ ${strat.targetPrice} (adaptive qty=$qty, kelly=${kellyQty})"
+                reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)"
             )
         )
         meterRegistry.counter("bot.position.opened", Tags.of("ticker", strat.ticker, "direction", dir.name)).increment()
-        logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ ${strat.targetPrice} (adaptive qty=$qty)" }
+        logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ $fillPrice (adaptive qty=$qty)" }
     }
 
     private suspend fun closePosition(pos: Position, price: BigDecimal, reason: String) {
@@ -165,17 +174,19 @@ class TradingBotService(
             PositionDirection.LONG -> "sell"
             PositionDirection.SHORT -> "buy"
         }
-        alorClient.placeMarketOrder(pos.ticker, side, pos.quantity)
+        val orderId = alorClient.placeMarketOrder(pos.ticker, side, pos.quantity)
+        val execution = orderId?.let { alorClient.verifyOrder(it) }
+        val closePrice = execution?.avgPrice ?: price
         pos.status = when (reason) {
             "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
             else -> PositionStatus.CLOSED
         }
         pos.closedAt = LocalDateTime.now()
-        pos.closePrice = price
+        pos.closePrice = closePrice
         pos.closeReason = reason
         val pnl = when (pos.direction) {
-            PositionDirection.LONG -> price.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
-            PositionDirection.SHORT -> pos.entryPrice.subtract(price).multiply(BigDecimal(pos.quantity))
+            PositionDirection.LONG -> closePrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
+            PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(BigDecimal(pos.quantity))
         }
         pos.pnl = pnl
         positionRepo.save(pos)

@@ -1,9 +1,21 @@
 server:
   port: 8080
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+
 spring:
   application:
-    name: mmvb-trading-bot
+    name: mmvb-trading-bot-v2
   datasource:
     url: jdbc:postgresql://localhost:5432/trading_bot
     username: ${DB_USER:trader}
@@ -21,7 +33,6 @@ spring:
     port: 6379
     timeout: 5s
 
-# === Alor Broker ===
 alor:
   api-url: ${ALOR_API_URL:https://api.alor.ru}
   ws-url: ${ALOR_WS_URL:wss://api.alor.ru/ws}
@@ -30,11 +41,9 @@ alor:
   portfolio: ${ALOR_PORTFOLIO:D12345}
   exchange: ${ALOR_EXCHANGE:MOEX}
 
-# === MOEX ISS (исторические данные) ===
 moex:
   base-url: https://iss.moex.com/iss
 
-# === LLM (Kimi k3) ===
 llm:
   api-key: ${KIMI_API_KEY:}
   base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
@@ -43,7 +52,6 @@ llm:
   max-tokens: 4096
   temperature: 0.15
 
-# === Торговые настройки (все вынесены) ===
 trading:
   mode: ${TRADING_MODE:SIMULATION}
   tickers:
@@ -57,18 +65,12 @@ trading:
     - TATN
     - VTBR
     - ALRS
-  # Интервал работы бота-трейдера (мс). По умолчанию 5 мин = 300000
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}
-  # Интервал пересчета стратегии (мс). По умолчанию 10 мин = 600000
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
-  # Интервал мониторинга открытых позиций (мс). По умолчанию 10 мин = 600000
   monitor-interval-ms: ${MONITOR_INTERVAL_MS:600000}
-  # Макс. открытых позиций при которых бот НЕ открывает новые
   max-open-positions-for-new-entry: ${MAX_OPEN_POS:0}
-  # Таймфрейм свечей
   timeframe: MINUTE_10
 
-# === Риск-менеджмент ===
 risk:
   enabled: true
   max-position-rub: 500000

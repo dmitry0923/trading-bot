@@ -85,7 +85,8 @@ class ArbitratorAgent(
 
     private fun parseFinal(c: String, fallback: StrategyAgent.Draft): Final {
         return try {
-            val j = objectMapper.readTree(c.replace("\`\`\`json", "").replace("\`\`\`", "").trim())
+            val cleaned = c.replace("```json", "").replace("```", "").trim()
+            val j = objectMapper.readTree(cleaned)
             Final(
                 StrategyAction.valueOf(j["action"]?.asText()?.uppercase() ?: "HOLD"),
                 j["targetPrice"]?.asText()?.toBigDecimalOrNull() ?: fallback.targetPrice,
@@ -101,5 +102,6 @@ class ArbitratorAgent(
             meterRegistry.counter("agent.arbitrator.parse.error").increment()
             Final(StrategyAction.HOLD, fallback.targetPrice, 0, null, null, false, 0.0, "Parse error")
         }
+
     }
 }

@@ -37,11 +37,17 @@ dependencies {
 
     runtimeOnly("org.postgresql:postgresql")
 
+    // ✅ ИСПРАВЛЕННЫЕ ТЕСТОВЫЕ ЗАВИСИМОСТИ
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
+    testImplementation("org.jetbrains.kotlin:kotlin-test")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.testcontainers:testcontainers")
+
+    // ✅ ЯВНО ДОБАВЛЯЕМ JUNIT PLATFORM LAUNCHER
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks.withType<KotlinCompile> {
@@ -53,4 +59,10 @@ tasks.withType<KotlinCompile> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    testLogging {
+        events("passed", "skipped", "failed")
+        showExceptions = true
+        showStackTraces = true
+        showCauses = true
+    }
 }

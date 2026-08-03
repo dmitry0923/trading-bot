@@ -134,7 +134,7 @@ class PerformanceFeedbackAgent(
 
     private fun parseFeedback(content: String, ticker: String, stats: TradeStats): StrategyFeedback {
         return try {
-            val clean = content.replace("\`\`\`json", "").replace("\`\`\`", "").trim()
+            val clean = content.replace("```json", "").replace("```", "").trim()
             val j = objectMapper.readTree(clean)
             StrategyFeedback(
                 ticker = ticker,

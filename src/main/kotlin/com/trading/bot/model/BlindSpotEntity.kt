@@ -7,7 +7,7 @@ data class BlindSpotEntity(
     val ticker: String,
     val conditionPattern: String,
     val lossRate: Double,
-    val occurrenceCount: Int,
+    var occurrenceCount: Int,
     val recommendation: String,
     var isActive: Boolean = true,
     val detectedAt: LocalDateTime = LocalDateTime.now(),

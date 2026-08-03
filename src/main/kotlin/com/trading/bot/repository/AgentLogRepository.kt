@@ -35,6 +35,7 @@ class AgentLogRepository(
         val sql = """
             INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
             VALUES (:cycleId, :agentName, :ticker, :action, :confidence, :reasoning, :rawOutput, :latencyMs, :createdAt)
+            RETURNING id
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
         namedTemplate.update(sql, MapSqlParameterSource()

@@ -73,6 +73,7 @@ class PositionRepository(
                 stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :trailingStopPrice, :pnl, :status, :alorOrderId, :closeReason, :openedAt, :closedAt)
+            RETURNING id    
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
         namedTemplate.update(sql, createParams(position), keyHolder)

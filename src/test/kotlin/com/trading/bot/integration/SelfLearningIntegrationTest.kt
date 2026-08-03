@@ -124,7 +124,8 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         hour: Int = 12
     ) {
         val pnl = close.subtract(entry).multiply(BigDecimal(10))
-        val opened = LocalDateTime.now().minusDays(1).withHour(hour)
+        val opened = LocalDateTime.now().minusDays(1).withHour(hour).withMinute(0).withSecond(0).withNano(0)
+        val closed = LocalDateTime.now()
         positionRepository.save(
             Position(
                 ticker = ticker,
@@ -138,7 +139,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
                 alorOrderId = "test-${System.nanoTime()}",
                 closeReason = reason,
                 openedAt = opened,
-                closedAt = opened.plusHours(2)
+                closedAt = closed
             )
         )
     }

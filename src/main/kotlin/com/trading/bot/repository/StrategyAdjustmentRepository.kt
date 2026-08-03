@@ -56,6 +56,7 @@ class StrategyAdjustmentRepository(
         val sql = """
             INSERT INTO strategy_adjustments (ticker, adjustment_type, old_value, new_value, triggered_by, reason, created_at)
             VALUES (:ticker, :adjustmentType, :oldValue, :newValue, :triggeredBy, :reason, :createdAt)
+            RETURNING id
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
         namedTemplate.update(sql, createParams(entity), keyHolder)

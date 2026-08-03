@@ -44,6 +44,7 @@ class StrategyRepository(
         val sql = """
             INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
             VALUES (:ticker, :action, :targetPrice, :quantity, :stopLoss, :takeProfit, :trailingStop, :confidence, :reasoning, :rawJson, :cycleId, :validUntil, :createdAt)
+            RETURNING id
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
         namedTemplate.update(sql, MapSqlParameterSource()

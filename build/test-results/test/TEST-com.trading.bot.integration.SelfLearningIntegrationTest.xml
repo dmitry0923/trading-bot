@@ -1,0 +1,789 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.trading.bot.integration.SelfLearningIntegrationTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-08-03T17:51:58" hostname="DMITRY" time="1.265">
+  <properties/>
+  <testcase name="time pattern analysis returns hourly win rates()" classname="com.trading.bot.integration.SelfLearningIntegrationTest" time="1.022"/>
+  <testcase name="blind spots are persisted to database()" classname="com.trading.bot.integration.SelfLearningIntegrationTest" time="0.054"/>
+  <testcase name="adaptive risk pauses trading after 4 consecutive losses()" classname="com.trading.bot.integration.SelfLearningIntegrationTest" time="0.046"/>
+  <testcase name="trade analysis calculates correct win rate()" classname="com.trading.bot.integration.SelfLearningIntegrationTest" time="0.036"/>
+  <testcase name="drawdown recovery detected after 3 consecutive losses()" classname="com.trading.bot.integration.SelfLearningIntegrationTest" time="0.024"/>
+  <testcase name="adaptive risk calculates kelly position size()" classname="com.trading.bot.integration.SelfLearningIntegrationTest" time="0.075"/>
+  <system-out><![CDATA[20:51:49.749 [Test worker] INFO org.springframework.test.context.support.AnnotationConfigContextLoaderUtils -- Could not detect default configuration classes for test class [com.trading.bot.integration.SelfLearningIntegrationTest]: SelfLearningIntegrationTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+20:51:49.866 [Test worker] INFO org.springframework.boot.test.context.SpringBootTestContextBootstrapper -- Found @SpringBootConfiguration com.trading.bot.TradingBotApplication for test class com.trading.bot.integration.SelfLearningIntegrationTest
+20:51:50.006 [Test worker] INFO org.testcontainers.images.PullPolicy -- Image pull policy will be performed by: DefaultPullPolicy()
+20:51:50.010 [Test worker] INFO org.testcontainers.utility.ImageNameSubstitutor -- Image name substitution will be performed by: DefaultImageNameSubstitutor (composite of 'ConfigurationFileImageNameSubstitutor' and 'PrefixingImageNameSubstitutor')
+20:51:50.018 [Test worker] INFO org.testcontainers.DockerClientFactory -- Testcontainers version: 1.21.4
+20:51:50.187 [Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy -- Loaded org.testcontainers.dockerclient.NpipeSocketClientProviderStrategy from ~/.testcontainers.properties, will try it first
+20:51:50.469 [Test worker] INFO org.testcontainers.dockerclient.DockerClientProviderStrategy -- Found Docker environment with local Npipe socket (npipe:////./pipe/docker_engine)
+20:51:50.470 [Test worker] INFO org.testcontainers.DockerClientFactory -- Docker host IP address is localhost
+20:51:50.490 [Test worker] INFO org.testcontainers.DockerClientFactory -- Connected to docker: 
+  Server Version: 29.6.2
+  API Version: 1.55
+  Operating System: Docker Desktop
+  Total Memory: 3921 MB
+  Labels: 
+    com.docker.desktop.address=npipe://\\.\pipe\docker_cli
+20:51:50.552 [Test worker] INFO tc.testcontainers/ryuk:0.12.0 -- Creating container for image: testcontainers/ryuk:0.12.0
+20:51:50.667 [Test worker] INFO org.testcontainers.utility.RegistryAuthLocator -- Credential helper/store (docker-credential-desktop) does not have credentials for https://index.docker.io/v1/
+20:51:50.811 [Test worker] INFO tc.testcontainers/ryuk:0.12.0 -- Container testcontainers/ryuk:0.12.0 is starting: 26f3d408bfc35cea11b0460091e88cdb384e5308b7c47e0a71013b2e77203ad3
+20:51:51.368 [Test worker] INFO tc.testcontainers/ryuk:0.12.0 -- Container testcontainers/ryuk:0.12.0 started in PT0.8152447S
+20:51:51.374 [Test worker] INFO org.testcontainers.utility.RyukResourceReaper -- Ryuk started - will monitor and terminate Testcontainers containers on JVM exit
+20:51:51.375 [Test worker] INFO org.testcontainers.DockerClientFactory -- Checking the system...
+20:51:51.376 [Test worker] INFO org.testcontainers.DockerClientFactory -- ✔︎ Docker server version should be at least 1.6.0
+20:51:51.377 [Test worker] INFO tc.postgres:15-alpine -- Creating container for image: postgres:15-alpine
+20:51:51.438 [Test worker] INFO tc.postgres:15-alpine -- Container postgres:15-alpine is starting: 3a70a3c5b581f02c6a12a99b99029a4b24f90133bbee2828de77799042c0840e
+20:51:53.568 [Test worker] INFO tc.postgres:15-alpine -- Container postgres:15-alpine started in PT2.191382S
+20:51:53.569 [Test worker] INFO tc.postgres:15-alpine -- Container is started (JDBC URL: jdbc:postgresql://localhost:57734/trading_bot?loggerLevel=OFF)
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+ :: Spring Boot ::                (v3.2.0)
+
+2026-08-03T20:51:53.905+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] c.t.b.i.SelfLearningIntegrationTest      : Starting SelfLearningIntegrationTest using Java 21.0.3 with PID 39104 (started by User in C:\Users\User\Downloads\repo_trading_bot\v2\trading-bot)
+2026-08-03T20:51:53.906+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] c.t.b.i.SelfLearningIntegrationTest      : Running with Spring Boot v3.2.0, Spring v6.1.1
+2026-08-03T20:51:53.907+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] c.t.b.i.SelfLearningIntegrationTest      : No active profile set, falling back to 1 default profile: "default"
+2026-08-03T20:51:54.987+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-08-03T20:51:54.989+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-08-03T20:51:55.024+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 23 ms. Found 0 Redis repository interfaces.
+2026-08-03T20:51:55.594+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-08-03T20:51:55.775+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection org.postgresql.jdbc.PgConnection@1eda309d
+2026-08-03T20:51:55.777+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-08-03T20:51:55.937+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.database                       : Set default schema name to public
+2026-08-03T20:51:56.118+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.changelog                      : Creating database history table with name: public.databasechangelog
+2026-08-03T20:51:56.154+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.changelog                      : Reading from public.databasechangelog
+2026-08-03T20:51:56.216+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.lockservice                    : Successfully acquired change log lock
+2026-08-03T20:51:56.219+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.command                        : Using deploymentId: 5779516219
+2026-08-03T20:51:56.225+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.changelog                      : Reading from public.databasechangelog
+Running Changeset: db/changelog/changes/001-create-tables.sql::001::dmitry
+2026-08-03T20:51:56.362+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.changelog                      : Custom SQL executed
+2026-08-03T20:51:56.365+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.changelog                      : ChangeSet db/changelog/changes/001-create-tables.sql::001::dmitry ran successfully in 101ms
+2026-08-03T20:51:56.377+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : UPDATE SUMMARY
+2026-08-03T20:51:56.377+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : Run:                          1
+2026-08-03T20:51:56.377+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : Previously run:               0
+2026-08-03T20:51:56.377+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : Filtered out:                 0
+2026-08-03T20:51:56.378+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : -------------------------------
+2026-08-03T20:51:56.378+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : Total change sets:            1
+2026-08-03T20:51:56.378+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.util                           : Update summary generated
+2026-08-03T20:51:56.380+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.command                        : Update command completed successfully.
+Liquibase: Update has been successful. Rows affected: 1
+2026-08-03T20:51:56.387+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.lockservice                    : Successfully released change log lock
+2026-08-03T20:51:56.388+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] liquibase.command                        : Command execution complete
+2026-08-03T20:51:58.665+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 3 endpoint(s) beneath base path '/actuator'
+2026-08-03T20:51:58.757+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] c.t.b.i.SelfLearningIntegrationTest      : Started SelfLearningIntegrationTest in 5.154 seconds (process running for 9.984)
+2026-08-03T20:51:58.765+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [   scheduling-1] c.trading.bot.service.StrategyService    : === STRATEGY CYCLE cf96cb78-8351-41e8-bb28-0a94461e89cd ===
+2026-08-03T20:51:58.792+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.794+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.801+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.823+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.824+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.825+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.825+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.828+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.829+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.829+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.829+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.832+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.833+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.833+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.833+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.836+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.837+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.837+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.837+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.840+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.840+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.840+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.841+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.846+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.847+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.847+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.847+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.850+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.851+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.851+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.851+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.864+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.866+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.866+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.866+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.869+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.870+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.870+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.870+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.872+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#1] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:58.893+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.893+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.893+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.896+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [   scheduling-1] c.trading.bot.service.TradingBotService  : === BOT CYCLE ===
+2026-08-03T20:51:58.896+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:58.898+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-2 @coroutine#3] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.898+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-2 @coroutine#3] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status = ? ORDER BY opened_at DESC]
+2026-08-03T20:51:58.899+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-2 @coroutine#3] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.900+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.901+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:58.902+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.916+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-3 @coroutine#4] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.916+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-3 @coroutine#4] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status = ? ORDER BY opened_at DESC]
+2026-08-03T20:51:58.916+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-3 @coroutine#4] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.934+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:58.934+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:58.935+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:58.959+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.032+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.034+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.034+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.043+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.043+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.044+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.044+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.047+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.047+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.048+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.048+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.050+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.169+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.170+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.170+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.459+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy SBER: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.460+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.460+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.460+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.463+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.463+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.464+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.464+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.466+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.466+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.466+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.468+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.470+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.470+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.470+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.472+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.472+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.472+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.473+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.475+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.475+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.475+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.475+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.477+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.478+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.478+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.478+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.484+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy GAZP: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.484+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.484+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.484+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.486+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.487+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.487+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.487+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.489+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.490+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.490+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.491+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.493+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.493+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.494+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.496+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.497+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.497+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.497+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.498+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.499+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.499+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.499+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.501+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.502+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.502+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.502+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.507+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy LKOH: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.508+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.508+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.508+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.510+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.510+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.510+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.510+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.513+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.513+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.513+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.515+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.516+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.516+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.516+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.519+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.520+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.520+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.520+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.522+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.522+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.522+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.522+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.524+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.524+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.525+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.525+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.531+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy YNDX: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.531+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.531+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.531+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.533+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.533+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.534+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.534+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.537+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.537+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.537+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.539+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.540+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.541+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.541+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.544+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.544+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.544+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.544+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.546+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.546+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.546+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.546+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.547+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.548+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.548+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.548+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.553+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy MGNT: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.553+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.554+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.554+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.555+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.556+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.556+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.556+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.558+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.558+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.558+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.559+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.560+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.561+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.561+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.563+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.564+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.564+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.564+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.565+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.565+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.566+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.566+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.567+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.568+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.568+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.569+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.575+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy NVTK: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.575+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.575+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.575+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.576+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.577+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.577+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.577+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.579+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.580+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.580+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.582+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.583+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.583+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.583+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.585+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.585+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.585+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.585+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.588+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.588+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.588+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.588+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.589+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.590+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.590+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.590+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.595+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy ROSN: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.595+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.595+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.595+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.597+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.597+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.597+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.597+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.599+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.599+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.599+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.601+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.602+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.602+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.602+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.604+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.604+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.604+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.605+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.606+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.606+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.606+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.606+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.607+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.608+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.608+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.608+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.613+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy TATN: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.613+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.613+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.613+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.614+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.615+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.615+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.615+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.618+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.618+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.618+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.620+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.621+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.621+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.621+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.623+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.623+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.623+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.623+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.625+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.625+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.625+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.625+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.626+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.627+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.627+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.627+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.631+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy VTBR: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.632+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.632+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.632+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.633+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 7 days
+2026-08-03T20:51:59.634+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.634+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM candles
+WHERE ticker = ? AND timeframe = ? AND time BETWEEN ? AND ?
+ORDER BY time]
+2026-08-03T20:51:59.634+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.636+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.636+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.636+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.637+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.638+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.638+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.638+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.640+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] com.trading.bot.agent.ArbitratorAgent    : Agent 5 FINAL: HOLD @ 100 conf=0,00 (adaptive threshold=0.6)
+2026-08-03T20:51:59.641+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.641+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.641+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.643+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.643+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.643+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.643+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.644+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.t.bot.service.TradeAnalysisService     : No closed positions in last 14 days
+2026-08-03T20:51:59.645+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.645+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.645+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.650+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [-1 @coroutine#2] c.trading.bot.service.StrategyService    : Strategy ALRS: HOLD @ 100 (adaptive conf=0.6, atr=1.5)
+2026-08-03T20:51:59.880+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.881+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM positions]
+2026-08-03T20:51:59.881+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.884+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.884+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM blind_spots]
+2026-08-03T20:51:59.884+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.886+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.886+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM strategy_adjustments]
+2026-08-03T20:51:59.886+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.892+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.892+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.892+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.900+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.900+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.900+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.904+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.904+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions
+WHERE status != 'OPEN' AND ticker = ? AND closed_at >= ?
+ORDER BY closed_at DESC]
+2026-08-03T20:51:59.905+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.930+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.930+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM positions]
+2026-08-03T20:51:59.930+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.932+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.933+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM blind_spots]
+2026-08-03T20:51:59.933+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.935+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.935+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM strategy_adjustments]
+2026-08-03T20:51:59.935+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.937+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.937+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.937+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.942+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.943+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.943+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.948+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.948+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.948+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.952+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.952+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.952+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.957+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.958+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.958+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.962+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.962+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:51:59.962+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.966+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.967+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:51:59.967+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.969+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.969+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.969+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.972+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.973+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:51:59.973+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.975+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.975+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:51:59.975+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.977+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:51:59.977+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:51:59.978+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.984+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.984+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM positions]
+2026-08-03T20:51:59.984+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.986+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.987+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM blind_spots]
+2026-08-03T20:51:59.987+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.988+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:51:59.988+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM strategy_adjustments]
+2026-08-03T20:51:59.988+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.991+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.991+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.991+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:51:59.996+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:51:59.997+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:51:59.997+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.001+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.002+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.002+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.007+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.007+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.007+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.013+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.013+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:52:00.013+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.015+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.016+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:52:00.016+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.018+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.018+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:52:00.018+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.022+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.022+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:52:00.022+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.024+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.024+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:52:00.024+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.032+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.032+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM positions]
+2026-08-03T20:52:00.032+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.034+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.034+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM blind_spots]
+2026-08-03T20:52:00.034+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.037+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.037+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM strategy_adjustments]
+2026-08-03T20:52:00.037+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.040+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.040+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.040+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.044+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.045+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.045+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.050+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.050+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.050+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.053+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.053+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.053+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.058+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.058+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.058+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.063+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.063+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:52:00.063+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.070+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.070+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM positions]
+2026-08-03T20:52:00.070+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.072+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.072+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM blind_spots]
+2026-08-03T20:52:00.072+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.073+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.073+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM strategy_adjustments]
+2026-08-03T20:52:00.073+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.075+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.075+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.075+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.081+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.081+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.081+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.085+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.085+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.085+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.089+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.089+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:52:00.089+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.095+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.095+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM positions]
+2026-08-03T20:52:00.095+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.097+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.097+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM blind_spots]
+2026-08-03T20:52:00.097+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.099+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL update
+2026-08-03T20:52:00.099+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [DELETE FROM strategy_adjustments]
+2026-08-03T20:52:00.099+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.100+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.100+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.100+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.104+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.104+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.104+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.109+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.109+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.109+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.114+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.114+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.114+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.120+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.120+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.120+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.126+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.126+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.126+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.132+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.132+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.132+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.136+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.136+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.136+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.141+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.142+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.142+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.146+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.147+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+    stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+VALUES (?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id    ]
+2026-08-03T20:52:00.147+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.151+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.151+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= ? ORDER BY closed_at DESC]
+2026-08-03T20:52:00.151+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.154+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.154+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:52:00.154+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.156+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.156+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:52:00.156+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.158+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL query
+2026-08-03T20:52:00.158+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [SELECT * FROM blind_spots WHERE ticker = ? AND is_active = true]
+2026-08-03T20:52:00.158+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.160+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing SQL update and returning generated keys
+2026-08-03T20:52:00.160+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.core.JdbcTemplate               : Executing prepared SQL statement [INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id]
+2026-08-03T20:52:00.160+03:00 DEBUG 39104 --- [mmvb-trading-bot-v2] [    Test worker] o.s.jdbc.datasource.DataSourceUtils      : Fetching JDBC Connection from DataSource
+2026-08-03T20:52:00.166+03:00  INFO 39104 --- [mmvb-trading-bot-v2] [    Test worker] c.t.bot.service.AdaptiveRiskService      : Kelly size for LKOH: 166666 (kelly=0.33333333333333326, safe=0.33333333333333326)
+]]></system-out>
+  <system-err><![CDATA[WARNING: A Java agent has been loaded dynamically (C:\Users\User\.gradle\caches\modules-2\files-2.1\net.bytebuddy\byte-buddy-agent\1.14.10\90ed94ac044ea8953b224304c762316e91fd6b31\byte-buddy-agent-1.14.10.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+]]></system-err>
+</testsuite>

@@ -1,0 +1,83 @@
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+
+spring:
+  application:
+    name: mmvb-trading-bot-v2
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
+    username: ${DB_USER:trader}
+    password: ${DB_PASS:trader}
+    driver-class-name: org.postgresql.Driver
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    timeout: 5s
+
+alor:
+  api-url: ${ALOR_API_URL:https://api.alor.ru}
+  ws-url: ${ALOR_WS_URL:wss://api.alor.ru/ws}
+  token: ${ALOR_TOKEN:}
+  refresh-token: ${ALOR_REFRESH_TOKEN:}
+  portfolio: ${ALOR_PORTFOLIO:D12345}
+  exchange: ${ALOR_EXCHANGE:MOEX}
+
+moex:
+  base-url: https://iss.moex.com/iss
+
+llm:
+  api-key: ${KIMI_API_KEY:}
+  base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
+  model: ${KIMI_MODEL:kimi-k3}
+  timeout-sec: 60
+  max-tokens: 4096
+  temperature: 0.15
+
+trading:
+  mode: ${TRADING_MODE:SIMULATION}
+  tickers:
+    - SBER
+    - GAZP
+    - LKOH
+    - YNDX
+    - MGNT
+    - NVTK
+    - ROSN
+    - TATN
+    - VTBR
+    - ALRS
+  bot-interval-ms: ${BOT_INTERVAL_MS:300000}
+  strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
+  monitor-interval-ms: ${MONITOR_INTERVAL_MS:600000}
+  max-open-positions-for-new-entry: ${MAX_OPEN_POS:0}
+  timeframe: MINUTE_10
+
+risk:
+  enabled: true
+  max-position-rub: 500000
+  max-daily-loss-rub: 50000
+  max-open-positions: 5
+  default-stop-loss-percent: 2.0
+  default-take-profit-percent: 4.0
+  trailing-stop-enabled: true
+  trailing-stop-percent: 1.5
+
+logging:
+  level:
+    com.trading.bot: DEBUG
+    org.springframework.jdbc: DEBUG

@@ -48,6 +48,7 @@ class BlindSpotRepository(
         val sql = """
             INSERT INTO blind_spots (ticker, condition_pattern, loss_rate, occurrence_count, recommendation, is_active, detected_at, resolved_at)
             VALUES (:ticker, :conditionPattern, :lossRate, :occurrenceCount, :recommendation, :isActive, :detectedAt, :resolvedAt)
+            RETURNING id
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
         namedTemplate.update(sql, createParams(entity), keyHolder)

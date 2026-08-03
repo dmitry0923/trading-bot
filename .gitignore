@@ -1,0 +1,13 @@
+.gradle/
+build/
+*.jar
+*.class
+.idea/
+*.iml
+.vscode/
+node_modules/
+frontend/build/
+frontend/node_modules/
+.env
+*.log
+.DS_Store

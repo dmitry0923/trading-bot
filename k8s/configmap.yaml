@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mmvb-config
+  namespace: mmvb-trading
+data:
+  TRADING_MODE: "SIMULATION"
+  BOT_INTERVAL_MS: "300000"
+  STRATEGY_INTERVAL_MS: "600000"
+  MONITOR_INTERVAL_MS: "600000"
+  MAX_OPEN_POS: "0"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres-service:5432/trading_bot"
+  SPRING_REDIS_HOST: "redis-service"
+  SPRING_REDIS_PORT: "6379"

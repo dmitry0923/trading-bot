@@ -54,7 +54,7 @@ llm:
   max-tokens: 4096
   temperature: 0.15
   semantic-cache-enabled: ${LLM_SEMANTIC_CACHE:true}
-  semantic-cache-ttl-minutes: ${LLM_SEMANTIC_CACHE_TTL:10}
+  semantic-cache-ttl-minutes: ${LLM_SEMANTIC_CACHE_TTL:30}
   guardrails-max-price-deviation-percent: 3.0
   circuit-breaker-enabled: true
   rate-limiter-enabled: true

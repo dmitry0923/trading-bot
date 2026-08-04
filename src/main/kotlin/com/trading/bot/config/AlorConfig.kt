@@ -3,6 +3,16 @@ package com.trading.bot.config
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 
+/**
+ * Конфигурация брокера Alor (prefix = "alor").
+ *
+ * @property apiUrl базовый URL REST API Alor
+ * @property wsUrl базовый URL WebSocket Alor
+ * @property token токен доступа (get token, а не refresh)
+ * @property refreshToken refresh-токен для продления доступа
+ * @property portfolio номер портфеля
+ * @property exchange биржа (по умолчанию MOEX)
+ */
 @Component
 @ConfigurationProperties(prefix = "alor")
 class AlorConfig {

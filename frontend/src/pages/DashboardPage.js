@@ -1,5 +1,4 @@
 import React from 'react';
-import { useFetch } from '../api';
 
 function Card({ title, value, color }) {
   return (
@@ -11,15 +10,58 @@ function Card({ title, value, color }) {
 }
 
 export default function DashboardPage() {
-  const { data, error } = useFetch('/api/v1/dashboard', 5000);
+  const [data, setData] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  const [connected, setConnected] = React.useState(false);
 
-  if (error) return <div>Error: {error}</div>;
+  React.useEffect(() => {
+    let es = null;
+    let pollId = null;
+
+    const stopPoll = () => { if (pollId) { clearInterval(pollId); pollId = null; } };
+    const startPoll = () => {
+      if (pollId) return;
+      const load = () =>
+        fetch('/api/v1/dashboard')
+          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+          .then(d => { setData(d); setError(null); })
+          .catch(e => setError(e.message));
+      load();
+      pollId = setInterval(load, 5000);
+    };
+
+    try {
+      es = new EventSource('/api/v1/dashboard/stream');
+      es.addEventListener('dashboard', ev => {
+        try { setData(JSON.parse(ev.data)); setError(null); setConnected(true); stopPoll(); } catch (e) { /* ignore malformed frame */ }
+      });
+      es.onopen = () => { setConnected(true); stopPoll(); };
+      es.onerror = () => { setConnected(false); startPoll(); };
+    } catch (e) {
+      setConnected(false);
+      startPoll();
+    }
+
+    return () => { if (es) es.close(); stopPoll(); };
+  }, []);
+
+  if (error && !data) return <div>Error: {error}</div>;
   if (!data) return <div>Loading dashboard...</div>;
 
   const pnlColor = p => (p && p > 0 ? '#2e7d32' : p && p < 0 ? '#c62828' : '#333');
 
   return (
     <div>
+      <div style={{ fontSize: 12, marginBottom: 12 }}>
+        <span
+          style={{
+            display: 'inline-block', width: 10, height: 10, borderRadius: 5,
+            background: connected ? '#2e7d32' : '#f57c00', marginRight: 6
+          }}
+        />
+        {connected ? 'Live (SSE)' : 'Reconnecting... (fallback poll 5s)'}
+      </div>
+
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <Card title="Mode" value={data.tradingMode} />
         <Card title="Daily P&L" value={data.dailyPnl} color={pnlColor(Number(data.dailyPnl))} />

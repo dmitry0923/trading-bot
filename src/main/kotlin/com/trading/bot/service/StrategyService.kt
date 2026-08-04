@@ -80,7 +80,12 @@ class StrategyService(
     fun runStrategyCycle() = run()
 
     /**
-     * Исполняет цикл стратегии: параллельный feedback, затем параллельная обработка тикеров.
+     * Исполняет цикл стратегии. Feedback Meta-Agent'а генерируется ПАРАЛЛЕЛЬНО
+     * с обработкой тикеров: цикл больше не ждёт завершения всех feedback-вызовов,
+     * каждый тикер ожидает только свой feedback внутри [processTicker].
+     *
+     * Критический путь цикла сокращается с `feedback + tickerChain` до
+     * `max(feedback, tickerChain)` — экономит один LLM-roundtrip на каждый цикл.
      *
      * @param cycleId уникальный идентификатор цикла
      */
@@ -88,25 +93,15 @@ class StrategyService(
         val tickers = tradingConfig.tickers
         try {
             coroutineScope {
-                val feedback = tickers
-                    .map { ticker ->
-                        async {
-                            try {
-                                ticker to feedbackAgent.generateFeedback(ticker)
-                            } catch (e: Exception) {
-                                logger.error(e) { "Feedback generation failed for $ticker" }
-                                meterRegistry.counter("strategy.feedback.error", Tags.of("ticker", ticker)).increment()
-                                ticker to null
-                            }
+                val feedback = tickers.associateWith { ticker ->
+                    async {
+                        try {
+                            feedbackAgent.generateFeedback(ticker)
+                        } catch (e: Exception) {
+                            logger.error(e) { "Feedback generation failed for $ticker" }
+                            meterRegistry.counter("strategy.feedback.error", Tags.of("ticker", ticker)).increment()
+                            null
                         }
-                    }
-                    .awaitAll()
-                    .toMap()
-
-                feedback.forEach { (ticker, fb) ->
-                    if (fb?.shouldPauseTrading == true) {
-                        logger.warn { "PAUSE recommended for $ticker by Meta-Agent" }
-                        meterRegistry.counter("strategy.pause", Tags.of("ticker", ticker)).increment()
                     }
                 }
 
@@ -114,7 +109,7 @@ class StrategyService(
                     .map { ticker ->
                         async {
                             try {
-                                processTicker(ticker, cycleId, feedback[ticker])
+                                processTicker(ticker, cycleId, feedback.getValue(ticker))
                             } catch (e: Exception) {
                                 logger.error(e) { "Strategy error $ticker" }
                                 meterRegistry.counter("strategy.error", Tags.of("ticker", ticker)).increment()
@@ -129,25 +124,40 @@ class StrategyService(
     }
 
     /**
-     * Обработка одного тикера. Tech/Fund-агенты запускаются параллельно.
+     * Обработка одного тикера.
+     *
+     * Данные для анализа (свечи, снапшот) загружаются ПАРАЛЛЕЛЬНО с ожиданием
+     * feedback Meta-Agent'а — все три источника независимы, что убирает задержку
+     * LLM-вызова feedback из последовательной цепочки тикера.
      *
      * @param ticker тикер инструмента
      * @param cycleId идентификатор цикла
-     * @param fb feedback Meta-Agent'а (может быть null)
+     * @param feedbackDeferred результат feedback Meta-Agent'а (может быть null)
      */
     private suspend fun processTicker(
         ticker: String,
         cycleId: String,
-        fb: PerformanceFeedbackAgent.StrategyFeedback?
+        feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>
     ) {
-        if (fb?.shouldPauseTrading == true || adaptiveRisk.shouldPauseTrading(ticker)) {
+        // Локальный adaptive risk — без LLM, проверяем первым
+        if (adaptiveRisk.shouldPauseTrading(ticker)) {
             logger.info { "Skipping $ticker — trading paused by adaptive risk" }
             meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker)).increment()
             return
         }
 
-        val candles = loadCandles(ticker)
-        val snapshot = alorClient.getMarketSnapshot(ticker) ?: return
+        val (candles, snapshot, fb) = coroutineScope {
+            val candlesDeferred = async { loadCandles(ticker) }
+            val snapshotDeferred = async { alorClient.getMarketSnapshot(ticker) }
+            Triple(candlesDeferred.await(), snapshotDeferred.await(), feedbackDeferred.await())
+        }
+
+        if (fb?.shouldPauseTrading == true) {
+            logger.warn { "PAUSE recommended for $ticker by Meta-Agent" }
+            meterRegistry.counter("strategy.pause", Tags.of("ticker", ticker)).increment()
+            return
+        }
+        if (snapshot == null) return
 
         // Независимые агенты Tech + Fund — параллельно (экономит ~1 LLM-вызов за такт)
         val (tech, fund) = coroutineScope {

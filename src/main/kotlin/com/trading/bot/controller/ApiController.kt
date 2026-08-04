@@ -9,8 +9,19 @@ import com.trading.bot.service.*
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.math.BigDecimal
 
+/**
+ * REST API для React Dashboard.
+ *
+ * Отдаёт данные дашборда, позиций, стратегий, логов агентов, аналитики,
+ * настроек и бэктеста. Реальный-time обновления дашборда — через SSE
+ * `/api/v1/dashboard/stream` ([DashboardSseService]).
+ *
+ * @see com.trading.bot.service.DashboardService
+ * @see com.trading.bot.service.DashboardSseService
+ */
 @RestController
 @RequestMapping("/api/v1")
 @CrossOrigin(origins = ["*"])
@@ -30,6 +41,8 @@ class ApiController(
     private val adjustmentRepository: StrategyAdjustmentRepository,
     private val backtestEngine: BacktestEngine,
     private val historicalDataLoader: HistoricalDataLoader,
+    private val dashboardService: DashboardService,
+    private val dashboardSseService: DashboardSseService,
     private val meterRegistry: MeterRegistry
 ) {
 
@@ -49,30 +62,20 @@ class ApiController(
     @GetMapping("/dashboard")
     fun getDashboard(): Map<String, Any> {
         meterRegistry.counter("api.dashboard").increment()
-        val openPositions = positionRepository.findByStatus(PositionStatus.OPEN)
-        val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
-        val todayStart = java.time.LocalDate.now().atStartOfDay()
-        val closedToday = positionRepository.findClosedSince(todayStart)
-        val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
-        val strategiesToday = strategyRepository.findTop50ByOrderByCreatedAtDesc()
-            .count { it.createdAt.isAfter(todayStart) }
-        val stats = tradeAnalysisService.analyzeLastNDays(7)
-        val pausedTickers = stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys
-        val adaptivePaused = tradingConfig.tickers.filter { adaptiveRiskService.shouldPauseTrading(it) }
+        return dashboardService.build()
+    }
 
-        return mapOf(
-            "tradingMode" to tradingConfig.mode,
-            "tickers" to tradingConfig.tickers,
-            "dailyPnl" to riskManagementService.getDailyPnL(),
-            "openPnl" to BigDecimal(openPnl),
-            "realizedPnlToday" to BigDecimal(realizedPnlToday),
-            "closedTodayCount" to closedToday.size,
-            "strategiesToday" to strategiesToday,
-            "openPositionsCount" to openPositions.size,
-            "openPositions" to openPositions,
-            "pausedTickers" to (pausedTickers + adaptivePaused).toSet(),
-            "timestamp" to java.time.LocalDateTime.now().toString()
-        )
+    /**
+     * Real-time поток дашборда (Server-Sent Events).
+     *
+     * Подписчик немедленно получает текущий снимок, далее — обновления при
+     * событиях домена (позиции, стратегии, исполнение, тики цен). Название
+     * события: `dashboard`, данные — JSON (см. [com.trading.bot.service.DashboardService.build]).
+     */
+    @GetMapping("/dashboard/stream", produces = ["text/event-stream"])
+    fun streamDashboard(): SseEmitter {
+        meterRegistry.counter("api.dashboard.stream").increment()
+        return dashboardSseService.subscribe()
     }
 
     @GetMapping("/strategies")

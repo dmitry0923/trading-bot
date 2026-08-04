@@ -4,6 +4,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 
+/**
+ * Конфигурация макроэкономического контекста (prefix = "macro").
+ *
+ * @property cbrRate ключевая ставка ЦБ, %
+ * @property brentPrice цена Brent, $
+ * @property usdRub курс USD/RUB
+ * @property usdRubTicker тикер пары USD/RUB на MOEX для live-обновления
+ */
 @Component
 @ConfigurationProperties(prefix = "macro")
 class MacroConfig {

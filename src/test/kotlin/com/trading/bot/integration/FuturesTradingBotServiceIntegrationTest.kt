@@ -71,20 +71,20 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             Mockito
                 .`when`(
                     alorClient.placeLimitOrder(
-                        Mockito.eq("Si"),
-                        Mockito.eq("buy"),
-                        Mockito.eq(1),
-                        Mockito.eq(BigDecimal("92000")),
-                        Mockito.anyString(),
+                        nonNullEq("Si"),
+                        nonNullEq("buy"),
+                        nonNullEq(1),
+                        nonNullEq(BigDecimal("92000")),
+                        nonNullAnyString(),
                     ),
                 ).thenReturn("ord-limit-1")
             Mockito
                 .`when`(
                     alorClient.placeMarketOrder(
-                        Mockito.eq("Si"),
-                        Mockito.eq("sell"),
-                        Mockito.eq(1),
-                        Mockito.anyString(),
+                        nonNullEq("Si"),
+                        nonNullEq("sell"),
+                        nonNullEq(1),
+                        nonNullAnyString(),
                     ),
                 ).thenReturn("ord-market-1")
         }
@@ -217,6 +217,16 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             cycleId = "test-cycle",
             validUntil = LocalDateTime.now().plusMinutes(5),
         )
+
+    private fun <T> nonNullEq(value: T): T {
+        Mockito.eq(value)
+        return value
+    }
+
+    private fun nonNullAnyString(): String {
+        Mockito.anyString()
+        return ""
+    }
 
     private fun awaitUntil(
         timeoutMs: Long = 10_000,

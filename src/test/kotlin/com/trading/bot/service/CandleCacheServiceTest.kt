@@ -23,7 +23,9 @@ import java.time.ZoneOffset
  */
 class CandleCacheServiceTest {
     private val redisTemplate = Mockito.mock(StringRedisTemplate::class.java)
-    private val zset: ZSetOperations<String, String> = Mockito.mock(ZSetOperations::class.java) as ZSetOperations<String, String>
+
+    @Suppress("UNCHECKED_CAST")
+    private val zset = Mockito.mock(ZSetOperations::class.java) as ZSetOperations<String, String>
     private val objectMapper =
         ObjectMapper().apply {
             registerModule(JavaTimeModule())

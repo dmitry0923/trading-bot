@@ -1,16 +1,21 @@
 package com.trading.bot.controller
 
 import com.trading.bot.backtest.BacktestEngine
+import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import com.trading.bot.service.*
 import io.micrometer.core.instrument.MeterRegistry
+import kotlinx.coroutines.runBlocking
 import org.springframework.web.bind.annotation.*
+import java.math.BigDecimal
 
 @RestController
 @RequestMapping("/api/v1")
 @CrossOrigin(origins = ["*"])
 class ApiController(
+    private val tradingConfig: TradingConfig,
     private val strategyRepository: StrategyRepository,
     private val positionRepository: PositionRepository,
     private val agentLogRepository: AgentLogRepository,
@@ -24,6 +29,7 @@ class ApiController(
     private val blindSpotRepository: BlindSpotRepository,
     private val adjustmentRepository: StrategyAdjustmentRepository,
     private val backtestEngine: BacktestEngine,
+    private val historicalDataLoader: HistoricalDataLoader,
     private val meterRegistry: MeterRegistry
 ) {
 
@@ -34,6 +40,39 @@ class ApiController(
     fun updateSettings(@RequestBody settings: BotSettings): BotSettings {
         settingsService.updateSettings(settings)
         return settings
+    }
+
+    /**
+     * Агрегированная панель для React Dashboard: открытые позиции с live P&L,
+     * дневная статистика, paused-тикеры, режим торговли.
+     */
+    @GetMapping("/dashboard")
+    fun getDashboard(): Map<String, Any> {
+        meterRegistry.counter("api.dashboard").increment()
+        val openPositions = positionRepository.findByStatus(PositionStatus.OPEN)
+        val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
+        val todayStart = java.time.LocalDate.now().atStartOfDay()
+        val closedToday = positionRepository.findClosedSince(todayStart)
+        val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
+        val strategiesToday = strategyRepository.findTop50ByOrderByCreatedAtDesc()
+            .count { it.createdAt.isAfter(todayStart) }
+        val stats = tradeAnalysisService.analyzeLastNDays(7)
+        val pausedTickers = stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys
+        val adaptivePaused = tradingConfig.tickers.filter { adaptiveRiskService.shouldPauseTrading(it) }
+
+        return mapOf(
+            "tradingMode" to tradingConfig.mode,
+            "tickers" to tradingConfig.tickers,
+            "dailyPnl" to riskManagementService.getDailyPnL(),
+            "openPnl" to BigDecimal(openPnl),
+            "realizedPnlToday" to BigDecimal(realizedPnlToday),
+            "closedTodayCount" to closedToday.size,
+            "strategiesToday" to strategiesToday,
+            "openPositionsCount" to openPositions.size,
+            "openPositions" to openPositions,
+            "pausedTickers" to (pausedTickers + adaptivePaused).toSet(),
+            "timestamp" to java.time.LocalDateTime.now().toString()
+        )
     }
 
     @GetMapping("/strategies")
@@ -51,7 +90,11 @@ class ApiController(
     fun getAllPositions() = positionRepository.findAll()
 
     @GetMapping("/logs")
-    fun getLogs() = agentLogRepository.findTop100ByOrderByCreatedAtDesc()
+    fun getLogs(
+        @RequestParam(required = false) ticker: String?,
+        @RequestParam(required = false) agent: String?,
+        @RequestParam(defaultValue = "100") limit: Int
+    ) = agentLogRepository.findFiltered(ticker, agent, limit)
 
     @GetMapping("/risk/daily-pnl")
     fun getDailyPnl() = mapOf("dailyPnl" to riskManagementService.getDailyPnL())
@@ -71,9 +114,13 @@ class ApiController(
     @GetMapping("/backtest/{ticker}")
     fun backtest(
         @PathVariable ticker: String,
-        @RequestParam(defaultValue = "365") days: Int
+        @RequestParam(defaultValue = "365") days: Int,
+        @RequestParam(defaultValue = "false") loadHistory: Boolean
     ): Map<String, Any> {
         meterRegistry.counter("api.backtest", io.micrometer.core.instrument.Tags.of("ticker", ticker)).increment()
+        if (loadHistory) {
+            runBlocking { historicalDataLoader.loadAndSave(ticker, days) }
+        }
         val result = backtestEngine.run(ticker, days)
         return mapOf(
             "ticker" to result.ticker,

@@ -11,6 +11,14 @@ import java.math.RoundingMode
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
+/**
+ * Сервис анализа закрытых сделок (мета-анализ для PerformanceFeedbackAgent).
+ *
+ * - Агрегирует закрытые позиции по тикерам в TradeStats (win rate, PF, SL/TP hit rate)
+ * - Считает максимальную серию убытков, лучшее/худшее время входа
+ * - Детектирует и персистит «слепые зоны» (BlindSpot): частые SL, убыточные часы
+ * - timePatternAnalysis(): почасовая статистика win rate по тикеру
+ */
 @Service
 class TradeAnalysisService(
     private val positionRepo: PositionRepository,
@@ -19,6 +27,12 @@ class TradeAnalysisService(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    /**
+     * Анализирует закрытые позиции за последние N дней и возвращает статистику по тикерам.
+     *
+     * @param days количество дней для анализа (по умолчанию 14)
+     * @return карта тикер -> TradeStats (пустая, если закрытых позиций нет)
+     */
     fun analyzeLastNDays(days: Int = 14): Map<String, TradeStats> {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val closed = positionRepo.findClosedSince(since)
@@ -163,6 +177,13 @@ class TradeAnalysisService(
         }
     }
 
+    /**
+     * Почасовая статистика win rate по закрытым сделкам тикера за N дней.
+     *
+     * @param ticker тикер инструмента
+     * @param days количество дней для анализа (по умолчанию 30)
+     * @return почасовая карта час -> win rate
+     */
     fun timePatternAnalysis(ticker: String, days: Int = 30): TimePattern {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val trades = positionRepo.findClosedByTickerSince(ticker, since)

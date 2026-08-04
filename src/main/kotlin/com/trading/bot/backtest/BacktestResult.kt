@@ -35,7 +35,13 @@ object BacktestMetrics {
         equityCurve: List<BigDecimal>,
         tradeReturns: List<Double>
     ): BacktestResult {
-        val totalReturn = equityCurve.last().subtract(BigDecimal.ONE).toDouble()
+        val totalReturn = if (equityCurve.size >= 2 && equityCurve.first() > BigDecimal.ZERO) {
+            equityCurve.last().subtract(equityCurve.first())
+                .divide(equityCurve.first(), 6, RoundingMode.HALF_UP)
+                .toDouble()
+        } else {
+            0.0
+        }
 
         val sharpe = sharpeRatio(tradeReturns)
         val mdd = maxDrawdown(equityCurve)

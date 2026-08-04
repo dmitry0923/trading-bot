@@ -17,8 +17,19 @@ class TradingHoursGuard(
 ) {
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 
+    /**
+     * Разрешена ли торговля сейчас (по текущему времени в МСК).
+     *
+     * @return true внутри торгового окна (полуоткрытый интервал)
+     */
     fun isTradingAllowed(): Boolean = isTradingAllowed(LocalTime.now(moscowZone))
 
+    /**
+     * Разрешена ли торговля в указанное время.
+     *
+     * @param now время для проверки
+     * @return true, если now строго внутри торгового окна (границы исключены)
+     */
     fun isTradingAllowed(now: LocalTime): Boolean {
         val start = LocalTime.parse(riskConfig.tradingHoursStart)
         val end = LocalTime.parse(riskConfig.tradingHoursEnd)

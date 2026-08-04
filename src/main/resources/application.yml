@@ -79,7 +79,7 @@ resilience4j:
   ratelimiter:
     instances:
       llm:
-        limitForPeriod: 20
+        limitForPeriod: 60
         limitRefreshPeriod: 60s
         timeoutDuration: 5s
   retry:
@@ -101,11 +101,21 @@ trading:
   mode: ${TRADING_MODE:SIMULATION}
   tickers:
     - Si
+    - SBER
+    - GAZP
+    - LKOH
+    - VTBR
+    - ROSN
+    - NVTK
+    - PLZL
+    - MGNT
+    - TATN
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
-  monitor-interval-ms: ${MONITOR_INTERVAL_MS:600000}
-  max-open-positions-for-new-entry: ${MAX_OPEN_POS:0}
+  monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}
+  max-open-positions-for-new-entry: ${MAX_OPEN_POS:3}
   timeframe: MINUTE_10
+  ws-quotes-enabled: ${WS_QUOTES_ENABLED:true}
 
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
@@ -124,12 +134,85 @@ instruments:
       go: "15000"
       leverage: "${leverage.user-leverage}"
       baseAsset: "USD"
+    - ticker: "SBER"
+      type: "STOCK"
+      lotSize: 10
+      priceStep: "0.01"
+      priceStepCost: "0.1"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "GAZP"
+      type: "STOCK"
+      lotSize: 10
+      priceStep: "0.05"
+      priceStepCost: "0.5"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "LKOH"
+      type: "STOCK"
+      lotSize: 1
+      priceStep: "1.0"
+      priceStepCost: "1.0"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "VTBR"
+      type: "STOCK"
+      lotSize: 1000
+      priceStep: "0.0001"
+      priceStepCost: "0.1"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "ROSN"
+      type: "STOCK"
+      lotSize: 1
+      priceStep: "0.05"
+      priceStepCost: "0.05"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "NVTK"
+      type: "STOCK"
+      lotSize: 1
+      priceStep: "1.0"
+      priceStepCost: "1.0"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "PLZL"
+      type: "STOCK"
+      lotSize: 1
+      priceStep: "1.0"
+      priceStepCost: "1.0"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "MGNT"
+      type: "STOCK"
+      lotSize: 1
+      priceStep: "1.0"
+      priceStepCost: "1.0"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
+    - ticker: "TATN"
+      type: "STOCK"
+      lotSize: 1
+      priceStep: "0.05"
+      priceStepCost: "0.05"
+      go: "0"
+      leverage: "1.0"
+      baseAsset: "RUB"
 
 risk:
   enabled: true
   max-position-rub: 50000
   max-daily-loss-rub: 5000
-  max-open-positions: 1
+  max-open-positions: 3
+  futures-max-open-positions: 1
   max-sector-exposure: 2
   max-volatility-percent: 5.0
   default-stop-loss-percent: 2.0
@@ -146,6 +229,15 @@ risk:
   trading-hours-end: "18:30"
   sectors:
     Si: FX
+    SBER: FINANCE
+    VTBR: FINANCE
+    GAZP: ENERGY
+    LKOH: ENERGY
+    ROSN: ENERGY
+    NVTK: ENERGY
+    TATN: ENERGY
+    PLZL: METALS
+    MGNT: CONSUMER
 
 logging:
   level:

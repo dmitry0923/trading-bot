@@ -34,6 +34,22 @@ class AgentLogRepository(
         return namedTemplate.query("SELECT * FROM agent_logs ORDER BY created_at DESC LIMIT 100", rowMapper)
     }
 
+    fun findFiltered(ticker: String?, agentName: String?, limit: Int): List<AgentLog> {
+        val conditions = mutableListOf<String>()
+        val params = mutableMapOf<String, Any>("limit" to limit.coerceIn(1, 500))
+        ticker?.takeIf { it.isNotBlank() }?.let {
+            conditions += "ticker = :ticker"
+            params["ticker"] = it
+        }
+        agentName?.takeIf { it.isNotBlank() }?.let {
+            conditions += "agent_name = :agentName"
+            params["agentName"] = it
+        }
+        val where = if (conditions.isEmpty()) "" else "WHERE ${conditions.joinToString(" AND ")} "
+        val sql = "SELECT * FROM agent_logs $where ORDER BY created_at DESC LIMIT :limit"
+        return namedTemplate.query(sql, params, rowMapper)
+    }
+
     fun save(log: AgentLog): AgentLog {
         val sql = """
             INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output,

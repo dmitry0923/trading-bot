@@ -31,6 +31,12 @@ class DailyLossCircuitBreaker(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    /**
+     * Обрабатывает закрытие позиции: обновляет дневной P&L и при достижении
+     * лимита убытка публикует TradingHaltedEvent (остановка новых входов).
+     *
+     * @param event событие закрытия позиции с P&L сделки
+     */
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
         futuresRiskEngine.updateDailyPnL(event.pnl)

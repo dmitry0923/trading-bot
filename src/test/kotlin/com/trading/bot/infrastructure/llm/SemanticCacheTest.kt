@@ -48,30 +48,50 @@ class SemanticCacheTest {
 
     @Test
     fun `fingerprint is stable for identical inputs`() {
-        val a = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY")
-        val b = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY")
+        val a = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY", session = "MORNING")
+        val b = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY", session = "MORNING")
         assertEquals(a, b)
     }
 
     @Test
     fun `fingerprint changes when market situation changes`() {
-        val a = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY")
-        val b = cache.fingerprint(BigDecimal("280.50"), 30.1, "UP", "LOW_VOLATILITY")
-        val c = cache.fingerprint(BigDecimal("290.00"), 62.4, "UP", "LOW_VOLATILITY")
+        val a = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY", session = "MORNING")
+        val b = cache.fingerprint(BigDecimal("280.50"), 30.1, "UP", "LOW_VOLATILITY", session = "MORNING")
+        val c = cache.fingerprint(BigDecimal("290.00"), 62.4, "UP", "LOW_VOLATILITY", session = "MORNING")
+        val d = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY", session = "EVENING")
         assertFalse(a == b)
         assertFalse(a == c)
+        assertFalse(a == d)
     }
 
     @Test
-    fun `fingerprint rounds price and rsi`() {
-        val byPrice = cache.fingerprint(BigDecimal("280.54"), 62.4, "UP", "LOW_VOLATILITY")
-        val priceRounded = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY")
+    fun `fingerprint rounds price and buckets rsi`() {
+        val byPrice = cache.fingerprint(BigDecimal("280.54"), 62.4, "UP", "LOW_VOLATILITY", session = "MORNING")
+        val priceRounded = cache.fingerprint(BigDecimal("280.50"), 62.4, "UP", "LOW_VOLATILITY", session = "MORNING")
         assertEquals(byPrice, priceRounded)
 
-        val byRsi = cache.fingerprint(BigDecimal("280.50"), 62.9, "UP", "LOW_VOLATILITY")
-        val rsiRounded = cache.fingerprint(BigDecimal("280.50"), 62.6, "UP", "LOW_VOLATILITY")
+        // RSI-бакет (по 10 пунктов): 62.9 и 62.6 -> один бакет 6
+        val byRsi = cache.fingerprint(BigDecimal("280.50"), 62.9, "UP", "LOW_VOLATILITY", session = "MORNING")
+        val rsiRounded = cache.fingerprint(BigDecimal("280.50"), 62.6, "UP", "LOW_VOLATILITY", session = "MORNING")
         assertEquals(byRsi, rsiRounded)
-        assertEquals("280.5:63:UP:LOW_VOLATILITY", byRsi)
+        assertEquals("280.5:6:UP:LOW_VOLATILITY:MNA:AN:MORNING", byRsi)
+    }
+
+    @Test
+    fun `fingerprint distinguishes macd direction`() {
+        val up = cache.fingerprint(BigDecimal("280.50"), 62.0, "UP", "LOW_VOLATILITY", macdHistogram = 1.2, session = "MORNING")
+        val down = cache.fingerprint(BigDecimal("280.50"), 62.0, "UP", "LOW_VOLATILITY", macdHistogram = -1.2, session = "MORNING")
+        assertFalse(up == down)
+        assertTrue(up.contains(":M+:"))
+        assertTrue(down.contains(":M-:"))
+    }
+
+    @Test
+    fun `generic fingerprint joins components`() {
+        val fp = cache.genericFingerprint("16.0", "75.0", "90.0")
+        assertEquals("16.0:75.0:90.0", fp)
+        val withNull = cache.genericFingerprint("16.0", null, "90.0")
+        assertEquals("16.0:NA:90.0", withNull)
     }
 
     @Test

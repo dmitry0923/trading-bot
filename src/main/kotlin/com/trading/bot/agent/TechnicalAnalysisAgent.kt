@@ -17,6 +17,15 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 
+/**
+ * Агент технического анализа (Agent-1).
+ *
+ * - Считает индикаторы (RSI, ATR, MACD, Bollinger) через IndicatorCalculator
+ * - При недостатке данных (< 30 свечей) возвращает INSUFFICIENT_DATA
+ * - Вызывает LLM с детерминированным baseline-отчётом как fallback
+ * - Кэширует результат по семантическому отпечатку рынка (SemanticCache)
+ * - Пишет лог в AgentLogRepository и метрики agent.technical.decision
+ */
 @Component
 class TechnicalAnalysisAgent(
     private val llmClient: ResilientLlmClient,
@@ -28,6 +37,16 @@ class TechnicalAnalysisAgent(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    /**
+     * Технический анализ тикера по свечам и текущему снапшоту рынка.
+     *
+     * @param ticker тикер инструмента
+     * @param candles исторические свечи (10-мин)
+     * @param snapshot текущий рыночный снапшот
+     * @param cycleId идентификатор торгового цикла
+     * @param version версия LLM-шаблона промпта
+     * @return отчёт с трендом, индикаторами и заключением
+     */
     suspend fun analyze(
         ticker: String,
         candles: List<Candle>,
@@ -63,13 +82,16 @@ class TechnicalAnalysisAgent(
         )
 
         val volatilityRegime = volatilityRegime(indicators.atr, snapshot.currentPrice)
+        val atrPercentile = IndicatorCalculator.atrPercentile(candles)
 
-        // Семантический отпечаток: цена (1 знак) + RSI (int) + trend + volatilityRegime
+        // Семантический отпечаток: цена (1 знак) + RSI-бакет + trend + vol regime + MACD + ATR pct + сессия
         val fingerprint = semanticCache.fingerprint(
             snapshot.currentPrice,
             indicators.rsi,
             indicators.trend,
-            volatilityRegime
+            volatilityRegime,
+            macdHistogram = indicators.macdHistogram,
+            atrPercentile = atrPercentile
         )
 
         val variables = mapOf(

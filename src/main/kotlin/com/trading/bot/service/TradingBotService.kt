@@ -15,8 +15,18 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Исполнительный сервис торгового бота (акции/валюты).
+ *
+ * - Котировки: real-time через WebSocket [AlorWebSocketClient.subscribeToQuotes];
+ *   [pollMarketData] остаётся деградированным fallback (SIMULATION / нет WS).
+ * - Все критичные операции (вход/выход/исполнение) — через доменные события.
+ */
 @Service
 class TradingBotService(
     private val tradingConfig: TradingConfig,
@@ -34,6 +44,9 @@ class TradingBotService(
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */
+    private val lastWsTickAt = ConcurrentHashMap<String, Instant>()
+
     init {
         scope.launch {
             alorWsClient.subscribeToOrders().collect { report ->
@@ -44,25 +57,43 @@ class TradingBotService(
                 }
             }
         }
+        if (tradingConfig.wsQuotesEnabled) {
+            scope.launch {
+                alorWsClient.subscribeToQuotes(tradingConfig.tickers).collect { tick ->
+                    try {
+                        lastWsTickAt[tick.ticker] = Instant.now()
+                        eventPublisher.publishPriceChanged(tick.ticker, tick.price)
+                    } catch (e: Exception) {
+                        logger.error(e) { "WS quote processing error for ${tick.ticker}" }
+                    }
+                }
+            }
+        }
     }
 
     /**
-     * Поллинг котировок — единственный допустимый @Scheduled (WS по котировкам
-     * отсутствует). Критичные операции (вход/выход/исполнение) — только через события.
+     * Поллинг котировок — fallback, когда WS неактивен (SIMULATION, нет токена).
+     * Если по тикеру был WS-тик за последние monitorIntervalMs — пропускаем тикер.
      */
     @Scheduled(fixedDelayString = "#{@tradingConfig.monitorIntervalMs}")
     fun pollMarketData() {
         scope.launch {
+            val now = Instant.now()
             val open = positionRepo.findByStatus(PositionStatus.OPEN)
-            open.map { it.ticker }.distinct().forEach { ticker ->
-                try {
-                    val price = alorClient.getLastPrice(ticker) ?: return@forEach
-                    eventPublisher.publishPriceChanged(ticker, price)
-                } catch (e: Exception) {
-                    logger.error(e) { "Price poll error $ticker" }
-                    meterRegistry.counter("bot.price.poll.error", Tags.of("ticker", ticker)).increment()
+            open.map { it.ticker }.distinct()
+                .filter { ticker ->
+                    val lastWs = lastWsTickAt[ticker]
+                    lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
                 }
-            }
+                .forEach { ticker ->
+                    try {
+                        val price = alorClient.getLastPrice(ticker) ?: return@forEach
+                        eventPublisher.publishPriceChanged(ticker, price)
+                    } catch (e: Exception) {
+                        logger.error(e) { "Price poll error $ticker" }
+                        meterRegistry.counter("bot.price.poll.error", Tags.of("ticker", ticker)).increment()
+                    }
+                }
         }
     }
 

@@ -6,6 +6,15 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 
+/**
+ * Сервис классического риск-менеджмента.
+ *
+ * - Дневной лимит убытка, максимум открытых позиций, секторная концентрация
+ * - Проверка волатильности (ATR%) перед входом
+ * - Расчёт SL/TP по проценту от цены входа, трейлинг-стоп
+ * - Контроль выхода по SL/TP/trailing для открытых позиций
+ * - Учёт дневного P&L (in-memory, сбрасывается при перезапуске)
+ */
 @Service
 class RiskManagementService(
     private val riskConfig: RiskConfig
@@ -13,9 +22,21 @@ class RiskManagementService(
     private val logger = mu.KotlinLogging.logger {}
     private var dailyPnL: BigDecimal = BigDecimal.ZERO
 
+    /**
+     * Проверяет, достигнут ли дневной лимит убытка.
+     *
+     * @return true, если дневной P&L <= -maxDailyLossRub
+     */
     fun isDailyLossLimitReached(): Boolean =
         dailyPnL <= riskConfig.maxDailyLossRub.negate()
 
+    /**
+     * Валидирует новую стратегию перед открытием позиции.
+     *
+     * @param strategy предлагаемая стратегия
+     * @param openPositions текущие открытые позиции
+     * @return результат проверки: разрешена ли сделка и с каким количеством
+     */
     fun validateNewStrategy(strategy: Strategy, openPositions: List<Position>): RiskCheckResult {
         if (riskConfig.enabled && isDailyLossLimitReached()) {
             return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${riskConfig.maxDailyLossRub})", 0)
@@ -59,9 +80,22 @@ class RiskManagementService(
         return count >= riskConfig.maxSectorExposure
     }
 
+    /**
+     * Сектор инструмента по тикеру.
+     *
+     * @param ticker тикер инструмента
+     * @return сектор из справочника risk.sectors или "UNKNOWN"
+     */
     fun sectorOf(ticker: String): String =
         riskConfig.sectors[ticker] ?: "UNKNOWN"
 
+    /**
+     * Проверяет, нужно ли закрыть позицию по стоп-лоссу при текущей цене.
+     *
+     * @param pos открытая позиция
+     * @param price текущая цена
+     * @return true, если цена пробила stopLoss в сторону убытка
+     */
     fun shouldCloseBySL(pos: Position, price: BigDecimal): Boolean {
         return when (pos.direction) {
             PositionDirection.LONG -> pos.stopLoss != null && price <= pos.stopLoss
@@ -69,6 +103,13 @@ class RiskManagementService(
         }
     }
 
+    /**
+     * Проверяет, нужно ли закрыть позицию по тейк-профиту при текущей цене.
+     *
+     * @param pos открытая позиция
+     * @param price текущая цена
+     * @return true, если цена достигла takeProfit
+     */
     fun shouldCloseByTP(pos: Position, price: BigDecimal): Boolean {
         return when (pos.direction) {
             PositionDirection.LONG -> pos.takeProfit != null && price >= pos.takeProfit
@@ -76,6 +117,13 @@ class RiskManagementService(
         }
     }
 
+    /**
+     * Проверяет, нужно ли закрыть позицию по трейлинг-стопу при текущей цене.
+     *
+     * @param pos открытая позиция
+     * @param price текущая цена
+     * @return true, если цена пробила trailingStopPrice
+     */
     fun shouldCloseByTrailing(pos: Position, price: BigDecimal): Boolean {
         if (!riskConfig.trailingStopEnabled || pos.trailingStopPrice == null) return false
         return when (pos.direction) {
@@ -84,6 +132,12 @@ class RiskManagementService(
         }
     }
 
+    /**
+     * Обновляет трейлинг-стоп позиции по текущей цене (если трейлинг включён).
+     *
+     * @param pos открытая позиция (мутируется)
+     * @param price текущая цена
+     */
     fun updateTrailingStop(pos: Position, price: BigDecimal) {
         if (!riskConfig.trailingStopEnabled) return
         val percent = BigDecimal(riskConfig.trailingStopPercent.toString()).divide(BigDecimal("100"))
@@ -94,6 +148,13 @@ class RiskManagementService(
         pos.trailingStopPrice = newStop.setScale(2, RoundingMode.HALF_UP)
     }
 
+    /**
+     * Рассчитывает цену стоп-лосса по проценту от цены входа.
+     *
+     * @param entryPrice цена входа
+     * @param direction направление позиции
+     * @return цена стоп-лосса (с 2 знаками после запятой)
+     */
     fun calcSL(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
         val percent = BigDecimal(riskConfig.defaultStopLossPercent.toString()).divide(BigDecimal("100"))
         return when (direction) {
@@ -102,6 +163,13 @@ class RiskManagementService(
         }
     }
 
+    /**
+     * Рассчитывает цену тейк-профита по проценту от цены входа.
+     *
+     * @param entryPrice цена входа
+     * @param direction направление позиции
+     * @return цена тейк-профита (с 2 знаками после запятой)
+     */
     fun calcTP(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
         val percent = BigDecimal(riskConfig.defaultTakeProfitPercent.toString()).divide(BigDecimal("100"))
         return when (direction) {
@@ -110,9 +178,19 @@ class RiskManagementService(
         }
     }
 
+    /**
+     * Добавляет P&L закрытой сделки к дневному итогу.
+     *
+     * @param pnl прибыль/убыток сделки
+     */
     fun updateDailyPnL(pnl: BigDecimal) {
         dailyPnL = dailyPnL.add(pnl)
     }
 
+    /**
+     * Текущий дневной P&L.
+     *
+     * @return накопленный дневной P&L
+     */
     fun getDailyPnL(): BigDecimal = dailyPnL
 }

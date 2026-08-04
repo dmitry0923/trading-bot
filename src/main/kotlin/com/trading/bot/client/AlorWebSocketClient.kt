@@ -17,14 +17,28 @@ import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.publisher.Mono
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.UUID
+
+/**
+ * Тик котировки из WebSocket Alor.
+ *
+ * @param ticker тикер инструмента
+ * @param price последняя цена сделки (Last), либо mid между лучшим Bid/Offer
+ */
+data class QuoteTick(
+    val ticker: String,
+    val price: BigDecimal
+)
 
 /**
  * WebSocket-клиент Alor.
  *
- * Подписывается на исполнения ордеров (OrdersGetAndSubscribeV2)
- * и отдаёт поток ExecutionReport с автоматическим переподключением
- * (до 5 попыток с экспоненциальным backoff).
+ * Подписывается на исполнения ордеров (OrdersGetAndSubscribeV2) и на
+ * real-time котировки (QuotesSubscribe). Оба потока имеют встроенное
+ * переподключение (до 5 попыток с экспоненциальным backoff).
+ *
+ * @see <a href="https://alor.dev/docs">Alor API документация</a>
  */
 @Component
 class AlorWebSocketClient(
@@ -113,6 +127,90 @@ class AlorWebSocketClient(
         awaitClose { cancelled = true }
     }
 
+    /**
+     * Поток real-time котировок для списка символов. Переподключение встроено.
+     *
+     * @param symbols тикеры для подписки (например ["Si", "SBER"])
+     * @return поток [QuoteTick] — последняя цена сделки каждого инструмента
+     */
+    fun subscribeToQuotes(symbols: List<String>): Flow<QuoteTick> = callbackFlow {
+        if (symbols.isEmpty()) {
+            close()
+            return@callbackFlow
+        }
+        var cancelled = false
+        var attempt = 0
+
+        lateinit var scheduleReconnect: (Int) -> Unit
+        lateinit var connect: (Int) -> Unit
+
+        scheduleReconnect = { nextAttempt: Int ->
+            if (cancelled || nextAttempt > maxAttempts) {
+                logger.error { "Alor WS quotes: max reconnect attempts ($maxAttempts) reached, giving up" }
+                meterRegistry.counter("alor.ws.quotes.disconnected", Tags.of("reason", "MAX_ATTEMPTS")).increment()
+                close()
+            } else {
+                val backoffSeconds = nextAttempt * 5L
+                logger.warn { "Alor WS quotes: reconnecting in ${backoffSeconds}s (attempt $nextAttempt/$maxAttempts)" }
+                meterRegistry.counter("alor.ws.quotes.reconnect").increment()
+                launch {
+                    delay(backoffSeconds * 1000)
+                    if (!cancelled) connect(nextAttempt)
+                }
+            }
+        }
+
+        connect = { currentAttempt: Int ->
+            if (!cancelled) {
+                try {
+                    val url = URI.create(wsUrl())
+                    wsClient.execute(url) { session ->
+                        val subscribeMsg = session.textMessage(
+                            objectMapper.writeValueAsString(
+                                mapOf(
+                                    "opcode" to "QuotesSubscribe",
+                                    "guid" to UUID.randomUUID().toString(),
+                                    "token" to alorConfig.token,
+                                    "exchange" to alorConfig.exchange,
+                                    "format" to "Simple",
+                                    "guids" to symbols.map { symbol ->
+                                        mapOf("guid" to "q-$symbol", "symbol" to symbol)
+                                    }
+                                )
+                            )
+                        )
+                        session.send(Mono.just(subscribeMsg))
+                            .thenMany(session.receive())
+                            .mapNotNull { msg -> parseQuote(msg.payloadAsText) }
+                            .doOnNext { tick ->
+                                meterRegistry.counter("alor.ws.quote_received", Tags.of("ticker", tick?.ticker ?: "UNKNOWN")).increment()
+                                tick?.let { trySend(it) }
+                            }
+                            .then()
+                    }.subscribe(
+                        { /* connection closed normally */ },
+                        { err ->
+                            logger.warn(err) { "Alor WS quotes stream error" }
+                            meterRegistry.counter("alor.ws.quotes.error").increment()
+                            if (!cancelled) scheduleReconnect(currentAttempt + 1)
+                        },
+                        {
+                            logger.info { "Alor WS quotes connection closed" }
+                            meterRegistry.counter("alor.ws.quotes.closed").increment()
+                            if (!cancelled) scheduleReconnect(currentAttempt + 1)
+                        }
+                    )
+                } catch (e: Exception) {
+                    logger.warn(e) { "Alor WS quotes connect failed" }
+                    if (!cancelled) scheduleReconnect(currentAttempt + 1)
+                }
+            }
+        }
+
+        connect(0)
+        awaitClose { cancelled = true }
+    }
+
     private fun wsUrl(): String {
         val base = alorConfig.wsUrl.removeSuffix("/")
         return if (base.contains("?")) "$base&token=${alorConfig.token}" else "$base?token=${alorConfig.token}"
@@ -162,6 +260,51 @@ class AlorWebSocketClient(
             )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to parse Alor WS message: ${json.take(500)}" }
+            null
+        }
+    }
+
+    /**
+     * Разбирает входящее WS-сообщение котировки в [QuoteTick].
+     *
+     * Сообщение Alor в Simple-формате:
+     * ```json
+     * {"guid":"q-SBER","quotes":[{"price":280.5,"volume":0,"o":"Last","oi":0}, ...]}
+     * ```
+     * Приоритет цены: `o == "Last"` (последняя сделка), иначе mid между Bid/Offer.
+     * Возвращает null для служебных сообщений.
+     */
+    fun parseQuote(json: String): QuoteTick? {
+        return try {
+            val j = objectMapper.readTree(json)
+            val symbol = j.path("guid").asText().removePrefix("q-").takeIf { it.isNotBlank() }
+                ?: j.path("symbol").asText().takeIf { it.isNotBlank() }
+                ?: return null
+
+            val quotes = j.path("quotes")
+            if (!quotes.isArray) return null
+
+            var last: BigDecimal? = null
+            var bid: BigDecimal? = null
+            var offer: BigDecimal? = null
+            for (q in quotes) {
+                when (q.path("o").asText()) {
+                    "Last" -> last = q.path("price").asText().toBigDecimalOrNull()
+                    "Bid" -> bid = q.path("price").asText().toBigDecimalOrNull()
+                    "Offer" -> offer = q.path("price").asText().toBigDecimalOrNull()
+                }
+                if (last != null) break
+            }
+
+            val price = last ?: if (bid != null && offer != null) {
+                bid.add(offer).divide(BigDecimal(2), 6, RoundingMode.HALF_UP)
+            } else {
+                bid ?: offer
+            } ?: return null
+
+            QuoteTick(ticker = symbol, price = price)
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to parse Alor WS quote: ${json.take(500)}" }
             null
         }
     }

@@ -3,6 +3,7 @@ package com.trading.bot.agent
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
+import com.trading.bot.infrastructure.llm.SemanticCache
 import com.trading.bot.model.*
 import com.trading.bot.repository.AgentLogRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -10,10 +11,20 @@ import io.micrometer.core.instrument.Tags
 import mu.KotlinLogging
 import org.springframework.stereotype.Component
 
+/**
+ * Контрариан-агент (Agent-4) — «адвокат дьявола».
+ *
+ * - Оспаривает черновик стратега: валидность, уровень риска и критика
+ * - Guardrail: при HOLD-черновике не вызывает LLM, риск LOW
+ * - При недоступности LLM разрешает сделку (isValid=true, riskLevel=LOW)
+ * - Кэширует результат по семантическому отпечатку рынка (SemanticCache)
+ * - Пишет лог в AgentLogRepository и метрики agent.contrarian.decision
+ */
 @Component
 class ContrarianAgent(
     private val llmClient: ResilientLlmClient,
     private val promptRegistry: PromptRegistry,
+    private val semanticCache: SemanticCache,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
@@ -27,6 +38,17 @@ class ContrarianAgent(
         val confidence: Double
     )
 
+    /**
+     * Оспаривает черновик стратега и возвращает оценку риска сделки.
+     *
+     * @param draft черновик стратега
+     * @param tech отчёт технического анализа
+     * @param fund отчёт фундаментального анализа
+     * @param snapshot текущий рыночный снапшот
+     * @param cycleId идентификатор торгового цикла
+     * @param version версия LLM-шаблона промпта
+     * @return отчёт о валидности, уровне риска и критике
+     */
     suspend fun challenge(
         draft: StrategyAgent.Draft,
         tech: TechnicalReport,
@@ -61,12 +83,22 @@ class ContrarianAgent(
             "atr" to tech.atr
         )
 
+        // Одинаковый сигнал при том же рынке -> одинаковый challenge (кэш)
+        val fingerprint = semanticCache.fingerprint(
+            snapshot.currentPrice,
+            tech.rsi,
+            tech.trend,
+            "contrarian",
+            macdHistogram = tech.macd
+        )
+
         val prompt = promptRegistry.getTemplate("contrarian", version)
         val resp = llmClient.complete(
             agent = "contrarian",
             ticker = snapshot.ticker,
             prompt = prompt,
             variables = variables,
+            fingerprint = fingerprint,
             temperature = 0.1
         )
 

@@ -11,15 +11,25 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.security.MessageDigest
 import java.time.Duration
-import kotlin.math.roundToInt
+import java.time.LocalTime
 
 /**
  * Semantic Cache поверх Redis.
  *
  * Ключ: SHA-256("agent:ticker:marketFingerprint").
- * marketFingerprint = округлённая цена (1 знак) + округлённый RSI (целое) + trend + volatilityRegime.
- * TTL по умолчанию 10 минут (совпадает с таймфреймом агентов).
- * Хранит LlmResponse сериализованным в JSON.
+ *
+ * marketFingerprint описывает рыночные условия, инвариантные к шуму:
+ *  - цена (округление до 1 знака)
+ *  - RSI-бакет (по 10 пунктов)
+ *  - тренд (UP/DOWN/SIDEWAYS)
+ *  - режим волатильности (ATR)
+ *  - направление MACD-гистограммы
+ *  - ATR-перцентиль (LOW/MED/HIGH)
+ *  - сессия дня (MORNING/DAY/EVENING)
+ *
+ * Одинаковая рыночная ситуация -> одинаковый ключ -> попадание в кэш.
+ * TTL по умолчанию из `llm.semantic-cache-ttl-minutes` (30 мин в проде).
+ * Хранит [LlmResponse] сериализованным в JSON.
  */
 @Component
 class SemanticCache(
@@ -36,13 +46,47 @@ class SemanticCache(
 
     /**
      * Семантический отпечаток рынка для инвариантности ключа.
-     * Одинаковая рыночная ситуация → одинаковый ключ → попадание в кэш.
+     *
+     * @param price текущая цена инструмента
+     * @param rsi значение RSI
+     * @param trend направление тренда (UP/DOWN/SIDEWAYS)
+     * @param volatilityRegime режим волатильности (LOW/MEDIUM/HIGH)
+     * @param macdHistogram значение MACD-гистограммы (NaN — не учитывать)
+     * @param atrPercentile перцентиль ATR относительно окна свечей (0..100, -1 — не учитывать)
+     * @param session торговая сессия (по умолчанию — текущая)
      */
-    fun fingerprint(price: BigDecimal, rsi: Double, trend: String, volatilityRegime: String): String {
+    fun fingerprint(
+        price: BigDecimal,
+        rsi: Double,
+        trend: String,
+        volatilityRegime: String,
+        macdHistogram: Double = Double.NaN,
+        atrPercentile: Int = -1,
+        session: String = sessionOf(LocalTime.now())
+    ): String {
         val pricePart = price.setScale(1, RoundingMode.HALF_UP).toPlainString()
-        val rsiPart = rsi.roundToInt().coerceIn(0, 100)
-        return "$pricePart:$rsiPart:$trend:$volatilityRegime"
+        val rsiBucket = (rsi.coerceIn(0.0, 100.0) / 10).toInt().coerceIn(0, 10)
+        val macdPart = when {
+            macdHistogram.isNaN() -> "MNA"
+            macdHistogram > 0.0 -> "M+"
+            macdHistogram < 0.0 -> "M-"
+            else -> "M0"
+        }
+        val atrPart = when {
+            atrPercentile < 0 -> "AN"
+            atrPercentile <= 25 -> "AL"
+            atrPercentile <= 75 -> "AM"
+            else -> "AH"
+        }
+        return "$pricePart:$rsiBucket:$trend:$volatilityRegime:$macdPart:$atrPart:$session"
     }
+
+    /**
+     * Универсальный отпечаток из произвольных компонент (для агентов без
+     * рыночных индикаторов, например Fundamental). Разделитель — двоеточие.
+     */
+    fun genericFingerprint(vararg components: Any?): String =
+        components.joinToString(":") { it?.toString() ?: "NA" }
 
     fun key(agent: String, ticker: String, fingerprint: String): String {
         val raw = "$agent:$ticker:$fingerprint"
@@ -83,5 +127,12 @@ class SemanticCache(
             logger.warn(e) { "Semantic cache write error for $agent:$ticker" }
             meterRegistry.counter("llm.cache.error", Tags.of("agent", agent)).increment()
         }
+    }
+
+    /** Сессия дня для ключа кэша: MORNING (<13ч), DAY (13-16ч), EVENING (>16ч). */
+    private fun sessionOf(time: LocalTime): String = when {
+        time.hour < 13 -> "MORNING"
+        time.hour < 16 -> "DAY"
+        else -> "EVENING"
     }
 }

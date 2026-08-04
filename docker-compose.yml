@@ -70,6 +70,41 @@ services:
       retries: 3
       start_period: 60s
 
+  prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: trading-bot-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: trading-bot-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  frontend:
+    build: ./frontend
+    container_name: trading-bot-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+
 volumes:
   postgres_data:
   redis_data:
+  prometheus_data:
+  grafana_data:

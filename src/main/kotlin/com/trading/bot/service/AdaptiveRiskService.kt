@@ -11,6 +11,15 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
 
+/**
+ * Адаптивный риск-менеджмент на основе статистики сделок (Kelly).
+ *
+ * - calculateOptimalPositionSize(): размер позиции по критерию Келли (cap 50%, floor 0)
+ * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
+ * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
+ * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
+ * - Все решения логируются в метрики adaptive.*
+ */
 @Service
 class AdaptiveRiskService(
     private val riskConfig: RiskConfig,
@@ -20,6 +29,12 @@ class AdaptiveRiskService(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    /**
+     * Оптимальный размер позиции по критерию Келли для тикера.
+     *
+     * @param ticker тикер инструмента
+     * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
+     */
     fun calculateOptimalPositionSize(ticker: String): BigDecimal {
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
         if (stats == null || stats.totalTrades < 5) {
@@ -44,6 +59,15 @@ class AdaptiveRiskService(
         return size
     }
 
+    /**
+     * Адаптивная цена стоп-лосса: ATR * множитель, зависящий от SL hit rate тикера.
+     *
+     * @param entryPrice цена входа
+     * @param direction направление позиции
+     * @param ticker тикер инструмента
+     * @param atr текущее значение ATR
+     * @return цена стоп-лосса (с 2 знаками после запятой)
+     */
     fun calculateAdaptiveSL(
         entryPrice: BigDecimal,
         direction: PositionDirection,
@@ -63,6 +87,15 @@ class AdaptiveRiskService(
         }
     }
 
+    /**
+     * Адаптивная цена тейк-профита: ATR * множитель, зависящий от TP hit rate тикера.
+     *
+     * @param entryPrice цена входа
+     * @param direction направление позиции
+     * @param ticker тикер инструмента
+     * @param atr текущее значение ATR
+     * @return цена тейк-профита (с 2 знаками после запятой)
+     */
     fun calculateAdaptiveTP(
         entryPrice: BigDecimal,
         direction: PositionDirection,
@@ -82,6 +115,12 @@ class AdaptiveRiskService(
         }
     }
 
+    /**
+     * Адаптивный порог уверенности для арбитра по тикеру.
+     *
+     * @param ticker тикер инструмента
+     * @return порог уверенности от 0.55 (сильная статистика) до 0.80 (слабая)
+     */
     fun getAdaptiveConfidenceThreshold(ticker: String): Double {
         val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
         return when {
@@ -93,6 +132,11 @@ class AdaptiveRiskService(
         }
     }
 
+    /**
+     * Проверяет, находится ли бот в режиме восстановления после просадки.
+     *
+     * @return true, если за последние 3 дня было >= 3 убыточных сделок подряд
+     */
     fun isInDrawdownRecovery(): Boolean {
         val recent = positionRepo.findClosedSince(LocalDateTime.now().minusDays(3))
         val consecutiveLosses = recent.reversed().takeWhile {
@@ -103,6 +147,12 @@ class AdaptiveRiskService(
         return result
     }
 
+    /**
+     * Проверяет, стоит ли приостановить торговлю по тикеру.
+     *
+     * @param ticker тикер инструмента
+     * @return true при серии >= 4 убытков или очень низком profit factor
+     */
     fun shouldPauseTrading(ticker: String): Boolean {
         val stats = tradeAnalysisService.analyzeLastNDays(7)[ticker]
         val result = when {

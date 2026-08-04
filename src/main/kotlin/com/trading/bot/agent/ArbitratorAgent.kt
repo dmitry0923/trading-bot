@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.Guardrails
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
+import com.trading.bot.infrastructure.llm.SemanticCache
 import com.trading.bot.model.*
 import com.trading.bot.repository.AgentLogRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -13,11 +14,22 @@ import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 
+/**
+ * Арбитр (Agent-5) — финальное решение о сделке.
+ *
+ * - Детерминированные overrides ДО LLM: CRITICAL challenge, пауза риск-менеджера,
+ *   дневной лимит убытка, HOLD стратега, низкая уверенность draft
+ * - Вызов LLM с контекстом памяти о последних сделках (memoryBlock)
+ * - Пост-обработка через Guardrails (адаптивный порог, риск-уровень, лимит убытка)
+ * - Кэширует результат по сигналу + риску (SemanticCache)
+ * - Пишет лог в AgentLogRepository и метрики agent.arbitrator.decision
+ */
 @Component
 class ArbitratorAgent(
     private val llmClient: ResilientLlmClient,
     private val promptRegistry: PromptRegistry,
     private val guardrails: Guardrails,
+    private val semanticCache: SemanticCache,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
@@ -36,6 +48,21 @@ class ArbitratorAgent(
         val overrideReason: String? = null
     )
 
+    /**
+     * Выносит финальное решение по сделке с учётом challenge и риск-контекста.
+     *
+     * @param draft черновик стратега
+     * @param challenge оценка контрариан-агента
+     * @param tech отчёт технического анализа
+     * @param fund отчёт фундаментального анализа
+     * @param snapshot текущий рыночный снапшот
+     * @param cycleId идентификатор торгового цикла
+     * @param contextPrompt контекст памяти о последних результатах сделок (может быть null)
+     * @param adaptiveConfidence адаптивный порог уверенности
+     * @param riskContext текущий риск-контекст (пауза, дневной лимит убытка)
+     * @param version версия LLM-шаблона промпта
+     * @return финальное решение (Final)
+     */
     suspend fun adjudicate(
         draft: StrategyAgent.Draft,
         challenge: ContrarianAgent.ChallengeReport,
@@ -109,12 +136,23 @@ class ArbitratorAgent(
             "memoryBlock" to memoryBlock
         )
 
+        // Арбитр решает один и тот же кейс одинаково — кэшируем по сигналу + риску
+        val fingerprint = semanticCache.genericFingerprint(
+            draft.action.name,
+            challenge.riskLevel,
+            tech.conclusion,
+            tech.trend,
+            String.format("%.1f", tech.rsi),
+            String.format("%.2f", adaptiveConfidence)
+        )
+
         val prompt = promptRegistry.getTemplate("arbitrator", version)
         val resp = llmClient.complete(
             agent = "arbitrator",
             ticker = snapshot.ticker,
             prompt = prompt,
             variables = variables,
+            fingerprint = fingerprint,
             temperature = 0.1
         )
 

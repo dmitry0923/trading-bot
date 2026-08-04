@@ -5,6 +5,14 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.math.sqrt
 
+/**
+ * Утилита расчёта технических индикаторов.
+ *
+ * - RSI(14), ATR(14), MACD(12,26,9), Bollinger Bands(20, 2σ), EMA
+ * - trend: сравнение EMA12 и EMA26 (UP/DOWN/SIDEWAYS)
+ * - conclusion: комбинация RSI/BB (перекупленность/перепроданность) + гистограмма MACD
+ * - Все методы чисто функциональные и потокобезопасные (без состояния)
+ */
 object IndicatorCalculator {
 
     data class Indicators(
@@ -20,6 +28,12 @@ object IndicatorCalculator {
         val conclusion: String
     )
 
+    /**
+     * Рассчитывает полный набор индикаторов по свечам.
+     *
+     * @param candles исторические свечи
+     * @return Indicators или null, если свечей меньше 30
+     */
     fun calculate(candles: List<Candle>): Indicators? {
         if (candles.size < 30) return null
         val closes = candles.map { it.closePrice }
@@ -57,6 +71,13 @@ object IndicatorCalculator {
         )
     }
 
+    /**
+     * Индекс относительной силы (RSI) по ценам закрытия.
+     *
+     * @param closes цены закрытия
+     * @param period период RSI (по умолчанию 14)
+     * @return RSI от 0 до 100 (50 при недостатке данных)
+     */
     fun rsi(closes: List<BigDecimal>, period: Int): Double {
         if (closes.size < period + 1) return 50.0
         var gain = 0.0
@@ -79,6 +100,13 @@ object IndicatorCalculator {
         return 100.0 - (100.0 / (1.0 + rs))
     }
 
+    /**
+     * Средний истинный диапазон (ATR) по свечам.
+     *
+     * @param candles исторические свечи
+     * @param period период ATR (по умолчанию 14)
+     * @return ATR в денежных единицах (0 при недостатке данных)
+     */
     fun atr(candles: List<Candle>, period: Int): Double {
         if (candles.size < period + 1) return 0.0
         val trueRanges = (1 until candles.size).map { i ->
@@ -94,6 +122,26 @@ object IndicatorCalculator {
         return a
     }
 
+    /**
+     * Перцентиль последнего внутрисвечного диапазона (high-low) относительно
+     * всех свечей окна. 0 — самый узкий диапазон, 100 — самый широкий.
+     * Используется для ATR-бакета семантического кэша LLM.
+     */
+    fun atrPercentile(candles: List<Candle>): Int {
+        if (candles.size < 2) return -1
+        val ranges = candles.map { it.highPrice.subtract(it.lowPrice).toDouble() }
+        val sorted = ranges.sorted()
+        val lastIndex = sorted.indexOf(ranges.last())
+        return (lastIndex * 100 / sorted.size).coerceIn(0, 100)
+    }
+
+    /**
+     * Экспоненциальное скользящее среднее (EMA) по значениям.
+     *
+     * @param values входной ряд значений
+     * @param period период EMA
+     * @return список EMA той же длины, что и входной ряд
+     */
     fun ema(values: List<BigDecimal>, period: Int): List<Double> {
         if (values.isEmpty()) return emptyList()
         val k = 2.0 / (period + 1)
@@ -120,6 +168,12 @@ object IndicatorCalculator {
         return result
     }
 
+    /**
+     * MACD (12, 26, 9): линия, сигнал и гистограмма.
+     *
+     * @param closes цены закрытия
+     * @return Triple(macdLine, macdSignal, macdHistogram)
+     */
     fun macd(closes: List<BigDecimal>): Triple<Double, Double, Double> {
         val e12 = ema(closes, 12)
         val e26 = ema(closes, 26)
@@ -128,6 +182,14 @@ object IndicatorCalculator {
         return Triple(macdLine.last(), signal.last(), macdLine.last() - signal.last())
     }
 
+    /**
+     * Полосы Боллинджера по ценам закрытия.
+     *
+     * @param closes цены закрытия
+     * @param period период окна (по умолчанию 20)
+     * @param mult количество стандартных отклонений (по умолчанию 2.0)
+     * @return Triple(средняя, верхняя, нижняя полоса)
+     */
     fun bollinger(closes: List<BigDecimal>, period: Int, mult: Double): Triple<BigDecimal, BigDecimal, BigDecimal> {
         val window = closes.takeLast(period).map { it.toDouble() }
         val mid = window.average()

@@ -13,6 +13,15 @@ import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 
+/**
+ * Стратегический агент (Agent-3).
+ *
+ * - Синтезирует сигналы технического и фундаментального агентов в торговый draft
+ * - Guardrail: при недостаточных/неуверенных данных возвращает HOLD без вызова LLM
+ * - При недоступности LLM возвращает HOLD с причиной
+ * - Пост-обработка через Guardrails (низкая уверенность -> HOLD, коррекция цены)
+ * - Пишет лог в AgentLogRepository и метрики agent.strategy.decision
+ */
 @Component
 class StrategyAgent(
     private val llmClient: ResilientLlmClient,
@@ -36,6 +45,18 @@ class StrategyAgent(
         val reasoning: String
     )
 
+    /**
+     * Формирует черновое торговое решение на основе технического и фундаментального отчётов.
+     *
+     * @param ticker тикер инструмента
+     * @param tech отчёт технического анализа
+     * @param fund отчёт фундаментального анализа
+     * @param snapshot текущий рыночный снапшот
+     * @param cycleId идентификатор торгового цикла
+     * @param adaptiveThreshold адаптивный порог уверенности (из AdaptiveRiskService)
+     * @param version версия LLM-шаблона промпта
+     * @return черновик стратегии (Draft)
+     */
     suspend fun formulate(
         ticker: String,
         tech: TechnicalReport,
@@ -59,7 +80,8 @@ class StrategyAgent(
             snapshot.currentPrice,
             tech.rsi,
             tech.trend,
-            "technical"
+            "technical",
+            macdHistogram = tech.macd
         )
 
         val variables = mapOf(

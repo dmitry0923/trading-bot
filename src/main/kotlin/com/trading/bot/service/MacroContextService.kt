@@ -35,6 +35,12 @@ class MacroContextService(
         val usdRub: BigDecimal
     )
 
+    /**
+     * Формирует актуальный макро-контекст: курс USD/RUB вживую с MOEX,
+     * ставка ЦБ и нефть Brent из конфига. Обновляет метрики macro.*.
+     *
+     * @return макро-контекст (ставка, Brent, USD/RUB)
+     */
     suspend fun fetch(): MacroContext {
         val liveUsdRub = fetchUsdRubLive()
         val ctx = MacroContext(

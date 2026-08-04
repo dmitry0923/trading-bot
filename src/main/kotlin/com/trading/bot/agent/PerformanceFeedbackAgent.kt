@@ -16,6 +16,15 @@ import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.security.MessageDigest
 
+/**
+ * Мета-агент обратной связи по результатам торговли (Agent-6).
+ *
+ * - Анализирует закрытые позиции за последние 14 дней (TradeAnalysisService)
+ * - Guardrail: при < 5 сделках возвращает rule-based feedback без вызова LLM
+ * - Кэширует результат в Redis по хешу статистики (RedisCacheService)
+ * - При недоступности LLM переключается на детерминированные правила
+ * - Сохраняет корректировки (confidence / SL / TP) в StrategyAdjustmentRepository
+ */
 @Component
 class PerformanceFeedbackAgent(
     private val llmClient: ResilientLlmClient,
@@ -40,6 +49,13 @@ class PerformanceFeedbackAgent(
         val rawJson: String
     )
 
+    /**
+     * Генерирует обратную связь и корректировки стратегии по тикеру.
+     *
+     * @param ticker тикер инструмента
+     * @param version версия LLM-шаблона промпта
+     * @return рекомендации по корректировке порога уверенности, SL/TP и паузе торговли
+     */
     suspend fun generateFeedback(
         ticker: String,
         version: String = PromptRegistry.DEFAULT_VERSION

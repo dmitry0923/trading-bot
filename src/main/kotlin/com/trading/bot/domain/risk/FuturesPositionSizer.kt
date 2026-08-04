@@ -163,6 +163,15 @@ class FuturesPositionSizer(
     }
 }
 
+/**
+ * Результат расчёта размера фьючерсной позиции.
+ *
+ * @property quantity итоговое количество контрактов (0 = вход запрещён)
+ * @property marginRequired требуемая маржа в рублях
+ * @property riskAmount допустимый риск на сделку в рублях
+ * @property liquidationPrice расчётная цена ликвидации (null, если не считалась)
+ * @property reason причина отказа при quantity = 0 (null при успехе)
+ */
 data class PositionSizeResult(
     val quantity: Int,
     val marginRequired: BigDecimal,

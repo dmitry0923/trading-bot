@@ -8,21 +8,35 @@ import java.math.RoundingMode
 /**
  * Справочник торговых инструментов (prefix = "instruments").
  *
- * Для бота валиден только фьючерс Si (доллар/рубль):
+ * Si — фьючерс (доллар/рубль):
  *   - priceStep = 0.01 (1 копейка)
  *   - priceStepCost = 10.0 (1 пункт = 10 ₽; контракт = 1000 USD)
  *   - go = 15 000 ₽ (гарантийное обеспечение)
  *   - leverage берётся из LeverageConfig (placeholder `${leverage.user-leverage}`)
  *
+ * Остальные тикеры — акции MOEX (SBER, GAZP, LKOH, ...). Их futures-поля
+ * (go, leverage) не используются: для акций применяется Kelly-сайзинг.
+ *
  * Производные величины:
- *   pointValue = priceStepCost / priceStep  // 10 / 0.01 = 1000 ₽ на 1.0 цены
+ *   pointValue = priceStepCost / priceStep  // Si: 10 / 0.01 = 1000 ₽ на 1.0 цены
  *   marginPerContract = go / leverage       // 15000 / 2 = 7500 ₽
  */
 @Component
 @ConfigurationProperties(prefix = "instruments")
 class InstrumentsConfig {
 
-    var instruments: List<InstrumentSpec> = mutableListOf(InstrumentSpec())
+    var instruments: List<InstrumentSpec> = mutableListOf(
+        InstrumentSpec(ticker = "Si", type = "FUTURES", lotSize = 1, priceStep = BigDecimal("0.01"), priceStepCost = BigDecimal("10.0"), go = BigDecimal("15000"), leverage = BigDecimal("2.0"), baseAsset = "USD"),
+        InstrumentSpec(ticker = "SBER", type = "STOCK", lotSize = 10, priceStep = BigDecimal("0.01"), priceStepCost = BigDecimal("0.1"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "GAZP", type = "STOCK", lotSize = 10, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.5"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "LKOH", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "VTBR", type = "STOCK", lotSize = 1000, priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("0.1"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "ROSN", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.05"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "NVTK", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "PLZL", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "MGNT", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
+        InstrumentSpec(ticker = "TATN", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.05"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB")
+    )
 
     data class InstrumentSpec(
         var ticker: String = "Si",

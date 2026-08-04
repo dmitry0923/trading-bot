@@ -84,7 +84,7 @@ class FuturesRiskEngine(
         if (dailyLossLimitReached) return reject("DAILY_LIMIT")
 
         val open = positionRepo.findByStatus(PositionStatus.OPEN)
-        if (open.size >= riskConfig.maxOpenPositions) return reject("MAX_POSITIONS")
+        if (open.size >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
 
         val instrument = instrumentsConfig.find(ticker)
         if (instrument == null || instrument.type != "FUTURES") return reject("UNSUPPORTED_INSTRUMENT")
@@ -175,11 +175,21 @@ class FuturesRiskEngine(
         meterRegistry.gauge("risk.daily.limit.reached", if (dailyLossLimitReached) 1.0 else 0.0)
     }
 
+    /**
+     * Достигнут ли дневной лимит убытка.
+     *
+     * @return true, если dailyPnL <= -maxDailyLossRub
+     */
     fun isDailyLossLimitReached(): Boolean {
         resetDailyStateIfNewDay()
         return dailyLossLimitReached
     }
 
+    /**
+     * Текущий дневной P&L.
+     *
+     * @return накопленный дневной P&L (восстановленный из снапшота при смене дня)
+     */
     fun getDailyPnL(): BigDecimal {
         resetDailyStateIfNewDay()
         return dailyPnL

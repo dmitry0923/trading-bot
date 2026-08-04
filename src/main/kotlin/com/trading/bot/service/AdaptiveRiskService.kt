@@ -1,7 +1,8 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.*
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags

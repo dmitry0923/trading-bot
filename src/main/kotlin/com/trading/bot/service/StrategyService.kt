@@ -1,18 +1,37 @@
 package com.trading.bot.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.agent.*
+import com.trading.bot.agent.ArbitratorAgent
+import com.trading.bot.agent.ContrarianAgent
+import com.trading.bot.agent.FundamentalAnalysisAgent
+import com.trading.bot.agent.PerformanceFeedbackAgent
+import com.trading.bot.agent.StrategyAgent
+import com.trading.bot.agent.TechnicalAnalysisAgent
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
-import com.trading.bot.model.*
-import com.trading.bot.repository.*
+import com.trading.bot.model.Candle
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.RiskContext
+import com.trading.bot.model.Strategy
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.PositionRepository
+import com.trading.bot.repository.StrategyRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -56,7 +75,6 @@ class StrategyService(
     private val candleCache: CandleCacheService,
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
-    private val agentLogRepo: AgentLogRepository,
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,

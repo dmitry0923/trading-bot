@@ -16,18 +16,13 @@ repositories {
     mavenCentral()
 }
 
-// BOM Spring Boot через нативный Gradle platform(), а не io.spring.dependency-management.
-// Это ограничивает версии (в т.ч. Kotlin 1.9.21) только конфигурациями приложения,
-// а изолированная конфигурация ktlint* получает собственный совместимый Kotlin (2.2.x).
 dependencies {
     implementation(platform(libs.springBootBom))
     runtimeOnly(platform(libs.springBootBom))
 
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-webflux")
-    // R2DBC: реактивный доступ к PostgreSQL из всех репозиториев приложения
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
-    // spring-boot-starter-jdbc остаётся ТОЛЬКО для Liquibase-миграций (Liquibase не поддерживает R2DBC)
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.liquibase:liquibase-core")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
@@ -43,12 +38,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.kotlinLogging)
 
-    // Resilience4j: Circuit Breaker, Rate Limiter, Retry (программное использование с корутинами)
     implementation(libs.resilience4jSpringBoot3)
     implementation(libs.resilience4jKotlin)
     implementation("org.springframework.boot:spring-boot-starter-aop")
 
-    // Jackson YAML — для PromptRegistry (чтение prompts/*.yml)
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml")
 
     runtimeOnly("org.postgresql:postgresql")
@@ -62,7 +55,6 @@ dependencies {
     testImplementation(libs.testcontainersPostgresql)
     testImplementation(libs.testcontainersCore)
 
-    // JUnit Platform Launcher для запуска тестов
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -83,15 +75,42 @@ tasks.withType<Test> {
     }
 }
 
+// НАСТРОЙКА KTLINT
 ktlint {
     version.set(libs.versions.ktlint.get())
     outputToConsole.set(true)
     verbose.set(true)
+
+    // Игнорируем сгенерированные файлы
     filter {
         exclude { it.file.path.contains("/generated/") }
+        exclude { it.file.path.contains("/build/") }
     }
+
+    // Дополнительные настройки через .editorconfig
+    // все настройки читаются из .editorconfig
 }
 
+// Отдельная задача для генерации baseline с правильными правилами
+tasks.register("generateKtlintBaseline") {
+    group = "verification"
+    description = "Generate ktlint baseline with all enabled rules"
+    dependsOn("ktlintBaseline")
+}
+
+// Проверка перед коммитом (можно добавить в pre-commit)
 tasks.named("check") {
+    dependsOn("ktlintCheck")
+}
+
+// Авто-исправление стиля
+tasks.named("ktlintFormat") {
+    // Форматирует код в соответствии с правилами
+}
+
+// Дополнительная задача для проверки неиспользуемого кода
+tasks.register("checkUnused") {
+    group = "verification"
+    description = "Check for unused imports, parameters, and members"
     dependsOn("ktlintCheck")
 }

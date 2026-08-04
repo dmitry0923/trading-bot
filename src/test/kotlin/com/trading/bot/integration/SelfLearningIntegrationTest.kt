@@ -1,10 +1,16 @@
 package com.trading.bot.integration
 
-import com.trading.bot.model.*
-import com.trading.bot.repository.*
-import com.trading.bot.service.*
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.repository.BlindSpotRepository
+import com.trading.bot.repository.PositionRepository
+import com.trading.bot.repository.StrategyAdjustmentRepository
+import com.trading.bot.service.AdaptiveRiskService
+import com.trading.bot.service.TradeAnalysisService
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired

@@ -1,7 +1,10 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.*
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.RiskCheckResult
+import com.trading.bot.model.Strategy
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -81,7 +84,7 @@ class RiskManagementService(
         val atrPercent =
             atr
                 .multiply(BigDecimal("100"))
-                .divide(price, 4, java.math.RoundingMode.HALF_UP)
+                .divide(price, 4, RoundingMode.HALF_UP)
                 .toDouble()
         val result = atrPercent > riskConfig.maxVolatilityPercent
         logger.info {

@@ -5,7 +5,11 @@ import com.trading.bot.infrastructure.llm.Guardrails
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
-import com.trading.bot.model.*
+import com.trading.bot.model.AgentLog
+import com.trading.bot.model.FundamentalReport
+import com.trading.bot.model.MarketSnapshot
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.TechnicalReport
 import com.trading.bot.repository.AgentLogRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -134,7 +138,7 @@ class StrategyAgent(
                         .trim()
                 val j = objectMapper.readTree(cleaned)
                 val action =
-                    StrategyAction.values().firstOrNull {
+                    StrategyAction.entries.firstOrNull {
                         it.name == j.path("action").asText("HOLD").uppercase()
                     } ?: StrategyAction.HOLD
 

@@ -9,11 +9,43 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 
 [*.{kt,kts}]
-# Самый современный стиль ktlint (kotlin lang server, official rules)
+# Современный стиль ktlint
 ktlint_code_style = ktlint_official
-# Включаем все экспериментальные правила ktlint 1.8.0
+
+# Включаем экспериментальные правила
 ktlint_experimental = enabled
-# Стандартные правила (все включены по умолчанию, некоторые настроены явно)
-ktlint_standard_max-line-length = off
+
+# СТАНДАРТНЫЕ ПРАВИЛА (все включены)
+ktlint_standard = enabled
+
+# Максимальная длина строки - 120 символов
+ktlint_standard_max-line-length = enabled
+ktlint_standard_max-line-length_max_line_length = 120
+
+# ЗАПРЕЩАЕМ wildcard импорты
+ktlint_standard_no-wildcard-imports = enabled
+
+# Включаем проверку неиспользуемых элементов
+ktlint_standard_unused-imports = enabled
+ktlint_standard_unused-parameter = enabled
+ktlint_standard_unused-private-member = enabled
+ktlint_standard_unused-value = enabled
+
 # Разрешаем trailing comma (современная идиома Kotlin)
+ktlint_standard_trailing-comma-on-call-site = enabled
+ktlint_standard_trailing-comma-on-declaration-site = enabled
+
+# Игнорируем неиспользуемые параметры с определенными именами
+ktlint_standard_unused-parameter_allowed_names = _, ignored, unused
+
+# Игнорируем неиспользуемые параметры в методах с этими аннотациями
+# ВАЖНО: БЕЗ КВАДРАТНЫХ СКОБОК, просто список через запятую
+ktlint_standard_unused-parameter_ignore_annotated = EventListener, ConfigurationProperties, Value
+
+# Игнорируем неиспользуемые приватные члены с определенными именами
+ktlint_standard_unused-private-member_allowed_names = companion, serialVersionUID, logger
+
+# ПРАВИЛА ДЛЯ ИМПОРТОВ В INTELLIJ IDEA
 ij_kotlin_allow_trailing_comma = true
+ij_kotlin_class_count_to_use_import_on_demand = 999
+ij_kotlin_names_count_to_use_import_on_demand = 999

@@ -195,7 +195,8 @@ class FuturesRiskEngineTest {
                 quantity = 1,
                 entryPrice = BigDecimal("92000"),
                 currentPrice = BigDecimal("92000"),
-                liquidationPrice = BigDecimal("91985"), // буфер 15
+                // Буфер до ликвидации: 15.
+                liquidationPrice = BigDecimal("91985"),
                 instrumentType = InstrumentType.FUTURES,
             )
 

@@ -1,6 +1,5 @@
 package com.trading.bot.backtest
 
-import com.trading.bot.model.StrategyAction
 import java.math.BigDecimal
 import java.math.RoundingMode
 

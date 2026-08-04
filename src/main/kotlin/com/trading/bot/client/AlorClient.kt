@@ -18,7 +18,6 @@ import java.math.RoundingMode
 import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
-import java.util.UUID
 
 /**
  * REST-клиент Alor.

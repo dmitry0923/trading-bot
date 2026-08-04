@@ -6,6 +6,7 @@ import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.MarketSnapshot
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.reactor.awaitSingle
 import mu.KotlinLogging
@@ -92,12 +93,18 @@ class AlorClient(
 
     suspend fun getLastPrice(ticker: String): BigDecimal? = getMarketSnapshot(ticker)?.currentPrice
 
-    suspend fun placeLimitOrder(ticker: String, side: String, qty: Int, price: BigDecimal): String? {
+    suspend fun placeLimitOrder(
+        ticker: String,
+        side: String,
+        qty: Int,
+        price: BigDecimal,
+        clientOrderId: String? = null,
+    ): String? {
         if (!isLive) return "sim-order-$ticker-${System.currentTimeMillis()}"
-        return withRetry(ticker) {
-            val start = System.currentTimeMillis()
-            try {
-                val idempotencyKey = idempotencyKey(ticker, side, qty, price, "limit")
+        val stableOrderId = clientOrderId ?: idempotencyKey(ticker, side, qty, price, "limit")
+        return try {
+            withRetry(ticker) {
+                val start = System.currentTimeMillis()
                 val body = mapOf(
                     "portfolio" to alorConfig.portfolio,
                     "ticker" to ticker,
@@ -106,7 +113,7 @@ class AlorClient(
                     "type" to "limit",
                     "quantity" to qty,
                     "price" to price.toPlainString(),
-                    "id" to idempotencyKey
+                    "id" to stableOrderId,
                 )
                 val raw: String = webClient.post()
                     .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/limit")
@@ -122,21 +129,28 @@ class AlorClient(
                 val orderNumber = objectMapper.readTree(raw).path("orderNumber").asText().ifBlank { null }
                 if (orderNumber != null) {
                     meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
-                    logger.info { "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$idempotencyKey)" }
+                    logger.info {
+                        "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$stableOrderId)"
+                    }
                 }
                 orderNumber
-            } catch (e: Exception) {
-                logger.error(e) { "placeLimitOrder failed for $ticker" }
-                meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
-                null
             }
+        } catch (e: Exception) {
+            logger.error(e) { "placeLimitOrder failed for $ticker" }
+            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
+            null
         }
     }
 
     /**
      * Маркет-ордер. Запрещён при спреде > 0.5% (slippage control).
      */
-    suspend fun placeMarketOrder(ticker: String, side: String, qty: Int): String? {
+    suspend fun placeMarketOrder(
+        ticker: String,
+        side: String,
+        qty: Int,
+        clientOrderId: String? = null,
+    ): String? {
         if (!isLive) return "sim-market-$ticker-${System.currentTimeMillis()}"
         val snapshot = getMarketSnapshot(ticker) ?: return null
 
@@ -152,7 +166,7 @@ class AlorClient(
             "sell" -> snapshot.bid ?: snapshot.currentPrice
             else -> snapshot.currentPrice
         }
-        val orderId = placeLimitOrder(ticker, side, qty, price)
+        val orderId = placeLimitOrder(ticker, side, qty, price, clientOrderId)
         if (orderId != null) {
             meterRegistry.counter("alor.order.placed", Tags.of("type", "market", "status", "OK")).increment()
         }
@@ -220,6 +234,8 @@ class AlorClient(
         while (true) {
             try {
                 return block()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 attempt++
                 if (attempt >= 3) throw e

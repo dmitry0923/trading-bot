@@ -69,8 +69,23 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))
-            Mockito.`when`(alorClient.placeLimitOrder("Si", "buy", 1, BigDecimal("92000"))).thenReturn("ord-limit-1")
-            Mockito.`when`(alorClient.placeMarketOrder("Si", "sell", 1)).thenReturn("ord-market-1")
+            Mockito.`when`(
+                alorClient.placeLimitOrder(
+                    Mockito.eq("Si"),
+                    Mockito.eq("buy"),
+                    Mockito.eq(1),
+                    Mockito.eq(BigDecimal("92000")),
+                    Mockito.anyString(),
+                ),
+            ).thenReturn("ord-limit-1")
+            Mockito.`when`(
+                alorClient.placeMarketOrder(
+                    Mockito.eq("Si"),
+                    Mockito.eq("sell"),
+                    Mockito.eq(1),
+                    Mockito.anyString(),
+                ),
+            ).thenReturn("ord-market-1")
         }
     }
 

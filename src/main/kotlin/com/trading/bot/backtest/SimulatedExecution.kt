@@ -34,8 +34,13 @@ object SimulatedExecution {
         return Fill(price, commissionOn(price))
     }
 
-    fun commissionOn(price: BigDecimal): BigDecimal =
-        price.multiply(COMMISSION_RATE).setScale(4, RoundingMode.HALF_UP)
+    fun commissionOn(price: BigDecimal, quantity: Int = 1): BigDecimal {
+        require(quantity >= 0) { "quantity must not be negative" }
+        return price
+            .multiply(quantity.toBigDecimal())
+            .multiply(COMMISSION_RATE)
+            .setScale(4, RoundingMode.HALF_UP)
+    }
 
     /**
      * Округление до целого лота (вниз). Если меньше 1 лота — 0 (позиция не открывается).
@@ -43,13 +48,29 @@ object SimulatedExecution {
     fun lotRounded(quantity: Int): Int =
         if (quantity < 1) 0 else quantity
 
-    /** Проверка достижения SL/TP внутри диапазона свечи (intraday high/low). */
-    fun hitStopOrTarget(candle: com.trading.bot.model.Candle, sl: BigDecimal, tp: BigDecimal): StopTpHit? {
-        val high = candle.highPrice
-        val low = candle.lowPrice
+    /**
+     * Проверка достижения SL/TP внутри диапазона свечи.
+     *
+     * Если одна свеча задела обе границы, порядок сделок внутри OHLC неизвестен,
+     * поэтому используется консервативный вариант: сначала срабатывает стоп.
+     */
+    fun hitStopOrTarget(
+        candle: com.trading.bot.model.Candle,
+        direction: com.trading.bot.model.PositionDirection,
+        sl: BigDecimal,
+        tp: BigDecimal,
+    ): StopTpHit? {
+        val stopHit = when (direction) {
+            com.trading.bot.model.PositionDirection.LONG -> candle.lowPrice <= sl
+            com.trading.bot.model.PositionDirection.SHORT -> candle.highPrice >= sl
+        }
+        val targetHit = when (direction) {
+            com.trading.bot.model.PositionDirection.LONG -> candle.highPrice >= tp
+            com.trading.bot.model.PositionDirection.SHORT -> candle.lowPrice <= tp
+        }
         return when {
-            low <= sl -> StopTpHit.STOP
-            high >= tp -> StopTpHit.TARGET
+            stopHit -> StopTpHit.STOP
+            targetHit -> StopTpHit.TARGET
             else -> null
         }
     }

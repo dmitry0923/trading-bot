@@ -92,6 +92,32 @@ class GuardrailsTest {
     }
 
     @Test
+    fun `invalid market price fails closed without division by zero`() {
+        val result = guardrails().apply(
+            buySignal(),
+            marketPrice = BigDecimal.ZERO,
+            adaptiveThreshold = 0.6,
+        )
+
+        assertTrue(result.overridden)
+        assertEquals(StrategyAction.HOLD, result.signal.action)
+        assertEquals("GUARDRAIL: INVALID_MARKET_PRICE", result.overrideReason)
+    }
+
+    @Test
+    fun `non finite confidence fails closed`() {
+        val result = guardrails().apply(
+            buySignal(confidence = Double.NaN),
+            marketPrice = BigDecimal("100"),
+            adaptiveThreshold = 0.6,
+        )
+
+        assertTrue(result.overridden)
+        assertEquals(StrategyAction.HOLD, result.signal.action)
+        assertEquals("GUARDRAIL: INVALID_CONFIDENCE", result.overrideReason)
+    }
+
+    @Test
     fun `hold signal is not processed further`() {
         val hold = Guardrails.Signal.hold(BigDecimal("100"))
         val result = guardrails().apply(hold, marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6)

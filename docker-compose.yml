@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -61,7 +59,7 @@ services:
       AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
       BOT_INTERVAL_MS: ${BOT_INTERVAL_MS:-300000}
       STRATEGY_INTERVAL_MS: ${STRATEGY_INTERVAL_MS:-600000}
-      MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-600000}
+      MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-10000}
       MAX_OPEN_POS: ${MAX_OPEN_POS:-0}
     ports:
       - "8080:8080"
@@ -78,8 +76,10 @@ services:
     environment:
       AUTH_USER: ${AUTH_USER:-admin}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
+    entrypoint: ["/bin/sh", "/etc/prometheus/trading-bot-entrypoint.sh"]
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml.template:ro
+      - ./scripts/prometheus-entrypoint.sh:/etc/prometheus/trading-bot-entrypoint.sh:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
@@ -103,9 +103,6 @@ services:
   frontend:
     build:
       context: ./frontend
-      args:
-        REACT_APP_AUTH_USER: ${AUTH_USER:-admin}
-        REACT_APP_AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
     container_name: trading-bot-frontend
     ports:
       - "80:80"

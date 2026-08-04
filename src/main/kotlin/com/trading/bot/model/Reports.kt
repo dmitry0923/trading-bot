@@ -33,8 +33,8 @@ data class MarketSnapshot(
 data class BotSettings(
     val tradingEnabled: Boolean = true,
     val riskEnabled: Boolean = true,
-    val maxPositionRub: Int = 500000,
-    val maxDailyLossRub: Int = 50000
+    val maxPositionRub: Int = 50_000,
+    val maxDailyLossRub: Int = 5_000,
 )
 
 data class RiskCheckResult(

@@ -18,13 +18,18 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.RiskManagementService
+import com.trading.bot.service.SettingsService
 import com.trading.bot.service.TradeEventService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import mu.KotlinLogging
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
@@ -52,6 +57,7 @@ class FuturesTradingBotService(
     private val orderOutboxService: OrderOutboxService,
     private val positionRepo: PositionRepository,
     private val riskManagement: RiskManagementService,
+    private val settingsService: SettingsService,
     private val instrumentsConfig: InstrumentsConfig,
     private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
@@ -61,6 +67,8 @@ class FuturesTradingBotService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val entryMutex = Mutex()
+    private val monitorMutex = Mutex()
 
     /**
      * Сигнал стратегии для Si → вход. Только Si (фьючерс) обрабатывается здесь.
@@ -72,7 +80,11 @@ class FuturesTradingBotService(
         if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
         scope.launch {
             try {
-                openFuturesPosition(strat.ticker, strat.targetPrice, strat.action)
+                entryMutex.withLock {
+                    if (settingsService.isTradingEnabled()) {
+                        openFuturesPosition(strat.ticker, strat.targetPrice, strat.action)
+                    }
+                }
             } catch (e: Exception) {
                 logger.error(e) { "Futures entry handler error ${strat.ticker}" }
                 meterRegistry.counter("futures.entry.error", Tags.of("ticker", strat.ticker)).increment()
@@ -88,12 +100,19 @@ class FuturesTradingBotService(
         if (event.ticker != "Si") return
         scope.launch {
             try {
-                monitorOpenPositions(event.ticker, event.price)
+                monitorMutex.withLock {
+                    monitorOpenPositions(event.ticker, event.price)
+                }
             } catch (e: Exception) {
                 logger.error(e) { "Futures monitor handler error ${event.ticker}" }
                 meterRegistry.counter("futures.monitor.error", Tags.of("ticker", event.ticker)).increment()
             }
         }
+    }
+
+    @PreDestroy
+    fun shutdown() {
+        scope.cancel("FuturesTradingBotService is shutting down")
     }
 
     @EventListener
@@ -116,6 +135,10 @@ class FuturesTradingBotService(
 
         val direction = if (action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val entryPrice = alorClient.getLastPrice(ticker) ?: targetPrice
+        if (entryPrice <= BigDecimal.ZERO) {
+            logger.warn { "Invalid entry price for $ticker: $entryPrice" }
+            return
+        }
         val currentGo = alorFuturesClient.getFuturesGO(ticker)
         val portfolioMoney = alorFuturesClient.getPortfolioMoney()
 
@@ -135,7 +158,7 @@ class FuturesTradingBotService(
         val execution = alorClient.verifyOrder(placed.alorOrderId)
         val fillPrice = execution?.avgPrice ?: entryPrice
 
-        val pos = Position(
+        val newPosition = Position(
             ticker = ticker,
             direction = direction,
             quantity = validation.quantity,
@@ -153,7 +176,7 @@ class FuturesTradingBotService(
             stopLossPoints = riskConfig.defaultStopLossPoints,
             alorOrderId = placed.alorOrderId
         )
-        positionRepo.save(pos)
+        val pos = positionRepo.save(newPosition)
         tradeEventService.recordPositionOpened(pos)
         eventPublisher.publishPositionOpened(pos)
         meterRegistry.counter(
@@ -207,7 +230,16 @@ class FuturesTradingBotService(
     private suspend fun closeFuturesPosition(pos: Position, price: BigDecimal, reason: String) {
         val side = if (pos.direction == PositionDirection.LONG) "sell" else "buy"
         val placed = orderOutboxService.placeOrder(pos.ticker, side, pos.quantity, null, "market")
-        val execution = placed.alorOrderId?.let { alorClient.verifyOrder(it, expectedPrice = price) }
+        val orderId = placed.alorOrderId
+        if (!placed.success || orderId == null) {
+            logger.error { "Close order failed for ${pos.ticker}; futures position remains OPEN" }
+            meterRegistry.counter(
+                "futures.order.failed",
+                Tags.of("ticker", pos.ticker, "operation", "CLOSE"),
+            ).increment()
+            return
+        }
+        val execution = alorClient.verifyOrder(orderId, expectedPrice = price)
         val closePrice = execution?.avgPrice ?: price
 
         // P&L фьючерса (₽): (close - entry) * qty * pointValue

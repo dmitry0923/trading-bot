@@ -4,7 +4,6 @@ import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.Candle
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
@@ -48,29 +47,14 @@ class CandleRepository(
             .awaitSingle()
     }
 
-    suspend fun existsByTickerAndTimeframeAndTime(
-        ticker: String,
-        timeframe: String,
-        time: LocalDateTime
-    ): Boolean {
-        val sql = "SELECT COUNT(*) AS c FROM candles WHERE ticker = :ticker AND timeframe = :timeframe AND time = :time"
-        val count = databaseClient.sql(sql)
-            .bind("ticker", ticker)
-            .bind("timeframe", timeframe)
-            .bind("time", time)
-            .map { row, _ -> row.get("c", Long::class.javaObjectType)!! }
-            .one()
-            .awaitSingle()
-        return count > 0
-    }
-
-    suspend fun save(candle: Candle) {
+    /** @return true, если свеча вставлена; false при конфликте уникального ключа. */
+    suspend fun save(candle: Candle): Boolean {
         val sql = """
             INSERT INTO candles (ticker, timeframe, open_price, high_price, low_price, close_price, volume, time)
             VALUES (:ticker, :timeframe, :openPrice, :highPrice, :lowPrice, :closePrice, :volume, :time)
             ON CONFLICT (ticker, timeframe, time) DO NOTHING
         """.trimIndent()
-        databaseClient.sql(sql)
+        val updated = databaseClient.sql(sql)
             .bind("ticker", candle.ticker)
             .bind("timeframe", candle.timeframe)
             .bind("openPrice", candle.openPrice)
@@ -79,7 +63,9 @@ class CandleRepository(
             .bind("closePrice", candle.closePrice)
             .bind("volume", candle.volume)
             .bind("time", candle.time)
-            .then()
-            .awaitSingleOrNull()
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
+        return updated > 0
     }
 }

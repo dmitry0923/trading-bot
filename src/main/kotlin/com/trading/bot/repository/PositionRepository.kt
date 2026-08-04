@@ -151,7 +151,7 @@ class PositionRepository(
             .bindOrNull("closeReason", position.closeReason)
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
-            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .map { row, _ -> row.require("id", Long::class.javaObjectType) }
             .one()
             .awaitSingle()
         return position.copy(id = id)
@@ -193,7 +193,7 @@ class PositionRepository(
             .bindOrNull("closeReason", position.closeReason)
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
-            .bind("id", position.id!!)
+            .bind("id", requireNotNull(position.id))
             .then()
             .awaitSingleOrNull()
     }

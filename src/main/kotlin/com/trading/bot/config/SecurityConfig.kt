@@ -10,6 +10,7 @@ import org.springframework.security.core.userdetails.User
 import org.springframework.security.core.userdetails.UserDetailsService
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.provisioning.InMemoryUserDetailsManager
 import org.springframework.security.web.SecurityFilterChain
 
@@ -25,7 +26,18 @@ import org.springframework.security.web.SecurityFilterChain
 class SecurityConfig(
     @Value("\${security.auth.user:admin}") private val authUser: String,
     @Value("\${security.auth.password:}") private val authPassword: String,
+    @Value("\${trading.mode:SIMULATION}") private val tradingMode: String,
 ) {
+    init {
+        require(authUser.matches(Regex("[A-Za-z0-9._-]{1,64}"))) {
+            "AUTH_USER contains unsupported characters"
+        }
+        if (tradingMode.equals("LIVE", ignoreCase = true)) {
+            require(authPassword.length >= 12 && authPassword != "change-me-now") {
+                "LIVE mode requires a non-default AUTH_PASSWORD with at least 12 characters"
+            }
+        }
+    }
     @Bean
     fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
         http
@@ -37,6 +49,7 @@ class SecurityConfig(
                     .requestMatchers("/api/v1/**", "/actuator/**").authenticated()
                     .anyRequest().permitAll()
             }
+            .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .httpBasic(Customizer.withDefaults())
         return http.build()
     }

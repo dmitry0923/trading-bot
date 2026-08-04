@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
@@ -34,6 +35,7 @@ class AlorFuturesClient(
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
+    private val gauges = MutableGauges(meterRegistry)
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
     private val defaultPortfolioMoney: BigDecimal = BigDecimal("50000")
@@ -60,7 +62,7 @@ class AlorFuturesClient(
                 ?.toBigDecimalOrNull()
                 ?: configGo
 
-            meterRegistry.gauge("futures.go", Tags.of("ticker", ticker), go.toDouble())
+            gauges.set("futures.go", go, Tags.of("ticker", ticker))
             logger.info { "Futures GO for $ticker = $go ₽" }
             go
         } catch (e: Exception) {
@@ -89,7 +91,7 @@ class AlorFuturesClient(
                 ?: j.path("money").asText().toBigDecimalOrNull()
                 ?: defaultPortfolioMoney
 
-            meterRegistry.gauge("futures.portfolio.money", money.toDouble())
+            gauges.set("futures.portfolio.money", money)
             logger.info { "Portfolio money = $money ₽" }
             money
         } catch (e: Exception) {

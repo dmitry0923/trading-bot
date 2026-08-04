@@ -1,53 +1,50 @@
 package com.trading.bot.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.event.*
+import com.trading.bot.event.ExecutionReportEvent
+import com.trading.bot.event.PositionClosedEvent
+import com.trading.bot.event.PositionOpenedEvent
+import com.trading.bot.event.PriceChangedEvent
+import com.trading.bot.event.StrategyGeneratedEvent
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.runBlocking
+import jakarta.annotation.PreDestroy
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Real-time рассылка дашборда через Server-Sent Events.
  *
- * - Подписчики получают полный снимок [DashboardService.build] по событиям домена
- *   (открытие/закрытие позиций, стратегия, исполнение, тик цены).
- * - Тики цен дебаунсятся интервалом [minIntervalMs] (2 сек) — WS-котировки могут
- *   приходить чаще, чем имеет смысл обновлять панель.
- * - Каждый подписчик получает поток именованных событий `dashboard` в JSON.
- * - Метрики: dashboard.sse.connections, dashboard.sse.broadcasts, dashboard.sse.send_error.
- *
- * @property dashboardService источник данных панели
- * @property objectMapper сериализация событий
- * @property meterRegistry метрики Prometheus
+ * Снимок строится в корутине, поэтому обработчик Spring-события не блокируется
+ * на R2DBC-запросах. Частые ценовые тики объединяются в одну trailing-рассылку:
+ * последнее обновление не теряется даже если пришло внутри throttle-окна.
  */
 @Service
 class DashboardSseService(
     private val dashboardService: DashboardService,
     private val objectMapper: ObjectMapper,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
-
-    /** Активные подключения. Параллельная коллекция с idempotent remove. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val emitters = ConcurrentHashMap.newKeySet<SseEmitter>()
-
-    /** Время последней рассылки, мс (для троттлинга ценовых тиков). */
     private val lastBroadcastAt = AtomicLong(0L)
-
-    /** Минимальный интервал между рассылками, мс. */
+    private val broadcastScheduled = AtomicBoolean(false)
+    private val latestReason = AtomicReference("UNKNOWN")
     private val minIntervalMs = 2_000L
 
-    /**
-     * Регистрирует нового подписчика и немедленно отправляет текущий снимок.
-     *
-     * @return [SseEmitter] для эндпоинта `/api/v1/dashboard/stream`
-     */
     fun subscribe(): SseEmitter {
         val emitter = SseEmitter(0L)
         emitters.add(emitter)
@@ -55,75 +52,77 @@ class DashboardSseService(
         emitter.onTimeout { emitters.remove(emitter) }
         emitter.onError { emitters.remove(emitter) }
         meterRegistry.counter("dashboard.sse.connections").increment()
-        send(emitter)
+        scope.launch { sendSnapshot(emitter) }
         return emitter
     }
 
     @EventListener
-    fun onPositionOpened(@Suppress("UNUSED_PARAMETER") event: PositionOpenedEvent) = throttledBroadcast("POSITION_OPENED")
+    fun onPositionOpened(event: PositionOpenedEvent) = scheduleBroadcast("POSITION_OPENED:${event.ticker}")
 
     @EventListener
-    fun onPositionClosed(@Suppress("UNUSED_PARAMETER") event: PositionClosedEvent) = throttledBroadcast("POSITION_CLOSED")
+    fun onPositionClosed(event: PositionClosedEvent) = scheduleBroadcast("POSITION_CLOSED:${event.ticker}")
 
     @EventListener
-    fun onStrategyGenerated(@Suppress("UNUSED_PARAMETER") event: StrategyGeneratedEvent) = throttledBroadcast("STRATEGY")
+    fun onStrategyGenerated(event: StrategyGeneratedEvent) = scheduleBroadcast("STRATEGY:${event.strategy.ticker}")
 
     @EventListener
-    fun onExecutionReport(@Suppress("UNUSED_PARAMETER") event: ExecutionReportEvent) = throttledBroadcast("EXECUTION")
+    fun onExecutionReport(event: ExecutionReportEvent) = scheduleBroadcast("EXECUTION:${event.report.orderId}")
 
     @EventListener
-    fun onPriceChanged(@Suppress("UNUSED_PARAMETER") event: PriceChangedEvent) = throttledBroadcast("PRICE")
+    fun onPriceChanged(event: PriceChangedEvent) = scheduleBroadcast("PRICE:${event.ticker}")
 
-    /**
-     * Рассылка с троттлингом: не чаще одного раза за [minIntervalMs].
-     *
-     * @param reason источник события (для метрики)
-     */
-    private fun throttledBroadcast(reason: String) {
-        val now = System.currentTimeMillis()
-        val last = lastBroadcastAt.get()
-        if (now - last < minIntervalMs) return
-        if (!lastBroadcastAt.compareAndSet(last, now)) return
-        broadcast(reason)
+    private fun scheduleBroadcast(reason: String) {
+        if (emitters.isEmpty()) return
+        latestReason.set(reason)
+        if (!broadcastScheduled.compareAndSet(false, true)) return
+
+        scope.launch {
+            try {
+                val waitMs = (minIntervalMs - (System.currentTimeMillis() - lastBroadcastAt.get())).coerceAtLeast(0L)
+                if (waitMs > 0) delay(waitMs)
+                broadcast(latestReason.get())
+                lastBroadcastAt.set(System.currentTimeMillis())
+            } finally {
+                broadcastScheduled.set(false)
+            }
+        }
     }
 
-    /**
-     * Полная рассылка снимка всем активным подписчикам.
-     *
-     * @param reason источник события
-     */
-    private fun broadcast(reason: String) {
-        val payload = try {
-            objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
-        } catch (e: Exception) {
-            logger.error(e) { "Dashboard payload build failed" }
-            return
-        }
-        meterRegistry.counter("dashboard.sse.broadcasts", Tags.of("reason", reason)).increment()
+    private suspend fun broadcast(reason: String) {
+        val payload = buildPayload() ?: return
+        meterRegistry.counter("dashboard.sse.broadcasts", Tags.of("reason", reason.substringBefore(':'))).increment()
         emitters.forEach { send(it, payload) }
     }
 
-    /**
-     * Отправляет снимок конкретному подписчику. Некорректный подписчик удаляется.
-     *
-     * @param emitter подписчик
-     * @param payload готовый JSON (если null — строится заново)
-     */
-    private fun send(emitter: SseEmitter, payload: String? = null) {
-        val json = payload ?: try {
-            objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
+    private suspend fun sendSnapshot(emitter: SseEmitter) {
+        buildPayload()?.let { send(emitter, it) }
+    }
+
+    private suspend fun buildPayload(): String? =
+        try {
+            objectMapper.writeValueAsString(dashboardService.build())
         } catch (e: Exception) {
             logger.error(e) { "Dashboard payload build failed" }
-            return
+            null
         }
+
+    private fun send(emitter: SseEmitter, payload: String) {
         try {
             synchronized(emitter) {
-                emitter.send(SseEmitter.event().name("dashboard").data(json))
+                emitter.send(SseEmitter.event().name("dashboard").data(payload))
             }
         } catch (e: Exception) {
             logger.debug(e) { "Dashboard SSE send failed, removing subscriber" }
             meterRegistry.counter("dashboard.sse.send_error").increment()
             emitters.remove(emitter)
+            emitter.complete()
         }
+    }
+
+    @PreDestroy
+    fun shutdown() {
+        emitters.forEach(SseEmitter::complete)
+        emitters.clear()
+        scope.cancel("DashboardSseService is shutting down")
     }
 }

@@ -74,6 +74,9 @@ class FuturesPositionSizer(
         }
 
         val leverage = leverageConfig.effective()
+        if (leverage <= BigDecimal.ZERO) {
+            return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_LEVERAGE")
+        }
 
         // 1. Маржа на один контракт (руб): go / leverage
         val marginPerContract = currentGo.divide(leverage, 4, RoundingMode.HALF_UP)
@@ -91,8 +94,10 @@ class FuturesPositionSizer(
         }
 
         // 4. Максимум контрактов по риску
+        val configuredCap = BigDecimal(riskConfig.maxContractsPerPosition.coerceAtLeast(0))
         val maxContractsByRisk = riskAmount
-            .divide(lossPerContract, 4, RoundingMode.DOWN)
+            .divide(lossPerContract, 0, RoundingMode.DOWN)
+            .min(configuredCap)
             .toInt()
 
         // 5. Маржинальный бюджет: депозит * maxMarginUsagePercent%
@@ -102,7 +107,8 @@ class FuturesPositionSizer(
 
         // 6. Максимум контрактов по марже
         val maxContractsByMargin = marginBudget
-            .divide(marginPerContract, 4, RoundingMode.DOWN)
+            .divide(marginPerContract, 0, RoundingMode.DOWN)
+            .min(configuredCap)
             .toInt()
 
         // 7. Итог: минимум всех лимитов

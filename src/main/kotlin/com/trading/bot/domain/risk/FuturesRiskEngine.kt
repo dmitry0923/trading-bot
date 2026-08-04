@@ -4,20 +4,19 @@ import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
-import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DailyRiskService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import mu.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * Риск-движок для фьючерсов (Si). Risk-first: любое действие сначала проходит через него.
@@ -45,23 +44,14 @@ class FuturesRiskEngine(
     private val positionRepo: PositionRepository,
     private val tradingHoursGuard: TradingHoursGuard,
     private val instrumentsConfig: InstrumentsConfig,
-    private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
-    private val meterRegistry: MeterRegistry
+    private val dailyRiskService: DailyRiskService,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
-    private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
-
-    private var dailyPnL: BigDecimal = BigDecimal.ZERO
-    private var dailyLossLimitReached: Boolean = false
-    private var lastTradingDate: LocalDate = LocalDate.now(moscowZone)
-    private var maxDrawdownToday: BigDecimal = BigDecimal.ZERO
+    private val gauges = MutableGauges(meterRegistry)
 
     /** Доля остаточного буфера маржи для CRITICAL-ликвидации (10%). */
     private val criticalLiquidationPercent = 10.0
-
-    init {
-        restoreDailyState()
-    }
 
     // ===================== Вход =====================
 
@@ -76,15 +66,14 @@ class FuturesRiskEngine(
         portfolioMoney: BigDecimal,
         currentGo: BigDecimal
     ): EntryValidationResult {
-        resetDailyStateIfNewDay()
-
         if (!riskConfig.enabled) return reject("RISK_DISABLED")
         if (!leverageConfig.enabled) return reject("LEVERAGE_DISABLED")
         if (!tradingHoursGuard.isTradingAllowed()) return reject("OUTSIDE_HOURS")
-        if (dailyLossLimitReached) return reject("DAILY_LIMIT")
+        if (dailyRiskService.isLimitReached()) return reject("DAILY_LIMIT")
 
-        val open = positionRepo.findByStatus(PositionStatus.OPEN)
-        if (open.size >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
+        val openFutures = positionRepo.findByStatus(PositionStatus.OPEN)
+            .count { it.instrumentType == InstrumentType.FUTURES }
+        if (openFutures >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
 
         val instrument = instrumentsConfig.find(ticker)
         if (instrument == null || instrument.type != "FUTURES") return reject("UNSUPPORTED_INSTRUMENT")
@@ -115,18 +104,18 @@ class FuturesRiskEngine(
             PositionDirection.SHORT -> entryPrice.subtract(tpOffset)
         }
 
-        meterRegistry.gauge("futures.position.size", size.quantity.toDouble())
-        meterRegistry.gauge("futures.margin.used", size.marginRequired.toDouble())
+        gauges.set("futures.position.size", size.quantity)
+        gauges.set("futures.margin.used", size.marginRequired)
         val marginUtilizationPercent = size.marginRequired
             .multiply(BigDecimal("100"))
             .divide(portfolioMoney, 4, RoundingMode.HALF_UP)
             .toDouble()
-        meterRegistry.gauge("risk.margin.utilization", marginUtilizationPercent)
+        gauges.set("risk.margin.utilization", marginUtilizationPercent)
         size.liquidationPrice?.let {
-            meterRegistry.gauge(
+            gauges.set(
                 "futures.liquidation.distance",
+                distanceToLiquidation(entryPrice, it, entryPrice),
                 Tags.of("ticker", ticker),
-                distanceToLiquidation(entryPrice, it, entryPrice).toDouble()
             )
         }
 
@@ -161,96 +150,18 @@ class FuturesRiskEngine(
 
     // ===================== Daily P&L =====================
 
-    /**
-     * Обновляет дневной P&L (закрытая сделка). При dailyPnL <= -5000 → dailyLossLimitReached = true.
-     * Состояние персистится в daily_risk_snapshot.
-     */
+    /** Обновляет общий дневной P&L акций и фьючерсов. */
     fun updateDailyPnL(pnl: BigDecimal) {
-        resetDailyStateIfNewDay()
-        dailyPnL = dailyPnL.add(pnl)
-        if (dailyPnL < maxDrawdownToday) {
-            maxDrawdownToday = dailyPnL
-        }
-        if (dailyPnL <= riskConfig.maxDailyLossRub.negate()) {
-            dailyLossLimitReached = true
-            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -${riskConfig.maxDailyLossRub}" }
-        }
-        persistDailyState()
-        meterRegistry.gauge("risk.daily.pnl", dailyPnL.toDouble())
-        meterRegistry.gauge("risk.daily.limit.reached", if (dailyLossLimitReached) 1.0 else 0.0)
+        dailyRiskService.addPnl(pnl)
+        gauges.set("risk.daily.pnl", dailyRiskService.currentPnl())
+        gauges.set("risk.daily.limit.reached", if (dailyRiskService.isLimitReached()) 1.0 else 0.0)
     }
 
-    /**
-     * Достигнут ли дневной лимит убытка.
-     *
-     * @return true, если dailyPnL <= -maxDailyLossRub
-     */
-    fun isDailyLossLimitReached(): Boolean {
-        resetDailyStateIfNewDay()
-        return dailyLossLimitReached
-    }
+    fun isDailyLossLimitReached(): Boolean = dailyRiskService.isLimitReached()
 
-    /**
-     * Текущий дневной P&L.
-     *
-     * @return накопленный дневной P&L (восстановленный из снапшота при смене дня)
-     */
-    fun getDailyPnL(): BigDecimal {
-        resetDailyStateIfNewDay()
-        return dailyPnL
-    }
+    fun getDailyPnL(): BigDecimal = dailyRiskService.currentPnl()
 
-    /**
-     * Смена календарного дня (МСК) → сброс дневного состояния.
-     * При рестарте в течение дня восстанавливает значения из БД.
-     */
-    private fun resetDailyStateIfNewDay() {
-        val today = LocalDate.now(moscowZone)
-        if (lastTradingDate == today) return
-        lastTradingDate = today
-        loadDailyState(today)
-    }
-
-    /**
-     * Полный сброс/восстановление дневного риск-состояния для текущего дня
-     * (из daily_risk_snapshot либо нулевое). Используется при старте, доступен
-     * для ручного сброса (admin) и для тестов.
-     */
-    fun resetDailyState() {
-        lastTradingDate = LocalDate.now(moscowZone)
-        loadDailyState(lastTradingDate)
-    }
-
-    private fun loadDailyState(today: LocalDate) {
-        val snapshot = try {
-            dailyRiskSnapshotRepo.findByDate(today)
-        } catch (e: Exception) {
-            logger.warn(e) { "Daily risk snapshot load failed" }
-            null
-        }
-        dailyPnL = snapshot?.dailyPnl ?: BigDecimal.ZERO
-        dailyLossLimitReached = snapshot?.limitReached ?: false
-        maxDrawdownToday = snapshot?.maxDrawdownToday ?: BigDecimal.ZERO
-        logger.info {
-            "Daily risk state for $today: dailyPnL=$dailyPnL limitReached=$dailyLossLimitReached"
-        }
-    }
-
-    private fun restoreDailyState() {
-        try {
-            resetDailyState()
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to restore daily risk state on startup" }
-        }
-    }
-
-    private fun persistDailyState() {
-        try {
-            dailyRiskSnapshotRepo.upsert(lastTradingDate, dailyPnL, dailyLossLimitReached, maxDrawdownToday)
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to persist daily risk snapshot" }
-        }
-    }
+    fun resetDailyState() = dailyRiskService.reset()
 
     // ===================== Ликвидация =====================
 
@@ -277,7 +188,7 @@ class FuturesRiskEngine(
         if (totalBuffer <= BigDecimal.ZERO) return LiquidationStatus.CRITICAL
 
         val distancePercent = distanceToLiquidation(position.entryPrice, liq, currentPrice)
-        meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), distancePercent.toDouble())
+        gauges.set("futures.liquidation.distance", distancePercent, Tags.of("ticker", position.ticker))
 
         val status = when {
             distancePercent < criticalLiquidationPercent -> LiquidationStatus.CRITICAL

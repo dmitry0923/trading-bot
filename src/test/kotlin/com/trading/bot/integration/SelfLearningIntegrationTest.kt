@@ -30,6 +30,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
 
     @BeforeEach
     fun setup() {
+        tradeAnalysisService.invalidateCache()
         runBlocking {
             positionRepository.deleteAll()
             blindSpotRepository.deleteAll()
@@ -65,6 +66,37 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         val shouldPause = runBlocking { adaptiveRiskService.shouldPauseTrading("GAZP") }
 
         assertTrue(shouldPause)
+    }
+
+    @Test
+    fun `all winning trades do not trigger low profit factor pause`() {
+        repeat(5) {
+            savePosition("ROSN", BigDecimal("500"), BigDecimal("510"), PositionStatus.CLOSED, "TAKE_PROFIT")
+        }
+
+        val stats = runBlocking { tradeAnalysisService.analyzeLastNDays(1).getValue("ROSN") }
+        val shouldPause = runBlocking { adaptiveRiskService.shouldPauseTrading("ROSN") }
+
+        assertTrue(stats.profitFactor > 1.0)
+        assertFalse(shouldPause)
+    }
+
+    @Test
+    fun `repeated analysis does not inflate blind spot occurrences`() {
+        repeat(5) {
+            savePosition("YNDX", BigDecimal("3000"), BigDecimal("2900"), PositionStatus.CLOSED, "STOP_LOSS")
+        }
+
+        runBlocking {
+            tradeAnalysisService.analyzeLastNDays(1)
+            tradeAnalysisService.analyzeLastNDays(1)
+        }
+
+        val stopSpot = runBlocking {
+            blindSpotRepository.findByTickerAndIsActiveTrue("YNDX")
+                .first { it.conditionPattern.contains("Stop-Loss") }
+        }
+        assertEquals(5, stopSpot.occurrenceCount)
     }
 
     @Test

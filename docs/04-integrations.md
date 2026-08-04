@@ -130,7 +130,7 @@ GET https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities
 
 **Ограничения rate limit**: MOEX ISS формально не лимитирует, но не рекомендуется > 1 запрос/с на секцию. Бот делает 1 запрос на тикер в цикле (10 тикеров за цикл).
 
-**Кэширование**: свечи сохраняются в PostgreSQL (`candles`, UNIQUE `(ticker, timeframe, time)`); повторные загрузки не дублируются (`existsByTickerAndTimeframeAndTime`). Целевое партиционирование — раздел 6.
+**Кэширование**: свечи сохраняются в PostgreSQL (`candles`, UNIQUE `(ticker, timeframe, time)`); повторные загрузки не дублируются (`INSERT ... ON CONFLICT DO NOTHING`). Целевое партиционирование — раздел 6.
 
 **Лимиты**: `takeLast(500)` свечей за раз; таймаут 10 c; при ошибке — `emptyList()` (бота не роняет).
 
@@ -268,7 +268,7 @@ sequenceDiagram
 ### MOEX ISS
 
 - Соблюдать вежливый rate limit (≥ 1 c между запросами на секцию). Бот делает 1 запрос/тикер/цикл.
-- Все исторические данные **кэшируются в PostgreSQL** — повторный запрос не ходит в сеть (`existsByTickerAndTimeframeAndTime`).
+- Все исторические данные **кэшируются в PostgreSQL** — повторная запись безопасна (`INSERT ... ON CONFLICT DO NOTHING`).
 - `from`/`until` — не более 7 дней за один запрос (лимит MOEX), данные сливаются и дедуплицируются.
 
 ### Kimi (LLM)

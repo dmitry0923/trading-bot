@@ -31,14 +31,19 @@ class TradeEventRepository(
 
     suspend fun append(event: TradeEvent) {
         val sql = """
+            WITH aggregate_lock AS (
+                SELECT pg_advisory_xact_lock(hashtextextended(CAST(:aggregateId AS text), 0))
+            )
             INSERT INTO trade_events (aggregate_id, event_type, payload, occurred_at, sequence_number)
-            VALUES (
+            SELECT
                 :aggregateId,
                 :eventType,
-                :payload::jsonb,
+                CAST(:payload AS jsonb),
                 :occurredAt,
-                (SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM trade_events WHERE aggregate_id = :aggregateId)
-            )
+                (SELECT COALESCE(MAX(sequence_number), 0) + 1
+                 FROM trade_events
+                 WHERE aggregate_id = :aggregateId)
+            FROM aggregate_lock
         """.trimIndent()
         databaseClient.sql(sql)
             .bind("aggregateId", event.aggregateId)

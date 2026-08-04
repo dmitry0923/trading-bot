@@ -78,7 +78,7 @@ class AgentLogRepository(
             .bind("isCached", log.isCached)
             .bindOrNull("overrideReason", log.overrideReason)
             .bind("createdAt", log.createdAt)
-            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .map { row, _ -> row.require("id", Long::class.javaObjectType) }
             .one()
             .awaitSingle()
         return log.copy(id = id)

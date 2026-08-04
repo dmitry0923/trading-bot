@@ -10,6 +10,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DailyRiskService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -60,7 +61,7 @@ class FuturesRiskEngineTest {
             positionRepo = positionRepo,
             tradingHoursGuard = TradingHoursGuard(guardConfig),
             instrumentsConfig = instrumentsConfig,
-            dailyRiskSnapshotRepo = dailyRiskRepo,
+            dailyRiskService = DailyRiskService(riskConfig, dailyRiskRepo),
             meterRegistry = SimpleMeterRegistry()
         )
     }
@@ -119,6 +120,31 @@ class FuturesRiskEngineTest {
 
         assertFalse(result.allowed)
         assertEquals("OUTSIDE_HOURS", result.reason)
+    }
+
+    @Test
+    fun `stock positions do not consume futures position limit`() = runBlocking {
+        Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
+            listOf(
+                Position(
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("300"),
+                    instrumentType = InstrumentType.STOCK,
+                ),
+            ),
+        )
+
+        val result = engine().validateEntry(
+            ticker = "Si",
+            entryPrice = BigDecimal("92000"),
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal("50000"),
+            currentGo = BigDecimal("15000"),
+        )
+
+        assertTrue(result.allowed)
     }
 
     @Test

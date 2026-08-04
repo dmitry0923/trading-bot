@@ -1,13 +1,14 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.*
-import com.trading.bot.repository.DailyRiskSnapshotRepository
+import com.trading.bot.model.InstrumentType
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.RiskCheckResult
+import com.trading.bot.model.Strategy
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * Сервис классического риск-менеджмента.
@@ -21,24 +22,16 @@ import java.time.ZoneId
 @Service
 class RiskManagementService(
     private val riskConfig: RiskConfig,
-    private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository
+    private val dailyRiskService: DailyRiskService,
 ) {
     private val logger = mu.KotlinLogging.logger {}
-    private val moscowZone = ZoneId.of("Europe/Moscow")
-    private var dailyPnL: BigDecimal = BigDecimal.ZERO
-    private var maxDrawdownToday: BigDecimal = BigDecimal.ZERO
-    private var dailyLossLimitReached: Boolean = false
-    private var lastTradingDate: LocalDate = LocalDate.MIN
 
     /**
      * Проверяет, достигнут ли дневной лимит убытка.
      *
      * @return true, если дневной P&L <= -maxDailyLossRub
      */
-    fun isDailyLossLimitReached(): Boolean {
-        resetDailyStateIfNewDay()
-        return dailyLossLimitReached
-    }
+    fun isDailyLossLimitReached(): Boolean = dailyRiskService.isLimitReached()
 
     /**
      * Валидирует новую стратегию перед открытием позиции.
@@ -49,14 +42,21 @@ class RiskManagementService(
      */
     fun validateNewStrategy(strategy: Strategy, openPositions: List<Position>): RiskCheckResult {
         if (riskConfig.enabled && isDailyLossLimitReached()) {
-            return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${riskConfig.maxDailyLossRub})", 0)
+            return RiskCheckResult(
+                false,
+                "Daily loss limit reached (${dailyRiskService.currentPnl()} <= -${riskConfig.maxDailyLossRub})",
+                0,
+            )
         }
-        if (riskConfig.enabled && openPositions.size >= riskConfig.maxOpenPositions) {
+        val openSpotPositions = openPositions.filter { it.instrumentType != InstrumentType.FUTURES }
+        if (riskConfig.enabled && openSpotPositions.size >= riskConfig.maxOpenPositions) {
             return RiskCheckResult(false, "Max open positions reached (${riskConfig.maxOpenPositions})", 0)
         }
         if (riskConfig.enabled && exceedsSectorExposure(strategy.ticker, openPositions)) {
             val sector = sectorOf(strategy.ticker)
-            val count = openPositions.count { sectorOf(it.ticker) == sector }
+            val count = openPositions.count {
+                it.instrumentType != InstrumentType.FUTURES && sectorOf(it.ticker) == sector
+            }
             return RiskCheckResult(
                 false,
                 "Sector concentration exceeded: $count open in sector $sector >= max ${riskConfig.maxSectorExposure}",
@@ -86,7 +86,9 @@ class RiskManagementService(
      */
     fun exceedsSectorExposure(ticker: String, openPositions: List<Position>): Boolean {
         val sector = sectorOf(ticker)
-        val count = openPositions.count { sectorOf(it.ticker) == sector }
+        val count = openPositions.count {
+            it.instrumentType != InstrumentType.FUTURES && sectorOf(it.ticker) == sector
+        }
         return count >= riskConfig.maxSectorExposure
     }
 
@@ -154,8 +156,15 @@ class RiskManagementService(
         val newStop = when (pos.direction) {
             PositionDirection.LONG -> price.multiply(BigDecimal.ONE.subtract(percent))
             PositionDirection.SHORT -> price.multiply(BigDecimal.ONE.add(percent))
+        }.setScale(2, RoundingMode.HALF_UP)
+        val currentStop = pos.trailingStopPrice
+        val improvesProtection = when (pos.direction) {
+            PositionDirection.LONG -> currentStop == null || newStop > currentStop
+            PositionDirection.SHORT -> currentStop == null || newStop < currentStop
         }
-        pos.trailingStopPrice = newStop.setScale(2, RoundingMode.HALF_UP)
+        if (improvesProtection) {
+            pos.trailingStopPrice = newStop
+        }
     }
 
     /**
@@ -194,14 +203,7 @@ class RiskManagementService(
      * @param pnl прибыль/убыток сделки
      */
     fun updateDailyPnL(pnl: BigDecimal) {
-        resetDailyStateIfNewDay()
-        dailyPnL = dailyPnL.add(pnl)
-        if (dailyPnL < maxDrawdownToday) maxDrawdownToday = dailyPnL
-        if (dailyPnL <= riskConfig.maxDailyLossRub.negate()) {
-            dailyLossLimitReached = true
-            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -${riskConfig.maxDailyLossRub}" }
-        }
-        persistDailyState()
+        dailyRiskService.addPnl(pnl)
     }
 
     /**
@@ -209,40 +211,5 @@ class RiskManagementService(
      *
      * @return накопленный дневной P&L
      */
-    fun getDailyPnL(): BigDecimal {
-        resetDailyStateIfNewDay()
-        return dailyPnL
-    }
-
-    /**
-     * Смена календарного дня (МСК) → сброс дневного состояния.
-     * При рестарте в течение дня восстанавливает значения из БД.
-     */
-    private fun resetDailyStateIfNewDay() {
-        val today = LocalDate.now(moscowZone)
-        if (lastTradingDate == today) return
-        lastTradingDate = today
-        loadDailyState(today)
-    }
-
-    private fun loadDailyState(today: LocalDate) {
-        val snapshot = try {
-            dailyRiskSnapshotRepo.findByDate(today)
-        } catch (e: Exception) {
-            logger.warn(e) { "Daily risk snapshot load failed" }
-            null
-        }
-        dailyPnL = snapshot?.dailyPnl ?: BigDecimal.ZERO
-        dailyLossLimitReached = snapshot?.limitReached ?: false
-        maxDrawdownToday = snapshot?.maxDrawdownToday ?: BigDecimal.ZERO
-        logger.info { "Daily risk state for $today: dailyPnL=$dailyPnL limitReached=$dailyLossLimitReached" }
-    }
-
-    private fun persistDailyState() {
-        try {
-            dailyRiskSnapshotRepo.upsert(lastTradingDate, dailyPnL, dailyLossLimitReached, maxDrawdownToday)
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to persist daily risk snapshot" }
-        }
-    }
+    fun getDailyPnL(): BigDecimal = dailyRiskService.currentPnl()
 }

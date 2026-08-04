@@ -82,7 +82,7 @@ class StrategyAdjustmentRepository(
             .bind("triggeredBy", entity.triggeredBy)
             .bind("reason", entity.reason)
             .bind("createdAt", entity.createdAt)
-            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .map { row, _ -> row.require("id", Long::class.javaObjectType) }
             .one()
             .awaitSingle()
         return entity.copy(id = id)
@@ -103,7 +103,7 @@ class StrategyAdjustmentRepository(
             .bind("triggeredBy", entity.triggeredBy)
             .bind("reason", entity.reason)
             .bind("createdAt", entity.createdAt)
-            .bind("id", entity.id!!)
+            .bind("id", requireNotNull(entity.id))
             .then()
             .awaitSingleOrNull()
     }

@@ -41,7 +41,7 @@ class RealDataBacktestIntegrationTest : AbstractTestContainerTest() {
         val load = runBlocking { loader.loadAndSave(ticker, days) }
         assertTrue(load.loaded >= 1000, "Ожидалось >= 1000 свечей за $days дней по $ticker, загружено ${load.loaded}")
 
-        val result = engine.run(ticker, days)
+        val result = runBlocking { engine.run(ticker, days) }
         assertTrue(result.equityCurve.isNotEmpty(), "equityCurve не должен быть пустым")
         assertTrue(result.totalTrades >= 0)
         assertTrue(result.sharpeRatio.isFinite())

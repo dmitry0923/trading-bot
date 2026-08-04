@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.event.*
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
@@ -93,7 +94,7 @@ class DashboardSseService(
      */
     private fun broadcast(reason: String) {
         val payload = try {
-            objectMapper.writeValueAsString(dashboardService.build())
+            objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
         } catch (e: Exception) {
             logger.error(e) { "Dashboard payload build failed" }
             return
@@ -110,7 +111,7 @@ class DashboardSseService(
      */
     private fun send(emitter: SseEmitter, payload: String? = null) {
         val json = payload ?: try {
-            objectMapper.writeValueAsString(dashboardService.build())
+            objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
         } catch (e: Exception) {
             logger.error(e) { "Dashboard payload build failed" }
             return

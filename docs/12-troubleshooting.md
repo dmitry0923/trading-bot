@@ -193,7 +193,10 @@ A: Сознательная страховка: бот генерирует ст
 A: `TAKE_PROFIT` ставится при закрытии по тейку, `CLOSED` — по SL/strategy/другое. При WS-fill без известной причины ставится `CLOSED` с `closeReason=EXECUTION_FILL`.
 
 **Q: Бот использует Hibernate?**
-A: Нет. `spring-boot-starter-jdbc` + `NamedParameterJdbcTemplate`. Миграции — Liquibase.
+A: Нет. Репозитории на R2DBC (`DatabaseClient`, все методы suspend). JDBC (`spring-boot-starter-jdbc` + `spring.datasource.*`) используется только Liquibase для миграций схемы.
+
+**Q: R2DBC: «Cannot decode value of type long/int with OID 20/23» при чтении колонки?**
+A: Kotlin `Long::class.java`/`Int::class.java`/`Boolean::class.java`/`Double::class.java` возвращают примитивные JVM-классы (`long`/`int`), которых нет в codec-карте r2dbc-postgresql. Используйте `Long::class.javaObjectType` (и аналогично для остальных примитивов). Также для void-запросов (`.then()`) вместо `awaitSingle()` используйте `awaitSingleOrNull()` — `.then()` завершается пустым Mono, и `awaitSingle()` бросает `NoSuchElementException`.
 
 **Q: Можно ли запускать 2 экземпляра бота?**
 A: Нет, см. раздел 2.6 (singleton). Если очень нужно — внедрить distributed lock.

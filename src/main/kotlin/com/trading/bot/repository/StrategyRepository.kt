@@ -1,66 +1,77 @@
 package com.trading.bot.repository
 
+import com.trading.bot.infrastructure.db.bindOrNull
+import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.Strategy
-import org.springframework.jdbc.core.RowMapper
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
-import org.springframework.jdbc.support.GeneratedKeyHolder
+import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
-import java.sql.ResultSet
+import java.math.BigDecimal
+import java.time.LocalDateTime
 
 @Repository
 class StrategyRepository(
-    private val namedTemplate: NamedParameterJdbcTemplate,
+    private val databaseClient: DatabaseClient,
 ) {
-    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
-        Strategy(
-            id = rs.getLong("id"),
-            ticker = rs.getString("ticker"),
-            action = enumValueOf(rs.getString("action")),
-            targetPrice = rs.getBigDecimal("target_price"),
-            quantity = rs.getInt("quantity"),
-            stopLoss = rs.getBigDecimal("stop_loss"),
-            takeProfit = rs.getBigDecimal("take_profit"),
-            trailingStop = rs.getBoolean("trailing_stop"),
-            confidence = rs.getDouble("confidence"),
-            reasoning = rs.getString("reasoning"),
-            rawJson = rs.getString("raw_json"),
-            cycleId = rs.getString("cycle_id"),
-            validUntil = rs.getTimestamp("valid_until").toLocalDateTime(),
-            createdAt = rs.getTimestamp("created_at").toLocalDateTime()
-        )
+    private fun toStrategy(row: Row): Strategy = Strategy(
+        id = row.get("id", Long::class.javaObjectType),
+        ticker = row.require("ticker", String::class.java),
+        action = enumValueOf(row.require("action", String::class.java)),
+        targetPrice = row.require("target_price", BigDecimal::class.java),
+        quantity = row.require("quantity", Int::class.javaObjectType),
+        stopLoss = row.get("stop_loss", BigDecimal::class.java),
+        takeProfit = row.get("take_profit", BigDecimal::class.java),
+        trailingStop = row.require("trailing_stop", Boolean::class.javaObjectType),
+        confidence = row.require("confidence", Double::class.javaObjectType),
+        reasoning = row.require("reasoning", String::class.java),
+        rawJson = row.get("raw_json", String::class.java),
+        cycleId = row.require("cycle_id", String::class.java),
+        validUntil = row.require("valid_until", LocalDateTime::class.java),
+        createdAt = row.require("created_at", LocalDateTime::class.java)
+    )
+
+    suspend fun findTop50ByOrderByCreatedAtDesc(): List<Strategy> {
+        return databaseClient.sql("SELECT * FROM strategies ORDER BY created_at DESC LIMIT 50")
+            .map { row, _ -> toStrategy(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
     }
 
-    fun findTop50ByOrderByCreatedAtDesc(): List<Strategy> {
-        return namedTemplate.query("SELECT * FROM strategies ORDER BY created_at DESC LIMIT 50", rowMapper)
-    }
-
-    fun findTopByTickerOrderByCreatedAtDesc(ticker: String): Strategy? {
+    suspend fun findTopByTickerOrderByCreatedAtDesc(ticker: String): Strategy? {
         val sql = "SELECT * FROM strategies WHERE ticker = :ticker ORDER BY created_at DESC LIMIT 1"
-        return namedTemplate.query(sql, mapOf("ticker" to ticker), rowMapper).firstOrNull()
+        return databaseClient.sql(sql)
+            .bind("ticker", ticker)
+            .map { row, _ -> toStrategy(row) }
+            .one()
+            .awaitSingleOrNull()
     }
 
-    fun save(strategy: Strategy): Strategy {
+    suspend fun save(strategy: Strategy): Strategy {
         val sql = """
             INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, created_at)
             VALUES (:ticker, :action, :targetPrice, :quantity, :stopLoss, :takeProfit, :trailingStop, :confidence, :reasoning, :rawJson, :cycleId, :validUntil, :createdAt)
             RETURNING id
         """.trimIndent()
-        val keyHolder = GeneratedKeyHolder()
-        namedTemplate.update(sql, MapSqlParameterSource()
-            .addValue("ticker", strategy.ticker)
-            .addValue("action", strategy.action.name)
-            .addValue("targetPrice", strategy.targetPrice)
-            .addValue("quantity", strategy.quantity)
-            .addValue("stopLoss", strategy.stopLoss)
-            .addValue("takeProfit", strategy.takeProfit)
-            .addValue("trailingStop", strategy.trailingStop)
-            .addValue("confidence", strategy.confidence)
-            .addValue("reasoning", strategy.reasoning)
-            .addValue("rawJson", strategy.rawJson)
-            .addValue("cycleId", strategy.cycleId)
-            .addValue("validUntil", strategy.validUntil)
-            .addValue("createdAt", strategy.createdAt), keyHolder)
-        return strategy.copy(id = keyHolder.key?.toLong())
+        val id = databaseClient.sql(sql)
+            .bind("ticker", strategy.ticker)
+            .bind("action", strategy.action.name)
+            .bind("targetPrice", strategy.targetPrice)
+            .bind("quantity", strategy.quantity)
+            .bindOrNull("stopLoss", strategy.stopLoss)
+            .bindOrNull("takeProfit", strategy.takeProfit)
+            .bind("trailingStop", strategy.trailingStop)
+            .bind("confidence", strategy.confidence)
+            .bindOrNull("reasoning", strategy.reasoning)
+            .bindOrNull("rawJson", strategy.rawJson)
+            .bindOrNull("cycleId", strategy.cycleId)
+            .bind("validUntil", strategy.validUntil)
+            .bind("createdAt", strategy.createdAt)
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .one()
+            .awaitSingle()
+        return strategy.copy(id = id)
     }
 }

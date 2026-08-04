@@ -1,49 +1,65 @@
 package com.trading.bot.repository
 
+import com.trading.bot.infrastructure.db.bindOrNull
+import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.StrategyAdjustment
-import org.springframework.jdbc.core.RowMapper
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
-import org.springframework.jdbc.support.GeneratedKeyHolder
+import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
-import java.sql.ResultSet
+import java.math.BigDecimal
+import java.time.LocalDateTime
 
 @Repository
 class StrategyAdjustmentRepository(
-    private val namedTemplate: NamedParameterJdbcTemplate,
+    private val databaseClient: DatabaseClient,
 ) {
-    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
-        StrategyAdjustment(
-            id = rs.getLong("id"),
-            ticker = rs.getString("ticker"),
-            adjustmentType = rs.getString("adjustment_type"),
-            oldValue = rs.getBigDecimal("old_value"),
-            newValue = rs.getBigDecimal("new_value"),
-            triggeredBy = rs.getString("triggered_by"),
-            reason = rs.getString("reason"),
-            createdAt = rs.getTimestamp("created_at").toLocalDateTime()
-        )
-    }
+    private fun toStrategyAdjustment(row: Row): StrategyAdjustment = StrategyAdjustment(
+        id = row.get("id", Long::class.javaObjectType),
+        ticker = row.require("ticker", String::class.java),
+        adjustmentType = row.require("adjustment_type", String::class.java),
+        oldValue = row.get("old_value", BigDecimal::class.java),
+        newValue = row.get("new_value", BigDecimal::class.java),
+        triggeredBy = row.require("triggered_by", String::class.java),
+        reason = row.require("reason", String::class.java),
+        createdAt = row.require("created_at", LocalDateTime::class.java)
+    )
 
-    fun findByTickerOrderByCreatedAtDesc(ticker: String): List<StrategyAdjustment> {
+    suspend fun findByTickerOrderByCreatedAtDesc(ticker: String): List<StrategyAdjustment> {
         val sql = "SELECT * FROM strategy_adjustments WHERE ticker = :ticker ORDER BY created_at DESC"
-        return namedTemplate.query(sql, mapOf("ticker" to ticker), rowMapper)
+        return databaseClient.sql(sql)
+            .bind("ticker", ticker)
+            .map { row, _ -> toStrategyAdjustment(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
     }
 
-    fun findByTickerAndAdjustmentTypeOrderByCreatedAtDesc(ticker: String, type: String): List<StrategyAdjustment> {
+    suspend fun findByTickerAndAdjustmentTypeOrderByCreatedAtDesc(ticker: String, type: String): List<StrategyAdjustment> {
         val sql = """
             SELECT * FROM strategy_adjustments
             WHERE ticker = :ticker AND adjustment_type = :type
             ORDER BY created_at DESC
         """.trimIndent()
-        return namedTemplate.query(sql, mapOf("ticker" to ticker, "type" to type), rowMapper)
+        return databaseClient.sql(sql)
+            .bind("ticker", ticker)
+            .bind("type", type)
+            .map { row, _ -> toStrategyAdjustment(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
     }
 
-    fun findAll(): List<StrategyAdjustment> {
-        return namedTemplate.query("SELECT * FROM strategy_adjustments ORDER BY created_at DESC", rowMapper)
+    suspend fun findAll(): List<StrategyAdjustment> {
+        return databaseClient.sql("SELECT * FROM strategy_adjustments ORDER BY created_at DESC")
+            .map { row, _ -> toStrategyAdjustment(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
     }
 
-    fun save(entity: StrategyAdjustment): StrategyAdjustment {
+    suspend fun save(entity: StrategyAdjustment): StrategyAdjustment {
         return if (entity.id == null) {
             insert(entity)
         } else {
@@ -52,39 +68,47 @@ class StrategyAdjustmentRepository(
         }
     }
 
-    private fun insert(entity: StrategyAdjustment): StrategyAdjustment {
+    private suspend fun insert(entity: StrategyAdjustment): StrategyAdjustment {
         val sql = """
             INSERT INTO strategy_adjustments (ticker, adjustment_type, old_value, new_value, triggered_by, reason, created_at)
             VALUES (:ticker, :adjustmentType, :oldValue, :newValue, :triggeredBy, :reason, :createdAt)
             RETURNING id
         """.trimIndent()
-        val keyHolder = GeneratedKeyHolder()
-        namedTemplate.update(sql, createParams(entity), keyHolder)
-        return entity.copy(id = keyHolder.key?.toLong())
+        val id = databaseClient.sql(sql)
+            .bind("ticker", entity.ticker)
+            .bind("adjustmentType", entity.adjustmentType)
+            .bindOrNull("oldValue", entity.oldValue)
+            .bindOrNull("newValue", entity.newValue)
+            .bind("triggeredBy", entity.triggeredBy)
+            .bind("reason", entity.reason)
+            .bind("createdAt", entity.createdAt)
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .one()
+            .awaitSingle()
+        return entity.copy(id = id)
     }
 
-    private fun update(entity: StrategyAdjustment) {
+    private suspend fun update(entity: StrategyAdjustment) {
         val sql = """
             UPDATE strategy_adjustments SET
                 ticker = :ticker, adjustment_type = :adjustmentType, old_value = :oldValue,
                 new_value = :newValue, triggered_by = :triggeredBy, reason = :reason, created_at = :createdAt
             WHERE id = :id
         """.trimIndent()
-        namedTemplate.update(sql, createParams(entity).addValue("id", entity.id))
+        databaseClient.sql(sql)
+            .bind("ticker", entity.ticker)
+            .bind("adjustmentType", entity.adjustmentType)
+            .bindOrNull("oldValue", entity.oldValue)
+            .bindOrNull("newValue", entity.newValue)
+            .bind("triggeredBy", entity.triggeredBy)
+            .bind("reason", entity.reason)
+            .bind("createdAt", entity.createdAt)
+            .bind("id", entity.id!!)
+            .then()
+            .awaitSingleOrNull()
     }
 
-    fun deleteAll() {
-        namedTemplate.update("DELETE FROM strategy_adjustments", emptyMap<String, Any>())
-    }
-
-    private fun createParams(entity: StrategyAdjustment): MapSqlParameterSource {
-        return MapSqlParameterSource()
-            .addValue("ticker", entity.ticker)
-            .addValue("adjustmentType", entity.adjustmentType)
-            .addValue("oldValue", entity.oldValue)
-            .addValue("newValue", entity.newValue)
-            .addValue("triggeredBy", entity.triggeredBy)
-            .addValue("reason", entity.reason)
-            .addValue("createdAt", entity.createdAt)
+    suspend fun deleteAll() {
+        databaseClient.sql("DELETE FROM strategy_adjustments").then().awaitSingleOrNull()
     }
 }

@@ -3,6 +3,7 @@ package com.trading.bot.integration
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import com.trading.bot.service.*
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -29,9 +30,11 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
 
     @BeforeEach
     fun setup() {
-        positionRepository.deleteAll()
-        blindSpotRepository.deleteAll()
-        adjustmentRepository.deleteAll()
+        runBlocking {
+            positionRepository.deleteAll()
+            blindSpotRepository.deleteAll()
+            adjustmentRepository.deleteAll()
+        }
     }
 
     @Test
@@ -42,7 +45,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         savePosition("SBER", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, "STOP_LOSS")
         savePosition("SBER", BigDecimal("100"), BigDecimal("95"), PositionStatus.CLOSED, "STOP_LOSS")
 
-        val stats = tradeAnalysisService.analyzeLastNDays(1)
+        val stats = runBlocking { tradeAnalysisService.analyzeLastNDays(1) }
 
         assertTrue(stats.containsKey("SBER"))
         val sber = stats["SBER"]!!
@@ -59,7 +62,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
             savePosition("GAZP", BigDecimal("200"), BigDecimal("190"), PositionStatus.CLOSED, "STOP_LOSS")
         }
 
-        val shouldPause = adaptiveRiskService.shouldPauseTrading("GAZP")
+        val shouldPause = runBlocking { adaptiveRiskService.shouldPauseTrading("GAZP") }
 
         assertTrue(shouldPause)
     }
@@ -73,7 +76,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
             savePosition("LKOH", BigDecimal("1000"), BigDecimal("900"), PositionStatus.CLOSED, "STOP_LOSS")
         }
 
-        val size = adaptiveRiskService.calculateOptimalPositionSize("LKOH")
+        val size = runBlocking { adaptiveRiskService.calculateOptimalPositionSize("LKOH") }
 
         assertTrue(size > BigDecimal.ZERO)
         assertTrue(size <= BigDecimal("500000"))
@@ -85,9 +88,9 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
             savePosition("YNDX", BigDecimal("3000"), BigDecimal("2900"), PositionStatus.CLOSED, "STOP_LOSS")
         }
 
-        tradeAnalysisService.analyzeLastNDays(1)
+        runBlocking { tradeAnalysisService.analyzeLastNDays(1) }
 
-        val spots = blindSpotRepository.findByTickerAndIsActiveTrue("YNDX")
+        val spots = runBlocking { blindSpotRepository.findByTickerAndIsActiveTrue("YNDX") }
         assertTrue(spots.isNotEmpty())
         assertTrue(spots.any { it.conditionPattern.contains("Stop-Loss") })
     }
@@ -98,7 +101,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
             savePosition("VTBR", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, "STOP_LOSS")
         }
 
-        val inRecovery = adaptiveRiskService.isInDrawdownRecovery()
+        val inRecovery = runBlocking { adaptiveRiskService.isInDrawdownRecovery() }
 
         assertTrue(inRecovery)
     }
@@ -108,7 +111,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         savePosition("SBER", BigDecimal("100"), BigDecimal("110"), PositionStatus.CLOSED, "TAKE_PROFIT", hour = 10)
         savePosition("SBER", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, "STOP_LOSS", hour = 16)
 
-        val pattern = tradeAnalysisService.timePatternAnalysis("SBER", 1)
+        val pattern = runBlocking { tradeAnalysisService.timePatternAnalysis("SBER", 1) }
 
         assertEquals("SBER", pattern.ticker)
         assertTrue(pattern.hourlyWinRates.containsKey(10))
@@ -126,21 +129,23 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         val pnl = close.subtract(entry).multiply(BigDecimal(10))
         val opened = LocalDateTime.now().minusDays(1).withHour(hour).withMinute(0).withSecond(0).withNano(0)
         val closed = LocalDateTime.now()
-        positionRepository.save(
-            Position(
-                ticker = ticker,
-                direction = PositionDirection.LONG,
-                quantity = 10,
-                entryPrice = entry,
-                currentPrice = close,
-                closePrice = close,
-                pnl = pnl,
-                status = status,
-                alorOrderId = "test-${System.nanoTime()}",
-                closeReason = reason,
-                openedAt = opened,
-                closedAt = closed
+        runBlocking {
+            positionRepository.save(
+                Position(
+                    ticker = ticker,
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = entry,
+                    currentPrice = close,
+                    closePrice = close,
+                    pnl = pnl,
+                    status = status,
+                    alorOrderId = "test-${System.nanoTime()}",
+                    closeReason = reason,
+                    openedAt = opened,
+                    closedAt = closed
+                )
             )
-        )
+        }
     }
 }

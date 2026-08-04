@@ -10,7 +10,6 @@ import com.trading.bot.event.StrategyGeneratedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
@@ -154,7 +153,7 @@ class FuturesTradingBotService(
             stopLossPoints = riskConfig.defaultStopLossPoints,
             alorOrderId = placed.alorOrderId
         )
-        BlockingDb.io { positionRepo.save(pos) }
+        positionRepo.save(pos)
         tradeEventService.recordPositionOpened(pos)
         eventPublisher.publishPositionOpened(pos)
         meterRegistry.counter(
@@ -169,7 +168,7 @@ class FuturesTradingBotService(
     }
 
     private suspend fun monitorOpenPositions(ticker: String, price: BigDecimal) {
-        val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }.filter { it.ticker == ticker }
+        val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.ticker == ticker }
         for (pos in open) {
             if (pos.instrumentType != InstrumentType.FUTURES) continue
             pos.currentPrice = price
@@ -201,7 +200,7 @@ class FuturesTradingBotService(
 
             // 3. Подтягивание trailing (только в прибыль, с учётом вариационной маржи)
             futuresRiskEngine.updateTrailingStop(pos, price)
-            BlockingDb.io { positionRepo.save(pos) }
+            positionRepo.save(pos)
         }
     }
 
@@ -224,7 +223,7 @@ class FuturesTradingBotService(
         pos.status = if (reason == "TAKE_PROFIT") PositionStatus.TAKE_PROFIT else PositionStatus.CLOSED
         pos.closedAt = LocalDateTime.now()
         pos.closeReason = reason
-        BlockingDb.io { positionRepo.save(pos) }
+        positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason)
 
         // Daily P&L обновляется в DailyLossCircuitBreaker через событие.

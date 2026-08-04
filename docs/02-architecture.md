@@ -23,7 +23,7 @@ flowchart LR
     BOT -->|REST ордера + WS исполнения| ALOR
     BOT -->|REST chat/completions| KIMI
     BOT -->|REST USD/RUB live| CBR
-    BOT -->|JDBC| PG[(PostgreSQL 15)]
+    BOT -->|R2DBC| PG[(PostgreSQL 15)]
     BOT -->|Redis protocol| RD[(Redis 7)]
 ```
 
@@ -42,7 +42,7 @@ flowchart TB
         RISK[RiskManagementService<br/>AdaptiveRiskService]
         TRADE[TradeAnalysisService]
         OUTBOX[OrderOutboxService<br/>+ worker]
-        REPOS[Repositories<br/>JDBC / NamedParameterJdbcTemplate]
+        REPOS[Repositories<br/>R2DBC / DatabaseClient]
         REDIS[RedisCacheService]
     end
 
@@ -91,9 +91,9 @@ com.trading.bot
 ├── config/           # TradingConfig, RiskConfig, AlorConfig, LlmConfig, MacroConfig
 ├── controller/       # ApiController
 ├── event/            # Events, TradingEventPublisher (event-driven слой)
-├── infrastructure/llm/ # ResilientLlmClient, SemanticCache, PromptRegistry, PromptTemplate, Guardrails, LlmResponse
+├── infrastructure/llm/ # ResilientLlmClient, LlmRequestQueue, SemanticCache, PromptRegistry, PromptTemplate, Guardrails, LlmResponse
 ├── model/            # все сущности (Position, Strategy, Candle, Reports, Enums, ...)
-├── repository/       # JDBC-репозитории (NamedParameterJdbcTemplate)
+├── repository/       # R2DBC-репозитории (DatabaseClient)
 └── service/          # StrategyService, TradingBotService, RiskManagementService, ...
 ```
 

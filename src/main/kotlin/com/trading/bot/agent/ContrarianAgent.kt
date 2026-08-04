@@ -125,7 +125,7 @@ class ContrarianAgent(
         return logAndReturn(report, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache)
     }
 
-    private fun logAndReturn(
+    private suspend fun logAndReturn(
         report: ChallengeReport,
         ticker: String,
         cycleId: String,

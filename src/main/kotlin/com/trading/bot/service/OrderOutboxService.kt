@@ -2,7 +2,6 @@ package com.trading.bot.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.client.AlorClient
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.OrderOutbox
 import com.trading.bot.repository.OrderOutboxRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -68,7 +67,7 @@ class OrderOutboxService(
                 "idempotencyKey" to idempotencyKey
             )
         )
-        val outbox = BlockingDb.io { outboxRepo.save(OrderOutbox(payloadJson = payload)) }
+        val outbox = outboxRepo.save(OrderOutbox(payloadJson = payload))
         logger.info { "Outbox order saved: ${outbox.id} $side $qty $ticker ($type)" }
         meterRegistry.counter("outbox.saved", Tags.of("type", type)).increment()
         return dispatch(outbox)
@@ -89,17 +88,17 @@ class OrderOutboxService(
                 else -> null
             }
             if (orderId != null) {
-                BlockingDb.io { outboxRepo.markSent(outbox.id!!, orderId) }
+                outboxRepo.markSent(outbox.id!!, orderId)
                 meterRegistry.counter("outbox.sent", Tags.of("type", type)).increment()
                 logger.info { "Outbox order SENT: ${outbox.id} -> alorOrderId=$orderId" }
                 PlaceOrderResult(outbox.id!!, orderId, success = true)
             } else {
-                BlockingDb.io { outboxRepo.markFailed(outbox.id!!, "Order rejected by Alor (no orderNumber)") }
+                outboxRepo.markFailed(outbox.id!!, "Order rejected by Alor (no orderNumber)")
                 meterRegistry.counter("outbox.failed", Tags.of("type", type)).increment()
                 PlaceOrderResult(outbox.id!!, null, success = false)
             }
         } catch (e: Exception) {
-            BlockingDb.io { outboxRepo.markFailed(outbox.id!!, e.message ?: "dispatch error") }
+            outboxRepo.markFailed(outbox.id!!, e.message ?: "dispatch error")
             logger.error(e) { "Outbox order FAILED: ${outbox.id}" }
             meterRegistry.counter("outbox.failed", Tags.of("type", type)).increment()
             PlaceOrderResult(outbox.id!!, null, success = false)
@@ -113,7 +112,7 @@ class OrderOutboxService(
     fun processPending() {
         scope.launch {
             try {
-                val pending = BlockingDb.io { outboxRepo.findPendingOlderThan(30) }
+                val pending = outboxRepo.findPendingOlderThan(30)
                 if (pending.isNotEmpty()) {
                     logger.info { "Outbox worker: ${pending.size} pending order(s) to re-dispatch" }
                     pending.forEach { outbox ->

@@ -209,12 +209,12 @@ Spring Boot по умолчанию пишет в консоль (лог-фор�
 
 | Уровень | Где используется |
 |---|---|
-| `DEBUG` | детали агентов, HTTP-запросы, JDBC SQL |
+| `DEBUG` | детали агентов, HTTP-запросы, R2DBC SQL |
 | `INFO` | открытие/закрытие позиций, решения арбитра, метки фаз |
 | `WARN` | fallback LLM, WIDE_SPREAD, reconnect WS, ошибки обновления токена |
 | `ERROR` | исключения циклов, parse-ошибки, сбои ордеров |
 
-Текущая конфигурация: `com.trading.bot: DEBUG`, `org.springframework.jdbc: DEBUG`.
+Текущая конфигурация: `com.trading.bot: DEBUG`, `org.springframework.r2dbc: DEBUG`.
 
 ### Correlation ID
 

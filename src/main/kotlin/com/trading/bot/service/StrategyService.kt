@@ -146,7 +146,7 @@ class StrategyService(
         feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>
     ) {
         // Локальный adaptive risk — без LLM, проверяем первым
-        if (BlockingDb.io { adaptiveRisk.shouldPauseTrading(ticker) }) {
+        if (adaptiveRisk.shouldPauseTrading(ticker)) {
             logger.info { "Skipping $ticker — trading paused by adaptive risk" }
             meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker)).increment()
             return
@@ -172,15 +172,15 @@ class StrategyService(
             techDeferred.await() to fundDeferred.await()
         }
 
-        val adaptiveConf = BlockingDb.io { adaptiveRisk.getAdaptiveConfidenceThreshold(ticker) }
+        val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
         val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId, adaptiveThreshold = adaptiveConf)
         val challenge = contrAgent.challenge(draft, tech, fund, snapshot, cycleId)
 
         val riskContext = RiskContext(
-            shouldPause = BlockingDb.io { adaptiveRisk.shouldPauseTrading(ticker) },
+            shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
             dailyLossLimitReached = riskManagement.isDailyLossLimitReached(),
-            drawdownRecovery = BlockingDb.io { adaptiveRisk.isInDrawdownRecovery() },
-            openPositionsCount = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }.size,
+            drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
+            openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
             maxOpenPositions = riskConfig.maxOpenPositions
         )
         val final = arbAgent.adjudicate(
@@ -203,8 +203,8 @@ class StrategyService(
             final
         }
 
-        val adaptiveSL = BlockingDb.io { adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr) }
-        val adaptiveTP = BlockingDb.io { adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr) }
+        val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr)
+        val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr)
         val effectiveConfidence = effectiveFinal.confidence.coerceAtLeast(adaptiveConf)
 
         val strategy = Strategy(
@@ -222,7 +222,7 @@ class StrategyService(
             validUntil = LocalDateTime.now().plusMinutes(10)
         )
 
-        BlockingDb.io { strategyRepo.save(strategy) }
+        strategyRepo.save(strategy)
         BlockingDb.io { redis.saveStrategy(strategy) }
         eventPublisher.publishStrategyGenerated(strategy)
         meterRegistry.counter("strategy.saved", Tags.of("ticker", ticker, "action", effectiveFinal.action.name)).increment()
@@ -234,9 +234,9 @@ class StrategyService(
         val cached = candleCache.getRecentCandles(ticker, tradingConfig.timeframe, 200)
         if (cached.size >= 50) return cached.sortedBy { it.time }
 
-        // 2. PostgreSQL — долгосрочное хранение
+        // 2. PostgreSQL — долгосрочное хранение (R2DBC, без Dispatchers.IO)
         val from = LocalDateTime.now().minusDays(7)
-        val db = BlockingDb.io { candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, tradingConfig.timeframe, from, LocalDateTime.now()) }
+        val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, tradingConfig.timeframe, from, LocalDateTime.now())
         if (db.size >= 50) {
             candleCache.addCandles(db)
             return db.sortedBy { it.time }
@@ -244,8 +244,10 @@ class StrategyService(
 
         // 3. MOEX — последний источник, с write-through в кэш
         val moex = moexClient.getCandles(ticker, 10, from)
-        BlockingDb.io {
-            moex.forEach { if (!candleRepo.existsByTickerAndTimeframeAndTime(it.ticker, it.timeframe, it.time)) candleRepo.save(it) }
+        moex.forEach { candle ->
+            if (!candleRepo.existsByTickerAndTimeframeAndTime(candle.ticker, candle.timeframe, candle.time)) {
+                candleRepo.save(candle)
+            }
         }
         candleCache.addCandles(moex)
         return moex.sortedBy { it.time }

@@ -38,7 +38,7 @@ class DashboardService(
      *
      * @return сериализуемая карта данных дашборда
      */
-    fun build(): Map<String, Any> {
+    suspend fun build(): Map<String, Any> {
         val openPositions = positionRepository.findByStatus(PositionStatus.OPEN)
         val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
         val todayStart = LocalDate.now().atStartOfDay()

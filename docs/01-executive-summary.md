@@ -199,7 +199,7 @@ flowchart LR
 |---|---|---|
 | Язык | Kotlin 1.9.21 | типизация + корутины (WS `Flow`) |
 | Фреймворк | Spring Boot 3.2.0 | DI, `@Scheduled`, `@EventListener`, actuator |
-| БД | PostgreSQL 15 + JDBC (`NamedParameterJdbcTemplate`) | единый источник правды, без ORM-оверхеда |
+| БД | PostgreSQL 15 + R2DBC (`DatabaseClient`) | единый источник правды, без ORM-оверхеда |
 | Кэш | Redis 7 | semantic cache, стратегии, feedback |
 | LLM | Kimi (Moonshot), модель `kimi-k3` | 6 агентов конвейера |
 | Устойчивость | resilience4j (CB/RateLimiter/Retry) | защита LLM-вызовов |
@@ -207,7 +207,7 @@ flowchart LR
 | Миграции | Liquibase | версионирование схемы |
 | Метрики | Micrometer + Prometheus | `/actuator/prometheus` |
 
-Почему **не** JPA/Hibernate: проект намеренно использует явный SQL — торговые запросы (позиции, outbox, свечи) критичны по производительности и прозрачны, а тонкий слой JDBC проще отлаживать.
+Почему **не** JPA/Hibernate: проект намеренно использует явный SQL — торговые запросы (позиции, outbox, свечи) критичны по производительности и прозрачны, а тонкий реактивный слой R2DBC (suspend-репозитории поверх `DatabaseClient`) проще отлаживать и не блокирует потоки. JDBC остаётся только для Liquibase-миграций.
 
 ## 1.15. Метрики успеха продукта
 

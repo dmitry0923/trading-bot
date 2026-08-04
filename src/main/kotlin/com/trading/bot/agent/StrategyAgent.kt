@@ -184,7 +184,7 @@ class StrategyAgent(
     private fun hold(marketPrice: BigDecimal, reason: String): Draft =
         Draft(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0, reason)
 
-    private fun logAndReturn(
+    private suspend fun logAndReturn(
         draft: Draft,
         ticker: String,
         cycleId: String,

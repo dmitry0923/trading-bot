@@ -1,40 +1,45 @@
 package com.trading.bot.repository
 
+import com.trading.bot.infrastructure.db.bindOrNull
+import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.AgentLog
-import org.springframework.jdbc.core.RowMapper
-import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
-import org.springframework.jdbc.support.GeneratedKeyHolder
+import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
-import java.sql.ResultSet
+import java.math.BigDecimal
+import java.time.LocalDateTime
 
 @Repository
 class AgentLogRepository(
-    private val namedTemplate: NamedParameterJdbcTemplate,
+    private val databaseClient: DatabaseClient,
 ) {
-    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
-        AgentLog(
-            id = rs.getLong("id"),
-            cycleId = rs.getString("cycle_id"),
-            agentName = rs.getString("agent_name"),
-            ticker = rs.getString("ticker"),
-            action = rs.getString("action"),
-            confidence = rs.getBigDecimal("confidence")?.toDouble(),
-            reasoning = rs.getString("reasoning"),
-            rawOutput = rs.getString("raw_output"),
-            latencyMs = rs.getLong("latency_ms").takeIf { it != 0L },
-            tokensUsed = rs.getInt("tokens_used").takeIf { it != 0 },
-            isCached = rs.getBoolean("is_cached"),
-            overrideReason = rs.getString("override_reason"),
-            createdAt = rs.getTimestamp("created_at").toLocalDateTime()
-        )
+    private fun toAgentLog(row: Row): AgentLog = AgentLog(
+        id = row.get("id", Long::class.javaObjectType),
+        cycleId = row.require("cycle_id", String::class.java),
+        agentName = row.require("agent_name", String::class.java),
+        ticker = row.get("ticker", String::class.java),
+        action = row.require("action", String::class.java),
+        confidence = row.get("confidence", BigDecimal::class.java)?.toDouble(),
+        reasoning = row.get("reasoning", String::class.java),
+        rawOutput = row.get("raw_output", String::class.java),
+        latencyMs = row.get("latency_ms", Long::class.javaObjectType)?.takeIf { it != 0L },
+        tokensUsed = row.get("tokens_used", Int::class.javaObjectType)?.takeIf { it != 0 },
+        isCached = row.require("is_cached", Boolean::class.javaObjectType),
+        overrideReason = row.get("override_reason", String::class.java),
+        createdAt = row.require("created_at", LocalDateTime::class.java)
+    )
+
+    suspend fun findTop100ByOrderByCreatedAtDesc(): List<AgentLog> {
+        return databaseClient.sql("SELECT * FROM agent_logs ORDER BY created_at DESC LIMIT 100")
+            .map { row, _ -> toAgentLog(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
     }
 
-    fun findTop100ByOrderByCreatedAtDesc(): List<AgentLog> {
-        return namedTemplate.query("SELECT * FROM agent_logs ORDER BY created_at DESC LIMIT 100", rowMapper)
-    }
-
-    fun findFiltered(ticker: String?, agentName: String?, limit: Int): List<AgentLog> {
+    suspend fun findFiltered(ticker: String?, agentName: String?, limit: Int): List<AgentLog> {
         val conditions = mutableListOf<String>()
         val params = mutableMapOf<String, Any>("limit" to limit.coerceIn(1, 500))
         ticker?.takeIf { it.isNotBlank() }?.let {
@@ -47,10 +52,12 @@ class AgentLogRepository(
         }
         val where = if (conditions.isEmpty()) "" else "WHERE ${conditions.joinToString(" AND ")} "
         val sql = "SELECT * FROM agent_logs $where ORDER BY created_at DESC LIMIT :limit"
-        return namedTemplate.query(sql, params, rowMapper)
+        var spec = databaseClient.sql(sql)
+        params.forEach { (name, value) -> spec = spec.bind(name, value) }
+        return spec.map { row, _ -> toAgentLog(row) }.all().collectList().awaitSingle()
     }
 
-    fun save(log: AgentLog): AgentLog {
+    suspend fun save(log: AgentLog): AgentLog {
         val sql = """
             INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output,
                                     latency_ms, tokens_used, is_cached, override_reason, created_at)
@@ -58,24 +65,26 @@ class AgentLogRepository(
                     :latencyMs, :tokensUsed, :isCached, :overrideReason, :createdAt)
             RETURNING id
         """.trimIndent()
-        val keyHolder = GeneratedKeyHolder()
-        namedTemplate.update(sql, MapSqlParameterSource()
-            .addValue("cycleId", log.cycleId)
-            .addValue("agentName", log.agentName)
-            .addValue("ticker", log.ticker)
-            .addValue("action", log.action)
-            .addValue("confidence", log.confidence)
-            .addValue("reasoning", log.reasoning)
-            .addValue("rawOutput", log.rawOutput)
-            .addValue("latencyMs", log.latencyMs)
-            .addValue("tokensUsed", log.tokensUsed)
-            .addValue("isCached", log.isCached)
-            .addValue("overrideReason", log.overrideReason)
-            .addValue("createdAt", log.createdAt), keyHolder)
-        return log.copy(id = keyHolder.key?.toLong())
+        val id = databaseClient.sql(sql)
+            .bind("cycleId", log.cycleId)
+            .bind("agentName", log.agentName)
+            .bindOrNull("ticker", log.ticker)
+            .bind("action", log.action)
+            .bindOrNull("confidence", log.confidence)
+            .bindOrNull("reasoning", log.reasoning)
+            .bindOrNull("rawOutput", log.rawOutput)
+            .bindOrNull("latencyMs", log.latencyMs)
+            .bindOrNull("tokensUsed", log.tokensUsed)
+            .bind("isCached", log.isCached)
+            .bindOrNull("overrideReason", log.overrideReason)
+            .bind("createdAt", log.createdAt)
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .one()
+            .awaitSingle()
+        return log.copy(id = id)
     }
 
-    fun deleteAll() {
-        namedTemplate.update("DELETE FROM agent_logs", emptyMap<String, Any>())
+    suspend fun deleteAll() {
+        databaseClient.sql("DELETE FROM agent_logs").then().awaitSingleOrNull()
     }
 }

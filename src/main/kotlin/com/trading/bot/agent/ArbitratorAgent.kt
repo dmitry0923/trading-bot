@@ -226,7 +226,7 @@ class ArbitratorAgent(
     private fun hold(price: BigDecimal, reason: String, overrideReason: String?): Final =
         Final(StrategyAction.HOLD, price, 0, null, null, false, 0.0, reason, overrideReason)
 
-    private fun logAndReturn(
+    private suspend fun logAndReturn(
         dec: Final,
         ticker: String,
         cycleId: String,

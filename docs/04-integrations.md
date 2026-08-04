@@ -274,6 +274,7 @@ sequenceDiagram
 ### Kimi (LLM)
 
 - Включён resilience4j: `circuit-breaker-enabled`, `rate-limiter-enabled`, `retry-enabled` (все `true` по умолчанию).
+- **Очередь запросов** (`LlmRequestQueue` на Kotlin Channel): параллельные вызовы ограничены `llm.queue-concurrency` (по умолчанию 2), избыточные встают в FIFO. Защищает от таранов при параллельной обработке тикеров.
 - `response_format={"type":"json_object"}` — гарантия структурированного ответа.
 - **Семантический кэш** отключается через `LLM_SEMANTIC_CACHE=false`, TTL — `LLM_SEMANTIC_CACHE_TTL` (10 мин).
 

@@ -48,7 +48,7 @@ class BacktestEngine(
      * @param slPercent стоп-лосс в % от цены входа (по умолчанию 2%)
      * @param tpPercent тейк-профит в % от цены входа (по умолчанию 4%)
      */
-    fun run(
+    suspend fun run(
         ticker: String,
         days: Int = 365,
         timeframe: String = "MINUTE_10",

@@ -18,6 +18,8 @@ import org.springframework.stereotype.Component
  * @property circuitBreakerEnabled включает Circuit Breaker
  * @property rateLimiterEnabled включает Rate Limiter
  * @property retryEnabled включает Retry
+ * @property queueCapacity ёмкость очереди запросов LLM (FIFO)
+ * @property queueConcurrency максимальное число одновременных LLM-вызовов
  */
 @Component
 @ConfigurationProperties(prefix = "llm")
@@ -37,4 +39,7 @@ class LlmConfig {
     var circuitBreakerEnabled: Boolean = true
     var rateLimiterEnabled: Boolean = true
     var retryEnabled: Boolean = true
+
+    var queueCapacity: Int = 64
+    var queueConcurrency: Int = 2
 }

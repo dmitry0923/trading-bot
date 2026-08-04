@@ -61,7 +61,7 @@ com.trading.bot.backtest
 
 ## 11.3. BacktestEngine
 
-`@Service`, единственная зависимость — `CandleRepository` (JDBC, таблица `candles`).
+`@Service`, единственная зависимость — `CandleRepository` (R2DBC, таблица `candles`).
 
 ### Публичное API
 

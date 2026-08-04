@@ -86,7 +86,7 @@ class TradingBotService(
     fun pollMarketData() {
         scope.launch {
             val now = Instant.now()
-            val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
+            val open = positionRepo.findByStatus(PositionStatus.OPEN)
             open.map { it.ticker }.distinct()
                 .filter { ticker ->
                     val lastWs = lastWsTickAt[ticker]
@@ -118,7 +118,7 @@ class TradingBotService(
                     logger.warn { "Daily loss limit reached, skip entry ${strat.ticker}" }
                     return@launch
                 }
-                val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
+                val open = positionRepo.findByStatus(PositionStatus.OPEN)
                 if (open.any { it.ticker == strat.ticker }) return@launch
                 if (open.size > tradingConfig.maxOpenPositionsForNewEntry) {
                     logger.info { "Open positions ${open.size} > max ${tradingConfig.maxOpenPositionsForNewEntry}, skip ${strat.ticker}" }
@@ -154,7 +154,7 @@ class TradingBotService(
         scope.launch {
             val handlerStart = System.nanoTime()
             try {
-                val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
+                val open = positionRepo.findByStatus(PositionStatus.OPEN)
                     .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
                 open.forEach { pos ->
                     val price = event.price
@@ -194,7 +194,7 @@ class TradingBotService(
                             if (shouldUpd) { pos.takeProfit = newTP; logger.info { "TP updated ${pos.ticker} -> $newTP" }; tpUpdated = true }
                         }
                     }
-                    BlockingDb.io { positionRepo.save(pos) }
+                    positionRepo.save(pos)
                     if (slUpdated || tpUpdated) {
                         tradeEventService.recordPositionUpdated(pos)
                     }
@@ -247,20 +247,20 @@ class TradingBotService(
     }
 
     private suspend fun openPosition(strat: Strategy) {
-        val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
+        val open = positionRepo.findByStatus(PositionStatus.OPEN)
         val check = risk.validateNewStrategy(strat, open)
         if (!check.allowed) {
             logger.warn { "Risk reject ${strat.ticker}: ${check.reason}" }
             meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker)).increment()
             return
         }
-        if (BlockingDb.io { adaptiveRisk.exceedsCorrelationLimit(strat.ticker, open) }) {
+        if (adaptiveRisk.exceedsCorrelationLimit(strat.ticker, open)) {
             logger.warn { "Correlation filter reject ${strat.ticker}: correlated with an open position" }
             meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "CORRELATION")).increment()
             return
         }
 
-        val kellySizeRub = BlockingDb.io { adaptiveRisk.calculateOptimalPositionSize(strat.ticker) }
+        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(strat.ticker)
         val kellyQty = if (kellySizeRub > BigDecimal.ZERO) {
             kellySizeRub.divide(strat.targetPrice, 0, RoundingMode.DOWN).toInt().coerceAtLeast(1)
         } else {
@@ -298,21 +298,19 @@ class TradingBotService(
             trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
             alorOrderId = orderId
         )
-        BlockingDb.io { positionRepo.save(pos) }
+        positionRepo.save(pos)
         tradeEventService.recordPositionOpened(pos)
         risk.updateDailyPnL(BigDecimal.ZERO)
-        BlockingDb.io {
-            agentLogRepo.save(
-                AgentLog(
-                    cycleId = strat.cycleId,
-                    agentName = "TradingBot",
-                    ticker = strat.ticker,
-                    action = "OPEN",
-                    confidence = strat.confidence,
-                    reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)"
-                )
+        agentLogRepo.save(
+            AgentLog(
+                cycleId = strat.cycleId,
+                agentName = "TradingBot",
+                ticker = strat.ticker,
+                action = "OPEN",
+                confidence = strat.confidence,
+                reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)"
             )
-        }
+        )
         meterRegistry.counter("bot.position.opened", Tags.of("ticker", strat.ticker, "direction", dir.name)).increment()
         logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ $fillPrice (adaptive qty=$qty)" }
     }
@@ -338,7 +336,7 @@ class TradingBotService(
             PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(BigDecimal(pos.quantity))
         }
         pos.pnl = pnl
-        BlockingDb.io { positionRepo.save(pos) }
+        positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason)
         risk.updateDailyPnL(pnl)
         meterRegistry.counter("bot.position.closed", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
@@ -353,7 +351,7 @@ class TradingBotService(
     private suspend fun applyExecutionReport(report: ExecutionReport) {
         if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
         val orderId = report.orderId
-        val pos = BlockingDb.io { positionRepo.findByAlorOrderId(orderId) } ?: return
+        val pos = positionRepo.findByAlorOrderId(orderId) ?: return
         if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
         if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
 
@@ -367,7 +365,7 @@ class TradingBotService(
         pos.status = if (report.status == OrderStatus.PARTIALLY_FILLED) PositionStatus.OPEN else PositionStatus.CLOSED
         pos.closedAt = if (report.status == OrderStatus.PARTIALLY_FILLED) null else LocalDateTime.now()
         pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
-        BlockingDb.io { positionRepo.save(pos) }
+        positionRepo.save(pos)
         if (pos.status == PositionStatus.CLOSED) {
             tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
         }

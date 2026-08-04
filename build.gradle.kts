@@ -21,6 +21,9 @@ repositories {
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    // R2DBC: реактивный доступ к PostgreSQL из всех репозиториев приложения
+    implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
+    // spring-boot-starter-jdbc остаётся ТОЛЬКО для Liquibase-миграций (Liquibase не поддерживает R2DBC)
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
     implementation("org.liquibase:liquibase-core")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
@@ -44,6 +47,7 @@ dependencies {
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml")
 
     runtimeOnly("org.postgresql:postgresql")
+    runtimeOnly("org.postgresql:r2dbc-postgresql")
 
     // ✅ ИСПРАВЛЕННЫЕ ТЕСТОВЫЕ ЗАВИСИМОСТИ
     testImplementation("org.springframework.boot:spring-boot-starter-test")

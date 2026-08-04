@@ -33,7 +33,7 @@ class TradeAnalysisService(
      * @param days количество дней для анализа (по умолчанию 14)
      * @return карта тикер -> TradeStats (пустая, если закрытых позиций нет)
      */
-    fun analyzeLastNDays(days: Int = 14): Map<String, TradeStats> {
+    suspend fun analyzeLastNDays(days: Int = 14): Map<String, TradeStats> {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val closed = positionRepo.findClosedSince(since)
 
@@ -47,7 +47,7 @@ class TradeAnalysisService(
         }
     }
 
-    private fun buildStats(ticker: String, trades: List<Position>, days: Int): TradeStats {
+    private suspend fun buildStats(ticker: String, trades: List<Position>, days: Int): TradeStats {
         val total = trades.size
         val wins = trades.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
         val losses = total - wins
@@ -123,7 +123,7 @@ class TradeAnalysisService(
         return maxStreak
     }
 
-    private fun detectAndPersistBlindSpots(ticker: String, trades: List<Position>): List<BlindSpot> {
+    private suspend fun detectAndPersistBlindSpots(ticker: String, trades: List<Position>): List<BlindSpot> {
         val losing = trades.filter { (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO }
         if (losing.size < 3) return emptyList()
 
@@ -158,7 +158,7 @@ class TradeAnalysisService(
         return spots
     }
 
-    private fun persistBlindSpot(ticker: String, spot: BlindSpot) {
+    private suspend fun persistBlindSpot(ticker: String, spot: BlindSpot) {
         val existing = blindSpotRepo.findByTickerAndIsActiveTrue(ticker)
             .find { it.conditionPattern == spot.conditionPattern }
         if (existing != null) {
@@ -184,7 +184,7 @@ class TradeAnalysisService(
      * @param days количество дней для анализа (по умолчанию 30)
      * @return почасовая карта час -> win rate
      */
-    fun timePatternAnalysis(ticker: String, days: Int = 30): TimePattern {
+    suspend fun timePatternAnalysis(ticker: String, days: Int = 30): TimePattern {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val trades = positionRepo.findClosedByTickerSince(ticker, since)
         val hourly = trades.groupBy { it.openedAt.hour }

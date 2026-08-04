@@ -97,7 +97,7 @@ class AdaptiveRiskService(
      * @param ticker тикер инструмента
      * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
      */
-    fun calculateOptimalPositionSize(ticker: String): BigDecimal {
+    suspend fun calculateOptimalPositionSize(ticker: String): BigDecimal {
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
         if (stats == null || stats.totalTrades < 5) {
             meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), riskConfig.maxPositionRub.toDouble())
@@ -130,7 +130,7 @@ class AdaptiveRiskService(
      * @param atr текущее значение ATR
      * @return цена стоп-лосса (с 2 знаками после запятой)
      */
-    fun calculateAdaptiveSL(
+    suspend fun calculateAdaptiveSL(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         ticker: String,
@@ -158,7 +158,7 @@ class AdaptiveRiskService(
      * @param atr текущее значение ATR
      * @return цена тейк-профита (с 2 знаками после запятой)
      */
-    fun calculateAdaptiveTP(
+    suspend fun calculateAdaptiveTP(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         ticker: String,
@@ -183,7 +183,7 @@ class AdaptiveRiskService(
      * @param ticker тикер инструмента
      * @return порог уверенности от 0.55 (сильная статистика) до 0.80 (слабая)
      */
-    fun getAdaptiveConfidenceThreshold(ticker: String): Double {
+    suspend fun getAdaptiveConfidenceThreshold(ticker: String): Double {
         val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
         return when {
             stats == null -> 0.60
@@ -199,7 +199,7 @@ class AdaptiveRiskService(
      *
      * @return true, если за последние 3 дня было >= 3 убыточных сделок подряд
      */
-    fun isInDrawdownRecovery(): Boolean {
+    suspend fun isInDrawdownRecovery(): Boolean {
         val recent = positionRepo.findClosedSince(LocalDateTime.now().minusDays(3))
         val consecutiveLosses = recent.reversed().takeWhile {
             (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO
@@ -215,7 +215,7 @@ class AdaptiveRiskService(
      * @param ticker тикер инструмента
      * @return true при серии >= 4 убытков или очень низком profit factor
      */
-    fun shouldPauseTrading(ticker: String): Boolean {
+    suspend fun shouldPauseTrading(ticker: String): Boolean {
         val stats = tradeAnalysisService.analyzeLastNDays(7)[ticker]
         val result = when {
             stats == null -> false

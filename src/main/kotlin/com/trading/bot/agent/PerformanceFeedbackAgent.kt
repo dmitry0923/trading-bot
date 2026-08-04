@@ -196,7 +196,7 @@ class PerformanceFeedbackAgent(
         }
     }
 
-    private fun saveAdjustments(feedback: StrategyFeedback, stats: TradeStats) {
+    private suspend fun saveAdjustments(feedback: StrategyFeedback, stats: TradeStats) {
         if (feedback.confidenceAdjustment != 0.0) {
             adjustmentRepo.save(
                 StrategyAdjustment(

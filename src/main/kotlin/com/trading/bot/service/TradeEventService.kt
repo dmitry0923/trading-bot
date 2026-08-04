@@ -1,7 +1,6 @@
 package com.trading.bot.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.Position
 import com.trading.bot.model.TradeEvent
 import com.trading.bot.repository.TradeEventRepository
@@ -49,7 +48,7 @@ class TradeEventService(
                 occurredAt = LocalDateTime.now(),
                 sequenceNumber = 0
             )
-            BlockingDb.io { tradeEventRepo.append(event) }
+            tradeEventRepo.append(event)
         } catch (e: Exception) {
             logger.warn(e) { "Trade event append failed: $type (ticker=${pos.ticker})" }
         }

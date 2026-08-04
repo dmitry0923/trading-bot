@@ -26,6 +26,13 @@ spring:
     username: ${DB_USER:trader}
     password: ${DB_PASS:trader}
     driver-class-name: org.postgresql.Driver
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
+    username: ${DB_USER:trader}
+    password: ${DB_PASS:trader}
+    pool:
+      initial-size: 5
+      max-size: 20
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.yaml
@@ -64,6 +71,8 @@ llm:
   circuit-breaker-enabled: true
   rate-limiter-enabled: true
   retry-enabled: true
+  queue-capacity: 64          # ёмкость FIFO-очереди LLM-запросов
+  queue-concurrency: 2        # максимум одновременных LLM-вызовов
 
 resilience4j:                      # конфигурация Resilience4j для LLM
   circuitbreaker:
@@ -147,7 +156,7 @@ risk:
 logging:
   level:
     com.trading.bot: DEBUG
-    org.springframework.jdbc: DEBUG
+    org.springframework.r2dbc: DEBUG
 ```
 
 ## 8.2. Таблица переменных окружения
@@ -257,7 +266,8 @@ MONITOR_INTERVAL_MS=600000
 ## 8.6. Рекомендации
 
 - `max-open-positions-for-new-entry` (`MAX_OPEN_POS`) — это лимит **новых входов за один бот-цикл**, не путать с `risk.max-open-positions` (максимум открытых одновременно).
-- Логирование JDBC (`org.springframework.jdbc: DEBUG`) — для диагностики, в проде убрать.
+- Логирование R2DBC (`org.springframework.r2dbc: DEBUG` / `io.r2dbc: DEBUG`) — для диагностики, в проде убрать.
+- `spring.datasource.*` (JDBC) нужен ТОЛЬКО для Liquibase-миграций; все запросы приложения идут по `spring.r2dbc.*`. Так как Spring Boot 3.2 не создаёт JDBC `DataSource` при наличии R2DBC `ConnectionFactory`, бин `liquibaseDataSource` объявлен явно в `DatabaseConfig` (см. раздел 6.3).
 
 ## 8.7. Приоритет конфигурации (Spring Boot)
 

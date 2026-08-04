@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit
  * Отказоустойчивый LLM-клиент.
  *
  * - Circuit Breaker / Rate Limiter / Retry через Resilience4j (конфиг в application.yml: resilience4j.*)
+ * - Очередь запросов [LlmRequestQueue]: ограничение параллельных вызовов + FIFO
  * - Таймаут HTTP 30 секунд
  * - response_format = {"type":"json_object"} — принудительный JSON
  * - Semantic Cache (Redis) поверх вызовов
@@ -41,6 +42,11 @@ class ResilientLlmClient(
     private val retryRegistry: RetryRegistry
 ) {
     private val logger = KotlinLogging.logger {}
+
+    private val llmQueue = LlmRequestQueue(
+        capacity = llmConfig.queueCapacity,
+        concurrency = llmConfig.queueConcurrency
+    )
 
     private val webClient: WebClient = WebClient.builder()
         .baseUrl(llmConfig.baseUrl)
@@ -84,7 +90,7 @@ class ResilientLlmClient(
         val user = prompt.renderUser(variables)
 
         val response = try {
-            decoratedCall { callLlm(system, user, temperature, agent) }
+            llmQueue.submit { decoratedCall { callLlm(system, user, temperature, agent) } }
         } catch (e: Exception) {
             logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
             meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()

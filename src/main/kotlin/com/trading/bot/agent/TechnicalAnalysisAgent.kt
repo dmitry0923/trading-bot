@@ -150,7 +150,7 @@ class TechnicalAnalysisAgent(
         }
     }
 
-    private fun logAndReturn(
+    private suspend fun logAndReturn(
         report: TechnicalReport,
         ticker: String,
         cycleId: String,

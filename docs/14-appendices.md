@@ -122,6 +122,7 @@ services:
         condition: service_healthy
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/trading_bot
+      SPRING_R2DBC_URL: r2dbc:postgresql://postgres:5432/trading_bot
       DB_USER: trader
       DB_PASS: trader_pass
       REDIS_HOST: redis

@@ -63,7 +63,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
 
     @BeforeEach
     fun setup() {
-        positionRepo.deleteAll()
+        runBlocking { positionRepo.deleteAll() }
         snapshotRepo.deleteAll()
         futuresRiskEngine.resetDailyState()
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
@@ -78,8 +78,8 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     fun `futures entry creates position with full risk fields`() {
         eventPublisher.publishStrategyGenerated(strategy("Si", StrategyAction.BUY, BigDecimal("92000")))
 
-        awaitUntil { positionRepo.findByStatus(PositionStatus.OPEN).isNotEmpty() }
-        val pos = positionRepo.findByStatus(PositionStatus.OPEN).first()
+        awaitUntil { runBlocking { positionRepo.findByStatus(PositionStatus.OPEN).isNotEmpty() } }
+        val pos = runBlocking { positionRepo.findByStatus(PositionStatus.OPEN).first() }
 
         assertEquals(InstrumentType.FUTURES, pos.instrumentType)
         assertEquals(1, pos.quantity)
@@ -98,33 +98,35 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `critical liquidation distance closes position at market`() {
-        val opened = positionRepo.save(
-            Position(
-                ticker = "Si",
-                direction = PositionDirection.LONG,
-                quantity = 1,
-                entryPrice = BigDecimal("92000"),
-                currentPrice = BigDecimal("92000"),
-                stopLoss = BigDecimal("91999.50"),
-                takeProfit = BigDecimal("92001.00"),
-                instrumentType = InstrumentType.FUTURES,
-                leverage = BigDecimal("2.0"),
-                goPerContract = BigDecimal("15000"),
-                marginUsed = BigDecimal("7500"),
-                liquidationPrice = BigDecimal("91985"),
-                variationMargin = BigDecimal.ZERO,
-                stopLossPoints = 50,
-                status = PositionStatus.OPEN
+        val opened = runBlocking {
+            positionRepo.save(
+                Position(
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("92000"),
+                    currentPrice = BigDecimal("92000"),
+                    stopLoss = BigDecimal("91999.50"),
+                    takeProfit = BigDecimal("92001.00"),
+                    instrumentType = InstrumentType.FUTURES,
+                    leverage = BigDecimal("2.0"),
+                    goPerContract = BigDecimal("15000"),
+                    marginUsed = BigDecimal("7500"),
+                    liquidationPrice = BigDecimal("91985"),
+                    variationMargin = BigDecimal.ZERO,
+                    stopLossPoints = 50,
+                    status = PositionStatus.OPEN
+                )
             )
-        )
+        }
 
         // 91986: остаток буфера 1/15 = 6.7% < 10% → CRITICAL → market close
         eventPublisher.publishPriceChanged("Si", BigDecimal("91986"))
 
         awaitUntil {
-            positionRepo.findById(opened.id!!).status != PositionStatus.OPEN
+            runBlocking { positionRepo.findById(opened.id!!).status != PositionStatus.OPEN }
         }
-        val closed = positionRepo.findById(opened.id!!)
+        val closed = runBlocking { positionRepo.findById(opened.id!!) }
 
         assertEquals(PositionStatus.CLOSED, closed.status)
         assertEquals("LIQUIDATION_CRITICAL", closed.closeReason)
@@ -144,29 +146,31 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).count() >= 1.0
         }
-        assertTrue(positionRepo.findByStatus(PositionStatus.OPEN).isEmpty())
+        assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
 
     @Test
     fun `entry rejected when position already open`() {
-        positionRepo.save(
-            Position(
-                ticker = "Si",
-                direction = PositionDirection.LONG,
-                quantity = 1,
-                entryPrice = BigDecimal("92000"),
-                instrumentType = InstrumentType.FUTURES,
-                liquidationPrice = BigDecimal("91985"),
-                status = PositionStatus.OPEN
+        runBlocking {
+            positionRepo.save(
+                Position(
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("92000"),
+                    instrumentType = InstrumentType.FUTURES,
+                    liquidationPrice = BigDecimal("91985"),
+                    status = PositionStatus.OPEN
+                )
             )
-        )
+        }
 
         eventPublisher.publishStrategyGenerated(strategy("Si", StrategyAction.BUY, BigDecimal("92000")))
 
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "MAX_POSITIONS")).count() >= 1.0
         }
-        assertEquals(1, positionRepo.findByStatus(PositionStatus.OPEN).size)
+        assertEquals(1, runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.size)
     }
 
     @Test
@@ -178,7 +182,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "OUTSIDE_HOURS")).count() >= 1.0
         }
-        assertTrue(positionRepo.findByStatus(PositionStatus.OPEN).isEmpty())
+        assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
 
     private fun strategy(ticker: String, action: StrategyAction, target: BigDecimal): Strategy =

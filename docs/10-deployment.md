@@ -36,6 +36,8 @@ data:
     spring:
       datasource:
         url: jdbc:postgresql://${DB_HOST}:5432/${DB_NAME}
+      r2dbc:
+        url: r2dbc:postgresql://${DB_HOST}:5432/${DB_NAME}
       redis:
         host: ${REDIS_HOST}
     trading:

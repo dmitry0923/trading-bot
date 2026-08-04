@@ -5,7 +5,7 @@ Production-ready trading bot for Moscow Exchange (MOEX) with AI-driven strategy 
 ## Architecture
 
 - **Kotlin 1.9.21** + **Spring Boot 3.2.0**
-- **JdbcTemplate** (no Hibernate) + **Liquibase** migrations
+- **R2DBC** (reactive `DatabaseClient`, all repositories `suspend`) + **Liquibase** migrations (JDBC)
 - **PostgreSQL** for persistence
 - **Redis** for caching
 - **Micrometer** + **Prometheus** metrics

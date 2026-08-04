@@ -6,14 +6,14 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
+import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
 class BacktestEngineTest {
 
     private val engine = BacktestEngine(
-        com.trading.bot.repository.CandleRepository(Mockito.mock(NamedParameterJdbcTemplate::class.java))
+        com.trading.bot.repository.CandleRepository(Mockito.mock(DatabaseClient::class.java))
     )
 
     private fun candle(price: Double, i: Int): Candle = Candle(

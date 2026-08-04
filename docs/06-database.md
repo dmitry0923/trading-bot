@@ -1,6 +1,6 @@
 # 6. База данных
 
-PostgreSQL 15, доступ через `spring-boot-starter-jdbc` + `NamedParameterJdbcTemplate` (без JPA/Hibernate). Миграции — Liquibase.
+PostgreSQL 15, доступ через `spring-boot-starter-data-r2dbc` (reactive `DatabaseClient`). Все 9 репозиториев — suspend-функции (не блокируют потоки), кроме `DailyRiskSnapshotRepository` (намеренно sync: вызывается из синхронного риск-движка, внутри `Mono.block()`). JDBC (`spring-boot-starter-jdbc` + `spring.datasource.*`) остаётся **только** для Liquibase-миграций схемы. JPA/Hibernate нет.
 
 ## 6.1. ER-диаграмма
 
@@ -221,6 +221,8 @@ UNIQUE `(ticker, timeframe, time)` — защита от дублей. Инде�
 ## 6.3. Liquibase Changelogs
 
 **Master changelog** `db/changelog/db.changelog-master.yaml`:
+
+> Важно: Spring Boot 3.2 отключает `DataSourceAutoConfiguration`, когда в контексте есть R2DBC `ConnectionFactory` (условие `@ConditionalOnMissingBean(type = "io.r2dbc.spi.ConnectionFactory")`), а `LiquibaseAutoConfiguration` требует бин `DataSource`. Поэтому бин `liquibaseDataSource` создаётся явно в `com.trading.bot.config.DatabaseConfig` из свойств `spring.datasource.*` (`DataSourceProperties.initializeDataSourceBuilder()`). Без этого бина Liquibase не выполняет миграции (тесты падали с `relation does not exist`).
 
 ```yaml
 databaseChangeLog:

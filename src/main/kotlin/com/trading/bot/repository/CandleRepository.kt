@@ -1,60 +1,85 @@
 package com.trading.bot.repository
 
+import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.Candle
-import org.springframework.jdbc.core.RowMapper
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
+import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
-import java.sql.ResultSet
+import java.math.BigDecimal
 import java.time.LocalDateTime
 
 @Repository
 class CandleRepository(
-    private val namedTemplate: NamedParameterJdbcTemplate,
+    private val databaseClient: DatabaseClient,
 ) {
-    private val rowMapper = RowMapper { rs: ResultSet, _: Int ->
-        Candle(
-            id = rs.getLong("id"),
-            ticker = rs.getString("ticker"),
-            timeframe = rs.getString("timeframe"),
-            openPrice = rs.getBigDecimal("open_price"),
-            highPrice = rs.getBigDecimal("high_price"),
-            lowPrice = rs.getBigDecimal("low_price"),
-            closePrice = rs.getBigDecimal("close_price"),
-            volume = rs.getLong("volume"),
-            time = rs.getTimestamp("time").toLocalDateTime()
-        )
-    }
+    private fun toCandle(row: Row): Candle = Candle(
+        id = row.get("id", Long::class.javaObjectType),
+        ticker = row.require("ticker", String::class.java),
+        timeframe = row.require("timeframe", String::class.java),
+        openPrice = row.require("open_price", BigDecimal::class.java),
+        highPrice = row.require("high_price", BigDecimal::class.java),
+        lowPrice = row.require("low_price", BigDecimal::class.java),
+        closePrice = row.require("close_price", BigDecimal::class.java),
+        volume = row.require("volume", Long::class.javaObjectType),
+        time = row.require("time", LocalDateTime::class.java)
+    )
 
-    fun findByTickerAndTimeframeAndTimeBetween(ticker: String, timeframe: String, from: LocalDateTime, to: LocalDateTime): List<Candle> {
+    suspend fun findByTickerAndTimeframeAndTimeBetween(
+        ticker: String,
+        timeframe: String,
+        from: LocalDateTime,
+        to: LocalDateTime
+    ): List<Candle> {
         val sql = """
             SELECT * FROM candles
             WHERE ticker = :ticker AND timeframe = :timeframe AND time BETWEEN :from AND :to
             ORDER BY time
         """.trimIndent()
-        return namedTemplate.query(sql, mapOf("ticker" to ticker, "timeframe" to timeframe, "from" to from, "to" to to), rowMapper)
+        return databaseClient.sql(sql)
+            .bind("ticker", ticker)
+            .bind("timeframe", timeframe)
+            .bind("from", from)
+            .bind("to", to)
+            .map { row, _ -> toCandle(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
     }
 
-    fun existsByTickerAndTimeframeAndTime(ticker: String, timeframe: String, time: LocalDateTime): Boolean {
-        val sql = "SELECT COUNT(*) FROM candles WHERE ticker = :ticker AND timeframe = :timeframe AND time = :time"
-        val count = namedTemplate.queryForObject(sql, mapOf("ticker" to ticker, "timeframe" to timeframe, "time" to time), Int::class.java)
-        return (count ?: 0) > 0
+    suspend fun existsByTickerAndTimeframeAndTime(
+        ticker: String,
+        timeframe: String,
+        time: LocalDateTime
+    ): Boolean {
+        val sql = "SELECT COUNT(*) AS c FROM candles WHERE ticker = :ticker AND timeframe = :timeframe AND time = :time"
+        val count = databaseClient.sql(sql)
+            .bind("ticker", ticker)
+            .bind("timeframe", timeframe)
+            .bind("time", time)
+            .map { row, _ -> row.get("c", Long::class.javaObjectType)!! }
+            .one()
+            .awaitSingle()
+        return count > 0
     }
 
-    fun save(candle: Candle) {
+    suspend fun save(candle: Candle) {
         val sql = """
             INSERT INTO candles (ticker, timeframe, open_price, high_price, low_price, close_price, volume, time)
             VALUES (:ticker, :timeframe, :openPrice, :highPrice, :lowPrice, :closePrice, :volume, :time)
             ON CONFLICT (ticker, timeframe, time) DO NOTHING
         """.trimIndent()
-        namedTemplate.update(sql, mapOf(
-            "ticker" to candle.ticker,
-            "timeframe" to candle.timeframe,
-            "openPrice" to candle.openPrice,
-            "highPrice" to candle.highPrice,
-            "lowPrice" to candle.lowPrice,
-            "closePrice" to candle.closePrice,
-            "volume" to candle.volume,
-            "time" to candle.time
-        ))
+        databaseClient.sql(sql)
+            .bind("ticker", candle.ticker)
+            .bind("timeframe", candle.timeframe)
+            .bind("openPrice", candle.openPrice)
+            .bind("highPrice", candle.highPrice)
+            .bind("lowPrice", candle.lowPrice)
+            .bind("closePrice", candle.closePrice)
+            .bind("volume", candle.volume)
+            .bind("time", candle.time)
+            .then()
+            .awaitSingleOrNull()
     }
 }

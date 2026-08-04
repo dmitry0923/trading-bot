@@ -281,11 +281,12 @@ prompt.renderUser(variables)     // user-шаблон с переменными
 | Retry (внутренний) | `resilience4j.retry.instances.llm`, экспоненциальный backoff 1s→2s→4s, 3 попытки | `retry` |
 | Rate Limiter | `resilience4j.ratelimiter.instances.llm`: 20 запросов/60 с, timeout 5 с | `ratelimiter` |
 | Circuit Breaker (внешний) | `resilience4j.circuitbreaker.instances.llm`: окно 10, порог 50%, open на 20 с | `circuitbreaker` |
+| Очередь запросов | `LlmRequestQueue` (Kotlin Channel): FIFO, максимум параллельных вызовов = `queue-concurrency`, ожидание слота не блокирует поток | `llm.queue-capacity`, `llm.queue-concurrency` |
 | HTTP | WebClient + Reactor Netty, connect timeout 5 с, response timeout 30 с | `llm.timeout-sec` |
 | Semantic Cache | Redis поверх всех вызовов (см. ниже) | `llm.semantic-cache-*` |
 | Fallback | `LlmResponse.fallback(reason)` — JSON NEUTRAL/0.0 | — |
 
-Декор-порядок в коде: `call = retry { rateLimiter { circuitBreaker { callLlm(...) } } }`.
+Декор-порядок в коде: `queue { retry { rateLimiter { circuitBreaker { callLlm(...) } } } }`.
 
 Запрос к Kimi:
 

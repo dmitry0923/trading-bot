@@ -28,6 +28,14 @@ spring:
     username: ${DB_USER:trader}
     password: ${DB_PASS:trader}
     driver-class-name: org.postgresql.Driver
+  r2dbc:
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
+    username: ${DB_USER:trader}
+    password: ${DB_PASS:trader}
+    pool:
+      enabled: true
+      initial-size: 5
+      max-size: 20
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.yaml
@@ -66,6 +74,8 @@ llm:
   circuit-breaker-enabled: true
   rate-limiter-enabled: true
   retry-enabled: true
+  queue-capacity: 64
+  queue-concurrency: 2
 
 resilience4j:
   circuitbreaker:

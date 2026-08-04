@@ -76,7 +76,6 @@ class AlorWebSocketClient(
      */
     fun subscribeToOrders(): Flow<ExecutionReport> = callbackFlow {
         var cancelled = false
-        var attempt = 0
 
         lateinit var scheduleReconnect: (Int) -> Unit
         lateinit var connect: (Int) -> Unit
@@ -115,17 +114,20 @@ class AlorWebSocketClient(
                             )
                         )
                         startHeartbeat(session, "alor.ws")
-                        session.receive()
-                            .timeout(heartbeatTimeout)
-                            .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
-                            .mapNotNull { msg -> parseExecution(msg.payloadAsText) }
-                            .doOnNext { report ->
-                                meterRegistry.counter("alor.ws.execution_received").increment()
-                                if (report != null) {
-                                    val result = trySend(report)
-                                    if (result.isFailure) meterRegistry.counter("alor.ws.drop").increment()
-                                }
-                            }
+                        session.send(Mono.just(subscribeMsg))
+                            .thenMany(
+                                session.receive()
+                                    .timeout(heartbeatTimeout)
+                                    .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
+                                    .mapNotNull { msg -> parseExecution(msg.payloadAsText) }
+                                    .doOnNext { report ->
+                                        meterRegistry.counter("alor.ws.execution_received").increment()
+                                        if (report != null) {
+                                            val result = trySend(report)
+                                            if (result.isFailure) meterRegistry.counter("alor.ws.drop").increment()
+                                        }
+                                    }
+                            )
                             .then()
                     }.subscribe(
                         { /* connection closed normally */ },
@@ -163,7 +165,6 @@ class AlorWebSocketClient(
             return@callbackFlow
         }
         var cancelled = false
-        var attempt = 0
 
         lateinit var scheduleReconnect: (Int) -> Unit
         lateinit var connect: (Int) -> Unit
@@ -204,20 +205,23 @@ class AlorWebSocketClient(
                             )
                         )
                         startHeartbeat(session, "alor.ws.quotes")
-                        session.receive()
-                            .timeout(heartbeatTimeout)
-                            .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
-                            .mapNotNull { msg -> parseQuote(msg.payloadAsText) }
-                            .doOnNext { tick ->
-                                meterRegistry.counter("alor.ws.quote_received", Tags.of("ticker", tick?.ticker ?: "UNKNOWN")).increment()
-                                if (tick != null) {
-                                    val result = trySend(tick)
-                                    if (result.isFailure) {
-                                        meterRegistry.counter("alor.ws.quotes.drop").increment()
-                                        meterRegistry.counter("alor.ws.drop").increment()
+                        session.send(Mono.just(subscribeMsg))
+                            .thenMany(
+                                session.receive()
+                                    .timeout(heartbeatTimeout)
+                                    .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
+                                    .mapNotNull { msg -> parseQuote(msg.payloadAsText) }
+                                    .doOnNext { tick ->
+                                        meterRegistry.counter("alor.ws.quote_received", Tags.of("ticker", tick?.ticker ?: "UNKNOWN")).increment()
+                                        if (tick != null) {
+                                            val result = trySend(tick)
+                                            if (result.isFailure) {
+                                                meterRegistry.counter("alor.ws.quotes.drop").increment()
+                                                meterRegistry.counter("alor.ws.drop").increment()
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                            )
                             .then()
                     }.subscribe(
                         { /* connection closed normally */ },

@@ -46,7 +46,6 @@ object BacktestMetrics {
         val sharpe = sharpeRatio(tradeReturns)
         val mdd = maxDrawdown(equityCurve)
         val wins = tradeReturns.count { it > 0 }
-        val losses = tradeReturns.count { it < 0 }
         val winRate = if (tradeReturns.isNotEmpty()) wins.toDouble() / tradeReturns.size else 0.0
 
         val grossProfit = tradeReturns.filter { it > 0 }.sum()

@@ -1,7 +1,6 @@
 package com.trading.bot.service
 
 import com.trading.bot.model.*
-import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.PositionRepository
 import mu.KotlinLogging
@@ -22,7 +21,6 @@ import java.time.temporal.ChronoUnit
 @Service
 class TradeAnalysisService(
     private val positionRepo: PositionRepository,
-    private val agentLogRepo: AgentLogRepository,
     private val blindSpotRepo: BlindSpotRepository
 ) {
     private val logger = KotlinLogging.logger {}
@@ -43,11 +41,11 @@ class TradeAnalysisService(
         }
 
         return closed.groupBy { it.ticker }.mapValues { (ticker, trades) ->
-            buildStats(ticker, trades, days)
+            buildStats(ticker, trades)
         }
     }
 
-    private suspend fun buildStats(ticker: String, trades: List<Position>, days: Int): TradeStats {
+    private suspend fun buildStats(ticker: String, trades: List<Position>): TradeStats {
         val total = trades.size
         val wins = trades.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
         val losses = total - wins
@@ -73,7 +71,7 @@ class TradeAnalysisService(
 
         val avgHoldTime = if (trades.isNotEmpty()) {
             trades.mapNotNull { pos ->
-                if (pos.closedAt != null && pos.openedAt != null)
+                if (pos.closedAt != null)
                     ChronoUnit.MINUTES.between(pos.openedAt, pos.closedAt)
                 else null
             }.average().toLong()

@@ -10,7 +10,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -91,17 +90,17 @@ class OrderOutboxService(
                 outboxRepo.markSent(outbox.id!!, orderId)
                 meterRegistry.counter("outbox.sent", Tags.of("type", type)).increment()
                 logger.info { "Outbox order SENT: ${outbox.id} -> alorOrderId=$orderId" }
-                PlaceOrderResult(outbox.id!!, orderId, success = true)
+                PlaceOrderResult(outbox.id, orderId, success = true)
             } else {
                 outboxRepo.markFailed(outbox.id!!, "Order rejected by Alor (no orderNumber)")
                 meterRegistry.counter("outbox.failed", Tags.of("type", type)).increment()
-                PlaceOrderResult(outbox.id!!, null, success = false)
+                PlaceOrderResult(outbox.id, null, success = false)
             }
         } catch (e: Exception) {
             outboxRepo.markFailed(outbox.id!!, e.message ?: "dispatch error")
             logger.error(e) { "Outbox order FAILED: ${outbox.id}" }
             meterRegistry.counter("outbox.failed", Tags.of("type", type)).increment()
-            PlaceOrderResult(outbox.id!!, null, success = false)
+            PlaceOrderResult(outbox.id, null, success = false)
         }
     }
 

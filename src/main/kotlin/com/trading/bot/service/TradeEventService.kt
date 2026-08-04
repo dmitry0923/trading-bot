@@ -34,7 +34,7 @@ class TradeEventService(
     }
 
     suspend fun recordPositionClosed(pos: Position, reason: String) {
-        val snapshot = snapshot(pos) + ("closeReason" to (reason ?: pos.closeReason))
+        val snapshot = snapshot(pos) + ("closeReason" to reason)
         append(pos, "POSITION_CLOSED", snapshot)
     }
 

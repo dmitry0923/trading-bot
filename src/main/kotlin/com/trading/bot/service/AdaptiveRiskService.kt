@@ -109,7 +109,9 @@ class AdaptiveRiskService(
         val r = stats.avgWin.toDouble() / avgLossAbs
         val kelly = (w * r - (1 - w)) / r
 
-        val safeKelly = kelly.coerceAtMost(0.50).coerceAtLeast(0.0)
+        // Классический (Full) Kelly слишком агрессивен: применяем долю
+        // riskConfig.kellyFraction (Half/Quarter-Kelly по умолчанию 0.5) и кап 50%.
+        val safeKelly = (kelly * riskConfig.kellyFraction).coerceAtMost(0.50).coerceAtLeast(0.0)
         val size = if (safeKelly > 0) {
             riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly))
         } else {

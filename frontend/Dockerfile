@@ -1,10 +1,15 @@
-# Build stage: сборка CRA-дашборда
+# Build stage: сборка CRA-дашборда (TypeScript)
 FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package.json .
+COPY package.json package-lock.json* ./
 RUN npm install
+COPY tsconfig.json .
 COPY public public
 COPY src src
+ARG REACT_APP_AUTH_USER
+ARG REACT_APP_AUTH_PASSWORD
+ENV REACT_APP_AUTH_USER=$REACT_APP_AUTH_USER \
+    REACT_APP_AUTH_PASSWORD=$REACT_APP_AUTH_PASSWORD
 RUN npm run build
 
 # Runtime stage: nginx, отдаёт SPA и проксирует /api на backend

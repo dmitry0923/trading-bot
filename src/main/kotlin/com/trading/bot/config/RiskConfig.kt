@@ -30,6 +30,13 @@ class RiskConfig {
     /** Риск на сделку, % от депозита. 1.0 = 500 ₽ на 50k. */
     var riskPerTradePercent: Double = 1.0
 
+    /**
+     * Доля критерия Келли. Полный (Full) Kelly слишком агрессивен на реальных
+     * рынках. Золотой стандарт: 0.5 (Half-Kelly) или 0.25 (Quarter-Kelly) от результата.
+     * Значения: 1.0 = Full, 0.5 = Half, 0.25 = Quarter. По умолчанию Half-Kelly.
+     */
+    var kellyFraction: Double = 0.5
+
     /** Стоп-лосс по умолчанию в пунктах. 50 пунктов * 10 ₽ = 500 ₽ при 1 контракте. */
     var defaultStopLossPoints: Int = 50
 

@@ -1,7 +1,8 @@
 import React from 'react';
 import { useFetch } from '../api';
+import type { BlindSpot, TradeStats, TimePattern, AdaptiveParams, HealthData } from '../types';
 
-function Section({ title, children }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 20, padding: 12, border: '1px solid #ddd', borderRadius: 8 }}>
       <h3 style={{ marginTop: 0 }}>{title}</h3>
@@ -12,11 +13,11 @@ function Section({ title, children }) {
 
 export default function AnalyticsPage() {
   const [ticker, setTicker] = React.useState('SBER');
-  const { data: health, error: healthError } = useFetch('/api/v1/analytics/health', 30000);
-  const { data: tradeStats } = useFetch('/api/v1/analytics/trade-stats?days=14', 30000);
-  const { data: blindSpots } = useFetch('/api/v1/analytics/blind-spots', 30000);
-  const { data: timePattern } = useFetch(`/api/v1/analytics/time-pattern/${ticker}?days=30`, 30000);
-  const { data: adaptive } = useFetch(`/api/v1/analytics/adaptive-params/${ticker}`, 30000);
+  const { data: health, error: healthError } = useFetch<HealthData>('/api/v1/analytics/health', 30000);
+  const { data: tradeStats } = useFetch<Record<string, TradeStats>>('/api/v1/analytics/trade-stats?days=14', 30000);
+  const { data: blindSpots } = useFetch<BlindSpot[]>('/api/v1/analytics/blind-spots', 30000);
+  const { data: timePattern } = useFetch<TimePattern>(`/api/v1/analytics/time-pattern/${ticker}?days=30`, 30000);
+  const { data: adaptive } = useFetch<AdaptiveParams>(`/api/v1/analytics/adaptive-params/${ticker}`, 30000);
 
   return (
     <div>
@@ -26,7 +27,7 @@ export default function AnalyticsPage() {
       </Section>
 
       <Section title="Trade Stats (last 14 days)">
-        <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <table border={1} cellPadding={6} style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead style={{ background: '#f0f0f0' }}>
             <tr>
               <th>Ticker</th><th>Trades</th><th>WinRate</th><th>PF</th><th>Max Losses</th>
@@ -48,7 +49,7 @@ export default function AnalyticsPage() {
               </tr>
             ))}
             {(!tradeStats || Object.keys(tradeStats).length === 0) && (
-              <tr><td colSpan="9" style={{ textAlign: 'center', color: '#888' }}>No trade stats yet</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: '#888' }}>No trade stats yet</td></tr>
             )}
           </tbody>
         </table>

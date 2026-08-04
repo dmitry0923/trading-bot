@@ -2,14 +2,12 @@ package com.trading.bot.controller
 
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.HistoricalDataLoader
-import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import com.trading.bot.service.*
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.web.bind.annotation.*
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
-import java.math.BigDecimal
 
 /**
  * REST API для React Dashboard.
@@ -23,9 +21,7 @@ import java.math.BigDecimal
  */
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = ["*"])
 class ApiController(
-    private val tradingConfig: TradingConfig,
     private val strategyRepository: StrategyRepository,
     private val positionRepository: PositionRepository,
     private val agentLogRepository: AgentLogRepository,
@@ -107,7 +103,7 @@ class ApiController(
      * POSITION_OPENED / POSITION_UPDATED / POSITION_CLOSED в порядке sequence.
      */
     @GetMapping("/positions/{positionId}/events")
-    suspend fun getPositionEvents(@PathVariable positionId: Long): List<com.trading.bot.model.TradeEvent> {
+    suspend fun getPositionEvents(@PathVariable positionId: Long): List<TradeEvent> {
         val aggregateId = java.util.UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
         return tradeEventRepository.findByAggregateId(aggregateId)
     }

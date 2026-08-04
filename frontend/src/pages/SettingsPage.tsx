@@ -1,9 +1,10 @@
 import React from 'react';
 import { useFetch, post } from '../api';
+import type { BotSettings } from '../types';
 
 export default function SettingsPage() {
-  const { data: settings, error, reload } = useFetch('/api/v1/settings');
-  const [form, setForm] = React.useState(null);
+  const { data: settings, error, reload } = useFetch<BotSettings>('/api/v1/settings');
+  const [form, setForm] = React.useState<BotSettings | null>(null);
   const [saved, setSaved] = React.useState('');
 
   React.useEffect(() => {
@@ -13,7 +14,8 @@ export default function SettingsPage() {
   if (error) return <div>Error: {error}</div>;
   if (!form) return <div>Loading settings...</div>;
 
-  const update = (key, value) => setForm({ ...form, [key]: value });
+  const update = <K extends keyof BotSettings>(key: K, value: BotSettings[K]) =>
+    setForm({ ...form, [key]: value });
 
   const save = async () => {
     try {
@@ -21,7 +23,7 @@ export default function SettingsPage() {
       setSaved('Saved at ' + new Date().toLocaleTimeString());
       reload();
     } catch (e) {
-      setSaved('Error: ' + e.message);
+      setSaved('Error: ' + (e as Error).message);
     }
   };
 

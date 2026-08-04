@@ -237,6 +237,7 @@ risk:
   trailing-stop-enabled: true
   trailing-stop-percent: 1.0
   risk-per-trade-percent: 1.0
+  kelly-fraction: 0.5
   default-stop-loss-points: 50
   default-take-profit-points: 100
   min-liquidation-distance-percent: 25.0
@@ -260,3 +261,8 @@ logging:
   level:
     com.trading.bot: DEBUG
     org.springframework.jdbc: DEBUG
+
+security:
+  auth:
+    user: ${AUTH_USER:admin}
+    password: ${AUTH_PASSWORD:change-me-now}

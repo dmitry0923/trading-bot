@@ -5,6 +5,7 @@ plugins {
     id("io.spring.dependency-management") version "1.1.5"
     kotlin("jvm") version "1.9.21"
     kotlin("plugin.spring") version "1.9.21"
+    id("org.jlleitschuh.gradle.ktlint") version "12.1.0"
 }
 
 group = "com.trading.bot"
@@ -28,6 +29,7 @@ dependencies {
     implementation("org.liquibase:liquibase-core")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.springframework.boot:spring-boot-starter-security")
 
     implementation("io.micrometer:micrometer-core")
     implementation("io.micrometer:micrometer-registry-prometheus")
@@ -76,5 +78,12 @@ tasks.withType<Test> {
         showExceptions = true
         showStackTraces = true
         showCauses = true
+    }
+}
+
+ktlint {
+    version.set("1.0.1")
+    filter {
+        exclude { it.file.path.contains("/generated/") }
     }
 }

@@ -57,6 +57,8 @@ services:
       KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
       KIMI_MODEL: ${KIMI_MODEL:-kimi-k3}
       TRADING_MODE: ${TRADING_MODE:-SIMULATION}
+      AUTH_USER: ${AUTH_USER:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
       BOT_INTERVAL_MS: ${BOT_INTERVAL_MS:-300000}
       STRATEGY_INTERVAL_MS: ${STRATEGY_INTERVAL_MS:-600000}
       MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-600000}
@@ -73,8 +75,11 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.1
     container_name: trading-bot-prometheus
+    environment:
+      AUTH_USER: ${AUTH_USER:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
@@ -96,7 +101,11 @@ services:
       - prometheus
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_AUTH_USER: ${AUTH_USER:-admin}
+        REACT_APP_AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
     container_name: trading-bot-frontend
     ports:
       - "80:80"

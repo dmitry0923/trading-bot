@@ -1,6 +1,8 @@
 import React from 'react';
+import { subscribeSse, get } from '../api';
+import type { DashboardData, Position } from '../types';
 
-function Card({ title, value, color }) {
+function Card({ title, value, color }: { title: string; value: React.ReactNode; color?: string }) {
   return (
     <div style={{ flex: 1, minWidth: 160, padding: 16, border: '1px solid #ddd', borderRadius: 8, background: '#fafafa' }}>
       <div style={{ fontSize: 13, color: '#666' }}>{title}</div>
@@ -10,45 +12,49 @@ function Card({ title, value, color }) {
 }
 
 export default function DashboardPage() {
-  const [data, setData] = React.useState(null);
-  const [error, setError] = React.useState(null);
+  const [data, setData] = React.useState<DashboardData | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
   const [connected, setConnected] = React.useState(false);
 
   React.useEffect(() => {
-    let es = null;
-    let pollId = null;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    let aborted = false;
+    const abort = new AbortController();
 
     const stopPoll = () => { if (pollId) { clearInterval(pollId); pollId = null; } };
     const startPoll = () => {
       if (pollId) return;
       const load = () =>
-        fetch('/api/v1/dashboard')
-          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        get<DashboardData>('/api/v1/dashboard')
           .then(d => { setData(d); setError(null); })
-          .catch(e => setError(e.message));
+          .catch((e: Error) => setError(e.message));
       load();
       pollId = setInterval(load, 5000);
     };
 
-    try {
-      es = new EventSource('/api/v1/dashboard/stream');
-      es.addEventListener('dashboard', ev => {
-        try { setData(JSON.parse(ev.data)); setError(null); setConnected(true); stopPoll(); } catch (e) { /* ignore malformed frame */ }
-      });
-      es.onopen = () => { setConnected(true); stopPoll(); };
-      es.onerror = () => { setConnected(false); startPoll(); };
-    } catch (e) {
-      setConnected(false);
-      startPoll();
-    }
+    const connect = () => {
+      subscribeSse('/api/v1/dashboard/stream', 'dashboard', payload => {
+        setData(JSON.parse(payload) as DashboardData);
+        setError(null);
+        setConnected(true);
+        stopPoll();
+      }, abort.signal)
+        .then(() => { if (!aborted) { setConnected(false); startPoll(); } })
+        .catch(() => { if (!aborted) { setConnected(false); startPoll(); } });
+    };
 
-    return () => { if (es) es.close(); stopPoll(); };
+    connect();
+
+    return () => { aborted = true; abort.abort(); stopPoll(); };
   }, []);
 
   if (error && !data) return <div>Error: {error}</div>;
   if (!data) return <div>Loading dashboard...</div>;
 
-  const pnlColor = p => (p && p > 0 ? '#2e7d32' : p && p < 0 ? '#c62828' : '#333');
+  const pnlColor = (p: number | string | null | undefined) => {
+    const n = Number(p);
+    return n > 0 ? '#2e7d32' : n < 0 ? '#c62828' : '#333';
+  };
 
   return (
     <div>
@@ -64,9 +70,9 @@ export default function DashboardPage() {
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <Card title="Mode" value={data.tradingMode} />
-        <Card title="Daily P&L" value={data.dailyPnl} color={pnlColor(Number(data.dailyPnl))} />
-        <Card title="Open P&L (unrealized)" value={data.openPnl} color={pnlColor(Number(data.openPnl))} />
-        <Card title="Realized Today" value={data.realizedPnlToday} color={pnlColor(Number(data.realizedPnlToday))} />
+        <Card title="Daily P&L" value={data.dailyPnl} color={pnlColor(data.dailyPnl)} />
+        <Card title="Open P&L (unrealized)" value={data.openPnl} color={pnlColor(data.openPnl)} />
+        <Card title="Realized Today" value={data.realizedPnlToday} color={pnlColor(data.realizedPnlToday)} />
         <Card title="Closed Today" value={data.closedTodayCount} />
         <Card title="Strategies Today" value={data.strategiesToday} />
         <Card title="Open Positions" value={data.openPositionsCount} />
@@ -79,12 +85,12 @@ export default function DashboardPage() {
       )}
 
       <h2>Open Positions</h2>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
+      <table border={1} cellPadding={6} style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead style={{ background: '#f0f0f0' }}>
           <tr><th>Ticker</th><th>Direction</th><th>Qty</th><th>Entry</th><th>Current</th><th>SL</th><th>TP</th><th>P&L</th></tr>
         </thead>
         <tbody>
-          {(data.openPositions || []).map(p => (
+          {(data.openPositions || []).map((p: Position) => (
             <tr key={p.id}>
               <td>{p.ticker}</td>
               <td>{p.direction}</td>
@@ -93,11 +99,11 @@ export default function DashboardPage() {
               <td>{p.currentPrice}</td>
               <td>{p.stopLoss}</td>
               <td>{p.takeProfit}</td>
-              <td style={{ color: pnlColor(Number(p.pnl)) }}>{p.pnl}</td>
+              <td style={{ color: pnlColor(p.pnl) }}>{p.pnl}</td>
             </tr>
           ))}
           {(!data.openPositions || data.openPositions.length === 0) && (
-            <tr><td colSpan="8" style={{ textAlign: 'center', color: '#888' }}>No open positions</td></tr>
+            <tr><td colSpan={8} style={{ textAlign: 'center', color: '#888' }}>No open positions</td></tr>
           )}
         </tbody>
       </table>

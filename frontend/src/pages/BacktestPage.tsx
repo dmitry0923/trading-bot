@@ -1,11 +1,12 @@
 import React from 'react';
 import { get } from '../api';
+import type { BacktestResult } from '../types';
 
 export default function BacktestPage() {
   const [ticker, setTicker] = React.useState('SBER');
   const [days, setDays] = React.useState(730);
   const [loadHistory, setLoadHistory] = React.useState(true);
-  const [result, setResult] = React.useState(null);
+  const [result, setResult] = React.useState<BacktestResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
 
@@ -13,17 +14,17 @@ export default function BacktestPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await get(`/api/v1/backtest/${ticker}?days=${days}&loadHistory=${loadHistory}`);
+      const res = await get<BacktestResult>(`/api/v1/backtest/${ticker}?days=${days}&loadHistory=${loadHistory}`);
       setResult(res);
     } catch (e) {
-      setError(e.message);
+      setError((e as Error).message);
       setResult(null);
     } finally {
       setLoading(false);
     }
   };
 
-  const fmtPct = v => `${(v * 100).toFixed(2)}%`;
+  const fmtPct = (v: number) => `${(v * 100).toFixed(2)}%`;
 
   return (
     <div>
@@ -31,7 +32,7 @@ export default function BacktestPage() {
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
         <input value={ticker} onChange={e => setTicker(e.target.value)} style={{ padding: 6 }} />
         <input
-          type="number" min="30" max="1095" value={days}
+          type="number" min={30} max={1095} value={days}
           onChange={e => setDays(Number(e.target.value))}
           style={{ padding: 6, width: 90 }}
         />

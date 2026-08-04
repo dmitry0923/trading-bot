@@ -15,10 +15,12 @@ const TABS = [
   { key: 'analytics', label: 'Analytics' },
   { key: 'settings', label: 'Settings' },
   { key: 'backtest', label: 'Backtest' }
-];
+] as const;
+
+type TabKey = typeof TABS[number]['key'];
 
 function App() {
-  const [tab, setTab] = React.useState('dashboard');
+  const [tab, setTab] = React.useState<TabKey>('dashboard');
 
   return (
     <div style={{ fontFamily: 'Segoe UI, Arial, sans-serif', padding: 20, maxWidth: 1200, margin: '0 auto' }}>

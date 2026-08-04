@@ -38,6 +38,17 @@ class PerformanceFeedbackAgent(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    companion object {
+        // Жёсткие границы для параметров, которые LLM может "галлюцинировать".
+        // Вне этих рамок значение усекается (clamp), а не принимается как есть.
+        const val CONFIDENCE_ADJUSTMENT_MIN = -0.20
+        const val CONFIDENCE_ADJUSTMENT_MAX = 0.20
+        const val SL_ADJUSTMENT_PERCENT_MIN = -0.30
+        const val SL_ADJUSTMENT_PERCENT_MAX = 0.30
+        const val TP_ADJUSTMENT_PERCENT_MIN = -0.30
+        const val TP_ADJUSTMENT_PERCENT_MAX = 0.30
+    }
+
     data class StrategyFeedback(
         val ticker: String,
         val confidenceAdjustment: Double,
@@ -163,6 +174,20 @@ class PerformanceFeedbackAgent(
         )
     }
 
+    /**
+     * Усекает значение в допустимые рамки. NaN/Infinity приравниваются к 0.0,
+     * чтобы галлюцинированный LLM-ответ не мог пробить границы риска.
+     *
+     * @param value значение из LLM-ответа
+     * @param min нижняя граница
+     * @param max верхняя граница
+     * @return значение, усечённое в [min, max]
+     */
+    fun clamp(value: Double, min: Double, max: Double): Double {
+        if (value.isNaN() || value.isInfinite()) return 0.0
+        return value.coerceIn(min, max)
+    }
+
     private fun hashStats(stats: TradeStats): String {
         val raw = "${stats.ticker}:${stats.totalTrades}:${stats.winRate}:${stats.slHitRate}:${stats.tpHitRate}"
         return MessageDigest.getInstance("SHA-256")
@@ -177,9 +202,18 @@ class PerformanceFeedbackAgent(
             val j = objectMapper.readTree(clean)
             StrategyFeedback(
                 ticker = ticker,
-                confidenceAdjustment = j["confidenceAdjustment"]?.asDouble() ?: 0.0,
-                slAdjustmentPercent = j["slAdjustmentPercent"]?.asDouble() ?: 0.0,
-                tpAdjustmentPercent = j["tpAdjustmentPercent"]?.asDouble() ?: 0.0,
+                confidenceAdjustment = clamp(
+                    j["confidenceAdjustment"]?.asDouble() ?: 0.0,
+                    CONFIDENCE_ADJUSTMENT_MIN, CONFIDENCE_ADJUSTMENT_MAX
+                ),
+                slAdjustmentPercent = clamp(
+                    j["slAdjustmentPercent"]?.asDouble() ?: 0.0,
+                    SL_ADJUSTMENT_PERCENT_MIN, SL_ADJUSTMENT_PERCENT_MAX
+                ),
+                tpAdjustmentPercent = clamp(
+                    j["tpAdjustmentPercent"]?.asDouble() ?: 0.0,
+                    TP_ADJUSTMENT_PERCENT_MIN, TP_ADJUSTMENT_PERCENT_MAX
+                ),
                 contextPrompt = j["contextPrompt"]?.asText() ?: "",
                 agentSpecificNotes = mapOf(
                     "techAgentNote" to (j["techAgentNote"]?.asText() ?: ""),

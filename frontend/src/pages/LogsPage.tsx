@@ -1,5 +1,6 @@
 import React from 'react';
 import { useFetch } from '../api';
+import type { AgentLog } from '../types';
 
 const AGENT_OPTIONS = [
   '', 'Agent-1-Technical', 'Agent-2-Fundamental', 'Agent-3-Strategist',
@@ -16,7 +17,7 @@ export default function LogsPage() {
   if (agent) params.set('agent', agent);
   params.set('limit', String(limit));
 
-  const { data: logs, error } = useFetch(`/api/v1/logs?${params.toString()}`, 5000);
+  const { data: logs, error } = useFetch<AgentLog[]>(`/api/v1/logs?${params.toString()}`, 5000);
 
   return (
     <div>
@@ -28,13 +29,13 @@ export default function LogsPage() {
           ))}
         </select>
         <input
-          type="number" min="1" max="500" value={limit}
+          type="number" min={1} max={500} value={limit}
           onChange={e => setLimit(Number(e.target.value))}
           style={{ padding: 6, width: 80 }}
         />
       </div>
       {error && <div style={{ color: '#c62828' }}>Error: {error}</div>}
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
+      <table border={1} cellPadding={6} style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead style={{ background: '#f0f0f0' }}>
           <tr>
             <th>Time</th><th>Agent</th><th>Ticker</th><th>Action</th><th>Conf</th>
@@ -56,7 +57,7 @@ export default function LogsPage() {
             </tr>
           ))}
           {(!logs || logs.length === 0) && (
-            <tr><td colSpan="9" style={{ textAlign: 'center', color: '#888' }}>No logs</td></tr>
+            <tr><td colSpan={9} style={{ textAlign: 'center', color: '#888' }}>No logs</td></tr>
           )}
         </tbody>
       </table>

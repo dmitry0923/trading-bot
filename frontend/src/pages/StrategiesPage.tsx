@@ -1,17 +1,18 @@
 import React from 'react';
 import { useFetch } from '../api';
+import type { Strategy } from '../types';
 
 export default function StrategiesPage() {
   const [ticker, setTicker] = React.useState('');
-  const { data: strategies, error } = useFetch('/api/v1/strategies', 15000);
-  const { data: single, error: singleError } = useFetch(
+  const { data: strategies, error } = useFetch<Strategy[]>('/api/v1/strategies', 15000);
+  const { data: single, error: singleError } = useFetch<Strategy>(
     ticker ? `/api/v1/strategies/${ticker}` : '',
     ticker ? 15000 : 0
   );
 
   if (error) return <div>Error: {error}</div>;
 
-  const rows = ticker ? (single ? [single] : []) : (strategies || []);
+  const rows: Strategy[] = ticker ? (single ? [single] : []) : (strategies || []);
 
   return (
     <div>
@@ -24,7 +25,7 @@ export default function StrategiesPage() {
         />
         {singleError && <span style={{ color: '#c62828' }}>{singleError}</span>}
       </div>
-      <table border="1" cellPadding="6" style={{ borderCollapse: 'collapse', width: '100%' }}>
+      <table border={1} cellPadding={6} style={{ borderCollapse: 'collapse', width: '100%' }}>
         <thead style={{ background: '#f0f0f0' }}>
           <tr>
             <th>ID</th><th>Ticker</th><th>Action</th><th>Target</th><th>Qty</th>
@@ -47,7 +48,7 @@ export default function StrategiesPage() {
               <td style={{ maxWidth: 400, fontSize: 12 }}>{s.reasoning}</td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan="11" style={{ textAlign: 'center', color: '#888' }}>No strategies</td></tr>}
+          {rows.length === 0 && <tr><td colSpan={11} style={{ textAlign: 'center', color: '#888' }}>No strategies</td></tr>}
         </tbody>
       </table>
     </div>

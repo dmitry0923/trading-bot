@@ -29,7 +29,14 @@ ALOR_REFRESH_TOKEN=your_refresh_token
 ALOR_PORTFOLIO=D12345
 KIMI_API_KEY=your_kimi_api_key
 TRADING_MODE=SIMULATION
+# Security (Basic Auth for API and Actuator)
+AUTH_USER=admin
+AUTH_PASSWORD=change-me-now
 ```
+
+> **Important**: set a strong `AUTH_PASSWORD` before exposing the bot outside
+> localhost. The API (`/api/v1/**`) and Actuator endpoints are protected with
+> Spring Security Basic Auth; only `/actuator/health` is public (Docker healthcheck).
 
 ### 3. Run with Docker Compose
 
@@ -38,9 +45,11 @@ docker-compose up -d
 ```
 
 Services:
-- App: http://localhost:8080
-- Prometheus metrics: http://localhost:8080/actuator/prometheus
+- Dashboard (frontend, nginx): http://localhost:80
+- App API: http://localhost:8080 (requires Basic Auth)
 - Health check: http://localhost:8080/actuator/health
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000
 
 ### 4. Local Development
 
@@ -56,6 +65,8 @@ docker-compose up -d postgres redis
 ```
 
 ## API Endpoints
+
+All `/api/v1/**` endpoints require **Basic Auth** (`AUTH_USER` / `AUTH_PASSWORD`):
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -97,6 +108,27 @@ See `application.yml` for all options. Key env vars:
 | `TRADING_MODE` | SIMULATION | SIMULATION or LIVE |
 | `ALOR_TOKEN` | — | Alor API token |
 | `KIMI_API_KEY` | — | Kimi LLM API key |
+| `AUTH_USER` | admin | Basic Auth username |
+| `AUTH_PASSWORD` | change-me-now | Basic Auth password |
+
+## Risk Management
+
+- **Half-Kelly sizing** (`risk.kelly-fraction=0.5`): the Kelly criterion result is
+  multiplied by 0.5 (Half-Kelly) before being capped at 50% of the max position.
+  Full Kelly is too aggressive on real markets; use 0.25 for Quarter-Kelly.
+- **LLM guardrails**: agent outputs are clamped to safe ranges before use
+  (e.g. confidence adjustment in [-0.20, +0.20], SL/TP adjustment in [-0.30, +0.30]),
+  NaN/Infinity collapse to 0. Signals also pass through `Guardrails`
+  (daily loss limit, price deviation, confidence threshold).
+- **Daily loss circuit breaker**: when the daily P&L reaches `max-daily-loss-rub`,
+  the bot halts new entries until the next day.
+
+## CI/CD
+
+`.github/workflows/ci.yml` runs on every push/PR:
+- `./gradlew ktlintCheck` (lint, baseline in `config/ktlint/baseline.xml`)
+- `./gradlew test` (unit + Testcontainers integration tests)
+- `npm run build` (TypeScript frontend)
 
 ## Monitoring
 

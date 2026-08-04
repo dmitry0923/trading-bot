@@ -45,6 +45,9 @@ class RiskConfig {
     /** Жёсткий лимит контрактов на позицию (Si: 1). */
     var maxContractsPerPosition: Int = 1
 
+    /** Максимум открытых фьючерсных позиций (Si: 1). Отдельно от акций. */
+    var futuresMaxOpenPositions: Int = 1
+
     /** Торговые часы, МСК. Вне окна — вход запрещён. */
     var tradingHoursStart: String = "10:00"
     var tradingHoursEnd: String = "18:30"

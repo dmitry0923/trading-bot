@@ -17,5 +17,5 @@ data class TradeEvent(
     val eventType: String,
     val payload: String,
     val occurredAt: LocalDateTime,
-    val sequenceNumber: Long
+    val sequenceNumber: Long,
 )

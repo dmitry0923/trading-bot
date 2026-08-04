@@ -5,7 +5,11 @@ import com.trading.bot.infrastructure.llm.Guardrails
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
-import com.trading.bot.model.*
+import com.trading.bot.model.AgentLog
+import com.trading.bot.model.FundamentalReport
+import com.trading.bot.model.MarketSnapshot
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.TechnicalReport
 import com.trading.bot.repository.AgentLogRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -30,7 +34,7 @@ class StrategyAgent(
     private val guardrails: Guardrails,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -42,7 +46,7 @@ class StrategyAgent(
         val takeProfit: BigDecimal?,
         val trailingStop: Boolean,
         val confidence: Double,
-        val reasoning: String
+        val reasoning: String,
     )
 
     /**
@@ -64,7 +68,7 @@ class StrategyAgent(
         snapshot: MarketSnapshot,
         cycleId: String,
         adaptiveThreshold: Double = 0.5,
-        version: String = PromptRegistry.DEFAULT_VERSION
+        version: String = PromptRegistry.DEFAULT_VERSION,
     ): Draft {
         val start = System.currentTimeMillis()
 
@@ -72,117 +76,147 @@ class StrategyAgent(
         if (tech.conclusion == "INSUFFICIENT_DATA" || tech.confidence < 0.5) {
             return logAndReturn(
                 hold(snapshot.currentPrice, "Insufficient technical data (conf=${tech.confidence})"),
-                ticker, cycleId, start, "{}", overrideReason = "GUARDRAIL: INSUFFICIENT_TECH_DATA"
+                ticker,
+                cycleId,
+                start,
+                "{}",
+                overrideReason = "GUARDRAIL: INSUFFICIENT_TECH_DATA",
             )
         }
 
-        val fingerprint = semanticCache.fingerprint(
-            snapshot.currentPrice,
-            tech.rsi,
-            tech.trend,
-            "technical",
-            macdHistogram = tech.macd
-        )
+        val fingerprint =
+            semanticCache.fingerprint(
+                snapshot.currentPrice,
+                tech.rsi,
+                tech.trend,
+                "technical",
+                macdHistogram = tech.macd,
+            )
 
-        val variables = mapOf(
-            "ticker" to ticker,
-            "currentPrice" to snapshot.currentPrice.toPlainString(),
-            "techConclusion" to tech.conclusion,
-            "techConfidence" to tech.confidence,
-            "techTrend" to tech.trend,
-            "techRsi" to tech.rsi,
-            "techReasoning" to tech.reasoning,
-            "fundConclusion" to fund.conclusion,
-            "fundConfidence" to fund.confidence,
-            "fundReasoning" to fund.reasoning
-        )
+        val variables =
+            mapOf(
+                "ticker" to ticker,
+                "currentPrice" to snapshot.currentPrice.toPlainString(),
+                "techConclusion" to tech.conclusion,
+                "techConfidence" to tech.confidence,
+                "techTrend" to tech.trend,
+                "techRsi" to tech.rsi,
+                "techReasoning" to tech.reasoning,
+                "fundConclusion" to fund.conclusion,
+                "fundConfidence" to fund.confidence,
+                "fundReasoning" to fund.reasoning,
+            )
 
         val prompt = promptRegistry.getTemplate("strategy", version)
-        val resp = llmClient.complete(
-            agent = "strategy",
-            ticker = ticker,
-            prompt = prompt,
-            variables = variables,
-            fingerprint = fingerprint,
-            temperature = 0.15
-        )
+        val resp =
+            llmClient.complete(
+                agent = "strategy",
+                ticker = ticker,
+                prompt = prompt,
+                variables = variables,
+                fingerprint = fingerprint,
+                temperature = 0.15,
+            )
         if (resp.isFallback) {
             logger.info { "LLM unavailable for $ticker, HOLD" }
             return logAndReturn(
                 hold(snapshot.currentPrice, "LLM unavailable"),
-                ticker, cycleId, start, resp.content, isCached = resp.fromCache
+                ticker,
+                cycleId,
+                start,
+                resp.content,
+                isCached = resp.fromCache,
             )
         }
 
-        val draft = try {
-            val cleaned = resp.content.replace("```json", "").replace("```", "").trim()
-            val j = objectMapper.readTree(cleaned)
-            val action = StrategyAction.values().firstOrNull {
-                it.name == j.path("action").asText("HOLD").uppercase()
-            } ?: StrategyAction.HOLD
+        val draft =
+            try {
+                val cleaned =
+                    resp.content
+                        .replace("```json", "")
+                        .replace("```", "")
+                        .trim()
+                val j = objectMapper.readTree(cleaned)
+                val action =
+                    StrategyAction.values().firstOrNull {
+                        it.name == j.path("action").asText("HOLD").uppercase()
+                    } ?: StrategyAction.HOLD
 
-            val rawPrice = j.path("targetPrice").asText().toBigDecimalOrNull() ?: snapshot.currentPrice
-            Draft(
-                action = action,
-                targetPrice = rawPrice,
-                quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(0).coerceIn(1, 10000),
-                stopLoss = j.path("stopLoss").asText().toBigDecimalOrNull(),
-                takeProfit = j.path("takeProfit").asText().toBigDecimalOrNull(),
-                trailingStop = j.path("trailingStop").asBoolean(false),
-                confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-                reasoning = j.path("reasoning").asText("")
-            )
-        } catch (e: Exception) {
-            logger.warn(e) { "Strategy LLM parse error for $ticker" }
-            meterRegistry.counter("strategy.agent.parse.error", Tags.of("ticker", ticker)).increment()
-            return logAndReturn(
-                hold(snapshot.currentPrice, "Parse error: ${e.message}"),
-                ticker, cycleId, start, resp.content, isCached = resp.fromCache, tokensUsed = resp.tokensUsed
-            )
-        }
+                val rawPrice = j.path("targetPrice").asText().toBigDecimalOrNull() ?: snapshot.currentPrice
+                Draft(
+                    action = action,
+                    targetPrice = rawPrice,
+                    quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(0).coerceIn(1, 10000),
+                    stopLoss = j.path("stopLoss").asText().toBigDecimalOrNull(),
+                    takeProfit = j.path("takeProfit").asText().toBigDecimalOrNull(),
+                    trailingStop = j.path("trailingStop").asBoolean(false),
+                    confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                    reasoning = j.path("reasoning").asText(""),
+                )
+            } catch (e: Exception) {
+                logger.warn(e) { "Strategy LLM parse error for $ticker" }
+                meterRegistry.counter("strategy.agent.parse.error", Tags.of("ticker", ticker)).increment()
+                return logAndReturn(
+                    hold(snapshot.currentPrice, "Parse error: ${e.message}"),
+                    ticker,
+                    cycleId,
+                    start,
+                    resp.content,
+                    isCached = resp.fromCache,
+                    tokensUsed = resp.tokensUsed,
+                )
+            }
 
         // POST-PROCESSING GUARDRAILS: низкая уверенность → HOLD, отклонение цены → коррекция
-        val guarded = guardrails.apply(
-            signal = Guardrails.Signal(
-                action = draft.action,
-                targetPrice = draft.targetPrice,
-                quantity = draft.quantity,
-                stopLoss = draft.stopLoss,
-                takeProfit = draft.takeProfit,
-                trailingStop = draft.trailingStop,
-                confidence = draft.confidence
-            ),
-            marketPrice = snapshot.currentPrice,
-            adaptiveThreshold = adaptiveThreshold
-        )
-
-        val finalDraft = if (guarded.overridden) {
-            logger.info { "Guardrail for $ticker: ${guarded.overrideReason}" }
-            draft.copy(
-                action = guarded.signal.action,
-                targetPrice = guarded.signal.targetPrice,
-                quantity = guarded.signal.quantity,
-                stopLoss = guarded.signal.stopLoss,
-                takeProfit = guarded.signal.takeProfit,
-                trailingStop = guarded.signal.trailingStop,
-                confidence = guarded.signal.confidence,
-                reasoning = draft.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]"
+        val guarded =
+            guardrails.apply(
+                signal =
+                    Guardrails.Signal(
+                        action = draft.action,
+                        targetPrice = draft.targetPrice,
+                        quantity = draft.quantity,
+                        stopLoss = draft.stopLoss,
+                        takeProfit = draft.takeProfit,
+                        trailingStop = draft.trailingStop,
+                        confidence = draft.confidence,
+                    ),
+                marketPrice = snapshot.currentPrice,
+                adaptiveThreshold = adaptiveThreshold,
             )
-        } else {
-            draft
-        }
+
+        val finalDraft =
+            if (guarded.overridden) {
+                logger.info { "Guardrail for $ticker: ${guarded.overrideReason}" }
+                draft.copy(
+                    action = guarded.signal.action,
+                    targetPrice = guarded.signal.targetPrice,
+                    quantity = guarded.signal.quantity,
+                    stopLoss = guarded.signal.stopLoss,
+                    takeProfit = guarded.signal.takeProfit,
+                    trailingStop = guarded.signal.trailingStop,
+                    confidence = guarded.signal.confidence,
+                    reasoning = draft.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]",
+                )
+            } else {
+                draft
+            }
 
         return logAndReturn(
             finalDraft,
-            ticker, cycleId, start, resp.content,
+            ticker,
+            cycleId,
+            start,
+            resp.content,
             isCached = resp.fromCache,
             tokensUsed = resp.tokensUsed,
-            overrideReason = guarded.overrideReason
+            overrideReason = guarded.overrideReason,
         )
     }
 
-    private fun hold(marketPrice: BigDecimal, reason: String): Draft =
-        Draft(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0, reason)
+    private fun hold(
+        marketPrice: BigDecimal,
+        reason: String,
+    ): Draft = Draft(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0, reason)
 
     private suspend fun logAndReturn(
         draft: Draft,
@@ -192,7 +226,7 @@ class StrategyAgent(
         raw: String,
         isCached: Boolean = false,
         tokensUsed: Int = 0,
-        overrideReason: String? = null
+        overrideReason: String? = null,
     ): Draft {
         agentLogRepository.save(
             AgentLog(
@@ -206,8 +240,8 @@ class StrategyAgent(
                 latencyMs = System.currentTimeMillis() - startMs,
                 tokensUsed = tokensUsed,
                 isCached = isCached,
-                overrideReason = overrideReason
-            )
+                overrideReason = overrideReason,
+            ),
         )
         meterRegistry.counter("agent.strategy.decision", Tags.of("action", draft.action.name)).increment()
         return draft

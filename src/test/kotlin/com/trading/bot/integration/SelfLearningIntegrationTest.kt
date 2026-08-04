@@ -1,10 +1,17 @@
 package com.trading.bot.integration
 
-import com.trading.bot.model.*
-import com.trading.bot.repository.*
-import com.trading.bot.service.*
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.repository.BlindSpotRepository
+import com.trading.bot.repository.PositionRepository
+import com.trading.bot.repository.StrategyAdjustmentRepository
+import com.trading.bot.service.AdaptiveRiskService
+import com.trading.bot.service.TradeAnalysisService
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -12,7 +19,6 @@ import java.math.BigDecimal
 import java.time.LocalDateTime
 
 class SelfLearningIntegrationTest : AbstractTestContainerTest() {
-
     @Autowired
     lateinit var tradeAnalysisService: TradeAnalysisService
 
@@ -92,10 +98,12 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
             tradeAnalysisService.analyzeLastNDays(1)
         }
 
-        val stopSpot = runBlocking {
-            blindSpotRepository.findByTickerAndIsActiveTrue("YNDX")
-                .first { it.conditionPattern.contains("Stop-Loss") }
-        }
+        val stopSpot =
+            runBlocking {
+                blindSpotRepository
+                    .findByTickerAndIsActiveTrue("YNDX")
+                    .first { it.conditionPattern.contains("Stop-Loss") }
+            }
         assertEquals(5, stopSpot.occurrenceCount)
     }
 
@@ -156,10 +164,17 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         close: BigDecimal,
         status: PositionStatus,
         reason: String,
-        hour: Int = 12
+        hour: Int = 12,
     ) {
         val pnl = close.subtract(entry).multiply(BigDecimal(10))
-        val opened = LocalDateTime.now().minusDays(1).withHour(hour).withMinute(0).withSecond(0).withNano(0)
+        val opened =
+            LocalDateTime
+                .now()
+                .minusDays(1)
+                .withHour(hour)
+                .withMinute(0)
+                .withSecond(0)
+                .withNano(0)
         val closed = LocalDateTime.now()
         runBlocking {
             positionRepository.save(
@@ -175,8 +190,8 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
                     alorOrderId = "test-${System.nanoTime()}",
                     closeReason = reason,
                     openedAt = opened,
-                    closedAt = closed
-                )
+                    closedAt = closed,
+                ),
             )
         }
     }

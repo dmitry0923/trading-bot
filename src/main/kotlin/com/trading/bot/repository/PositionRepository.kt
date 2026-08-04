@@ -20,35 +20,37 @@ import java.time.LocalDateTime
 class PositionRepository(
     private val databaseClient: DatabaseClient,
 ) {
-    private fun toPosition(row: Row): Position = Position(
-        id = row.get("id", Long::class.javaObjectType),
-        ticker = row.require("ticker", String::class.java),
-        direction = enumValueOf(row.require("direction", String::class.java)),
-        quantity = row.require("quantity", Int::class.javaObjectType),
-        entryPrice = row.require("entry_price", BigDecimal::class.java),
-        currentPrice = row.get("current_price", BigDecimal::class.java),
-        closePrice = row.get("close_price", BigDecimal::class.java),
-        stopLoss = row.get("stop_loss", BigDecimal::class.java),
-        takeProfit = row.get("take_profit", BigDecimal::class.java),
-        instrumentType = enumValueOf(row.require("instrument_type", String::class.java)),
-        leverage = row.get("leverage", BigDecimal::class.java),
-        goPerContract = row.get("go_per_contract", BigDecimal::class.java),
-        marginUsed = row.get("margin_used", BigDecimal::class.java),
-        liquidationPrice = row.get("liquidation_price", BigDecimal::class.java),
-        variationMargin = row.get("variation_margin", BigDecimal::class.java) ?: BigDecimal.ZERO,
-        stopLossPoints = row.get("stop_loss_points", Int::class.javaObjectType),
-        trailingStopPrice = row.get("trailing_stop_price", BigDecimal::class.java),
-        pnl = row.get("pnl", BigDecimal::class.java),
-        status = enumValueOf(row.require("status", String::class.java)),
-        alorOrderId = row.get("alor_order_id", String::class.java),
-        closeReason = row.get("close_reason", String::class.java),
-        openedAt = row.require("opened_at", LocalDateTime::class.java),
-        closedAt = row.get("closed_at", LocalDateTime::class.java)
-    )
+    private fun toPosition(row: Row): Position =
+        Position(
+            id = row.get("id", Long::class.javaObjectType),
+            ticker = row.require("ticker", String::class.java),
+            direction = enumValueOf(row.require("direction", String::class.java)),
+            quantity = row.require("quantity", Int::class.javaObjectType),
+            entryPrice = row.require("entry_price", BigDecimal::class.java),
+            currentPrice = row.get("current_price", BigDecimal::class.java),
+            closePrice = row.get("close_price", BigDecimal::class.java),
+            stopLoss = row.get("stop_loss", BigDecimal::class.java),
+            takeProfit = row.get("take_profit", BigDecimal::class.java),
+            instrumentType = enumValueOf(row.require("instrument_type", String::class.java)),
+            leverage = row.get("leverage", BigDecimal::class.java),
+            goPerContract = row.get("go_per_contract", BigDecimal::class.java),
+            marginUsed = row.get("margin_used", BigDecimal::class.java),
+            liquidationPrice = row.get("liquidation_price", BigDecimal::class.java),
+            variationMargin = row.get("variation_margin", BigDecimal::class.java) ?: BigDecimal.ZERO,
+            stopLossPoints = row.get("stop_loss_points", Int::class.javaObjectType),
+            trailingStopPrice = row.get("trailing_stop_price", BigDecimal::class.java),
+            pnl = row.get("pnl", BigDecimal::class.java),
+            status = enumValueOf(row.require("status", String::class.java)),
+            alorOrderId = row.get("alor_order_id", String::class.java),
+            closeReason = row.get("close_reason", String::class.java),
+            openedAt = row.require("opened_at", LocalDateTime::class.java),
+            closedAt = row.get("closed_at", LocalDateTime::class.java),
+        )
 
     suspend fun findByStatus(status: PositionStatus): List<Position> {
         val sql = "SELECT * FROM positions WHERE status = :status ORDER BY opened_at DESC"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("status", status.name)
             .map { row, _ -> toPosition(row) }
             .all()
@@ -58,7 +60,8 @@ class PositionRepository(
 
     suspend fun findById(id: Long): Position {
         val sql = "SELECT * FROM positions WHERE id = :id"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("id", id)
             .map { row, _ -> toPosition(row) }
             .one()
@@ -67,24 +70,26 @@ class PositionRepository(
 
     suspend fun findByAlorOrderId(alorOrderId: String): Position? {
         val sql = "SELECT * FROM positions WHERE alor_order_id = :alorOrderId"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("alorOrderId", alorOrderId)
             .map { row, _ -> toPosition(row) }
             .one()
             .awaitSingleOrNull()
     }
 
-    suspend fun findAll(): List<Position> {
-        return databaseClient.sql("SELECT * FROM positions ORDER BY opened_at DESC")
+    suspend fun findAll(): List<Position> =
+        databaseClient
+            .sql("SELECT * FROM positions ORDER BY opened_at DESC")
             .map { row, _ -> toPosition(row) }
             .all()
             .collectList()
             .awaitSingle()
-    }
 
     suspend fun findClosedSince(since: LocalDateTime): List<Position> {
         val sql = "SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= :since ORDER BY closed_at DESC"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("since", since)
             .map { row, _ -> toPosition(row) }
             .all()
@@ -92,13 +97,18 @@ class PositionRepository(
             .awaitSingle()
     }
 
-    suspend fun findClosedByTickerSince(ticker: String, since: LocalDateTime): List<Position> {
-        val sql = """
+    suspend fun findClosedByTickerSince(
+        ticker: String,
+        since: LocalDateTime,
+    ): List<Position> {
+        val sql =
+            """
             SELECT * FROM positions
             WHERE status != 'OPEN' AND ticker = :ticker AND closed_at >= :since
             ORDER BY closed_at DESC
-        """.trimIndent()
-        return databaseClient.sql(sql)
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
             .bind("ticker", ticker)
             .bind("since", since)
             .map { row, _ -> toPosition(row) }
@@ -107,17 +117,17 @@ class PositionRepository(
             .awaitSingle()
     }
 
-    suspend fun save(position: Position): Position {
-        return if (position.id == null) {
+    suspend fun save(position: Position): Position =
+        if (position.id == null) {
             insert(position)
         } else {
             update(position)
             position
         }
-    }
 
     private suspend fun insert(position: Position): Position {
-        val sql = """
+        val sql =
+            """
             INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
                 stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
                 liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
@@ -127,38 +137,41 @@ class PositionRepository(
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
                 :alorOrderId, :closeReason, :openedAt, :closedAt)
             RETURNING id
-        """.trimIndent()
-        val id = databaseClient.sql(sql)
-            .bind("ticker", position.ticker)
-            .bind("direction", position.direction.name)
-            .bind("quantity", position.quantity)
-            .bind("entryPrice", position.entryPrice)
-            .bindOrNull("currentPrice", position.currentPrice)
-            .bindOrNull("closePrice", position.closePrice)
-            .bindOrNull("stopLoss", position.stopLoss)
-            .bindOrNull("takeProfit", position.takeProfit)
-            .bind("instrumentType", position.instrumentType.name)
-            .bindOrNull("leverage", position.leverage)
-            .bindOrNull("goPerContract", position.goPerContract)
-            .bindOrNull("marginUsed", position.marginUsed)
-            .bindOrNull("liquidationPrice", position.liquidationPrice)
-            .bind("variationMargin", position.variationMargin)
-            .bindOrNull("stopLossPoints", position.stopLossPoints)
-            .bindOrNull("trailingStopPrice", position.trailingStopPrice)
-            .bindOrNull("pnl", position.pnl)
-            .bind("status", position.status.name)
-            .bindOrNull("alorOrderId", position.alorOrderId)
-            .bindOrNull("closeReason", position.closeReason)
-            .bind("openedAt", position.openedAt)
-            .bindOrNull("closedAt", position.closedAt)
-            .map { row, _ -> row.require("id", Long::class.javaObjectType) }
-            .one()
-            .awaitSingle()
+            """.trimIndent()
+        val id =
+            databaseClient
+                .sql(sql)
+                .bind("ticker", position.ticker)
+                .bind("direction", position.direction.name)
+                .bind("quantity", position.quantity)
+                .bind("entryPrice", position.entryPrice)
+                .bindOrNull("currentPrice", position.currentPrice)
+                .bindOrNull("closePrice", position.closePrice)
+                .bindOrNull("stopLoss", position.stopLoss)
+                .bindOrNull("takeProfit", position.takeProfit)
+                .bind("instrumentType", position.instrumentType.name)
+                .bindOrNull("leverage", position.leverage)
+                .bindOrNull("goPerContract", position.goPerContract)
+                .bindOrNull("marginUsed", position.marginUsed)
+                .bindOrNull("liquidationPrice", position.liquidationPrice)
+                .bind("variationMargin", position.variationMargin)
+                .bindOrNull("stopLossPoints", position.stopLossPoints)
+                .bindOrNull("trailingStopPrice", position.trailingStopPrice)
+                .bindOrNull("pnl", position.pnl)
+                .bind("status", position.status.name)
+                .bindOrNull("alorOrderId", position.alorOrderId)
+                .bindOrNull("closeReason", position.closeReason)
+                .bind("openedAt", position.openedAt)
+                .bindOrNull("closedAt", position.closedAt)
+                .map { row, _ -> row.require("id", Long::class.javaObjectType) }
+                .one()
+                .awaitSingle()
         return position.copy(id = id)
     }
 
     private suspend fun update(position: Position) {
-        val sql = """
+        val sql =
+            """
             UPDATE positions SET
                 ticker = :ticker, direction = :direction, quantity = :quantity, entry_price = :entryPrice,
                 current_price = :currentPrice, close_price = :closePrice, stop_loss = :stopLoss,
@@ -169,8 +182,9 @@ class PositionRepository(
                 alor_order_id = :alorOrderId, close_reason = :closeReason, opened_at = :openedAt,
                 closed_at = :closedAt
             WHERE id = :id
-        """.trimIndent()
-        databaseClient.sql(sql)
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
             .bind("ticker", position.ticker)
             .bind("direction", position.direction.name)
             .bind("quantity", position.quantity)

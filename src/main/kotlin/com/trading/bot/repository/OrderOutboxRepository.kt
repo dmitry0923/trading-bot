@@ -16,21 +16,23 @@ import java.util.UUID
 class OrderOutboxRepository(
     private val databaseClient: DatabaseClient,
 ) {
-    private fun toOrderOutbox(row: Row): OrderOutbox = OrderOutbox(
-        id = row.get("id", UUID::class.java),
-        payloadJson = row.require("payload", String::class.java),
-        status = OutboxStatus.valueOf(row.require("status", String::class.java)),
-        alorOrderId = row.get("alor_order_id", String::class.java),
-        createdAt = row.require("created_at", LocalDateTime::class.java),
-        processedAt = row.get("processed_at", LocalDateTime::class.java),
-        errorMessage = row.get("error_message", String::class.java),
-        attemptCount = row.require("attempt_count", Int::class.javaObjectType),
-        nextAttemptAt = row.require("next_attempt_at", LocalDateTime::class.java),
-    )
+    private fun toOrderOutbox(row: Row): OrderOutbox =
+        OrderOutbox(
+            id = row.get("id", UUID::class.java),
+            payloadJson = row.require("payload", String::class.java),
+            status = OutboxStatus.valueOf(row.require("status", String::class.java)),
+            alorOrderId = row.get("alor_order_id", String::class.java),
+            createdAt = row.require("created_at", LocalDateTime::class.java),
+            processedAt = row.get("processed_at", LocalDateTime::class.java),
+            errorMessage = row.get("error_message", String::class.java),
+            attemptCount = row.require("attempt_count", Int::class.javaObjectType),
+            nextAttemptAt = row.require("next_attempt_at", LocalDateTime::class.java),
+        )
 
     suspend fun save(outbox: OrderOutbox): OrderOutbox {
         val id = outbox.id ?: UUID.randomUUID()
-        val sql = """
+        val sql =
+            """
             INSERT INTO order_outbox (
                 id, payload, status, alor_order_id, created_at, processed_at,
                 error_message, attempt_count, next_attempt_at
@@ -38,8 +40,9 @@ class OrderOutboxRepository(
                 :id, CAST(:payload AS jsonb), :status, :alorOrderId, :createdAt, :processedAt,
                 :errorMessage, :attemptCount, :nextAttemptAt
             )
-        """.trimIndent()
-        databaseClient.sql(sql)
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
             .bind("id", id)
             .bind("payload", outbox.payloadJson)
             .bind("status", outbox.status.name)
@@ -56,13 +59,15 @@ class OrderOutboxRepository(
 
     /** Атомарно захватывает только что созданный ордер для немедленной отправки. */
     suspend fun claim(id: UUID): OrderOutbox? {
-        val sql = """
+        val sql =
+            """
             UPDATE order_outbox
             SET status = 'PROCESSING', processed_at = :now
             WHERE id = :id AND status = 'PENDING'
             RETURNING *
-        """.trimIndent()
-        return databaseClient.sql(sql)
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
             .bind("now", LocalDateTime.now())
             .bind("id", id)
             .map { row, _ -> toOrderOutbox(row) }
@@ -76,7 +81,8 @@ class OrderOutboxRepository(
      */
     suspend fun claimReady(limit: Int = 100): List<OrderOutbox> {
         val now = LocalDateTime.now()
-        val sql = """
+        val sql =
+            """
             WITH candidates AS (
                 SELECT id
                 FROM order_outbox
@@ -91,8 +97,9 @@ class OrderOutboxRepository(
             FROM candidates
             WHERE outbox.id = candidates.id
             RETURNING outbox.*
-        """.trimIndent()
-        return databaseClient.sql(sql)
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
             .bind("now", now)
             .bind("staleBefore", now.minusMinutes(5))
             .bind("limit", limit.coerceIn(1, 500))
@@ -102,30 +109,37 @@ class OrderOutboxRepository(
             .awaitSingle()
     }
 
-    suspend fun markSent(id: UUID, alorOrderId: String) {
-        databaseClient.sql(
-            """
-            UPDATE order_outbox
-            SET status = 'SENT', alor_order_id = :oid, processed_at = :now, error_message = NULL
-            WHERE id = :id AND status = 'PROCESSING'
-            """.trimIndent(),
-        )
-            .bind("oid", alorOrderId)
+    suspend fun markSent(
+        id: UUID,
+        alorOrderId: String,
+    ) {
+        databaseClient
+            .sql(
+                """
+                UPDATE order_outbox
+                SET status = 'SENT', alor_order_id = :oid, processed_at = :now, error_message = NULL
+                WHERE id = :id AND status = 'PROCESSING'
+                """.trimIndent(),
+            ).bind("oid", alorOrderId)
             .bind("now", LocalDateTime.now())
             .bind("id", id)
             .then()
             .awaitSingleOrNull()
     }
 
-    suspend fun markFailed(id: UUID, attemptCount: Int, error: String) {
-        databaseClient.sql(
-            """
-            UPDATE order_outbox
-            SET status = 'FAILED', attempt_count = :attemptCount, processed_at = :now, error_message = :error
-            WHERE id = :id AND status = 'PROCESSING'
-            """.trimIndent(),
-        )
-            .bind("attemptCount", attemptCount)
+    suspend fun markFailed(
+        id: UUID,
+        attemptCount: Int,
+        error: String,
+    ) {
+        databaseClient
+            .sql(
+                """
+                UPDATE order_outbox
+                SET status = 'FAILED', attempt_count = :attemptCount, processed_at = :now, error_message = :error
+                WHERE id = :id AND status = 'PROCESSING'
+                """.trimIndent(),
+            ).bind("attemptCount", attemptCount)
             .bind("now", LocalDateTime.now())
             .bind("error", error.take(MAX_ERROR_LENGTH))
             .bind("id", id)

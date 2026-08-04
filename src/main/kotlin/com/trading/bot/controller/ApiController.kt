@@ -69,14 +69,15 @@ class ApiController(
     private val historicalDataLoader: HistoricalDataLoader,
     private val dashboardService: DashboardService,
     private val dashboardSseService: DashboardSseService,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
-
     @GetMapping("/settings")
     fun getSettings(): BotSettings = settingsService.getSettings()
 
     @PostMapping("/settings")
-    fun updateSettings(@RequestBody settings: BotSettings): BotSettings =
+    fun updateSettings(
+        @RequestBody settings: BotSettings,
+    ): BotSettings =
         try {
             settingsService.updateSettings(settings)
         } catch (e: IllegalArgumentException) {
@@ -110,7 +111,9 @@ class ApiController(
     suspend fun getStrategies() = strategyRepository.findTop50ByOrderByCreatedAtDesc()
 
     @GetMapping("/strategies/{ticker}")
-    suspend fun getStrategy(@PathVariable ticker: String): Strategy? {
+    suspend fun getStrategy(
+        @PathVariable ticker: String,
+    ): Strategy? {
         val normalizedTicker = validateTicker(ticker)
         return redisCacheService.getStrategy(normalizedTicker)
             ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(normalizedTicker)
@@ -126,7 +129,7 @@ class ApiController(
     suspend fun getLogs(
         @RequestParam(required = false) ticker: String?,
         @RequestParam(required = false) agent: String?,
-        @RequestParam(defaultValue = "100") limit: Int
+        @RequestParam(defaultValue = "100") limit: Int,
     ) = agentLogRepository.findFiltered(ticker, agent, limit)
 
     @GetMapping("/risk/daily-pnl")
@@ -137,7 +140,9 @@ class ApiController(
      * POSITION_OPENED / POSITION_UPDATED / POSITION_CLOSED в порядке sequence.
      */
     @GetMapping("/positions/{positionId}/events")
-    suspend fun getPositionEvents(@PathVariable positionId: Long): List<TradeEvent> {
+    suspend fun getPositionEvents(
+        @PathVariable positionId: Long,
+    ): List<TradeEvent> {
         if (positionId <= 0) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "positionId must be positive")
         val aggregateId = java.util.UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
         return tradeEventRepository.findByAggregateId(aggregateId)
@@ -161,14 +166,16 @@ class ApiController(
     suspend fun backtest(
         @PathVariable ticker: String,
         @RequestParam(defaultValue = "365") days: Int,
-        @RequestParam(defaultValue = "false") loadHistory: Boolean
+        @RequestParam(defaultValue = "false") loadHistory: Boolean,
     ): Map<String, Any> {
         val normalizedTicker = validateTicker(ticker)
         val normalizedDays = validateDays(days, max = 1_095)
-        meterRegistry.counter(
-            "api.backtest",
-            io.micrometer.core.instrument.Tags.of("ticker", normalizedTicker),
-        ).increment()
+        meterRegistry
+            .counter(
+                "api.backtest",
+                io.micrometer.core.instrument.Tags
+                    .of("ticker", normalizedTicker),
+            ).increment()
         if (loadHistory) {
             historicalDataLoader.loadAndSave(normalizedTicker, normalizedDays)
         }
@@ -183,23 +190,32 @@ class ApiController(
             "totalTrades" to result.totalTrades,
             "passable" to result.isPassable(),
             "equityCurve" to result.equityCurve,
-            "timestamp" to java.time.LocalDateTime.now().toString()
+            "timestamp" to
+                java.time.LocalDateTime
+                    .now()
+                    .toString(),
         )
     }
 
     @GetMapping("/analytics/trade-stats")
-    suspend fun getTradeStats(@RequestParam(defaultValue = "14") days: Int): Map<String, TradeStats> {
+    suspend fun getTradeStats(
+        @RequestParam(defaultValue = "14") days: Int,
+    ): Map<String, TradeStats> {
         meterRegistry.counter("api.analytics.trade-stats").increment()
         return tradeAnalysisService.analyzeLastNDays(validateDays(days))
     }
 
     @GetMapping("/analytics/adaptive-params/{ticker}")
-    suspend fun getAdaptiveParams(@PathVariable ticker: String): Map<String, Any> {
+    suspend fun getAdaptiveParams(
+        @PathVariable ticker: String,
+    ): Map<String, Any> {
         val normalizedTicker = validateTicker(ticker)
-        meterRegistry.counter(
-            "api.analytics.adaptive-params",
-            io.micrometer.core.instrument.Tags.of("ticker", normalizedTicker),
-        ).increment()
+        meterRegistry
+            .counter(
+                "api.analytics.adaptive-params",
+                io.micrometer.core.instrument.Tags
+                    .of("ticker", normalizedTicker),
+            ).increment()
         return mapOf(
             "ticker" to normalizedTicker,
             "confidenceThreshold" to adaptiveRiskService.getAdaptiveConfidenceThreshold(normalizedTicker),
@@ -216,7 +232,9 @@ class ApiController(
     }
 
     @GetMapping("/analytics/adjustments")
-    suspend fun getAdjustments(@RequestParam(required = false) ticker: String?): List<StrategyAdjustment> {
+    suspend fun getAdjustments(
+        @RequestParam(required = false) ticker: String?,
+    ): List<StrategyAdjustment> {
         meterRegistry.counter("api.analytics.adjustments").increment()
         return if (ticker != null) {
             adjustmentRepository.findByTickerOrderByCreatedAtDesc(validateTicker(ticker))
@@ -228,13 +246,15 @@ class ApiController(
     @GetMapping("/analytics/time-pattern/{ticker}")
     suspend fun getTimePattern(
         @PathVariable ticker: String,
-        @RequestParam(defaultValue = "30") days: Int
+        @RequestParam(defaultValue = "30") days: Int,
     ): TimePattern {
         val normalizedTicker = validateTicker(ticker)
-        meterRegistry.counter(
-            "api.analytics.time-pattern",
-            io.micrometer.core.instrument.Tags.of("ticker", normalizedTicker),
-        ).increment()
+        meterRegistry
+            .counter(
+                "api.analytics.time-pattern",
+                io.micrometer.core.instrument.Tags
+                    .of("ticker", normalizedTicker),
+            ).increment()
         return tradeAnalysisService.timePatternAnalysis(normalizedTicker, validateDays(days))
     }
 
@@ -248,11 +268,17 @@ class ApiController(
             "totalTradesLast7Days" to totalTrades,
             "averageWinRate" to String.format("%.2f", avgWinRate * 100) + "%",
             "pausedTickers" to stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys,
-            "timestamp" to java.time.LocalDateTime.now().toString(),
+            "timestamp" to
+                java.time.LocalDateTime
+                    .now()
+                    .toString(),
         )
     }
 
-    private fun validateDays(days: Int, max: Int = 365): Int {
+    private fun validateDays(
+        days: Int,
+        max: Int = 365,
+    ): Int {
         if (days !in 1..max) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "days must be between 1 and $max")
         }

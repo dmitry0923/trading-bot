@@ -106,7 +106,10 @@ class DashboardSseService(
             null
         }
 
-    private fun send(emitter: SseEmitter, payload: String) {
+    private fun send(
+        emitter: SseEmitter,
+        payload: String,
+    ) {
         try {
             synchronized(emitter) {
                 emitter.send(SseEmitter.event().name("dashboard").data(payload))

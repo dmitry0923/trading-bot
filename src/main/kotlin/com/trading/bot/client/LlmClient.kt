@@ -13,29 +13,34 @@ import org.springframework.stereotype.Component
  */
 @Component
 class LlmClient(
-    private val resilientLlmClient: ResilientLlmClient
+    private val resilientLlmClient: ResilientLlmClient,
 ) {
     data class LlmResponse(
         val content: String,
         val tokensUsed: Int = 0,
         val latencyMs: Long = 0,
-        val isFallback: Boolean = false
+        val isFallback: Boolean = false,
     )
 
-    suspend fun chat(system: String, user: String, temperature: Double = 0.15): LlmResponse {
+    suspend fun chat(
+        system: String,
+        user: String,
+        temperature: Double = 0.15,
+    ): LlmResponse {
         val prompt = PromptTemplate(name = "legacy", version = "default", system = system, userTemplate = user)
-        val resp = resilientLlmClient.complete(
-            agent = "legacy",
-            ticker = "",
-            prompt = prompt,
-            variables = emptyMap(),
-            temperature = temperature
-        )
+        val resp =
+            resilientLlmClient.complete(
+                agent = "legacy",
+                ticker = "",
+                prompt = prompt,
+                variables = emptyMap(),
+                temperature = temperature,
+            )
         return LlmResponse(
             content = resp.content,
             tokensUsed = resp.tokensUsed,
             latencyMs = resp.latencyMs,
-            isFallback = resp.isFallback
+            isFallback = resp.isFallback,
         )
     }
 }

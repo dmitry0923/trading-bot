@@ -21,12 +21,17 @@ class MutableGauges(
 
     private val values = ConcurrentHashMap<Key, AtomicReference<Double>>()
 
-    fun set(name: String, value: Number, tags: Tags = Tags.empty()) {
+    fun set(
+        name: String,
+        value: Number,
+        tags: Tags = Tags.empty(),
+    ) {
         val key = Key(name, tags.sortedBy { it.key }.toList())
-        values.computeIfAbsent(key) {
-            val reference = AtomicReference(0.0)
-            meterRegistry.gauge(name, Tags.of(key.tags), reference) { it.get() }
-            reference
-        }.set(value.toDouble())
+        values
+            .computeIfAbsent(key) {
+                val reference = AtomicReference(0.0)
+                meterRegistry.gauge(name, Tags.of(key.tags), reference) { it.get() }
+                reference
+            }.set(value.toDouble())
     }
 }

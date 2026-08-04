@@ -12,13 +12,13 @@ data class TechnicalReport(
     val bbLower: BigDecimal? = null,
     val conclusion: String = "NEUTRAL",
     val confidence: Double = 0.0,
-    val reasoning: String = ""
+    val reasoning: String = "",
 )
 
 data class FundamentalReport(
     val conclusion: String,
     val confidence: Double = 0.0,
-    val reasoning: String = ""
+    val reasoning: String = "",
 )
 
 data class MarketSnapshot(
@@ -27,7 +27,7 @@ data class MarketSnapshot(
     val bid: BigDecimal? = null,
     val ask: BigDecimal? = null,
     val volume: Long? = null,
-    val timestamp: Instant = Instant.now()
+    val timestamp: Instant = Instant.now(),
 )
 
 data class BotSettings(
@@ -40,5 +40,5 @@ data class BotSettings(
 data class RiskCheckResult(
     val allowed: Boolean,
     val reason: String,
-    val adjustedQty: Int
+    val adjustedQty: Int,
 )

@@ -37,6 +37,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Исполнительный сервис торгового бота (акции/валюты).
@@ -59,7 +60,7 @@ class TradingBotService(
     private val agentLogRepo: AgentLogRepository,
     private val tradeEventService: TradeEventService,
     private val eventPublisher: TradingEventPublisher,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -68,8 +69,8 @@ class TradingBotService(
     private val lastWsTickAt = ConcurrentHashMap<String, Instant>()
 
     /** Текущий P&L открытых позиций (Gauge position.pnl, обновляется на каждом тике). */
-    private val positionPnlGauges = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicReference<Double>>()
-    private val realizedPnlGauges = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicReference<Double>>()
+    private val positionPnlGauges = ConcurrentHashMap<String, AtomicReference<Double>>()
+    private val realizedPnlGauges = ConcurrentHashMap<String, AtomicReference<Double>>()
 
     /** Сериализует глобальную проверку лимитов и открытие позиции. */
     private val entryMutex = Mutex()
@@ -92,7 +93,8 @@ class TradingBotService(
                 alorWsClient.subscribeToQuotes(tradingConfig.tickers).collect { tick ->
                     try {
                         lastWsTickAt[tick.ticker] = Instant.now()
-                        meterRegistry.timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
+                        meterRegistry
+                            .timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
                             .record(Duration.between(tick.receivedAt, Instant.now()).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
                         eventPublisher.publishPriceChanged(tick.ticker, tick.price)
                     } catch (e: Exception) {
@@ -117,12 +119,13 @@ class TradingBotService(
         scope.launch {
             val now = Instant.now()
             val open = positionRepo.findByStatus(PositionStatus.OPEN)
-            open.map { it.ticker }.distinct()
+            open
+                .map { it.ticker }
+                .distinct()
                 .filter { ticker ->
                     val lastWs = lastWsTickAt[ticker]
                     lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
-                }
-                .forEach { ticker ->
+                }.forEach { ticker ->
                     try {
                         val price = alorClient.getLastPrice(ticker) ?: return@forEach
                         eventPublisher.publishPriceChanged(ticker, price)
@@ -156,7 +159,9 @@ class TradingBotService(
                 if (open.any { it.ticker == strat.ticker }) return@launch
                 val openSpotCount = open.count { it.instrumentType != InstrumentType.FUTURES }
                 if (openSpotCount >= tradingConfig.maxOpenPositionsForNewEntry) {
-                    logger.info { "Open positions $openSpotCount >= max ${tradingConfig.maxOpenPositionsForNewEntry}, skip ${strat.ticker}" }
+                    logger.info {
+                        "Open positions $openSpotCount >= max ${tradingConfig.maxOpenPositionsForNewEntry}, skip ${strat.ticker}"
+                    }
                     return@launch
                 }
                 eventPublisher.publishEntrySignal(strat)
@@ -194,35 +199,43 @@ class TradingBotService(
             val handlerStart = System.nanoTime()
             try {
                 monitorMutexes.computeIfAbsent(event.ticker) { Mutex() }.withLock {
-                    val open = positionRepo.findByStatus(PositionStatus.OPEN)
-                        .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
+                    val open =
+                        positionRepo
+                            .findByStatus(PositionStatus.OPEN)
+                            .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
                     open.forEach { position -> monitorPosition(position, event.price) }
                 }
             } catch (e: Exception) {
                 logger.error(e) { "Price change handler error ${event.ticker}" }
                 meterRegistry.counter("bot.monitor.error", Tags.of("ticker", event.ticker)).increment()
             } finally {
-                meterRegistry.timer("bot.latency", Tags.of("ticker", event.ticker))
+                meterRegistry
+                    .timer("bot.latency", Tags.of("ticker", event.ticker))
                     .record(System.nanoTime() - handlerStart, java.util.concurrent.TimeUnit.NANOSECONDS)
             }
         }
     }
 
-    private suspend fun monitorPosition(position: Position, price: BigDecimal) {
+    private suspend fun monitorPosition(
+        position: Position,
+        price: BigDecimal,
+    ) {
         position.currentPrice = price
-        val pnl = when (position.direction) {
-            PositionDirection.LONG -> price.subtract(position.entryPrice).multiply(BigDecimal(position.quantity))
-            PositionDirection.SHORT -> position.entryPrice.subtract(price).multiply(BigDecimal(position.quantity))
-        }
+        val pnl =
+            when (position.direction) {
+                PositionDirection.LONG -> price.subtract(position.entryPrice).multiply(BigDecimal(position.quantity))
+                PositionDirection.SHORT -> position.entryPrice.subtract(price).multiply(BigDecimal(position.quantity))
+            }
         position.pnl = pnl
         updatePositionPnlGauge(position.ticker, pnl.toDouble())
 
-        val closeReason = when {
-            risk.shouldCloseBySL(position, price) -> "STOP_LOSS"
-            risk.shouldCloseByTP(position, price) -> "TAKE_PROFIT"
-            risk.shouldCloseByTrailing(position, price) -> "TRAILING_STOP"
-            else -> null
-        }
+        val closeReason =
+            when {
+                risk.shouldCloseBySL(position, price) -> "STOP_LOSS"
+                risk.shouldCloseByTP(position, price) -> "TAKE_PROFIT"
+                risk.shouldCloseByTrailing(position, price) -> "TRAILING_STOP"
+                else -> null
+            }
         if (closeReason != null) {
             closePosition(position, price, closeReason)
             return
@@ -238,10 +251,11 @@ class TradingBotService(
             }
             strategy.stopLoss?.let { newStopLoss ->
                 val currentStopLoss = position.stopLoss
-                val improvesProtection = when (position.direction) {
-                    PositionDirection.LONG -> currentStopLoss == null || newStopLoss > currentStopLoss
-                    PositionDirection.SHORT -> currentStopLoss == null || newStopLoss < currentStopLoss
-                }
+                val improvesProtection =
+                    when (position.direction) {
+                        PositionDirection.LONG -> currentStopLoss == null || newStopLoss > currentStopLoss
+                        PositionDirection.SHORT -> currentStopLoss == null || newStopLoss < currentStopLoss
+                    }
                 if (improvesProtection) {
                     position.stopLoss = newStopLoss
                     slUpdated = true
@@ -250,10 +264,11 @@ class TradingBotService(
             }
             strategy.takeProfit?.let { newTakeProfit ->
                 val currentTakeProfit = position.takeProfit
-                val extendsTarget = when (position.direction) {
-                    PositionDirection.LONG -> currentTakeProfit == null || newTakeProfit > currentTakeProfit
-                    PositionDirection.SHORT -> currentTakeProfit == null || newTakeProfit < currentTakeProfit
-                }
+                val extendsTarget =
+                    when (position.direction) {
+                        PositionDirection.LONG -> currentTakeProfit == null || newTakeProfit > currentTakeProfit
+                        PositionDirection.SHORT -> currentTakeProfit == null || newTakeProfit < currentTakeProfit
+                    }
                 if (extendsTarget) {
                     position.takeProfit = newTakeProfit
                     tpUpdated = true
@@ -270,20 +285,28 @@ class TradingBotService(
     /**
      * Обновляет Gauge position.pnl для тикера (регистрируется один раз на тикер).
      */
-    private fun updatePositionPnlGauge(ticker: String, pnl: Double) {
-        positionPnlGauges.computeIfAbsent(ticker) { t ->
-            val ref = java.util.concurrent.atomic.AtomicReference(0.0)
-            meterRegistry.gauge("position.pnl", Tags.of("ticker", t), ref) { it.get() }
-            ref
-        }.set(pnl)
+    private fun updatePositionPnlGauge(
+        ticker: String,
+        pnl: Double,
+    ) {
+        positionPnlGauges
+            .computeIfAbsent(ticker) { t ->
+                val ref = AtomicReference(0.0)
+                meterRegistry.gauge("position.pnl", Tags.of("ticker", t), ref) { it.get() }
+                ref
+            }.set(pnl)
     }
 
-    private fun updateRealizedPnlGauge(ticker: String, pnl: Double) {
-        realizedPnlGauges.computeIfAbsent(ticker) { t ->
-            val ref = java.util.concurrent.atomic.AtomicReference(0.0)
-            meterRegistry.gauge("bot.pnl", Tags.of("ticker", t), ref) { it.get() }
-            ref
-        }.set(pnl)
+    private fun updateRealizedPnlGauge(
+        ticker: String,
+        pnl: Double,
+    ) {
+        realizedPnlGauges
+            .computeIfAbsent(ticker) { t ->
+                val ref = AtomicReference(0.0)
+                meterRegistry.gauge("bot.pnl", Tags.of("ticker", t), ref) { it.get() }
+                ref
+            }.set(pnl)
     }
 
     /**
@@ -371,17 +394,18 @@ class TradingBotService(
         val fillPrice = execution?.avgPrice ?: strat.targetPrice
         logger.info { "Order $orderId for ${strat.ticker} verified: status=${execution?.status}, fillPrice=$fillPrice" }
 
-        val newPosition = Position(
-            ticker = strat.ticker,
-            direction = dir,
-            quantity = qty,
-            entryPrice = fillPrice,
-            currentPrice = fillPrice,
-            stopLoss = strat.stopLoss ?: risk.calcSL(fillPrice, dir),
-            takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
-            trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
-            alorOrderId = orderId
-        )
+        val newPosition =
+            Position(
+                ticker = strat.ticker,
+                direction = dir,
+                quantity = qty,
+                entryPrice = fillPrice,
+                currentPrice = fillPrice,
+                stopLoss = strat.stopLoss ?: risk.calcSL(fillPrice, dir),
+                takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
+                trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
+                alorOrderId = orderId,
+            )
         val pos = positionRepo.save(newPosition)
         tradeEventService.recordPositionOpened(pos)
         eventPublisher.publishPositionOpened(pos)
@@ -392,18 +416,23 @@ class TradingBotService(
                 ticker = strat.ticker,
                 action = "OPEN",
                 confidence = strat.confidence,
-                reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)"
-            )
+                reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)",
+            ),
         )
         meterRegistry.counter("bot.position.opened", Tags.of("ticker", strat.ticker, "direction", dir.name)).increment()
         logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ $fillPrice (adaptive qty=$qty)" }
     }
 
-    private suspend fun closePosition(pos: Position, price: BigDecimal, reason: String) {
-        val side = when (pos.direction) {
-            PositionDirection.LONG -> "sell"
-            PositionDirection.SHORT -> "buy"
-        }
+    private suspend fun closePosition(
+        pos: Position,
+        price: BigDecimal,
+        reason: String,
+    ) {
+        val side =
+            when (pos.direction) {
+                PositionDirection.LONG -> "sell"
+                PositionDirection.SHORT -> "buy"
+            }
         val placed = orderOutboxService.placeOrder(pos.ticker, side, pos.quantity, null, "market")
         val orderId = placed.alorOrderId
         if (!placed.success || orderId == null) {
@@ -413,17 +442,19 @@ class TradingBotService(
         }
         val execution = alorClient.verifyOrder(orderId, expectedPrice = price)
         val closePrice = execution?.avgPrice ?: price
-        pos.status = when (reason) {
-            "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
-            else -> PositionStatus.CLOSED
-        }
+        pos.status =
+            when (reason) {
+                "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
+                else -> PositionStatus.CLOSED
+            }
         pos.closedAt = LocalDateTime.now()
         pos.closePrice = closePrice
         pos.closeReason = reason
-        val pnl = when (pos.direction) {
-            PositionDirection.LONG -> closePrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
-            PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(BigDecimal(pos.quantity))
-        }
+        val pnl =
+            when (pos.direction) {
+                PositionDirection.LONG -> closePrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
+                PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(BigDecimal(pos.quantity))
+            }
         pos.pnl = pnl
         positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason)

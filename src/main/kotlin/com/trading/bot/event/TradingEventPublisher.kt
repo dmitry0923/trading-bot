@@ -12,9 +12,12 @@ import java.math.BigDecimal
  */
 @Component
 class TradingEventPublisher(
-    private val publisher: ApplicationEventPublisher
+    private val publisher: ApplicationEventPublisher,
 ) {
-    fun publishPriceChanged(ticker: String, price: BigDecimal) {
+    fun publishPriceChanged(
+        ticker: String,
+        price: BigDecimal,
+    ) {
         publisher.publishEvent(PriceChangedEvent(ticker, price))
     }
 
@@ -37,8 +40,8 @@ class TradingEventPublisher(
                 ticker = position.ticker,
                 quantity = position.quantity,
                 direction = position.direction,
-                entryPrice = position.entryPrice
-            )
+                entryPrice = position.entryPrice,
+            ),
         )
     }
 
@@ -48,8 +51,8 @@ class TradingEventPublisher(
                 positionId = position.id ?: -1L,
                 ticker = position.ticker,
                 pnl = position.pnl ?: java.math.BigDecimal.ZERO,
-                reason = position.closeReason ?: "CLOSED"
-            )
+                reason = position.closeReason ?: "CLOSED",
+            ),
         )
     }
 

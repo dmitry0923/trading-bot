@@ -19,17 +19,17 @@ data class TradeStats(
     val strategyCloseRate: Double,
     val bestEntryHour: Int?,
     val worstEntryHour: Int?,
-    val blindSpots: List<BlindSpot>
+    val blindSpots: List<BlindSpot>,
 )
 
 data class BlindSpot(
     val conditionPattern: String,
     val lossRate: Double,
     val occurrenceCount: Int,
-    val recommendation: String
+    val recommendation: String,
 )
 
 data class TimePattern(
     val ticker: String,
-    val hourlyWinRates: Map<Int, Double>
+    val hourlyWinRates: Map<Int, Double>,
 )

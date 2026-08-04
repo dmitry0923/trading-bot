@@ -25,7 +25,7 @@ import java.time.Duration
 class MacroContextService(
     private val macroConfig: MacroConfig,
     private val objectMapper: ObjectMapper,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -34,7 +34,7 @@ class MacroContextService(
     data class MacroContext(
         val cbrRate: BigDecimal,
         val brentPrice: BigDecimal,
-        val usdRub: BigDecimal
+        val usdRub: BigDecimal,
     )
 
     /**
@@ -45,32 +45,41 @@ class MacroContextService(
      */
     suspend fun fetch(): MacroContext {
         val liveUsdRub = fetchUsdRubLive()
-        val ctx = MacroContext(
-            cbrRate = macroConfig.cbrRate,
-            brentPrice = macroConfig.brentPrice,
-            usdRub = liveUsdRub ?: macroConfig.usdRub
-        )
+        val ctx =
+            MacroContext(
+                cbrRate = macroConfig.cbrRate,
+                brentPrice = macroConfig.brentPrice,
+                usdRub = liveUsdRub ?: macroConfig.usdRub,
+            )
         gauges.set("macro.usd_rub", ctx.usdRub)
         gauges.set("macro.cbr_rate", ctx.cbrRate)
         gauges.set("macro.brent", ctx.brentPrice)
         return ctx
     }
 
-    private suspend fun fetchUsdRubLive(): BigDecimal? {
-        return try {
-            val url = "https://iss.moex.com/iss/engines/currency/markets/seld/boards/CETS/securities/" +
-                "${macroConfig.usdRubTicker}.json?iss.meta=off&iss.only=marketdata&marketdata.columns=SECID,LAST"
-            val raw: String = webClient.get()
-                .uri(url)
-                .retrieve()
-                .bodyToMono(String::class.java)
-                .timeout(Duration.ofSeconds(5))
-                .awaitSingle()
+    private suspend fun fetchUsdRubLive(): BigDecimal? =
+        try {
+            val url =
+                "https://iss.moex.com/iss/engines/currency/markets/seld/boards/CETS/securities/" +
+                    "${macroConfig.usdRubTicker}.json?iss.meta=off&iss.only=marketdata&marketdata.columns=SECID,LAST"
+            val raw: String =
+                webClient
+                    .get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(5))
+                    .awaitSingle()
 
-            val last = objectMapper.readTree(raw)
-                .path("marketdata").path("data")
-                .takeIf { it.isArray && it.size() > 0 }?.get(0)
-                ?.get(1)?.asText()
+            val last =
+                objectMapper
+                    .readTree(raw)
+                    .path("marketdata")
+                    .path("data")
+                    .takeIf { it.isArray && it.size() > 0 }
+                    ?.get(0)
+                    ?.get(1)
+                    ?.asText()
             last?.toBigDecimalOrNull()?.also {
                 meterRegistry.counter("macro.usd_rub.live", Tags.of("status", "OK")).increment()
                 logger.info { "USD/RUB live: $it" }
@@ -80,5 +89,4 @@ class MacroContextService(
             meterRegistry.counter("macro.usd_rub.live", Tags.of("status", "FALLBACK")).increment()
             null
         }
-    }
 }

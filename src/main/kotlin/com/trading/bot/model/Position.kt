@@ -26,5 +26,5 @@ data class Position(
     var alorOrderId: String? = null,
     var closeReason: String? = null,
     var openedAt: LocalDateTime = LocalDateTime.now(),
-    var closedAt: LocalDateTime? = null
+    var closedAt: LocalDateTime? = null,
 )

@@ -63,12 +63,13 @@ class DailyRiskService(
     @Synchronized
     fun reset() {
         tradeDate = LocalDate.now(moscowZone)
-        val snapshot = try {
-            repository.findByDate(tradeDate)
-        } catch (e: Exception) {
-            logger.warn(e) { "Daily risk snapshot load failed" }
-            null
-        }
+        val snapshot =
+            try {
+                repository.findByDate(tradeDate)
+            } catch (e: Exception) {
+                logger.warn(e) { "Daily risk snapshot load failed" }
+                null
+            }
         dailyPnl = snapshot?.dailyPnl ?: BigDecimal.ZERO
         maxDrawdown = snapshot?.maxDrawdownToday ?: BigDecimal.ZERO
         limitReached = snapshot?.limitReached ?: (dailyPnl <= riskConfig.maxDailyLossRub.negate())

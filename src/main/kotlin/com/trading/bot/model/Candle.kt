@@ -12,5 +12,5 @@ data class Candle(
     val lowPrice: BigDecimal,
     val closePrice: BigDecimal,
     val volume: Long,
-    val time: LocalDateTime
+    val time: LocalDateTime,
 )

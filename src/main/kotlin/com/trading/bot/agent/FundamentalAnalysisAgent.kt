@@ -29,7 +29,7 @@ class FundamentalAnalysisAgent(
     private val semanticCache: SemanticCache,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -44,53 +44,58 @@ class FundamentalAnalysisAgent(
     suspend fun analyze(
         ticker: String,
         cycleId: String,
-        version: String = PromptRegistry.DEFAULT_VERSION
+        version: String = PromptRegistry.DEFAULT_VERSION,
     ): FundamentalReport {
         val start = System.currentTimeMillis()
         val macro = macroContextService.fetch()
 
-        val variables = mapOf(
-            "ticker" to ticker,
-            "cbrRate" to macro.cbrRate.toPlainString(),
-            "brentPrice" to macro.brentPrice.toPlainString(),
-            "usdRub" to macro.usdRub.toPlainString()
-        )
+        val variables =
+            mapOf(
+                "ticker" to ticker,
+                "cbrRate" to macro.cbrRate.toPlainString(),
+                "brentPrice" to macro.brentPrice.toPlainString(),
+                "usdRub" to macro.usdRub.toPlainString(),
+            )
 
         // Фундаментальный анализ зависит только от макро-фона — кэшируем по нему
-        val fingerprint = semanticCache.genericFingerprint(
-            macro.cbrRate.toPlainString(),
-            macro.brentPrice.toPlainString(),
-            macro.usdRub.toPlainString()
-        )
+        val fingerprint =
+            semanticCache.genericFingerprint(
+                macro.cbrRate.toPlainString(),
+                macro.brentPrice.toPlainString(),
+                macro.usdRub.toPlainString(),
+            )
 
         val prompt = promptRegistry.getTemplate("fundamental-analysis", version)
-        val resp = llmClient.complete(
-            agent = "fundamental",
-            ticker = ticker,
-            prompt = prompt,
-            variables = variables,
-            fingerprint = fingerprint,
-            temperature = 0.1
-        )
+        val resp =
+            llmClient.complete(
+                agent = "fundamental",
+                ticker = ticker,
+                prompt = prompt,
+                variables = variables,
+                fingerprint = fingerprint,
+                temperature = 0.1,
+            )
 
-        val report = if (resp.isFallback) {
-            logger.info { "LLM unavailable for fundamental analysis of $ticker" }
-            FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "LLM unavailable")
-        } else {
-            try {
-                val j = objectMapper.readTree(resp.content)
-                FundamentalReport(
-                    conclusion = j.path("conclusion").asText("NEUTRAL").uppercase().let {
-                        if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
-                    },
-                    confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-                    reasoning = j.path("reasoning").asText("")
-                )
-            } catch (e: Exception) {
-                logger.warn(e) { "Fundamental LLM parse error for $ticker" }
-                FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "Parse error")
+        val report =
+            if (resp.isFallback) {
+                logger.info { "LLM unavailable for fundamental analysis of $ticker" }
+                FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "LLM unavailable")
+            } else {
+                try {
+                    val j = objectMapper.readTree(resp.content)
+                    FundamentalReport(
+                        conclusion =
+                            j.path("conclusion").asText("NEUTRAL").uppercase().let {
+                                if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
+                            },
+                        confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                        reasoning = j.path("reasoning").asText(""),
+                    )
+                } catch (e: Exception) {
+                    logger.warn(e) { "Fundamental LLM parse error for $ticker" }
+                    FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "Parse error")
+                }
             }
-        }
 
         agentLogRepository.save(
             AgentLog(
@@ -103,8 +108,8 @@ class FundamentalAnalysisAgent(
                 rawOutput = resp.content,
                 latencyMs = System.currentTimeMillis() - start,
                 tokensUsed = resp.tokensUsed,
-                isCached = resp.fromCache
-            )
+                isCached = resp.fromCache,
+            ),
         )
         meterRegistry.counter("agent.fundamental.decision", Tags.of("action", report.conclusion)).increment()
         return report

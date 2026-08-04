@@ -17,5 +17,5 @@ data class Strategy(
     val rawJson: String? = null,
     val cycleId: String,
     val validUntil: LocalDateTime,
-    val createdAt: LocalDateTime = LocalDateTime.now()
+    val createdAt: LocalDateTime = LocalDateTime.now(),
 )

@@ -39,25 +39,28 @@ class ResilientLlmClient(
     private val meterRegistry: MeterRegistry,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
-    private val retryRegistry: RetryRegistry
+    private val retryRegistry: RetryRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
 
-    private val llmQueue = LlmRequestQueue(
-        capacity = llmConfig.queueCapacity,
-        concurrency = llmConfig.queueConcurrency
-    )
-
-    private val webClient: WebClient = WebClient.builder()
-        .baseUrl(llmConfig.baseUrl)
-        .clientConnector(
-            ReactorClientHttpConnector(
-                HttpClient.create()
-                    .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000)
-                    .responseTimeout(Duration.ofSeconds(llmConfig.timeoutSec))
-            )
+    private val llmQueue =
+        LlmRequestQueue(
+            capacity = llmConfig.queueCapacity,
+            concurrency = llmConfig.queueConcurrency,
         )
-        .build()
+
+    private val webClient: WebClient =
+        WebClient
+            .builder()
+            .baseUrl(llmConfig.baseUrl)
+            .clientConnector(
+                ReactorClientHttpConnector(
+                    HttpClient
+                        .create()
+                        .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000)
+                        .responseTimeout(Duration.ofSeconds(llmConfig.timeoutSec)),
+                ),
+            ).build()
 
     /**
      * Выполняет LLM-вызов с resilience-обвязкой и semantic cache.
@@ -75,7 +78,7 @@ class ResilientLlmClient(
         prompt: PromptTemplate,
         variables: Map<String, Any>,
         fingerprint: String? = null,
-        temperature: Double = llmConfig.temperature
+        temperature: Double = llmConfig.temperature,
     ): LlmResponse {
         if (llmConfig.apiKey.isBlank()) {
             meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "NO_API_KEY")).increment()
@@ -89,13 +92,14 @@ class ResilientLlmClient(
         val system = prompt.renderSystem(variables)
         val user = prompt.renderUser(variables)
 
-        val response = try {
-            llmQueue.submit { decoratedCall { callLlm(system, user, temperature, agent) } }
-        } catch (e: Exception) {
-            logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
-            meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
-            LlmResponse.fallback("CALL_ERROR")
-        }
+        val response =
+            try {
+                llmQueue.submit { decoratedCall { callLlm(system, user, temperature, agent) } }
+            } catch (e: Exception) {
+                logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
+                meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
+                LlmResponse.fallback("CALL_ERROR")
+            }
 
         if (fingerprint != null && !response.isFallback) {
             semanticCache.put(agent, ticker, fingerprint, response)
@@ -123,31 +127,46 @@ class ResilientLlmClient(
         return call()
     }
 
-    private suspend fun callLlm(system: String, user: String, temperature: Double, agent: String): LlmResponse {
+    private suspend fun callLlm(
+        system: String,
+        user: String,
+        temperature: Double,
+        agent: String,
+    ): LlmResponse {
         val start = System.currentTimeMillis()
-        val body = mapOf(
-            "model" to llmConfig.model,
-            "messages" to listOf(
-                mapOf("role" to "system", "content" to system),
-                mapOf("role" to "user", "content" to user)
-            ),
-            "temperature" to temperature,
-            "max_tokens" to llmConfig.maxTokens,
-            "response_format" to mapOf("type" to "json_object")
-        )
+        val body =
+            mapOf(
+                "model" to llmConfig.model,
+                "messages" to
+                    listOf(
+                        mapOf("role" to "system", "content" to system),
+                        mapOf("role" to "user", "content" to user),
+                    ),
+                "temperature" to temperature,
+                "max_tokens" to llmConfig.maxTokens,
+                "response_format" to mapOf("type" to "json_object"),
+            )
 
-        val raw: String = webClient.post()
-            .uri("/chat/completions")
-            .header("Authorization", "Bearer ${llmConfig.apiKey}")
-            .contentType(MediaType.APPLICATION_JSON)
-            .bodyValue(objectMapper.writeValueAsString(body))
-            .retrieve()
-            .bodyToMono(String::class.java)
-            .timeout(Duration.ofSeconds(llmConfig.timeoutSec))
-            .awaitSingle()
+        val raw: String =
+            webClient
+                .post()
+                .uri("/chat/completions")
+                .header("Authorization", "Bearer ${llmConfig.apiKey}")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(objectMapper.writeValueAsString(body))
+                .retrieve()
+                .bodyToMono(String::class.java)
+                .timeout(Duration.ofSeconds(llmConfig.timeoutSec))
+                .awaitSingle()
 
         val tree = objectMapper.readTree(raw)
-        val content = tree.path("choices").path(0).path("message").path("content").asText()
+        val content =
+            tree
+                .path("choices")
+                .path(0)
+                .path("message")
+                .path("content")
+                .asText()
         if (content.isBlank()) throw IllegalStateException("LLM returned empty content")
 
         val tokens = tree.path("usage").path("total_tokens").asInt(0)

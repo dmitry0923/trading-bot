@@ -21,7 +21,7 @@ import java.time.LocalDateTime
 data class LoadResult(
     val ticker: String,
     val loaded: Int,
-    val saved: Int
+    val saved: Int,
 )
 
 /**
@@ -37,7 +37,7 @@ data class LoadResult(
 class HistoricalDataLoader(
     private val moexClient: MoexClient,
     private val candleRepo: CandleRepository,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -49,7 +49,11 @@ class HistoricalDataLoader(
      * @param timeframe таймфрейм свечей (по умолчанию MINUTE_10)
      * @return [LoadResult] — сколько загружено и сохранено
      */
-    suspend fun loadAndSave(ticker: String, days: Int, timeframe: String = "MINUTE_10"): LoadResult {
+    suspend fun loadAndSave(
+        ticker: String,
+        days: Int,
+        timeframe: String = "MINUTE_10",
+    ): LoadResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val to = LocalDateTime.now()
         val candles = moexClient.getCandlesPaged(ticker, from, to)
@@ -69,10 +73,14 @@ class HistoricalDataLoader(
      * @param days глубина истории в днях
      * @return отображение тикер -> [LoadResult]
      */
-    suspend fun loadAndSaveAll(tickers: List<String>, days: Int): Map<String, LoadResult> = coroutineScope {
-        tickers
-            .map { ticker -> async { ticker to loadAndSave(ticker, days) } }
-            .awaitAll()
-            .toMap()
-    }
+    suspend fun loadAndSaveAll(
+        tickers: List<String>,
+        days: Int,
+    ): Map<String, LoadResult> =
+        coroutineScope {
+            tickers
+                .map { ticker -> async { ticker to loadAndSave(ticker, days) } }
+                .awaitAll()
+                .toMap()
+        }
 }

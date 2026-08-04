@@ -16,7 +16,7 @@ data class BacktestResult(
     val totalTrades: Int,
     val avgHoldBars: Double,
     val equityCurve: List<BigDecimal>,
-    val monthlyReturns: Map<String, Double>
+    val monthlyReturns: Map<String, Double>,
 ) {
     /**
      * Критерии приёма стратегии в прод:
@@ -36,13 +36,16 @@ object BacktestMetrics {
         tradeReturns: List<Double>,
         holdBars: List<Int> = emptyList(),
     ): BacktestResult {
-        val totalReturn = if (equityCurve.size >= 2 && equityCurve.first() > BigDecimal.ZERO) {
-            equityCurve.last().subtract(equityCurve.first())
-                .divide(equityCurve.first(), 6, RoundingMode.HALF_UP)
-                .toDouble()
-        } else {
-            0.0
-        }
+        val totalReturn =
+            if (equityCurve.size >= 2 && equityCurve.first() > BigDecimal.ZERO) {
+                equityCurve
+                    .last()
+                    .subtract(equityCurve.first())
+                    .divide(equityCurve.first(), 6, RoundingMode.HALF_UP)
+                    .toDouble()
+            } else {
+                0.0
+            }
 
         val sharpe = sharpeRatio(tradeReturns)
         val mdd = maxDrawdown(equityCurve)
@@ -51,7 +54,14 @@ object BacktestMetrics {
 
         val grossProfit = tradeReturns.filter { it > 0 }.sum()
         val grossLoss = tradeReturns.filter { it < 0 }.sum().let { if (it == 0.0) 0.0 else -it }
-        val profitFactor = if (grossLoss > 0) grossProfit / grossLoss else if (grossProfit > 0) Double.POSITIVE_INFINITY else 0.0
+        val profitFactor =
+            if (grossLoss > 0) {
+                grossProfit / grossLoss
+            } else if (grossProfit > 0) {
+                Double.POSITIVE_INFINITY
+            } else {
+                0.0
+            }
 
         return BacktestResult(
             ticker = ticker,
@@ -63,11 +73,14 @@ object BacktestMetrics {
             totalTrades = tradeReturns.size,
             avgHoldBars = holdBars.takeIf { it.isNotEmpty() }?.average() ?: 0.0,
             equityCurve = equityCurve,
-            monthlyReturns = emptyMap()
+            monthlyReturns = emptyMap(),
         )
     }
 
-    fun sharpeRatio(periodReturns: List<Double>, rfPerPeriod: Double = 0.0): Double {
+    fun sharpeRatio(
+        periodReturns: List<Double>,
+        rfPerPeriod: Double = 0.0,
+    ): Double {
         if (periodReturns.size < 2) return 0.0
         val mean = periodReturns.average()
         val variance = periodReturns.map { (it - mean) * (it - mean) }.average()

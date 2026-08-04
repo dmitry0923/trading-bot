@@ -1,17 +1,24 @@
 package com.trading.bot.model
 
 enum class StrategyAction {
-    BUY, SELL, HOLD, CLOSE
+    BUY,
+    SELL,
+    HOLD,
+    CLOSE,
 }
 
 enum class PositionDirection {
-    LONG, SHORT
+    LONG,
+    SHORT,
 }
 
 enum class PositionStatus {
-    OPEN, CLOSED, TAKE_PROFIT
+    OPEN,
+    CLOSED,
+    TAKE_PROFIT,
 }
 
 enum class InstrumentType {
-    STOCK, FUTURES
+    STOCK,
+    FUTURES,
 }

@@ -16,13 +16,13 @@ import java.math.BigDecimal
  * Проверка circuit breaker по дневному лимиту убытка.
  */
 class DailyLossCircuitBreakerTest {
-
     private val engine: FuturesRiskEngine = Mockito.mock(FuturesRiskEngine::class.java)
     private val meterRegistry = SimpleMeterRegistry()
     private val haltedEvents = mutableListOf<TradingHaltedEvent>()
-    private val publisher = TradingEventPublisher(
-        ApplicationEventPublisher { event -> if (event is TradingHaltedEvent) haltedEvents += event }
-    )
+    private val publisher =
+        TradingEventPublisher(
+            ApplicationEventPublisher { event -> if (event is TradingHaltedEvent) haltedEvents += event },
+        )
 
     private fun breaker() = DailyLossCircuitBreaker(engine, publisher, meterRegistry)
 
@@ -31,7 +31,7 @@ class DailyLossCircuitBreakerTest {
         Mockito.`when`(engine.isDailyLossLimitReached()).thenReturn(false)
 
         breaker().onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS")
+            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS"),
         )
 
         Mockito.verify(engine).updateDailyPnL(BigDecimal("-1000"))
@@ -44,7 +44,7 @@ class DailyLossCircuitBreakerTest {
         Mockito.`when`(engine.isDailyLossLimitReached()).thenReturn(true)
 
         breaker().onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "LIQUIDATION_CRITICAL")
+            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "LIQUIDATION_CRITICAL"),
         )
 
         Mockito.verify(engine).updateDailyPnL(BigDecimal("-14000"))
@@ -58,7 +58,7 @@ class DailyLossCircuitBreakerTest {
         Mockito.`when`(engine.isDailyLossLimitReached()).thenReturn(false)
 
         breaker().onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-3000"), reason = "STOP_LOSS")
+            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-3000"), reason = "STOP_LOSS"),
         )
 
         Mockito.verify(engine).updateDailyPnL(BigDecimal("-3000"))

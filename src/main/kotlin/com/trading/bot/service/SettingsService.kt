@@ -18,14 +18,15 @@ import java.util.concurrent.atomic.AtomicReference
 class SettingsService(
     private val riskConfig: RiskConfig,
 ) {
-    private val settings = AtomicReference(
-        BotSettings(
-            tradingEnabled = true,
-            riskEnabled = riskConfig.enabled,
-            maxPositionRub = riskConfig.maxPositionRub.intValueExact(),
-            maxDailyLossRub = riskConfig.maxDailyLossRub.intValueExact(),
-        ),
-    )
+    private val settings =
+        AtomicReference(
+            BotSettings(
+                tradingEnabled = true,
+                riskEnabled = riskConfig.enabled,
+                maxPositionRub = riskConfig.maxPositionRub.intValueExact(),
+                maxDailyLossRub = riskConfig.maxDailyLossRub.intValueExact(),
+            ),
+        )
 
     fun getSettings(): BotSettings = settings.get()
 

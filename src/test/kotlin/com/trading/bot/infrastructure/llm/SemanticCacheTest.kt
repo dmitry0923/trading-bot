@@ -20,7 +20,6 @@ import java.math.BigDecimal
 
 @Testcontainers
 class SemanticCacheTest {
-
     companion object {
         @Container
         @JvmStatic
@@ -31,18 +30,23 @@ class SemanticCacheTest {
 
     @BeforeEach
     fun setup() {
-        val factory = LettuceConnectionFactory(
-            RedisStandaloneConfiguration(redis.host, redis.getMappedPort(6379))
-        )
+        val factory =
+            LettuceConnectionFactory(
+                RedisStandaloneConfiguration(redis.host, redis.getMappedPort(6379)),
+            )
         factory.afterPropertiesSet()
         val template = StringRedisTemplate(factory)
         template.afterPropertiesSet()
-        template.connectionFactory!!.connection.serverCommands().flushAll()
+        template.connectionFactory!!
+            .connection
+            .serverCommands()
+            .flushAll()
 
-        val config = LlmConfig().apply {
-            semanticCacheEnabled = true
-            semanticCacheTtlMinutes = 10
-        }
+        val config =
+            LlmConfig().apply {
+                semanticCacheEnabled = true
+                semanticCacheTtlMinutes = 10
+            }
         cache = SemanticCache(template, jacksonObjectMapper(), SimpleMeterRegistry(), config)
     }
 
@@ -107,12 +111,13 @@ class SemanticCacheTest {
 
     @Test
     fun `put then get returns stored response`() {
-        val resp = LlmResponse(
-            content = """{"conclusion":"BULLISH","confidence":0.8,"reasoning":"trend up"}""",
-            tokensUsed = 123,
-            latencyMs = 456,
-            model = "kimi-k3"
-        )
+        val resp =
+            LlmResponse(
+                content = """{"conclusion":"BULLISH","confidence":0.8,"reasoning":"trend up"}""",
+                tokensUsed = 123,
+                latencyMs = 456,
+                model = "kimi-k3",
+            )
         cache.put("technical", "SBER", "280.5:62:UP:LOW_VOLATILITY", resp)
 
         val cached = cache.get("technical", "SBER", "280.5:62:UP:LOW_VOLATILITY")

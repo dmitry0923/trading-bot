@@ -22,7 +22,6 @@ import kotlin.math.abs
  * с открытой позицией > 0.8 (исключение — фьючерсный хедж Si).
  */
 class AdaptiveRiskServiceCorrelationTest {
-
     private val riskConfig = RiskConfig()
     private val tradeAnalysis = Mockito.mock(TradeAnalysisService::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
@@ -42,12 +41,15 @@ class AdaptiveRiskServiceCorrelationTest {
                 lowPrice = BigDecimal(v),
                 closePrice = BigDecimal(v),
                 volume = 0,
-                time = t
+                time = t,
             ).also { t = t.plusMinutes(10) }
         }
     }
 
-    private fun stubSeries(ticker: String, values: List<Double>) {
+    private fun stubSeries(
+        ticker: String,
+        values: List<Double>,
+    ) {
         Mockito.`when`(candleCache.getRecentCandles(ticker, "MINUTE_10", 50)).thenReturn(closes(values))
     }
 
@@ -85,13 +87,14 @@ class AdaptiveRiskServiceCorrelationTest {
         val series = (1..50).map { i -> 100.0 + i }
         stubSeries("A", series)
         stubSeries("B", series)
-        val openPosition = Position(
-            id = 1,
-            ticker = "B",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("120")
-        )
+        val openPosition =
+            Position(
+                id = 1,
+                ticker = "B",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("120"),
+            )
 
         assertTrue(service.exceedsCorrelationLimit("A", listOf(openPosition)))
     }
@@ -101,26 +104,28 @@ class AdaptiveRiskServiceCorrelationTest {
         val series = (1..50).map { i -> 100.0 + i }
         stubSeries("Si", series)
         stubSeries("B", series)
-        val openPosition = Position(
-            id = 1,
-            ticker = "B",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("120")
-        )
+        val openPosition =
+            Position(
+                id = 1,
+                ticker = "B",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("120"),
+            )
 
         assertFalse(service.exceedsCorrelationLimit("Si", listOf(openPosition)))
     }
 
     @Test
     fun `same ticker open position is not a correlation conflict`() {
-        val openPosition = Position(
-            id = 1,
-            ticker = "A",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("120")
-        )
+        val openPosition =
+            Position(
+                id = 1,
+                ticker = "A",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("120"),
+            )
 
         assertFalse(service.exceedsCorrelationLimit("A", listOf(openPosition)))
     }
@@ -129,13 +134,14 @@ class AdaptiveRiskServiceCorrelationTest {
     fun `insufficient data does not block entry`() {
         stubSeries("A", emptyList())
         stubSeries("B", emptyList())
-        val openPosition = Position(
-            id = 1,
-            ticker = "B",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("120")
-        )
+        val openPosition =
+            Position(
+                id = 1,
+                ticker = "B",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("120"),
+            )
 
         assertFalse(service.exceedsCorrelationLimit("A", listOf(openPosition)))
         assertTrue(abs(service.correlationOf("A", "B") ?: 0.0 - 0.0) < 1e-9 || service.correlationOf("A", "B") == null)

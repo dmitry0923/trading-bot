@@ -20,7 +20,6 @@ import java.time.ZoneId
  * и восстановление снапшота после рестарта.
  */
 class RiskManagementServiceDailyPnLTest {
-
     private val repo = Mockito.mock(DailyRiskSnapshotRepository::class.java)
     private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
@@ -63,20 +62,22 @@ class RiskManagementServiceDailyPnLTest {
     @Test
     fun `trailing stop never loosens when price reverses`() {
         val s = service(BigDecimal("5000"))
-        val long = Position(
-            ticker = "SBER",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("100"),
-            trailingStopPrice = BigDecimal("108.90"),
-        )
-        val short = Position(
-            ticker = "SBER",
-            direction = PositionDirection.SHORT,
-            quantity = 1,
-            entryPrice = BigDecimal("100"),
-            trailingStopPrice = BigDecimal("91.90"),
-        )
+        val long =
+            Position(
+                ticker = "SBER",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("100"),
+                trailingStopPrice = BigDecimal("108.90"),
+            )
+        val short =
+            Position(
+                ticker = "SBER",
+                direction = PositionDirection.SHORT,
+                quantity = 1,
+                entryPrice = BigDecimal("100"),
+                trailingStopPrice = BigDecimal("91.90"),
+            )
 
         s.updateTrailingStop(long, BigDecimal("105"))
         s.updateTrailingStop(short, BigDecimal("95"))
@@ -93,8 +94,8 @@ class RiskManagementServiceDailyPnLTest {
                 tradeDate = moscowToday,
                 dailyPnl = BigDecimal("-3000"),
                 limitReached = false,
-                maxDrawdownToday = BigDecimal("-3000")
-            )
+                maxDrawdownToday = BigDecimal("-3000"),
+            ),
         )
         val s = service(BigDecimal("5000"))
 
@@ -109,8 +110,8 @@ class RiskManagementServiceDailyPnLTest {
                 tradeDate = moscowToday,
                 dailyPnl = BigDecimal("-6000"),
                 limitReached = true,
-                maxDrawdownToday = BigDecimal("-6000")
-            )
+                maxDrawdownToday = BigDecimal("-6000"),
+            ),
         )
         val s = service(BigDecimal("5000"))
 

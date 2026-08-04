@@ -30,7 +30,7 @@ class AdaptiveRiskService(
     private val tradeAnalysisService: TradeAnalysisService,
     private val positionRepo: PositionRepository,
     private val candleCache: CandleCacheService,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val gauges = MutableGauges(meterRegistry)
@@ -47,7 +47,12 @@ class AdaptiveRiskService(
      * @param period глубина расчёта
      * @return корреляция в [-1, 1] или null, если данных недостаточно
      */
-    fun correlationOf(a: String, b: String, timeframe: String = "MINUTE_10", period: Int = 50): Double? {
+    fun correlationOf(
+        a: String,
+        b: String,
+        timeframe: String = "MINUTE_10",
+        period: Int = 50,
+    ): Double? {
         if (a == b) return 1.0
         val x = candleCache.getRecentCandles(a, timeframe, period).map { it.closePrice.toDouble() }
         val y = candleCache.getRecentCandles(b, timeframe, period).map { it.closePrice.toDouble() }
@@ -81,18 +86,21 @@ class AdaptiveRiskService(
      * @param openPositions открытые позиции
      * @return true, если вход запрещён по корреляции
      */
-    fun exceedsCorrelationLimit(candidateTicker: String, openPositions: List<Position>): Boolean {
+    fun exceedsCorrelationLimit(
+        candidateTicker: String,
+        openPositions: List<Position>,
+    ): Boolean {
         if (candidateTicker == "Si") return false // фьючерсный хедж не фильтруется
-        val blocked = openPositions.any { pos ->
-            if (pos.ticker == candidateTicker || pos.ticker == "Si") return@any false
-            (correlationOf(candidateTicker, pos.ticker) ?: 0.0) > correlationThreshold
-        }
+        val blocked =
+            openPositions.any { pos ->
+                if (pos.ticker == candidateTicker || pos.ticker == "Si") return@any false
+                (correlationOf(candidateTicker, pos.ticker) ?: 0.0) > correlationThreshold
+            }
         if (blocked) {
             meterRegistry.counter("adaptive.correlation.blocked", Tags.of("ticker", candidateTicker)).increment()
         }
         return blocked
     }
-
 
     /**
      * Оптимальный размер позиции по критерию Келли для тикера.
@@ -115,11 +123,12 @@ class AdaptiveRiskService(
         // Классический (Full) Kelly слишком агрессивен: применяем долю
         // riskConfig.kellyFraction (Half/Quarter-Kelly по умолчанию 0.5) и кап 50%.
         val safeKelly = (kelly * riskConfig.kellyFraction).coerceAtMost(0.50).coerceAtLeast(0.0)
-        val size = if (safeKelly > 0) {
-            riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly))
-        } else {
-            BigDecimal.ZERO
-        }
+        val size =
+            if (safeKelly > 0) {
+                riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly))
+            } else {
+                BigDecimal.ZERO
+            }
 
         gauges.set("adaptive.position_size", size, Tags.of("ticker", ticker))
         logger.info { "Kelly size for $ticker: ${size.toInt()} (kelly=$kelly, safe=$safeKelly)" }
@@ -139,14 +148,15 @@ class AdaptiveRiskService(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         ticker: String,
-        atr: BigDecimal
+        atr: BigDecimal,
     ): BigDecimal {
         val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        val baseMultiplier = when {
-            (stats?.slHitRate ?: 0.0) > 0.65 -> BigDecimal("2.5")
-            (stats?.slHitRate ?: 0.0) < 0.30 -> BigDecimal("1.5")
-            else -> BigDecimal("2.0")
-        }
+        val baseMultiplier =
+            when {
+                (stats?.slHitRate ?: 0.0) > 0.65 -> BigDecimal("2.5")
+                (stats?.slHitRate ?: 0.0) < 0.30 -> BigDecimal("1.5")
+                else -> BigDecimal("2.0")
+            }
         val atrBased = atr.multiply(baseMultiplier)
         return when (direction) {
             PositionDirection.LONG -> entryPrice.subtract(atrBased).setScale(2, RoundingMode.HALF_UP)
@@ -167,14 +177,15 @@ class AdaptiveRiskService(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         ticker: String,
-        atr: BigDecimal
+        atr: BigDecimal,
     ): BigDecimal {
         val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        val baseMultiplier = when {
-            (stats?.tpHitRate ?: 0.0) > 0.50 -> BigDecimal("3.0")
-            (stats?.tpHitRate ?: 0.0) < 0.20 -> BigDecimal("2.0")
-            else -> BigDecimal("2.5")
-        }
+        val baseMultiplier =
+            when {
+                (stats?.tpHitRate ?: 0.0) > 0.50 -> BigDecimal("3.0")
+                (stats?.tpHitRate ?: 0.0) < 0.20 -> BigDecimal("2.0")
+                else -> BigDecimal("2.5")
+            }
         val atrBased = atr.multiply(baseMultiplier)
         return when (direction) {
             PositionDirection.LONG -> entryPrice.add(atrBased).setScale(2, RoundingMode.HALF_UP)
@@ -206,9 +217,12 @@ class AdaptiveRiskService(
      */
     suspend fun isInDrawdownRecovery(): Boolean {
         val recent = positionRepo.findClosedSince(LocalDateTime.now().minusDays(3))
-        val consecutiveLosses = recent.reversed().takeWhile {
-            (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO
-        }.count()
+        val consecutiveLosses =
+            recent
+                .reversed()
+                .takeWhile {
+                    (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO
+                }.count()
         val result = consecutiveLosses >= 3
         gauges.set("adaptive.drawdown_recovery", if (result) 1.0 else 0.0)
         return result
@@ -222,12 +236,13 @@ class AdaptiveRiskService(
      */
     suspend fun shouldPauseTrading(ticker: String): Boolean {
         val stats = tradeAnalysisService.analyzeLastNDays(7)[ticker]
-        val result = when {
-            stats == null -> false
-            stats.maxConsecutiveLosses >= 4 -> true
-            stats.profitFactor in 0.0..0.5 && stats.totalTrades >= 5 -> true
-            else -> false
-        }
+        val result =
+            when {
+                stats == null -> false
+                stats.maxConsecutiveLosses >= 4 -> true
+                stats.profitFactor in 0.0..0.5 && stats.totalTrades >= 5 -> true
+                else -> false
+            }
         gauges.set("adaptive.pause", if (result) 1.0 else 0.0, Tags.of("ticker", ticker))
         return result
     }

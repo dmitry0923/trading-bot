@@ -10,7 +10,7 @@ data class PromptTemplate(
     val name: String,
     val version: String,
     val system: String,
-    val userTemplate: String
+    val userTemplate: String,
 ) {
     /**
      * Рендерит user-шаблон, подставляя значения переменных.
@@ -23,21 +23,30 @@ data class PromptTemplate(
      */
     fun renderSystem(variables: Map<String, Any>): String = render(system, variables)
 
-    private fun render(template: String, variables: Map<String, Any>): String {
+    private fun render(
+        template: String,
+        variables: Map<String, Any>,
+    ): String {
         val compiled = COMPILED.getOrPut(this to template) { compile(template) }
-        return StringBuilder(template.length).also { out ->
-            for (part in compiled) {
-                when (part) {
-                    is TemplatePart.Literal -> out.append(part.text)
-                    is TemplatePart.Variable -> out.append(variables[part.name]?.toString() ?: "")
+        return StringBuilder(template.length)
+            .also { out ->
+                for (part in compiled) {
+                    when (part) {
+                        is TemplatePart.Literal -> out.append(part.text)
+                        is TemplatePart.Variable -> out.append(variables[part.name]?.toString() ?: "")
+                    }
                 }
-            }
-        }.toString()
+            }.toString()
     }
 
     private sealed interface TemplatePart {
-        data class Literal(val text: String) : TemplatePart
-        data class Variable(val name: String) : TemplatePart
+        data class Literal(
+            val text: String,
+        ) : TemplatePart
+
+        data class Variable(
+            val name: String,
+        ) : TemplatePart
     }
 
     private fun compile(template: String): List<TemplatePart> {

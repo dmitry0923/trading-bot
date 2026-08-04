@@ -20,5 +20,5 @@ data class TradeBreakdownDto(
     val avgWin: BigDecimal?,
     val avgLoss: BigDecimal?,
     val closeReason: String,
-    val reasonCount: Long
+    val reasonCount: Long,
 )

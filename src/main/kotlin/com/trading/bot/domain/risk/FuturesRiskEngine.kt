@@ -64,15 +64,17 @@ class FuturesRiskEngine(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         portfolioMoney: BigDecimal,
-        currentGo: BigDecimal
+        currentGo: BigDecimal,
     ): EntryValidationResult {
         if (!riskConfig.enabled) return reject("RISK_DISABLED")
         if (!leverageConfig.enabled) return reject("LEVERAGE_DISABLED")
         if (!tradingHoursGuard.isTradingAllowed()) return reject("OUTSIDE_HOURS")
         if (dailyRiskService.isLimitReached()) return reject("DAILY_LIMIT")
 
-        val openFutures = positionRepo.findByStatus(PositionStatus.OPEN)
-            .count { it.instrumentType == InstrumentType.FUTURES }
+        val openFutures =
+            positionRepo
+                .findByStatus(PositionStatus.OPEN)
+                .count { it.instrumentType == InstrumentType.FUTURES }
         if (openFutures >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
 
         val instrument = instrumentsConfig.find(ticker)
@@ -86,30 +88,34 @@ class FuturesRiskEngine(
         if (size.quantity == 0) return reject(size.reason ?: "ZERO_RISK_SIZE")
 
         // 6. Маржинальная проверка: marginRequired <= депозит * 30%
-        val marginBudget = portfolioMoney
-            .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
-            .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
+        val marginBudget =
+            portfolioMoney
+                .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
+                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         if (size.marginRequired > marginBudget) return reject("INSUFFICIENT_MARGIN")
 
         // SL/TP в ценах: entry ± пункты * priceStep
         val priceStep = instrument.priceStep
         val slOffset = BigDecimal(stopLossPoints).multiply(priceStep)
         val tpOffset = BigDecimal(riskConfig.defaultTakeProfitPoints).multiply(priceStep)
-        val stopLossPrice = when (direction) {
-            PositionDirection.LONG -> entryPrice.subtract(slOffset)
-            PositionDirection.SHORT -> entryPrice.add(slOffset)
-        }
-        val takeProfitPrice = when (direction) {
-            PositionDirection.LONG -> entryPrice.add(tpOffset)
-            PositionDirection.SHORT -> entryPrice.subtract(tpOffset)
-        }
+        val stopLossPrice =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.subtract(slOffset)
+                PositionDirection.SHORT -> entryPrice.add(slOffset)
+            }
+        val takeProfitPrice =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.add(tpOffset)
+                PositionDirection.SHORT -> entryPrice.subtract(tpOffset)
+            }
 
         gauges.set("futures.position.size", size.quantity)
         gauges.set("futures.margin.used", size.marginRequired)
-        val marginUtilizationPercent = size.marginRequired
-            .multiply(BigDecimal("100"))
-            .divide(portfolioMoney, 4, RoundingMode.HALF_UP)
-            .toDouble()
+        val marginUtilizationPercent =
+            size.marginRequired
+                .multiply(BigDecimal("100"))
+                .divide(portfolioMoney, 4, RoundingMode.HALF_UP)
+                .toDouble()
         gauges.set("risk.margin.utilization", marginUtilizationPercent)
         size.liquidationPrice?.let {
             gauges.set(
@@ -130,7 +136,7 @@ class FuturesRiskEngine(
             stopLossPrice = stopLossPrice,
             takeProfitPrice = takeProfitPrice,
             liquidationPrice = size.liquidationPrice,
-            reason = null
+            reason = null,
         )
     }
 
@@ -144,7 +150,7 @@ class FuturesRiskEngine(
             stopLossPrice = BigDecimal.ZERO,
             takeProfitPrice = BigDecimal.ZERO,
             liquidationPrice = null,
-            reason = reason
+            reason = reason,
         )
     }
 
@@ -179,7 +185,10 @@ class FuturesRiskEngine(
      *
      * Для Si: buffer = 15 ₽, на стопе (0.5 ₽) остаётся 96.7% → SAFE; guardrail — страховка при пробое стопа.
      */
-    fun checkLiquidationDistance(position: Position, currentPrice: BigDecimal): LiquidationStatus {
+    fun checkLiquidationDistance(
+        position: Position,
+        currentPrice: BigDecimal,
+    ): LiquidationStatus {
         val liq = position.liquidationPrice
         if (liq == null || liq <= BigDecimal.ZERO || currentPrice <= BigDecimal.ZERO) {
             return LiquidationStatus.SAFE
@@ -190,11 +199,12 @@ class FuturesRiskEngine(
         val distancePercent = distanceToLiquidation(position.entryPrice, liq, currentPrice)
         gauges.set("futures.liquidation.distance", distancePercent, Tags.of("ticker", position.ticker))
 
-        val status = when {
-            distancePercent < criticalLiquidationPercent -> LiquidationStatus.CRITICAL
-            distancePercent < riskConfig.minLiquidationDistancePercent -> LiquidationStatus.WARNING
-            else -> LiquidationStatus.SAFE
-        }
+        val status =
+            when {
+                distancePercent < criticalLiquidationPercent -> LiquidationStatus.CRITICAL
+                distancePercent < riskConfig.minLiquidationDistancePercent -> LiquidationStatus.WARNING
+                else -> LiquidationStatus.SAFE
+            }
         if (status != LiquidationStatus.SAFE) {
             logger.warn {
                 "${position.ticker} ${position.direction} distanceToLiquidation=$distancePercent% " +
@@ -204,7 +214,11 @@ class FuturesRiskEngine(
         return status
     }
 
-    private fun distanceToLiquidation(entry: BigDecimal, liq: BigDecimal, current: BigDecimal): Double {
+    private fun distanceToLiquidation(
+        entry: BigDecimal,
+        liq: BigDecimal,
+        current: BigDecimal,
+    ): Double {
         val totalBuffer = entry.subtract(liq).abs()
         if (totalBuffer <= BigDecimal.ZERO) return 0.0
         val remaining = current.subtract(liq).abs()
@@ -222,39 +236,54 @@ class FuturesRiskEngine(
      * - Двигает trailing stop только в прибыль (vm > 0) и только в «улучшающую» сторону.
      * - Никогда не ослабляет ниже жёсткого stopLoss.
      */
-    fun updateTrailingStop(position: Position, currentPrice: BigDecimal) {
+    fun updateTrailingStop(
+        position: Position,
+        currentPrice: BigDecimal,
+    ) {
         if (!riskConfig.trailingStopEnabled) return
         if (position.instrumentType != InstrumentType.FUTURES) return
 
         val pointValue = instrumentsConfig.pointValue(position.ticker)
         val qty = BigDecimal(position.quantity)
-        val variationMargin = when (position.direction) {
-            PositionDirection.LONG -> currentPrice.subtract(position.entryPrice).multiply(pointValue).multiply(qty)
-            PositionDirection.SHORT -> position.entryPrice.subtract(currentPrice).multiply(pointValue).multiply(qty)
-        }
+        val variationMargin =
+            when (position.direction) {
+                PositionDirection.LONG -> {
+                    currentPrice.subtract(position.entryPrice).multiply(pointValue).multiply(qty)
+                }
+
+                PositionDirection.SHORT -> {
+                    position.entryPrice
+                        .subtract(currentPrice)
+                        .multiply(pointValue)
+                        .multiply(qty)
+                }
+            }
         position.variationMargin = variationMargin
 
         if (variationMargin <= BigDecimal.ZERO) return
 
         val percent = BigDecimal(riskConfig.trailingStopPercent.toString()).divide(BigDecimal("100"))
-        var candidate = when (position.direction) {
-            PositionDirection.LONG -> currentPrice.multiply(BigDecimal.ONE.subtract(percent))
-            PositionDirection.SHORT -> currentPrice.multiply(BigDecimal.ONE.add(percent))
-        }
+        var candidate =
+            when (position.direction) {
+                PositionDirection.LONG -> currentPrice.multiply(BigDecimal.ONE.subtract(percent))
+                PositionDirection.SHORT -> currentPrice.multiply(BigDecimal.ONE.add(percent))
+            }
 
         // Не ослабляем ниже жёсткого стопа
         position.stopLoss?.let { hardStop ->
-            candidate = when (position.direction) {
-                PositionDirection.LONG -> if (candidate < hardStop) hardStop else candidate
-                PositionDirection.SHORT -> if (candidate > hardStop) hardStop else candidate
-            }
+            candidate =
+                when (position.direction) {
+                    PositionDirection.LONG -> if (candidate < hardStop) hardStop else candidate
+                    PositionDirection.SHORT -> if (candidate > hardStop) hardStop else candidate
+                }
         }
 
         val currentStop = position.trailingStopPrice
-        val improved = when (position.direction) {
-            PositionDirection.LONG -> currentStop == null || candidate > currentStop
-            PositionDirection.SHORT -> currentStop == null || candidate < currentStop
-        }
+        val improved =
+            when (position.direction) {
+                PositionDirection.LONG -> currentStop == null || candidate > currentStop
+                PositionDirection.SHORT -> currentStop == null || candidate < currentStop
+            }
         if (improved) {
             position.trailingStopPrice = candidate.setScale(4, RoundingMode.HALF_UP)
             logger.debug { "Trailing stop updated ${position.ticker} -> $candidate (vm=$variationMargin)" }
@@ -270,7 +299,7 @@ class FuturesRiskEngine(
         val stopLossPrice: BigDecimal,
         val takeProfitPrice: BigDecimal,
         val liquidationPrice: BigDecimal?,
-        val reason: String?
+        val reason: String?,
     )
 
     enum class LiquidationStatus { SAFE, WARNING, CRITICAL }

@@ -14,9 +14,10 @@ import org.springframework.r2dbc.core.DatabaseClient
 @Suppress("ReifiedTypeParameterNoArgType")
 internal inline fun <reified T : Any> DatabaseClient.GenericExecuteSpec.bindOrNull(
     name: String,
-    value: T?
-): DatabaseClient.GenericExecuteSpec =
-    if (value == null) bindNull(name, T::class.java) else bind(name, value)
+    value: T?,
+): DatabaseClient.GenericExecuteSpec = if (value == null) bindNull(name, T::class.java) else bind(name, value)
 
-internal fun <T : Any> Row.require(name: String, type: Class<T>): T =
-    get(name, type) ?: throw IllegalStateException("Column '$name' is NULL, but NOT NULL expected")
+internal fun <T : Any> Row.require(
+    name: String,
+    type: Class<T>,
+): T = get(name, type) ?: throw IllegalStateException("Column '$name' is NULL, but NOT NULL expected")

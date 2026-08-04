@@ -60,23 +60,25 @@ class OrderOutboxService(
         require(type != "limit" || price != null) { "limit order requires price" }
 
         val clientOrderId = orderIdempotencyKey(ticker, side, qty, price, type)
-        val payload = objectMapper.writeValueAsString(
-            mapOf(
-                "ticker" to ticker,
-                "side" to side,
-                "qty" to qty,
-                "price" to price?.toPlainString(),
-                "type" to type,
-                "idempotencyKey" to clientOrderId,
-            ),
-        )
+        val payload =
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "ticker" to ticker,
+                    "side" to side,
+                    "qty" to qty,
+                    "price" to price?.toPlainString(),
+                    "type" to type,
+                    "idempotencyKey" to clientOrderId,
+                ),
+            )
         val saved = outboxRepo.save(OrderOutbox(payloadJson = payload))
         val outboxId = requireNotNull(saved.id) { "Outbox repository did not assign an id" }
         logger.info { "Outbox order saved: $outboxId $side $qty $ticker ($type)" }
         meterRegistry.counter("outbox.saved", Tags.of("type", type)).increment()
 
-        val claimed = outboxRepo.claim(outboxId)
-            ?: return PlaceOrderResult(outboxId, null, success = false)
+        val claimed =
+            outboxRepo.claim(outboxId)
+                ?: return PlaceOrderResult(outboxId, null, success = false)
         return dispatch(claimed)
     }
 
@@ -86,20 +88,32 @@ class OrderOutboxService(
         val ticker = payload.path("ticker").asText()
         val side = payload.path("side").asText()
         val qty = payload.path("qty").asInt()
-        val price = payload.path("price").asText()
-            .takeIf { it.isNotBlank() && it != "null" }
-            ?.toBigDecimal()
+        val price =
+            payload
+                .path("price")
+                .asText()
+                .takeIf { it.isNotBlank() && it != "null" }
+                ?.toBigDecimal()
         val type = payload.path("type").asText("limit")
         val clientOrderId = payload.path("idempotencyKey").asText()
 
         return try {
-            val orderId = when (type) {
-                "limit" -> price?.let {
-                    alorClient.placeLimitOrder(ticker, side, qty, it, clientOrderId)
+            val orderId =
+                when (type) {
+                    "limit" -> {
+                        price?.let {
+                            alorClient.placeLimitOrder(ticker, side, qty, it, clientOrderId)
+                        }
+                    }
+
+                    "market" -> {
+                        alorClient.placeMarketOrder(ticker, side, qty, clientOrderId)
+                    }
+
+                    else -> {
+                        null
+                    }
                 }
-                "market" -> alorClient.placeMarketOrder(ticker, side, qty, clientOrderId)
-                else -> null
-            }
             if (orderId != null) {
                 outboxRepo.markSent(outboxId, orderId)
                 meterRegistry.counter("outbox.sent", Tags.of("type", type)).increment()
@@ -118,7 +132,10 @@ class OrderOutboxService(
         }
     }
 
-    private suspend fun fail(outbox: OrderOutbox, error: String) {
+    private suspend fun fail(
+        outbox: OrderOutbox,
+        error: String,
+    ) {
         val outboxId = requireNotNull(outbox.id)
         val attempt = outbox.attemptCount + 1
         outboxRepo.markFailed(outboxId, attempt, error)
@@ -158,7 +175,8 @@ class OrderOutboxService(
         type: String,
     ): String {
         val raw = "$ticker|$side|$qty|${price?.toPlainString()}|$type|${UUID.randomUUID()}"
-        return MessageDigest.getInstance("SHA-256")
+        return MessageDigest
+            .getInstance("SHA-256")
             .digest(raw.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
             .take(32)

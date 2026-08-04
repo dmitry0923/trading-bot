@@ -24,36 +24,38 @@ import java.math.BigDecimal
  * Проверка risk-first логики FuturesRiskEngine.
  */
 class FuturesRiskEngineTest {
-
     private val riskConfig = RiskConfig()
     private val leverageConfig = LeverageConfig()
-    private val instrumentsConfig = InstrumentsConfig().apply {
-        instruments = mutableListOf(
-            InstrumentsConfig.InstrumentSpec(
-                ticker = "Si",
-                type = "FUTURES",
-                lotSize = 1,
-                priceStep = BigDecimal("0.01"),
-                priceStepCost = BigDecimal("10.0"),
-                go = BigDecimal("15000"),
-                leverage = BigDecimal("2.0"),
-                baseAsset = "USD"
-            )
-        )
-    }
+    private val instrumentsConfig =
+        InstrumentsConfig().apply {
+            instruments =
+                mutableListOf(
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "Si",
+                        type = "FUTURES",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.01"),
+                        priceStepCost = BigDecimal("10.0"),
+                        go = BigDecimal("15000"),
+                        leverage = BigDecimal("2.0"),
+                        baseAsset = "USD",
+                    ),
+                )
+        }
     private val positionRepo: PositionRepository = Mockito.mock(PositionRepository::class.java)
     private val dailyRiskRepo: DailyRiskSnapshotRepository = Mockito.mock(DailyRiskSnapshotRepository::class.java)
 
     private fun engine(openGuard: Boolean = true): FuturesRiskEngine {
-        val guardConfig = RiskConfig().apply {
-            if (openGuard) {
-                tradingHoursStart = "00:00"
-                tradingHoursEnd = "23:59"
-            } else {
-                tradingHoursStart = "19:00"
-                tradingHoursEnd = "18:00"
+        val guardConfig =
+            RiskConfig().apply {
+                if (openGuard) {
+                    tradingHoursStart = "00:00"
+                    tradingHoursEnd = "23:59"
+                } else {
+                    tradingHoursStart = "19:00"
+                    tradingHoursEnd = "18:00"
+                }
             }
-        }
         return FuturesRiskEngine(
             riskConfig = riskConfig,
             leverageConfig = leverageConfig,
@@ -62,161 +64,173 @@ class FuturesRiskEngineTest {
             tradingHoursGuard = TradingHoursGuard(guardConfig),
             instrumentsConfig = instrumentsConfig,
             dailyRiskService = DailyRiskService(riskConfig, dailyRiskRepo),
-            meterRegistry = SimpleMeterRegistry()
+            meterRegistry = SimpleMeterRegistry(),
         )
     }
 
     @Test
-    fun `entry allowed within all limits`() = runBlocking {
-        Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
+    fun `entry allowed within all limits`() =
+        runBlocking {
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
 
-        val result = engine().validateEntry(
-            ticker = "Si",
-            entryPrice = BigDecimal("92000"),
-            direction = PositionDirection.LONG,
-            portfolioMoney = BigDecimal("50000"),
-            currentGo = BigDecimal("15000")
-        )
-
-        assertTrue(result.allowed)
-        assertEquals(1, result.quantity)
-        assertEquals(0, BigDecimal("7500").compareTo(result.marginRequired))
-        // SL = 92000 - 50*0.01 = 91999.50, TP = 92000 + 100*0.01 = 92001.00 (R:R 1:2)
-        assertEquals(0, BigDecimal("91999.50").compareTo(result.stopLossPrice))
-        assertEquals(0, BigDecimal("92001").compareTo(result.takeProfitPrice))
-        val liq = requireNotNull(result.liquidationPrice)
-        assertEquals(0, BigDecimal("91985").compareTo(liq))
-    }
-
-    @Test
-    fun `entry blocked after daily loss limit reached`() = runBlocking {
-        val e = engine()
-        e.updateDailyPnL(BigDecimal("-3000"))
-        e.updateDailyPnL(BigDecimal("-2000")) // суммарно -5000 = 10% депозита
-
-        assertTrue(e.isDailyLossLimitReached())
-
-        val result = e.validateEntry(
-            ticker = "Si",
-            entryPrice = BigDecimal("92000"),
-            direction = PositionDirection.LONG,
-            portfolioMoney = BigDecimal("50000"),
-            currentGo = BigDecimal("15000")
-        )
-
-        assertFalse(result.allowed)
-        assertEquals("DAILY_LIMIT", result.reason)
-    }
-
-    @Test
-    fun `entry blocked outside trading hours`() = runBlocking {
-        val result = engine(openGuard = false).validateEntry(
-            ticker = "Si",
-            entryPrice = BigDecimal("92000"),
-            direction = PositionDirection.LONG,
-            portfolioMoney = BigDecimal("50000"),
-            currentGo = BigDecimal("15000")
-        )
-
-        assertFalse(result.allowed)
-        assertEquals("OUTSIDE_HOURS", result.reason)
-    }
-
-    @Test
-    fun `stock positions do not consume futures position limit`() = runBlocking {
-        Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
-            listOf(
-                Position(
-                    ticker = "SBER",
-                    direction = PositionDirection.LONG,
-                    quantity = 10,
-                    entryPrice = BigDecimal("300"),
-                    instrumentType = InstrumentType.STOCK,
-                ),
-            ),
-        )
-
-        val result = engine().validateEntry(
-            ticker = "Si",
-            entryPrice = BigDecimal("92000"),
-            direction = PositionDirection.LONG,
-            portfolioMoney = BigDecimal("50000"),
-            currentGo = BigDecimal("15000"),
-        )
-
-        assertTrue(result.allowed)
-    }
-
-    @Test
-    fun `entry blocked when position already open`() = runBlocking {
-        Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
-            listOf(
-                Position(
+            val result =
+                engine().validateEntry(
                     ticker = "Si",
-                    direction = PositionDirection.LONG,
-                    quantity = 1,
                     entryPrice = BigDecimal("92000"),
-                    instrumentType = InstrumentType.FUTURES
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal("15000"),
                 )
+
+            assertTrue(result.allowed)
+            assertEquals(1, result.quantity)
+            assertEquals(0, BigDecimal("7500").compareTo(result.marginRequired))
+            // SL = 92000 - 50*0.01 = 91999.50, TP = 92000 + 100*0.01 = 92001.00 (R:R 1:2)
+            assertEquals(0, BigDecimal("91999.50").compareTo(result.stopLossPrice))
+            assertEquals(0, BigDecimal("92001").compareTo(result.takeProfitPrice))
+            val liq = requireNotNull(result.liquidationPrice)
+            assertEquals(0, BigDecimal("91985").compareTo(liq))
+        }
+
+    @Test
+    fun `entry blocked after daily loss limit reached`() =
+        runBlocking {
+            val e = engine()
+            e.updateDailyPnL(BigDecimal("-3000"))
+            e.updateDailyPnL(BigDecimal("-2000")) // суммарно -5000 = 10% депозита
+
+            assertTrue(e.isDailyLossLimitReached())
+
+            val result =
+                e.validateEntry(
+                    ticker = "Si",
+                    entryPrice = BigDecimal("92000"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal("15000"),
+                )
+
+            assertFalse(result.allowed)
+            assertEquals("DAILY_LIMIT", result.reason)
+        }
+
+    @Test
+    fun `entry blocked outside trading hours`() =
+        runBlocking {
+            val result =
+                engine(openGuard = false).validateEntry(
+                    ticker = "Si",
+                    entryPrice = BigDecimal("92000"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal("15000"),
+                )
+
+            assertFalse(result.allowed)
+            assertEquals("OUTSIDE_HOURS", result.reason)
+        }
+
+    @Test
+    fun `stock positions do not consume futures position limit`() =
+        runBlocking {
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 10,
+                        entryPrice = BigDecimal("300"),
+                        instrumentType = InstrumentType.STOCK,
+                    ),
+                ),
             )
-        )
 
-        val result = engine().validateEntry(
-            ticker = "Si",
-            entryPrice = BigDecimal("92000"),
-            direction = PositionDirection.LONG,
-            portfolioMoney = BigDecimal("50000"),
-            currentGo = BigDecimal("15000")
-        )
+            val result =
+                engine().validateEntry(
+                    ticker = "Si",
+                    entryPrice = BigDecimal("92000"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal("15000"),
+                )
 
-        assertFalse(result.allowed)
-        assertEquals("MAX_POSITIONS", result.reason)
-    }
+            assertTrue(result.allowed)
+        }
+
+    @Test
+    fun `entry blocked when position already open`() =
+        runBlocking {
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "Si",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("92000"),
+                        instrumentType = InstrumentType.FUTURES,
+                    ),
+                ),
+            )
+
+            val result =
+                engine().validateEntry(
+                    ticker = "Si",
+                    entryPrice = BigDecimal("92000"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal("15000"),
+                )
+
+            assertFalse(result.allowed)
+            assertEquals("MAX_POSITIONS", result.reason)
+        }
 
     @Test
     fun `liquidation status thresholds`() {
         val e = engine()
-        val pos = Position(
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("92000"),
-            currentPrice = BigDecimal("92000"),
-            liquidationPrice = BigDecimal("91985"), // буфер 15
-            instrumentType = InstrumentType.FUTURES
-        )
+        val pos =
+            Position(
+                ticker = "Si",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("92000"),
+                currentPrice = BigDecimal("92000"),
+                liquidationPrice = BigDecimal("91985"), // буфер 15
+                instrumentType = InstrumentType.FUTURES,
+            )
 
         // остаток 4/15 = 26.7% → SAFE
         assertEquals(
             FuturesRiskEngine.LiquidationStatus.SAFE,
-            e.checkLiquidationDistance(pos, BigDecimal("91989"))
+            e.checkLiquidationDistance(pos, BigDecimal("91989")),
         )
         // остаток 3/15 = 20% → WARNING
         assertEquals(
             FuturesRiskEngine.LiquidationStatus.WARNING,
-            e.checkLiquidationDistance(pos, BigDecimal("91988"))
+            e.checkLiquidationDistance(pos, BigDecimal("91988")),
         )
         // остаток 1/15 = 6.7% → CRITICAL
         assertEquals(
             FuturesRiskEngine.LiquidationStatus.CRITICAL,
-            e.checkLiquidationDistance(pos, BigDecimal("91986"))
+            e.checkLiquidationDistance(pos, BigDecimal("91986")),
         )
     }
 
     @Test
     fun `trailing stop moves only in profit and never below hard stop`() {
         val e = engine()
-        val pos = Position(
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("92000"),
-            currentPrice = BigDecimal("92000"),
-            stopLoss = BigDecimal("91950"),
-            trailingStopPrice = BigDecimal("91950"),
-            instrumentType = InstrumentType.FUTURES,
-            variationMargin = BigDecimal.ZERO
-        )
+        val pos =
+            Position(
+                ticker = "Si",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("92000"),
+                currentPrice = BigDecimal("92000"),
+                stopLoss = BigDecimal("91950"),
+                trailingStopPrice = BigDecimal("91950"),
+                instrumentType = InstrumentType.FUTURES,
+                variationMargin = BigDecimal.ZERO,
+            )
 
         // цена упала → вариационная маржа < 0, trailing не двигается
         e.updateTrailingStop(pos, BigDecimal("91900"))

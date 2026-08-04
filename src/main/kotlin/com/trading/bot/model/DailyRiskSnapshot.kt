@@ -12,5 +12,5 @@ data class DailyRiskSnapshot(
     val tradeDate: LocalDate,
     val dailyPnl: BigDecimal,
     val limitReached: Boolean,
-    val maxDrawdownToday: BigDecimal
+    val maxDrawdownToday: BigDecimal,
 )

@@ -36,7 +36,7 @@ class SemanticCache(
     private val redisTemplate: StringRedisTemplate,
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
-    private val llmConfig: LlmConfig
+    private val llmConfig: LlmConfig,
 ) {
     private val logger = KotlinLogging.logger {}
     private val prefix = "llm:semantic:"
@@ -62,22 +62,24 @@ class SemanticCache(
         volatilityRegime: String,
         macdHistogram: Double = Double.NaN,
         atrPercentile: Int = -1,
-        session: String = sessionOf(LocalTime.now())
+        session: String = sessionOf(LocalTime.now()),
     ): String {
         val pricePart = price.setScale(1, RoundingMode.HALF_UP).toPlainString()
         val rsiBucket = (rsi.coerceIn(0.0, 100.0) / 10).toInt().coerceIn(0, 10)
-        val macdPart = when {
-            macdHistogram.isNaN() -> "MNA"
-            macdHistogram > 0.0 -> "M+"
-            macdHistogram < 0.0 -> "M-"
-            else -> "M0"
-        }
-        val atrPart = when {
-            atrPercentile < 0 -> "AN"
-            atrPercentile <= 25 -> "AL"
-            atrPercentile <= 75 -> "AM"
-            else -> "AH"
-        }
+        val macdPart =
+            when {
+                macdHistogram.isNaN() -> "MNA"
+                macdHistogram > 0.0 -> "M+"
+                macdHistogram < 0.0 -> "M-"
+                else -> "M0"
+            }
+        val atrPart =
+            when {
+                atrPercentile < 0 -> "AN"
+                atrPercentile <= 25 -> "AL"
+                atrPercentile <= 75 -> "AM"
+                else -> "AH"
+            }
         return "$pricePart:$rsiBucket:$trend:$volatilityRegime:$macdPart:$atrPart:$session"
     }
 
@@ -85,16 +87,23 @@ class SemanticCache(
      * Универсальный отпечаток из произвольных компонент (для агентов без
      * рыночных индикаторов, например Fundamental). Разделитель — двоеточие.
      */
-    fun genericFingerprint(vararg components: Any?): String =
-        components.joinToString(":") { it?.toString() ?: "NA" }
+    fun genericFingerprint(vararg components: Any?): String = components.joinToString(":") { it?.toString() ?: "NA" }
 
-    fun key(agent: String, ticker: String, fingerprint: String): String {
+    fun key(
+        agent: String,
+        ticker: String,
+        fingerprint: String,
+    ): String {
         val raw = "$agent:$ticker:$fingerprint"
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
         return prefix + digest.joinToString("") { "%02x".format(it) }
     }
 
-    fun get(agent: String, ticker: String, fingerprint: String): LlmResponse? {
+    fun get(
+        agent: String,
+        ticker: String,
+        fingerprint: String,
+    ): LlmResponse? {
         if (!llmConfig.semanticCacheEnabled) {
             meterRegistry.counter("llm.cache.miss", Tags.of("agent", agent)).increment()
             return null
@@ -117,7 +126,12 @@ class SemanticCache(
         }
     }
 
-    fun put(agent: String, ticker: String, fingerprint: String, response: LlmResponse) {
+    fun put(
+        agent: String,
+        ticker: String,
+        fingerprint: String,
+        response: LlmResponse,
+    ) {
         if (!llmConfig.semanticCacheEnabled || response.isFallback) return
         val key = key(agent, ticker, fingerprint)
         try {
@@ -130,9 +144,10 @@ class SemanticCache(
     }
 
     /** Сессия дня для ключа кэша: MORNING (<13ч), DAY (13-16ч), EVENING (>16ч). */
-    private fun sessionOf(time: LocalTime): String = when {
-        time.hour < 13 -> "MORNING"
-        time.hour < 16 -> "DAY"
-        else -> "EVENING"
-    }
+    private fun sessionOf(time: LocalTime): String =
+        when {
+            time.hour < 13 -> "MORNING"
+            time.hour < 16 -> "DAY"
+            else -> "EVENING"
+        }
 }

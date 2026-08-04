@@ -26,7 +26,6 @@ import org.springframework.beans.factory.annotation.Autowired
  */
 @EnabledIfEnvironmentVariable(named = "BK_REAL_TEST", matches = "true")
 class RealDataBacktestIntegrationTest : AbstractTestContainerTest() {
-
     @Autowired
     lateinit var loader: HistoricalDataLoader
 

@@ -38,18 +38,16 @@ import java.math.RoundingMode
 class FuturesPositionSizer(
     private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
-    private val instrumentsConfig: InstrumentsConfig
+    private val instrumentsConfig: InstrumentsConfig,
 ) {
-
     /**
      * Базовый расчёт без цены входа (liquidationPrice = null).
      */
     fun calculateSiContracts(
         portfolioMoney: BigDecimal,
         stopLossPoints: Int,
-        currentGo: BigDecimal
-    ): PositionSizeResult =
-        calculateSiContracts(portfolioMoney, stopLossPoints, currentGo, null, null)
+        currentGo: BigDecimal,
+    ): PositionSizeResult = calculateSiContracts(portfolioMoney, stopLossPoints, currentGo, null, null)
 
     /**
      * Полный расчёт с ценой входа и направлением — вычисляет liquidationPrice.
@@ -59,7 +57,7 @@ class FuturesPositionSizer(
         stopLossPoints: Int,
         currentGo: BigDecimal,
         entryPrice: BigDecimal?,
-        direction: PositionDirection?
+        direction: PositionDirection?,
     ): PositionSizeResult {
         if (portfolioMoney <= BigDecimal.ZERO) {
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "NON_POSITIVE_PORTFOLIO")
@@ -67,8 +65,9 @@ class FuturesPositionSizer(
         if (currentGo <= BigDecimal.ZERO) {
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_GO")
         }
-        val instrument = instrumentsConfig.find("Si")
-            ?: return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INSTRUMENT_NOT_FOUND")
+        val instrument =
+            instrumentsConfig.find("Si")
+                ?: return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INSTRUMENT_NOT_FOUND")
         if (stopLossPoints <= 0) {
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_STOP_LOSS_POINTS")
         }
@@ -83,9 +82,10 @@ class FuturesPositionSizer(
 
         // 2. Риск на сделку (руб): депозит * riskPerTradePercent%
         val riskPercent = BigDecimal(riskConfig.riskPerTradePercent.toString())
-        val riskAmount = portfolioMoney
-            .multiply(riskPercent)
-            .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
+        val riskAmount =
+            portfolioMoney
+                .multiply(riskPercent)
+                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
 
         // 3. Убыток с одного контракта на стопе (руб): пункты * стоимость пункта
         val lossPerContract = BigDecimal(stopLossPoints).multiply(instrument.priceStepCost)
@@ -95,35 +95,40 @@ class FuturesPositionSizer(
 
         // 4. Максимум контрактов по риску
         val configuredCap = BigDecimal(riskConfig.maxContractsPerPosition.coerceAtLeast(0))
-        val maxContractsByRisk = riskAmount
-            .divide(lossPerContract, 0, RoundingMode.DOWN)
-            .min(configuredCap)
-            .toInt()
+        val maxContractsByRisk =
+            riskAmount
+                .divide(lossPerContract, 0, RoundingMode.DOWN)
+                .min(configuredCap)
+                .toInt()
 
         // 5. Маржинальный бюджет: депозит * maxMarginUsagePercent%
-        val marginBudget = portfolioMoney
-            .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
-            .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
+        val marginBudget =
+            portfolioMoney
+                .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
+                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
 
         // 6. Максимум контрактов по марже
-        val maxContractsByMargin = marginBudget
-            .divide(marginPerContract, 0, RoundingMode.DOWN)
-            .min(configuredCap)
-            .toInt()
+        val maxContractsByMargin =
+            marginBudget
+                .divide(marginPerContract, 0, RoundingMode.DOWN)
+                .min(configuredCap)
+                .toInt()
 
         // 7. Итог: минимум всех лимитов
-        val finalQty = minOf(
-            maxContractsByRisk,
-            maxContractsByMargin,
-            riskConfig.maxContractsPerPosition
-        )
+        val finalQty =
+            minOf(
+                maxContractsByRisk,
+                maxContractsByMargin,
+                riskConfig.maxContractsPerPosition,
+            )
 
         if (finalQty < 1) {
-            val reason = when {
-                maxContractsByRisk < 1 -> "ZERO_RISK_SIZE"
-                maxContractsByMargin < 1 -> "INSUFFICIENT_MARGIN"
-                else -> "ZERO_CONTRACTS_CONFIG"
-            }
+            val reason =
+                when {
+                    maxContractsByRisk < 1 -> "ZERO_RISK_SIZE"
+                    maxContractsByMargin < 1 -> "INSUFFICIENT_MARGIN"
+                    else -> "ZERO_CONTRACTS_CONFIG"
+                }
             return PositionSizeResult(0, BigDecimal.ZERO, riskAmount, null, reason)
         }
 
@@ -135,7 +140,7 @@ class FuturesPositionSizer(
             marginRequired = marginRequired,
             riskAmount = riskAmount,
             liquidationPrice = liquidationPrice,
-            reason = null
+            reason = null,
         )
     }
 
@@ -152,15 +157,16 @@ class FuturesPositionSizer(
         direction: PositionDirection?,
         marginPerContract: BigDecimal,
         leverage: BigDecimal,
-        instrument: InstrumentsConfig.InstrumentSpec
+        instrument: InstrumentsConfig.InstrumentSpec,
     ): BigDecimal? {
         if (entryPrice == null || direction == null) return null
         val pointValue = instrument.priceStepCost.divide(instrument.priceStep, 6, RoundingMode.HALF_UP)
         if (pointValue <= BigDecimal.ZERO) return null
 
-        val bufferPrice = marginPerContract
-            .multiply(leverage)
-            .divide(pointValue, 6, RoundingMode.HALF_UP)
+        val bufferPrice =
+            marginPerContract
+                .multiply(leverage)
+                .divide(pointValue, 6, RoundingMode.HALF_UP)
 
         return when (direction) {
             PositionDirection.LONG -> entryPrice.subtract(bufferPrice)
@@ -183,5 +189,5 @@ data class PositionSizeResult(
     val marginRequired: BigDecimal,
     val riskAmount: BigDecimal,
     val liquidationPrice: BigDecimal?,
-    val reason: String?
+    val reason: String?,
 )

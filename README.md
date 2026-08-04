@@ -135,7 +135,7 @@ See `application.yml` for all options. Key env vars:
 ## CI/CD
 
 `.github/workflows/ci.yml` runs on every push/PR:
-- `./gradlew ktlintCheck` (lint, baseline in `config/ktlint/baseline.xml`)
+- `./gradlew ktlintCheck` (lint without suppressing baseline debt)
 - `./gradlew test` (unit + Testcontainers integration tests)
 - `npm run build` (TypeScript + Vite frontend)
 - `npm audit` reports zero known frontend vulnerabilities

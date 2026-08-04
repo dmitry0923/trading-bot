@@ -16,10 +16,8 @@ import javax.sql.DataSource
  */
 @Configuration
 class DatabaseConfig {
-
     @Bean
-    fun liquibaseDataSource(): DataSource =
-        liquibaseDataSourceProperties().initializeDataSourceBuilder().build()
+    fun liquibaseDataSource(): DataSource = liquibaseDataSourceProperties().initializeDataSourceBuilder().build()
 
     @Bean
     @ConfigurationProperties(prefix = "spring.datasource")

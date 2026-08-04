@@ -9,7 +9,7 @@ data class RiskContext(
     val dailyLossLimitReached: Boolean = false,
     val drawdownRecovery: Boolean = false,
     val openPositionsCount: Int = 0,
-    val maxOpenPositions: Int = 5
+    val maxOpenPositions: Int = 5,
 ) {
     fun blocking(): Boolean = shouldPause || dailyLossLimitReached
 }

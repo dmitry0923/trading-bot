@@ -14,14 +14,15 @@ class SettingsServiceTest {
         val riskConfig = RiskConfig()
         val service = SettingsService(riskConfig)
 
-        val updated = service.updateSettings(
-            BotSettings(
-                tradingEnabled = true,
-                riskEnabled = true,
-                maxPositionRub = 80_000,
-                maxDailyLossRub = 4_000,
-            ),
-        )
+        val updated =
+            service.updateSettings(
+                BotSettings(
+                    tradingEnabled = true,
+                    riskEnabled = true,
+                    maxPositionRub = 80_000,
+                    maxDailyLossRub = 4_000,
+                ),
+            )
 
         assertEquals(updated, service.getSettings())
         assertEquals(BigDecimal("80000"), riskConfig.maxPositionRub)

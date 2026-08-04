@@ -16,7 +16,6 @@ import java.math.BigDecimal
  * REST не вызывается, значения берутся из конфига (fallback).
  */
 class AlorFuturesClientTest {
-
     private val instrumentsConfig = InstrumentsConfig()
     private val meterRegistry = SimpleMeterRegistry()
 
@@ -27,25 +26,28 @@ class AlorFuturesClientTest {
     }
 
     @Test
-    fun `simulation returns config GO without REST call`() = runBlocking {
-        val go = client().getFuturesGO("Si")
+    fun `simulation returns config GO without REST call`() =
+        runBlocking {
+            val go = client().getFuturesGO("Si")
 
-        assertEquals(0, BigDecimal("15000").compareTo(go))
-    }
-
-    @Test
-    fun `simulation returns default portfolio money`() = runBlocking {
-        val money = client().getPortfolioMoney()
-
-        assertEquals(0, BigDecimal("50000").compareTo(money))
-    }
+            assertEquals(0, BigDecimal("15000").compareTo(go))
+        }
 
     @Test
-    fun `config fallback used for unknown ticker`() = runBlocking {
-        val go = client().getFuturesGO("UNKNOWN")
+    fun `simulation returns default portfolio money`() =
+        runBlocking {
+            val money = client().getPortfolioMoney()
 
-        assertEquals(0, BigDecimal("15000").compareTo(go))
-    }
+            assertEquals(0, BigDecimal("50000").compareTo(money))
+        }
+
+    @Test
+    fun `config fallback used for unknown ticker`() =
+        runBlocking {
+            val go = client().getFuturesGO("UNKNOWN")
+
+            assertEquals(0, BigDecimal("15000").compareTo(go))
+        }
 
     @Test
     fun `point value derived from price step and cost`() {

@@ -31,7 +31,7 @@ class AlorFuturesClient(
     private val tradingConfig: TradingConfig,
     private val objectMapper: ObjectMapper,
     private val instrumentsConfig: InstrumentsConfig,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -48,19 +48,25 @@ class AlorFuturesClient(
         if (!isLive) return configGo
 
         return try {
-            val raw: String = webClient.get()
-                .uri("${alorConfig.apiUrl}/md/v2/Securities/${alorConfig.exchange}/$ticker/risk")
-                .header("Authorization", "Bearer ${alorConfig.token}")
-                .retrieve()
-                .bodyToMono(String::class.java)
-                .timeout(Duration.ofSeconds(10))
-                .awaitSingle()
+            val raw: String =
+                webClient
+                    .get()
+                    .uri("${alorConfig.apiUrl}/md/v2/Securities/${alorConfig.exchange}/$ticker/risk")
+                    .header("Authorization", "Bearer ${alorConfig.token}")
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
 
             val j = objectMapper.readTree(raw)
-            val go = j.path("long").path("initialMargin").asText()
-                .takeIf { it.isNotBlank() }
-                ?.toBigDecimalOrNull()
-                ?: configGo
+            val go =
+                j
+                    .path("long")
+                    .path("initialMargin")
+                    .asText()
+                    .takeIf { it.isNotBlank() }
+                    ?.toBigDecimalOrNull()
+                    ?: configGo
 
             gauges.set("futures.go", go, Tags.of("ticker", ticker))
             logger.info { "Futures GO for $ticker = $go ₽" }
@@ -78,18 +84,21 @@ class AlorFuturesClient(
         if (!isLive) return defaultPortfolioMoney
 
         return try {
-            val raw: String = webClient.get()
-                .uri("${alorConfig.apiUrl}/md/v2/Clients/${alorConfig.portfolio}/summaries")
-                .header("Authorization", "Bearer ${alorConfig.token}")
-                .retrieve()
-                .bodyToMono(String::class.java)
-                .timeout(Duration.ofSeconds(10))
-                .awaitSingle()
+            val raw: String =
+                webClient
+                    .get()
+                    .uri("${alorConfig.apiUrl}/md/v2/Clients/${alorConfig.portfolio}/summaries")
+                    .header("Authorization", "Bearer ${alorConfig.token}")
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
 
             val j = objectMapper.readTree(raw)
-            val money = j.path("moneyAmount").asText().toBigDecimalOrNull()
-                ?: j.path("money").asText().toBigDecimalOrNull()
-                ?: defaultPortfolioMoney
+            val money =
+                j.path("moneyAmount").asText().toBigDecimalOrNull()
+                    ?: j.path("money").asText().toBigDecimalOrNull()
+                    ?: defaultPortfolioMoney
 
             gauges.set("futures.portfolio.money", money)
             logger.info { "Portfolio money = $money ₽" }

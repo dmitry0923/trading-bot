@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.agent.*
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import io.micrometer.core.instrument.MeterRegistry
@@ -29,10 +31,14 @@ class StrategyService(
     private val arbAgent: ArbitratorAgent,
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
+    private val riskManagement: RiskManagementService,
+    private val positionRepo: PositionRepository,
+    private val riskConfig: RiskConfig,
     private val redis: RedisCacheService,
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
     private val agentLogRepo: AgentLogRepository,
+    private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
 ) {
@@ -75,42 +81,62 @@ class StrategyService(
 
                     val tech = techAgent.analyze(ticker, candles, snapshot, cycleId)
                     val fund = fundAgent.analyze(ticker, cycleId)
-                    val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId)
+                    val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
+                    val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId, adaptiveThreshold = adaptiveConf)
                     val challenge = contrAgent.challenge(draft, tech, fund, snapshot, cycleId)
 
-                    val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
                     val fb = globalFeedback[ticker]
+                    val riskContext = RiskContext(
+                        shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
+                        dailyLossLimitReached = riskManagement.isDailyLossLimitReached(),
+                        drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
+                        openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
+                        maxOpenPositions = riskConfig.maxOpenPositions
+                    )
                     val final = arbAgent.adjudicate(
                         draft, challenge, tech, fund, snapshot, cycleId,
                         contextPrompt = fb?.contextPrompt,
-                        adaptiveConfidence = adaptiveConf
+                        adaptiveConfidence = adaptiveConf,
+                        riskContext = riskContext
                     )
 
                     val atr = BigDecimal.valueOf(tech.atr)
                     val direction = if (final.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-                    val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(final.targetPrice, direction, ticker, atr)
-                    val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(final.targetPrice, direction, ticker, atr)
-                    val effectiveConfidence = final.confidence.coerceAtLeast(adaptiveConf)
+
+                    val highVolatility = final.action != StrategyAction.HOLD &&
+                        riskManagement.isVolatilityTooHigh(atr, snapshot.currentPrice)
+                    val effectiveFinal = if (highVolatility) {
+                        logger.warn { "Volatility guard: $ticker ATR=$atr > ${riskConfig.maxVolatilityPercent}%, strategy -> HOLD" }
+                        meterRegistry.counter("strategy.volatility.blocked", Tags.of("ticker", ticker)).increment()
+                        final.copy(action = StrategyAction.HOLD, quantity = 0, reasoning = final.reasoning + " [VOLATILITY_GUARD]")
+                    } else {
+                        final
+                    }
+
+                    val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr)
+                    val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr)
+                    val effectiveConfidence = effectiveFinal.confidence.coerceAtLeast(adaptiveConf)
 
                     val strategy = Strategy(
                         ticker = ticker,
-                        action = final.action,
-                        targetPrice = final.targetPrice,
-                        quantity = final.quantity,
+                        action = effectiveFinal.action,
+                        targetPrice = effectiveFinal.targetPrice,
+                        quantity = effectiveFinal.quantity,
                         stopLoss = adaptiveSL,
                         takeProfit = adaptiveTP,
-                        trailingStop = final.trailingStop,
+                        trailingStop = effectiveFinal.trailingStop,
                         confidence = effectiveConfidence,
-                        reasoning = final.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}, SL/TP adapted, atr=${atr}",
-                        rawJson = objectMapper.writeValueAsString(final),
+                        reasoning = effectiveFinal.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}, SL/TP adapted, atr=${atr}",
+                        rawJson = objectMapper.writeValueAsString(effectiveFinal),
                         cycleId = cycleId,
                         validUntil = LocalDateTime.now().plusMinutes(10)
                     )
 
                     strategyRepo.save(strategy)
                     redis.saveStrategy(strategy)
-                    meterRegistry.counter("strategy.saved", Tags.of("ticker", ticker, "action", final.action.name)).increment()
-                    logger.info { "Strategy $ticker: ${final.action} @ ${final.targetPrice} (adaptive conf=$adaptiveConf, atr=$atr)" }
+                    eventPublisher.publishStrategyGenerated(strategy)
+                    meterRegistry.counter("strategy.saved", Tags.of("ticker", ticker, "action", effectiveFinal.action.name)).increment()
+                    logger.info { "Strategy $ticker: ${effectiveFinal.action} @ ${effectiveFinal.targetPrice} (adaptive conf=$adaptiveConf, atr=$atr)" }
                 } catch (e: Exception) {
                     logger.error(e) { "Strategy error $ticker" }
                     meterRegistry.counter("strategy.error", Tags.of("ticker", ticker)).increment()

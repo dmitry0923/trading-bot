@@ -23,6 +23,9 @@ class AgentLogRepository(
             reasoning = rs.getString("reasoning"),
             rawOutput = rs.getString("raw_output"),
             latencyMs = rs.getLong("latency_ms").takeIf { it != 0L },
+            tokensUsed = rs.getInt("tokens_used").takeIf { it != 0 },
+            isCached = rs.getBoolean("is_cached"),
+            overrideReason = rs.getString("override_reason"),
             createdAt = rs.getTimestamp("created_at").toLocalDateTime()
         )
     }
@@ -33,8 +36,10 @@ class AgentLogRepository(
 
     fun save(log: AgentLog): AgentLog {
         val sql = """
-            INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output, latency_ms, created_at)
-            VALUES (:cycleId, :agentName, :ticker, :action, :confidence, :reasoning, :rawOutput, :latencyMs, :createdAt)
+            INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output,
+                                    latency_ms, tokens_used, is_cached, override_reason, created_at)
+            VALUES (:cycleId, :agentName, :ticker, :action, :confidence, :reasoning, :rawOutput,
+                    :latencyMs, :tokensUsed, :isCached, :overrideReason, :createdAt)
             RETURNING id
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
@@ -47,6 +52,9 @@ class AgentLogRepository(
             .addValue("reasoning", log.reasoning)
             .addValue("rawOutput", log.rawOutput)
             .addValue("latencyMs", log.latencyMs)
+            .addValue("tokensUsed", log.tokensUsed)
+            .addValue("isCached", log.isCached)
+            .addValue("overrideReason", log.overrideReason)
             .addValue("createdAt", log.createdAt), keyHolder)
         return log.copy(id = keyHolder.key?.toLong())
     }

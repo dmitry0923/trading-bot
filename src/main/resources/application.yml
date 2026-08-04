@@ -40,42 +40,112 @@ alor:
 moex:
   base-url: https://iss.moex.com/iss
 
+macro:
+  cbr-rate: ${CBR_RATE:16.0}
+  brent-price: ${BRENT_PRICE:75.0}
+  usd-rub: ${USD_RUB:90.0}
+  usd-rub-ticker: USD000UTSTOM
+
 llm:
   api-key: ${KIMI_API_KEY:}
   base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
   model: ${KIMI_MODEL:kimi-k3}
-  timeout-sec: 60
+  timeout-sec: 30
   max-tokens: 4096
   temperature: 0.15
+  semantic-cache-enabled: ${LLM_SEMANTIC_CACHE:true}
+  semantic-cache-ttl-minutes: ${LLM_SEMANTIC_CACHE_TTL:10}
+  guardrails-max-price-deviation-percent: 3.0
+  circuit-breaker-enabled: true
+  rate-limiter-enabled: true
+  retry-enabled: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      llm:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 20s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+        recordExceptions:
+          - java.io.IOException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+  ratelimiter:
+    instances:
+      llm:
+        limitForPeriod: 20
+        limitRefreshPeriod: 60s
+        timeoutDuration: 5s
+  retry:
+    instances:
+      llm:
+        maxAttempts: 3
+        waitDuration: 1s
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2.0
+        maxInterval: 5s
+        retryExceptions:
+          - java.io.IOException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException$TooManyRequests
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$BadRequest
 
 trading:
   mode: ${TRADING_MODE:SIMULATION}
   tickers:
-    - SBER
-    - GAZP
-    - LKOH
-    - YNDX
-    - MGNT
-    - NVTK
-    - ROSN
-    - TATN
-    - VTBR
-    - ALRS
+    - Si
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
   monitor-interval-ms: ${MONITOR_INTERVAL_MS:600000}
   max-open-positions-for-new-entry: ${MAX_OPEN_POS:0}
   timeframe: MINUTE_10
 
+leverage:
+  enabled: ${LEVERAGE_ENABLED:true}
+  default-leverage: ${LEVERAGE_DEFAULT:2.0}
+  max-leverage: ${LEVERAGE_MAX:3.0}
+  min-leverage: ${LEVERAGE_MIN:1.0}
+  user-leverage: ${LEVERAGE_USER:2.0}
+
+instruments:
+  instruments:
+    - ticker: "Si"
+      type: "FUTURES"
+      lotSize: 1
+      priceStep: "0.01"
+      priceStepCost: "10.0"
+      go: "15000"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "USD"
+
 risk:
   enabled: true
-  max-position-rub: 500000
-  max-daily-loss-rub: 50000
-  max-open-positions: 5
+  max-position-rub: 50000
+  max-daily-loss-rub: 5000
+  max-open-positions: 1
+  max-sector-exposure: 2
+  max-volatility-percent: 5.0
   default-stop-loss-percent: 2.0
   default-take-profit-percent: 4.0
   trailing-stop-enabled: true
-  trailing-stop-percent: 1.5
+  trailing-stop-percent: 1.0
+  risk-per-trade-percent: 1.0
+  default-stop-loss-points: 50
+  default-take-profit-points: 100
+  min-liquidation-distance-percent: 25.0
+  max-margin-usage-percent: 30.0
+  max-contracts-per-position: 1
+  trading-hours-start: "10:00"
+  trading-hours-end: "18:30"
+  sectors:
+    Si: FX
 
 logging:
   level:

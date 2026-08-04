@@ -1,13 +1,16 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.AlorWebSocketClient
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.*
 import mu.KotlinLogging
+import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -18,52 +21,104 @@ import java.time.LocalDateTime
 class TradingBotService(
     private val tradingConfig: TradingConfig,
     private val alorClient: AlorClient,
+    private val alorWsClient: AlorWebSocketClient,
+    private val orderOutboxService: OrderOutboxService,
     private val redis: RedisCacheService,
     private val risk: RiskManagementService,
     private val adaptiveRisk: AdaptiveRiskService,
     private val positionRepo: PositionRepository,
     private val agentLogRepo: AgentLogRepository,
+    private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    @Scheduled(fixedDelayString = "#{@tradingConfig.botIntervalMs}")
-    fun run() {
-        logger.info { "=== BOT CYCLE ===" }
-        meterRegistry.counter("bot.cycle").increment()
+    init {
         scope.launch {
-            try {
-                if (risk.isDailyLossLimitReached()) {
-                    logger.warn { "Daily loss limit reached (${risk.getDailyPnL()}), trading halted" }
-                    meterRegistry.counter("bot.halted.daily_loss").increment()
-                    return@launch
+            alorWsClient.subscribeToOrders().collect { report ->
+                try {
+                    eventPublisher.publishExecutionReport(report)
+                } catch (e: Exception) {
+                    logger.error(e) { "WS execution processing error for order ${report.orderId}" }
                 }
-                val open = positionRepo.findByStatus(PositionStatus.OPEN)
-                if (open.size <= tradingConfig.maxOpenPositionsForNewEntry) {
-                    val strategies = redis.getAllStrategies(tradingConfig.tickers)
-                    strategies.values.filter {
-                        it.action == StrategyAction.BUY || it.action == StrategyAction.SELL
-                    }.forEach { strat ->
-                        if (open.none { it.ticker == strat.ticker }) openPosition(strat)
-                    }
-                } else {
-                    logger.info { "Open positions ${open.size} > max ${tradingConfig.maxOpenPositionsForNewEntry}, skipping new entries" }
-                }
-            } catch (e: Exception) {
-                logger.error(e) { "Bot cycle error" }
-                meterRegistry.counter("bot.cycle.error").increment()
             }
         }
     }
 
+    /**
+     * Поллинг котировок — единственный допустимый @Scheduled (WS по котировкам
+     * отсутствует). Критичные операции (вход/выход/исполнение) — только через события.
+     */
     @Scheduled(fixedDelayString = "#{@tradingConfig.monitorIntervalMs}")
-    fun monitor() {
+    fun pollMarketData() {
         scope.launch {
             val open = positionRepo.findByStatus(PositionStatus.OPEN)
-            open.forEach { pos ->
+            open.map { it.ticker }.distinct().forEach { ticker ->
                 try {
-                    val price = alorClient.getLastPrice(pos.ticker) ?: return@forEach
+                    val price = alorClient.getLastPrice(ticker) ?: return@forEach
+                    eventPublisher.publishPriceChanged(ticker, price)
+                } catch (e: Exception) {
+                    logger.error(e) { "Price poll error $ticker" }
+                    meterRegistry.counter("bot.price.poll.error", Tags.of("ticker", ticker)).increment()
+                }
+            }
+        }
+    }
+
+    /**
+     * StrategyGeneratedEvent → если сигнал пригоден и нет открытой позиции → EntrySignalEvent.
+     */
+    @EventListener
+    fun onStrategyGenerated(event: com.trading.bot.event.StrategyGeneratedEvent) {
+        val strat = event.strategy
+        if (strat.ticker == "Si") return // фьючерсы обрабатывает FuturesTradingBotService
+        if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
+        scope.launch {
+            try {
+                if (risk.isDailyLossLimitReached()) {
+                    logger.warn { "Daily loss limit reached, skip entry ${strat.ticker}" }
+                    return@launch
+                }
+                val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                if (open.any { it.ticker == strat.ticker }) return@launch
+                if (open.size > tradingConfig.maxOpenPositionsForNewEntry) {
+                    logger.info { "Open positions ${open.size} > max ${tradingConfig.maxOpenPositionsForNewEntry}, skip ${strat.ticker}" }
+                    return@launch
+                }
+                eventPublisher.publishEntrySignal(strat)
+            } catch (e: Exception) {
+                logger.error(e) { "Strategy generated handler error ${strat.ticker}" }
+            }
+        }
+    }
+
+    /**
+     * EntrySignalEvent → RiskEngine.assessEntry() + открытие позиции.
+     */
+    @EventListener
+    fun onEntrySignal(event: com.trading.bot.event.EntrySignalEvent) {
+        scope.launch {
+            try {
+                openPosition(event.strategy)
+            } catch (e: Exception) {
+                logger.error(e) { "Entry signal handler error ${event.strategy.ticker}" }
+                meterRegistry.counter("bot.entry.error", Tags.of("ticker", event.strategy.ticker)).increment()
+            }
+        }
+    }
+
+    /**
+     * PriceChangedEvent → мониторинг открытых позиций (SL/TP/trailing/STRATEGY_CLOSE).
+     */
+    @EventListener
+    fun onPriceChanged(event: com.trading.bot.event.PriceChangedEvent) {
+        scope.launch {
+            try {
+                val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                    .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
+                open.forEach { pos ->
+                    val price = event.price
                     pos.currentPrice = price
                     val pnl = when (pos.direction) {
                         PositionDirection.LONG -> price.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
@@ -98,12 +153,34 @@ class TradingBotService(
                         }
                     }
                     positionRepo.save(pos)
-                } catch (e: Exception) {
-                    logger.error(e) { "Monitor error ${pos.ticker}" }
-                    meterRegistry.counter("bot.monitor.error", Tags.of("ticker", pos.ticker)).increment()
                 }
+            } catch (e: Exception) {
+                logger.error(e) { "Price change handler error ${event.ticker}" }
+                meterRegistry.counter("bot.monitor.error", Tags.of("ticker", event.ticker)).increment()
             }
         }
+    }
+
+    /**
+     * ExecutionReportEvent → фиксация фактического исполнения (closePrice, P&L, slippage).
+     */
+    @EventListener
+    fun onExecutionReport(event: com.trading.bot.event.ExecutionReportEvent) {
+        try {
+            applyExecutionReport(event.report)
+        } catch (e: Exception) {
+            logger.error(e) { "Execution report handler error for order ${event.report.orderId}" }
+        }
+    }
+
+    /**
+     * Ручной триггер (API /bot/trigger): публикует EntrySignalEvent для текущих стратегий.
+     */
+    fun runBotCycle() {
+        logger.info { "=== BOT CYCLE (manual trigger) ===" }
+        meterRegistry.counter("bot.cycle").increment()
+        val strategies = redis.getAllStrategies(tradingConfig.tickers)
+        strategies.values.forEach { eventPublisher.publishStrategyGenerated(it) }
     }
 
     private suspend fun openPosition(strat: Strategy) {
@@ -130,13 +207,13 @@ class TradingBotService(
 
         val dir = if (strat.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val side = if (strat.action == StrategyAction.BUY) "buy" else "sell"
-        val orderId = alorClient.placeLimitOrder(strat.ticker, side, qty, strat.targetPrice)
-            ?: alorClient.placeMarketOrder(strat.ticker, side, qty)
-        if (orderId == null) {
+        val placed = orderOutboxService.placeOrder(strat.ticker, side, qty, strat.targetPrice, "limit")
+        if (!placed.success || placed.alorOrderId == null) {
             logger.error { "Order failed ${strat.ticker}" }
             meterRegistry.counter("bot.order.failed", Tags.of("ticker", strat.ticker)).increment()
             return
         }
+        val orderId = placed.alorOrderId
 
         val execution = alorClient.verifyOrder(orderId)
         val fillPrice = execution?.avgPrice ?: strat.targetPrice
@@ -174,8 +251,9 @@ class TradingBotService(
             PositionDirection.LONG -> "sell"
             PositionDirection.SHORT -> "buy"
         }
-        val orderId = alorClient.placeMarketOrder(pos.ticker, side, pos.quantity)
-        val execution = orderId?.let { alorClient.verifyOrder(it) }
+        val placed = orderOutboxService.placeOrder(pos.ticker, side, pos.quantity, null, "market")
+        val orderId = placed.alorOrderId
+        val execution = orderId?.let { alorClient.verifyOrder(it, expectedPrice = price) }
         val closePrice = execution?.avgPrice ?: price
         pos.status = when (reason) {
             "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
@@ -196,5 +274,30 @@ class TradingBotService(
         logger.info { "Closed ${pos.ticker} reason=$reason P&L=$pnl" }
     }
 
-    fun runBotCycle() = run()
+    /**
+     * Применяет ExecutionReport из WebSocket: фиксирует фактическую цену
+     * исполнения в closePrice открытой позиции (slippage tracking).
+     */
+    private fun applyExecutionReport(report: ExecutionReport) {
+        if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
+        val orderId = report.orderId
+        val pos = positionRepo.findByAlorOrderId(orderId) ?: return
+        if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
+        if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
+
+        val fillPrice = report.avgPrice ?: return
+        pos.closePrice = fillPrice
+        val pnl = when (pos.direction) {
+            PositionDirection.LONG -> fillPrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
+            PositionDirection.SHORT -> pos.entryPrice.subtract(fillPrice).multiply(BigDecimal(pos.quantity))
+        }
+        pos.pnl = pnl
+        pos.status = if (report.status == OrderStatus.PARTIALLY_FILLED) PositionStatus.OPEN else PositionStatus.CLOSED
+        pos.closedAt = if (report.status == OrderStatus.PARTIALLY_FILLED) null else LocalDateTime.now()
+        pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
+        positionRepo.save(pos)
+        alorClient.recordSlippage(pos.entryPrice, fillPrice, pos.quantity)
+        meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()
+        logger.info { "WS fill applied for ${pos.ticker}: order=$orderId price=$fillPrice pnl=$pnl" }
+    }
 }

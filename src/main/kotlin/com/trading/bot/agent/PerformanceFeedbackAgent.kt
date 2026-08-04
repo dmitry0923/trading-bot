@@ -1,7 +1,8 @@
 package com.trading.bot.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.client.LlmClient
+import com.trading.bot.infrastructure.llm.PromptRegistry
+import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.model.*
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository
@@ -17,11 +18,12 @@ import java.security.MessageDigest
 
 @Component
 class PerformanceFeedbackAgent(
-    private val llmClient: LlmClient,
+    private val llmClient: ResilientLlmClient,
     private val tradeAnalysisService: TradeAnalysisService,
     private val agentLogRepo: AgentLogRepository,
     private val adjustmentRepo: StrategyAdjustmentRepository,
     private val redisCache: RedisCacheService,
+    private val promptRegistry: PromptRegistry,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
 ) {
@@ -38,10 +40,16 @@ class PerformanceFeedbackAgent(
         val rawJson: String
     )
 
-    suspend fun generateFeedback(ticker: String): StrategyFeedback = coroutineScope {
+    suspend fun generateFeedback(
+        ticker: String,
+        version: String = PromptRegistry.DEFAULT_VERSION
+    ): StrategyFeedback = coroutineScope {
         val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        if (stats == null || stats.totalTrades < 3) {
-            return@coroutineScope defaultFeedback(ticker)
+
+        // GUARDRAIL: недостаточно сделок (< 5) → rule-based feedback без LLM
+        if (stats == null || stats.totalTrades < 5) {
+            meterRegistry.counter("feedback.rule_based", Tags.of("ticker", ticker, "reason", "LOW_TRADES")).increment()
+            return@coroutineScope ruleBasedFeedback(ticker, stats)
         }
 
         val statsHash = hashStats(stats)
@@ -55,28 +63,88 @@ class PerformanceFeedbackAgent(
 
         meterRegistry.counter("feedback.cache.miss", Tags.of("ticker", ticker)).increment()
 
-        val prompt = buildPrompt(ticker, stats)
+        val variables = mapOf(
+            "ticker" to ticker,
+            "totalTrades" to stats.totalTrades,
+            "winRate" to String.format("%.1f", stats.winRate * 100),
+            "profitFactor" to String.format("%.2f", stats.profitFactor),
+            "avgWin" to stats.avgWin,
+            "avgLoss" to stats.avgLoss,
+            "slHitRate" to String.format("%.1f", stats.slHitRate * 100),
+            "tpHitRate" to String.format("%.1f", stats.tpHitRate * 100),
+            "maxConsecutiveLosses" to stats.maxConsecutiveLosses,
+            "bestEntryHour" to (stats.bestEntryHour ?: "N/A"),
+            "worstEntryHour" to (stats.worstEntryHour ?: "N/A"),
+            "blindSpots" to stats.blindSpots.joinToString("; ") { it.conditionPattern }
+        )
 
+        val prompt = promptRegistry.getTemplate("performance-feedback", version)
         val feedback = try {
-            val resp = llmClient.chat(
-                "You are a Meta-Learning trading bot agent. Analyze statistics and give specific numeric adjustments. Be conservative. Reply ONLY JSON.",
-                prompt
+            val resp = llmClient.complete(
+                agent = "feedback",
+                ticker = ticker,
+                prompt = prompt,
+                variables = variables,
+                temperature = 0.1
             )
             if (resp.isFallback) {
-                logger.warn { "LLM error for $ticker feedback, using defaults" }
-                defaultFeedback(ticker, stats)
+                logger.warn { "LLM error for $ticker feedback, using rule-based" }
+                ruleBasedFeedback(ticker, stats)
             } else {
                 parseFeedback(resp.content, ticker, stats)
             }
         } catch (e: Exception) {
-            logger.error(e) { "Feedback LLM call failed for $ticker, using defaults" }
+            logger.error(e) { "Feedback LLM call failed for $ticker, using rule-based" }
             meterRegistry.counter("feedback.llm.error", Tags.of("ticker", ticker)).increment()
-            defaultFeedback(ticker, stats)
+            ruleBasedFeedback(ticker, stats)
         }
 
         redisCache.saveFeedback(ticker, feedback.rawJson, statsHash)
         saveAdjustments(feedback, stats)
+        agentLogRepo.save(
+            AgentLog(
+                cycleId = "META",
+                agentName = "Agent-6-Performance",
+                ticker = ticker,
+                action = if (feedback.shouldPauseTrading) "PAUSE" else "ADJUST",
+                confidence = stats.winRate,
+                reasoning = "confAdj=${feedback.confidenceAdjustment}, slAdj=${feedback.slAdjustmentPercent}, tpAdj=${feedback.tpAdjustmentPercent}",
+                rawOutput = feedback.rawJson
+            )
+        )
         feedback
+    }
+
+    /**
+     * Rule-based feedback (без LLM) по детерминированным правилам:
+     * - maxConsecutiveLosses >= 3 → shouldPauseTrading = true
+     * - winRate < 35% → confidenceAdjustment = +0.15 (повышаем порог входа)
+     * - slHitRate > 60% → slAdjustmentPercent = +0.20 (расширяем стоп)
+     */
+    fun ruleBasedFeedback(ticker: String, stats: TradeStats?): StrategyFeedback {
+        val shouldPause = (stats?.maxConsecutiveLosses ?: 0) >= 3
+        val confidenceAdjustment = if ((stats?.winRate ?: 1.0) < 0.35) 0.15 else 0.0
+        val slAdjustment = if ((stats?.slHitRate ?: 0.0) > 0.60) 0.20 else 0.0
+        val tpAdjustment = 0.0
+
+        val notes = mapOf(
+            "reason" to "RULE_BASED" +
+                (if (shouldPause) "; consecutive losses >= 3 -> pause" else "") +
+                (if (confidenceAdjustment > 0) "; winRate < 35% -> confAdj +0.15" else "") +
+                (if (slAdjustment > 0) "; slHitRate > 60% -> slAdj +0.20" else "")
+        )
+        val raw = "{\"confidenceAdjustment\":$confidenceAdjustment,\"slAdjustmentPercent\":$slAdjustment," +
+            "\"tpAdjustmentPercent\":0.0,\"contextPrompt\":\"\",\"shouldPauseTrading\":$shouldPause}"
+        return StrategyFeedback(
+            ticker = ticker,
+            confidenceAdjustment = confidenceAdjustment,
+            slAdjustmentPercent = slAdjustment,
+            tpAdjustmentPercent = tpAdjustment,
+            contextPrompt = "",
+            agentSpecificNotes = notes,
+            shouldPauseTrading = shouldPause,
+            rawJson = raw
+        )
     }
 
     private fun hashStats(stats: TradeStats): String {
@@ -85,51 +153,6 @@ class PerformanceFeedbackAgent(
             .digest(raw.toByteArray())
             .joinToString("") { "%02x".format(it) }
             .take(16)
-    }
-
-    private fun defaultFeedback(ticker: String, stats: TradeStats? = null): StrategyFeedback {
-        val pause = (stats?.maxConsecutiveLosses ?: 0) >= 3
-        return StrategyFeedback(
-            ticker = ticker,
-            confidenceAdjustment = 0.0,
-            slAdjustmentPercent = 0.0,
-            tpAdjustmentPercent = 0.0,
-            contextPrompt = "",
-            agentSpecificNotes = emptyMap(),
-            shouldPauseTrading = pause,
-            rawJson = "{}"
-        )
-    }
-
-    private fun buildPrompt(ticker: String, stats: TradeStats): String {
-        return """
-            TICKER: $ticker
-            14-DAY STATISTICS:
-            - Total trades: ${stats.totalTrades}
-            - Win Rate: ${String.format("%.1f", stats.winRate * 100)}%
-            - Profit Factor: ${String.format("%.2f", stats.profitFactor)}
-            - Avg win: ${stats.avgWin}
-            - Avg loss: ${stats.avgLoss}
-            - SL hit: ${String.format("%.1f", stats.slHitRate * 100)}%
-            - TP hit: ${String.format("%.1f", stats.tpHitRate * 100)}%
-            - Max loss streak: ${stats.maxConsecutiveLosses}
-            - Best entry hour: ${stats.bestEntryHour ?: "N/A"}
-            - Worst entry hour: ${stats.worstEntryHour ?: "N/A"}
-            - Blind spots: ${stats.blindSpots.joinToString("; ") { it.conditionPattern }}
-
-            TASK: Output JSON:
-            {
-              "confidenceAdjustment": double,
-              "slAdjustmentPercent": double,
-              "tpAdjustmentPercent": double,
-              "contextPrompt": "string",
-              "techAgentNote": "string",
-              "fundAgentNote": "string",
-              "strategistNote": "string",
-              "contrarianNote": "string",
-              "shouldPauseTrading": boolean
-            }
-        """.trimIndent()
     }
 
     private fun parseFeedback(content: String, ticker: String, stats: TradeStats): StrategyFeedback {
@@ -153,7 +176,7 @@ class PerformanceFeedbackAgent(
             )
         } catch (e: Exception) {
             logger.error(e) { "Feedback parse error for $ticker" }
-            defaultFeedback(ticker, stats)
+            ruleBasedFeedback(ticker, stats)
         }
     }
 

@@ -11,3 +11,7 @@ enum class PositionDirection {
 enum class PositionStatus {
     OPEN, CLOSED, TAKE_PROFIT
 }
+
+enum class InstrumentType {
+    STOCK, FUTURES
+}

@@ -1,18 +1,24 @@
 package com.trading.bot.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.client.LlmClient
+import com.trading.bot.infrastructure.llm.Guardrails
+import com.trading.bot.infrastructure.llm.PromptRegistry
+import com.trading.bot.infrastructure.llm.ResilientLlmClient
+import com.trading.bot.infrastructure.llm.SemanticCache
 import com.trading.bot.model.*
 import com.trading.bot.repository.AgentLogRepository
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
-import java.math.RoundingMode
 
 @Component
 class StrategyAgent(
-    private val llmClient: LlmClient,
+    private val llmClient: ResilientLlmClient,
+    private val promptRegistry: PromptRegistry,
+    private val semanticCache: SemanticCache,
+    private val guardrails: Guardrails,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
@@ -30,43 +36,63 @@ class StrategyAgent(
         val reasoning: String
     )
 
-    private val systemPrompt = """
-        Ты — стратег алгоритмического торгового бота для Мосбиржи.
-        На основе технического и фундаментального анализа прими решение.
-        Правила:
-        1. Торгуй только при явном согласии анализа (обе стороны BULLISH/BEARISH или одна сторона очень уверена).
-        2. При сомнении — HOLD. Лучше пропустить сделку, чем войти в плохую.
-        3. quantity — количество лотов.
-        Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"quantity":0,"stopLoss":0.0,"takeProfit":0.0,"trailingStop":false,"confidence":0.0,"reasoning":"string"}.
-    """.trimIndent()
-
     suspend fun formulate(
         ticker: String,
         tech: TechnicalReport,
         fund: FundamentalReport,
         snapshot: MarketSnapshot,
-        cycleId: String
+        cycleId: String,
+        adaptiveThreshold: Double = 0.5,
+        version: String = PromptRegistry.DEFAULT_VERSION
     ): Draft {
         val start = System.currentTimeMillis()
 
+        // GUARDRAIL: недостаточно данных → HOLD без LLM-вызова
         if (tech.conclusion == "INSUFFICIENT_DATA" || tech.confidence < 0.5) {
-            return logAndReturn(hold(snapshot.currentPrice, "Insufficient technical data (conf=${tech.confidence})"), ticker, cycleId, start, "{}")
+            return logAndReturn(
+                hold(snapshot.currentPrice, "Insufficient technical data (conf=${tech.confidence})"),
+                ticker, cycleId, start, "{}", overrideReason = "GUARDRAIL: INSUFFICIENT_TECH_DATA"
+            )
         }
 
-        val prompt = """
-            ТИКЕР: $ticker
-            Текущая цена: ${snapshot.currentPrice}
-            Технический анализ: conclusion=${tech.conclusion}, confidence=${tech.confidence}, trend=${tech.trend}, RSI=${tech.rsi}, reasoning=${tech.reasoning}
-            Фундаментальный анализ: conclusion=${fund.conclusion}, confidence=${fund.confidence}, reasoning=${fund.reasoning}
-        """.trimIndent()
+        val fingerprint = semanticCache.fingerprint(
+            snapshot.currentPrice,
+            tech.rsi,
+            tech.trend,
+            "technical"
+        )
 
-        val resp = llmClient.chat(systemPrompt, prompt, temperature = 0.15)
+        val variables = mapOf(
+            "ticker" to ticker,
+            "currentPrice" to snapshot.currentPrice.toPlainString(),
+            "techConclusion" to tech.conclusion,
+            "techConfidence" to tech.confidence,
+            "techTrend" to tech.trend,
+            "techRsi" to tech.rsi,
+            "techReasoning" to tech.reasoning,
+            "fundConclusion" to fund.conclusion,
+            "fundConfidence" to fund.confidence,
+            "fundReasoning" to fund.reasoning
+        )
+
+        val prompt = promptRegistry.getTemplate("strategy", version)
+        val resp = llmClient.complete(
+            agent = "strategy",
+            ticker = ticker,
+            prompt = prompt,
+            variables = variables,
+            fingerprint = fingerprint,
+            temperature = 0.15
+        )
         if (resp.isFallback) {
             logger.info { "LLM unavailable for $ticker, HOLD" }
-            return logAndReturn(hold(snapshot.currentPrice, "LLM unavailable"), ticker, cycleId, start, resp.content)
+            return logAndReturn(
+                hold(snapshot.currentPrice, "LLM unavailable"),
+                ticker, cycleId, start, resp.content, isCached = resp.fromCache
+            )
         }
 
-        return try {
+        val draft = try {
             val cleaned = resp.content.replace("```json", "").replace("```", "").trim()
             val j = objectMapper.readTree(cleaned)
             val action = StrategyAction.values().firstOrNull {
@@ -74,11 +100,9 @@ class StrategyAgent(
             } ?: StrategyAction.HOLD
 
             val rawPrice = j.path("targetPrice").asText().toBigDecimalOrNull() ?: snapshot.currentPrice
-            val targetPrice = guardPrice(rawPrice, snapshot.currentPrice, ticker)
-
-            val draft = Draft(
+            Draft(
                 action = action,
-                targetPrice = targetPrice,
+                targetPrice = rawPrice,
                 quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(0).coerceIn(1, 10000),
                 stopLoss = j.path("stopLoss").asText().toBigDecimalOrNull(),
                 takeProfit = j.path("takeProfit").asText().toBigDecimalOrNull(),
@@ -86,26 +110,68 @@ class StrategyAgent(
                 confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
                 reasoning = j.path("reasoning").asText("")
             )
-            logAndReturn(draft, ticker, cycleId, start, resp.content)
         } catch (e: Exception) {
             logger.warn(e) { "Strategy LLM parse error for $ticker" }
-            meterRegistry.counter("strategy.agent.parse.error", io.micrometer.core.instrument.Tags.of("ticker", ticker)).increment()
-            logAndReturn(hold(snapshot.currentPrice, "Parse error: ${e.message}"), ticker, cycleId, start, resp.content)
+            meterRegistry.counter("strategy.agent.parse.error", Tags.of("ticker", ticker)).increment()
+            return logAndReturn(
+                hold(snapshot.currentPrice, "Parse error: ${e.message}"),
+                ticker, cycleId, start, resp.content, isCached = resp.fromCache, tokensUsed = resp.tokensUsed
+            )
         }
-    }
 
-    private fun guardPrice(proposed: BigDecimal, market: BigDecimal, ticker: String): BigDecimal {
-        val deviation = proposed.subtract(market).abs().divide(market, 4, RoundingMode.HALF_UP)
-        return if (deviation > BigDecimal("0.02")) {
-            logger.warn { "Guardrail: price deviation ${deviation}% too high for $ticker, using market price" }
-            market
-        } else proposed
+        // POST-PROCESSING GUARDRAILS: низкая уверенность → HOLD, отклонение цены → коррекция
+        val guarded = guardrails.apply(
+            signal = Guardrails.Signal(
+                action = draft.action,
+                targetPrice = draft.targetPrice,
+                quantity = draft.quantity,
+                stopLoss = draft.stopLoss,
+                takeProfit = draft.takeProfit,
+                trailingStop = draft.trailingStop,
+                confidence = draft.confidence
+            ),
+            marketPrice = snapshot.currentPrice,
+            adaptiveThreshold = adaptiveThreshold
+        )
+
+        val finalDraft = if (guarded.overridden) {
+            logger.info { "Guardrail for $ticker: ${guarded.overrideReason}" }
+            draft.copy(
+                action = guarded.signal.action,
+                targetPrice = guarded.signal.targetPrice,
+                quantity = guarded.signal.quantity,
+                stopLoss = guarded.signal.stopLoss,
+                takeProfit = guarded.signal.takeProfit,
+                trailingStop = guarded.signal.trailingStop,
+                confidence = guarded.signal.confidence,
+                reasoning = draft.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]"
+            )
+        } else {
+            draft
+        }
+
+        return logAndReturn(
+            finalDraft,
+            ticker, cycleId, start, resp.content,
+            isCached = resp.fromCache,
+            tokensUsed = resp.tokensUsed,
+            overrideReason = guarded.overrideReason
+        )
     }
 
     private fun hold(marketPrice: BigDecimal, reason: String): Draft =
         Draft(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0, reason)
 
-    private fun logAndReturn(draft: Draft, ticker: String, cycleId: String, startMs: Long, raw: String): Draft {
+    private fun logAndReturn(
+        draft: Draft,
+        ticker: String,
+        cycleId: String,
+        startMs: Long,
+        raw: String,
+        isCached: Boolean = false,
+        tokensUsed: Int = 0,
+        overrideReason: String? = null
+    ): Draft {
         agentLogRepository.save(
             AgentLog(
                 cycleId = cycleId,
@@ -115,9 +181,13 @@ class StrategyAgent(
                 confidence = draft.confidence,
                 reasoning = draft.reasoning,
                 rawOutput = raw,
-                latencyMs = System.currentTimeMillis() - startMs
+                latencyMs = System.currentTimeMillis() - startMs,
+                tokensUsed = tokensUsed,
+                isCached = isCached,
+                overrideReason = overrideReason
             )
         )
+        meterRegistry.counter("agent.strategy.decision", Tags.of("action", draft.action.name)).increment()
         return draft
     }
 }

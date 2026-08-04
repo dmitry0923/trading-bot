@@ -1,0 +1,299 @@
+# 13. Roadmap и планы развития
+
+## 13.1. Текущее состояние (v2.1)
+
+**Реализовано в текущей ветке:**
+
+- 6 LLM-агентов (тех. анализ, фундаментал, стратегия, контрар, арбитр, feedback) + Guardrails + semantic cache + resilience (CB/RateLimiter/Retry).
+- Alor-интеграция: REST + WebSocket, idempotency, outbox, контроль спреда.
+- MOEX ISS данные, индикаторы (MA, RSI, ATR, MACD, Bollinger, EMA), Kelly criterion, адаптивные SL/TP.
+- Стратегии `conservative`/`default`/`aggressive`, self-learning (PerformanceFeedbackAgent).
+- 7 таблиц, Liquibase, REST API, Prometheus-метрики, alertmanager-конфиг.
+- Docker compose (PostgreSQL 15 + Redis 7).
+- **Event-driven слой** (раздел 2.3): `PriceChangedEvent`, `StrategyGeneratedEvent`, `EntrySignalEvent`, `ExecutionReportEvent` + `TradingEventPublisher` + `@EventListener`.
+- **Sector concentration** (раздел 5.3): `risk.max-sector-exposure`, справочник `risk.sectors`.
+- **Volatility guard** (раздел 5.4): ATR% > `risk.max-volatility-percent` → HOLD.
+- **Backtest framework** (раздел 11): `BacktestEngine`, `SimulatedExecution`, `BacktestMetrics`, endpoint `GET /api/v1/backtest/{ticker}`, 6 unit-тестов.
+
+## 13.2. Дорожная карта по версиям
+
+```mermaid
+gantt
+    title MMVB Trading Bot roadmap
+    dateFormat  YYYY-MM-DD
+    section v2.0 (реализовано)
+    Мультиагентный конвейер          :done, a0, 2025-01-01, 2025-03-01
+    section v2.1 (реализовано)
+    Event-driven слой                :done, a1, 2025-03-01, 2025-05-01
+    Risk guard (sector/volatility)   :done, a2, after a1, 2025-06-01
+    Backtest framework               :done, a3, after a2, 2025-07-01
+    section v2.2 (краткосрочная)
+    Emergency stop endpoint          :v21, 2025-07-01, 2025-09-01
+    Persist daily PnL                :v21b, after v21, 2025-10-01
+    section v2.3 (среднесрочная)
+    LLM в бэктесте, WebSocket-only   :v22, 2025-10-01, 2026-01-01
+    section v2.4 (долгосрочная)
+    ML-агенты (CatBoost/LightGBM)    :v23, 2026-01-01, 2026-04-01
+    section v2.5
+    Cross-exchange, multi-timeframe  :v24, 2026-04-01, 2026-07-01
+```
+
+### v2.2 — Краткосрочные улучшения
+
+| Фича | Описание | Статус |
+|---|---|---|
+| Emergency stop endpoint | `POST /api/v1/bot/emergency-stop` — закрывает все позиции + запрещает открытие | 🔜 |
+| Persist daily PnL | перенос `dailyPnl` из памяти в БД + `/api/v1/risk/daily-pnl-history` (раздел 6.6) | 🔜 |
+| Партиционирование `candles`/`positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | 🔜 |
+| Точный контроль SL/TP в лимитных заявках | добавлять SL/TP заявки при открытии позиции | 🔜 |
+| Distributed lock | возможность запуска нескольких инстансов без гонок (раздел 2.6) | 🔜 |
+| Multi-account | поддержка нескольких Alor-портфелей с общим конвейером и персональными лимитами | 🔜 |
+| Backtest: сохранение результатов | таблица `backtest_results` + сравнение итераций | 🔜 |
+| Backtest: out-of-sample | split 80/20, прогон на удержанном хвосте | 🔜 |
+
+### v2.3 — Среднесрочные
+
+| Фича | Описание |
+|---|---|
+| **LLM-агенты в бэктесте** | заменить детерминированный `signalAt()` на конвейер tech→fund→strategy→contrarian→arbitrator (раздел 11.1) |
+| Backtest: панельный прогон | несколько тикеров за один вызов, распределение результатов |
+| Backtest: конфиг `bt.*` | вынос констант 20%/2%/4% и `initialCapital` из кода |
+| WebSocket-only исполнение | полный переход на WS для market-data и ордеров, REST — только fallback |
+| Уменьшение LLM-латентности | параллельные вызовы агентов, дельта-промпты |
+| Очередь (RabbitMQ) для outbox | буферизация ордеров и логов, гарантия доставки |
+
+### v2.4 — ML-агенты
+
+- Замена/дополнение части LLM-инференса ML-моделями (CatBoost/LightGBM) для задач, где нужна скорость и стабильность: скрининг кандидатов, оценка вероятности удержания тренда.
+- Retraining pipeline: собранные через `agent_logs` и сделки данные → features → обучение на CI.
+
+### v2.5 — Расширение горизонтов
+
+- Multi-timeframe: вход по 10-минутному, фильтр по часовому/дневному.
+- Cross-exchange: мониторинг котировок на нескольких площадках, арбитраж между MOEX и международными рынками (по мере регуляторной готовности).
+
+## 13.3. План стабилизации (непрерывно)
+
+1. **Набор regression-тестов** по каждому модулю (Guardrails, SemanticCache, Agent parsers, outbox, BacktestEngine).
+2. **Backtest всех тикеров** по критериям раздела 11.5 перед каждой новой стратегией.
+3. **Chaos testing**: отключение Redis/Postgres/Kimi/сети — проверка graceful degradation.
+4. **Нагрузочное тестирование**: до 100 тикеров × 6 агентов × 2 LLM-вызова — бюджет латентности и стоимости.
+5. **Мониторинг вырожденных случаев**: SPREAD > 1%, депозитарные паузы, гэпы.
+
+## 13.4. Контрольные точки (milestones)
+
+| Миля | Критерий готовности |
+|---|---|
+| M1 (v2.2) | Emergency stop + persist daily PnL, тесты зелёные, документация обновлена |
+| M2 (v2.3) | LLM-бэктест проходит критерии по ≥ 5 тикерам; WebSocket-only стабилен 1 неделю SIMULATION |
+| M3 (v2.4) | ML-модель выигрывает у базовой LLM-версии на out-of-sample выборке |
+| M4 (v2.5) | Cross-exchange сигналы без ложных арбитражных входов |
+
+## 13.5. Что уже снято с планов (сделано)
+
+Эти пункты были в планах, но реализованы в v2.1:
+
+| Пункт | Где реализовано |
+|---|---|
+| Event-driven очередь (вместо @Scheduled) | раздел 2.3 — события + `@EventListener`, остаточные `@Scheduled` для poll/outbox |
+| Sector Concentration | раздел 5.3 — `exceedsSectorExposure`, `risk.max-sector-exposure` |
+| Volatility Check (ATR% > 5% → запрет) | раздел 5.4 — `isVolatilityTooHigh`, `risk.max-volatility-percent` |
+| Backtest framework (первый этап) | раздел 11 — детерминированный `BacktestEngine` + endpoint + тесты |
+
+> Пометка «не реализовано» из ранних версий документации снята — эти фичи теперь покрыты кодом и тестами.
+
+## 13.6. Приоритизация
+
+| Приоритет | Фича | Обоснование |
+|---|---|---|
+| P0 | Emergency stop | безопасность: ручная остановка в любой момент |
+| P0 | Persist daily PnL | лимит убытка не должен теряться при рестарте |
+| P1 | LLM в бэктесте | соответствие живому конвейеру, достоверность критериев приёма |
+| P1 | Партиционирование candles | рост таблицы ~42 000 строк/мес |
+| P2 | Distributed lock | мульти-реплика (после стабилизации singleton) |
+| P2 | Multi-account | бизнес-расширение |
+| P3 | RabbitMQ outbox | при росте нагрузки |
+| P3 | ML-агенты | экспериментально, после стабилизации LLM-конвейера |
+
+## 13.7. Детализация фич v2.2
+
+### 13.7.1. Emergency stop
+
+**Требования:**
+
+- `POST /api/v1/bot/emergency-stop` с телом `{"reason": "...", "liquidate": bool}`.
+- При вызове: флаг `bot:emergency-stop=true` в Redis + локально.
+- `TradingBotService.run()`, `StrategyService.run()`, `monitor()` проверяют флаг в начале цикла → немедленный выход.
+- Опционально: закрыть все открытые позиции рыночными ордерами (через outbox).
+- Повторный вход: только после `POST /api/v1/bot/resume` или рестарта с очисткой флага.
+
+**Реализация:**
+
+| Слой | Изменение |
+|---|---|
+| Controller | 2 endpoints: `POST /emergency-stop`, `POST /resume` |
+| Service | `EmergencyStopService` (флаг Redis + локальный, проверка в циклах) |
+| Risk | `RiskManagementService` учитывает флаг в `validateNewStrategy` → сразу HOLD |
+| Метрики | `bot.emergency_stop{reason}`, alert `EmergencyStop` |
+
+### 13.7.2. Persist daily PnL
+
+**Требования:**
+
+- Таблица `daily_pnl(trade_date PK, pnl, updated_at)` (раздел 6.6).
+- `updateDailyPnL()` — `INSERT ... ON CONFLICT DO UPDATE`.
+- При старте `RiskManagementService` подгружает P&L за сегодня из БД.
+- Новый endpoint `GET /api/v1/risk/daily-pnl-history?days=30` (график).
+- Сброс лимита — автоматически в 00:00 МСК (новая строка даты).
+
+**Почему это важно:** сейчас при рестарте в течение дня бот «забывает» накопленный убыток и может продолжить торговлю, уже превысив лимит. Это главный риск v2.1.
+
+### 13.7.3. Backtest: сохранение результатов
+
+- Таблица `backtest_results(id, ticker, params jsonb, metrics jsonb, created_at)`.
+- `BacktestEngine.run` пишет результат после прогона.
+- Endpoint `GET /api/v1/backtest/results?ticker=` — сравнение итераций.
+- Уведомление `bt_pass_total{result=PASS}` в метриках.
+
+## 13.8. Детализация фич v2.3
+
+### 13.8.1. LLM-агенты в бэктесте
+
+Заменить `signalAt()` (детерминированный RSI/MACD) на конвейер агентов:
+
+```mermaid
+flowchart LR
+    C[Candles] --> IC[IndicatorCalculator]
+    IC --> TA[TechnicalAnalysisAgent]
+    IC --> FA[FundamentalAnalysisAgent]
+    TA --> ST[StrategyAgent]
+    FA --> ST
+    ST --> CT[ContrarianAgent]
+    CT --> AR[ArbitratorAgent]
+    AR -->|Final| SIM[SimulatedExecution]
+```
+
+Проблемы, которые надо решить:
+
+| Проблема | Решение |
+|---|---|
+| Стоимость: 10 тикеров × 365 дней × 6 агентов | сэмплирование: сигнал каждые N баров, параллельные вызовы |
+| Латентность | кэш LLM-ответов по fingerprint бара |
+| Детерминированность | `temperature=0`, стабильный seed |
+| Тайм-ауты | resilience4j конфиг для backtest-профиля |
+
+### 13.8.2. WebSocket-only исполнение
+
+- Полный перевод market-data и ордеров на WS (`alor.ws`).
+- REST остаётся fallback для `verifyOrder` и токенов.
+- Ожидаемый выигрыш: латентность, меньше лимитов rate-limiter.
+
+## 13.9. Метрики зрелости продукта
+
+| Уровень | Признак |
+|---|---|
+| L1 — прототип | бот работает в SIMULATION, LLM fallback допустим |
+| L2 — стабильный | 1 неделя SIMULATION без `bot.halted.daily_loss`, метрики полные |
+| L3 — проверенный | бэктесты PASS по ≥ 5 тикерам, chaos-тесты зелёные |
+| L4 — боевой | LIVE с лимитами, emergency stop, persist daily PnL (v2.2) |
+| L5 — масштабируемый | мульти-реплика (distributed lock), k8s, RabbitMQ (v2.3+) |
+
+Целевое состояние на текущий момент — **L3** (бэктест реализован, но критерии ещё не подтверждены данными реального портфеля).
+
+## 13.10. Критерии выхода из беты
+
+- [ ] 2 недели подряд без ошибок цикла (`bot.cycle.error == 0`)
+- [ ] `maxConsecutiveLosses < 4` для всех тикеров (нет пауз)
+- [ ] Проскальзывание ≤ 0.1% в среднем (`trade.slippage.rub / общий оборот`)
+- [ ] Бэктест `isPassable() == true` для ≥ 50% тикеров портфеля
+- [ ] Все алерты критического уровня срабатывают корректно (проверено)
+- [ ] Документация актуальна (этот документ — часть DoD)
+
+## 13.11. Детализация v2.4 (ML-агенты)
+
+**Задачи для ML-замены** (где детерминизм/скорость важнее гибкости):
+
+| Задача | Сейчас (LLM) | ML-кандидат |
+|---|---|---|
+| Скрининг кандидатов (10 тикеров → топ-N) | каждый тикер полный конвейер | градиентный бустинг по признакам индикаторов |
+| Оценка вероятности продолжения тренда | StrategyAgent (LLM) | бинарный классификатор (тренд вверх/вниз) |
+| Порог уверенности | AdaptiveRiskService (правила) | онлайн-обучение по исходам сделок |
+
+**Признаки** (features): RSI, ATR%, MACD-гистограмма, Bollinger %B, EMA-наклон, волатильность, winRate/чac, слепые зоны тикера, макро (ставка, нефть, курс).
+
+**Pipeline**:
+
+1. Сбор датасета: `positions` (исход сделки) + `candles` + `agent_logs`.
+2. Обучение на CI (этап в пайплайне, данные — экспорт из БД).
+3. Валидация: out-of-sample 20%, метрика — выигрыш у LLM-baseline (M3).
+4. Промоушн: feature-флаг `ml.enabled`.
+
+**Риски**:
+
+- Переобучение на короткой истории (мало сделок).
+- Нестационарность рынка MOEX — дрейф признаков.
+- Регуляторные ограничения автоматической торговли.
+
+## 13.12. Детализация v2.5 (Cross-exchange)
+
+**Целевые рынки**: MOEX (основной) + внебиржевые/другие площадки по мере готовности.
+
+**Арбитражные условия** (осторожно):
+
+- Расхождение котировок > комиссии + проскальзывание + издержки перевода.
+- Синхронизация времени (NTP), минимальное окно проверки.
+
+**Ограничения**:
+
+- Валютные/юридические ограничения движения капитала.
+- Разные режимы торгов (T+2 на MOEX).
+- Арбитраж выполняется **только** в SIMULATION до отдельного approval.
+
+## 13.13. Управление зависимостями roadmap
+
+```mermaid
+flowchart LR
+    A[Persist daily PnL] --> B[Emergency stop]
+    A --> C[История P&L график]
+    B --> D[v2.3 база стабильности]
+    D --> E[LLM в бэктесте]
+    E --> F[Панельный backtest]
+    F --> G[v2.4 ML-агенты]
+    D --> H[WebSocket-only]
+    H --> I[RabbitMQ outbox]
+    I --> J[Мульти-реплика + lock]
+    J --> K[v2.5 cross-exchange]
+```
+
+Ключевое: **persist daily PnL — фундамент** для emergency stop и истории; **LLM в бэктесте — фундамент** для ML-этапа (метрики качества решений).
+
+## 13.14. Риски дорожной карты
+
+| Риск | Вероятность | Влияние | Митигация |
+|---|---|---|---|
+| LLM-бэктест дорогой/медленный | средняя | задержка M2 | сэмплирование баров, кэш ответов |
+| MOEX меняет API | низкая | пауза интеграций | абстракция клиентов, тесты на контракты |
+| Переобучение ML | высокая | ложная прибыль | строгая out-of-sample валидация |
+| Регуляторные ограничения | низкая | остановка LIVE | SIMULATION-first, approval-гейт |
+| Утечка секретов | низкая | критично | IAM-аудит, ротация, никаких секретов в git |
+| Бот в одной реплике → SPOF | средняя | простой | distributed lock (v2.3) |
+
+## 13.15. KPI по версиям
+
+| Версия | KPI успеха |
+|---|---|
+| v2.1 (текущая) | 39 тестов зелёных; событийный слой без потерь (`event.handled ≈ event.published`); бэктест-endpoint работает |
+| v2.2 | emergency stop < 1 c на реакцию; daily PnL переживает рестарт (тест); партиционирование candles — выборка за год < 200 мс |
+| v2.3 | LLM-бэктест ≥ 5 тикеров PASS; WebSocket-only 1 неделя SIMULATION без ошибок |
+| v2.4 | ML-модель > LLM-baseline на out-of-sample по profit factor |
+| v2.5 | 0 ложных арбитражных входов за месяц SIMULATION |
+
+## 13.16. Процесс внесения фичи
+
+1. **RFC**: описание в разделе roadmap (этот файл), владелец, KPI.
+2. **TDD**: тесты до кода (например, для backtest — сначала `BacktestEngineTest`).
+3. **Промежуточный деплой**: SIMULATION на 1 неделю.
+4. **Оценка по KPI** таблицы выше.
+5. **Промоушн**: только если KPI достигнуты; обновить README и статусы в этом разделе.
+
+Этот процесс гарантирует, что статус в документации («🔜» / «✅») всегда честно отражает код — как это сделано для v2.1 (раздел 13.5).

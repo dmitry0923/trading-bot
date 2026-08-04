@@ -1,37 +1,52 @@
 package com.trading.bot.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.client.LlmClient
+import com.trading.bot.infrastructure.llm.PromptRegistry
+import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.model.AgentLog
 import com.trading.bot.model.FundamentalReport
 import com.trading.bot.repository.AgentLogRepository
+import com.trading.bot.service.MacroContextService
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import mu.KotlinLogging
 import org.springframework.stereotype.Component
 
 @Component
 class FundamentalAnalysisAgent(
-    private val llmClient: LlmClient,
+    private val llmClient: ResilientLlmClient,
+    private val promptRegistry: PromptRegistry,
+    private val macroContextService: MacroContextService,
     private val agentLogRepository: AgentLogRepository,
+    private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
 ) {
     private val logger = KotlinLogging.logger {}
 
-    private val systemPrompt = """
-        Ты — фундаментальный аналитик российского фондового рынка.
-        Дай оценку на основе известных тебе макроэкономических факторов, отчётности и новостей.
-        Будь консервативен: без свежих данных по конкретному тикеру отвечай NEUTRAL.
-        Ответь СТРОГО JSON: {"conclusion":"BULLISH|BEARISH|NEUTRAL","confidence":0.0,"reasoning":"string"}.
-    """.trimIndent()
-
-    suspend fun analyze(ticker: String, cycleId: String): FundamentalReport {
+    suspend fun analyze(
+        ticker: String,
+        cycleId: String,
+        version: String = PromptRegistry.DEFAULT_VERSION
+    ): FundamentalReport {
         val start = System.currentTimeMillis()
-        val prompt = """
-            ТИКЕР: $ticker (Московская биржа, акции).
-            Если у тебя есть актуальная информация по данному тикеру — оцени её.
-            Если данных нет — conclusion=NEUTRAL, confidence=0.2.
-        """.trimIndent()
+        val macro = macroContextService.fetch()
 
-        val resp = llmClient.chat(systemPrompt, prompt, temperature = 0.1)
+        val variables = mapOf(
+            "ticker" to ticker,
+            "cbrRate" to macro.cbrRate.toPlainString(),
+            "brentPrice" to macro.brentPrice.toPlainString(),
+            "usdRub" to macro.usdRub.toPlainString()
+        )
+
+        val prompt = promptRegistry.getTemplate("fundamental-analysis", version)
+        val resp = llmClient.complete(
+            agent = "fundamental",
+            ticker = ticker,
+            prompt = prompt,
+            variables = variables,
+            temperature = 0.1
+        )
+
         val report = if (resp.isFallback) {
             logger.info { "LLM unavailable for fundamental analysis of $ticker" }
             FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "LLM unavailable")
@@ -60,9 +75,12 @@ class FundamentalAnalysisAgent(
                 confidence = report.confidence,
                 reasoning = report.reasoning,
                 rawOutput = resp.content,
-                latencyMs = System.currentTimeMillis() - start
+                latencyMs = System.currentTimeMillis() - start,
+                tokensUsed = resp.tokensUsed,
+                isCached = resp.fromCache
             )
         )
+        meterRegistry.counter("agent.fundamental.decision", Tags.of("action", report.conclusion)).increment()
         return report
     }
 }

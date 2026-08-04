@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.jdbc.support.GeneratedKeyHolder
 import org.springframework.stereotype.Repository
+import java.math.BigDecimal
 import java.sql.ResultSet
 import java.time.LocalDateTime
 
@@ -25,6 +26,13 @@ class PositionRepository(
             closePrice = rs.getBigDecimal("close_price"),
             stopLoss = rs.getBigDecimal("stop_loss"),
             takeProfit = rs.getBigDecimal("take_profit"),
+            instrumentType = enumValueOf(rs.getString("instrument_type")),
+            leverage = rs.getBigDecimal("leverage"),
+            goPerContract = rs.getBigDecimal("go_per_contract"),
+            marginUsed = rs.getBigDecimal("margin_used"),
+            liquidationPrice = rs.getBigDecimal("liquidation_price"),
+            variationMargin = rs.getBigDecimal("variation_margin") ?: BigDecimal.ZERO,
+            stopLossPoints = rs.getInt("stop_loss_points").takeIf { !rs.wasNull() },
             trailingStopPrice = rs.getBigDecimal("trailing_stop_price"),
             pnl = rs.getBigDecimal("pnl"),
             status = enumValueOf(rs.getString("status")),
@@ -38,6 +46,16 @@ class PositionRepository(
     fun findByStatus(status: PositionStatus): List<Position> {
         val sql = "SELECT * FROM positions WHERE status = :status ORDER BY opened_at DESC"
         return namedTemplate.query(sql, mapOf("status" to status.name), rowMapper)
+    }
+
+    fun findById(id: Long): Position {
+        val sql = "SELECT * FROM positions WHERE id = :id"
+        return namedTemplate.query(sql, mapOf("id" to id), rowMapper).first()
+    }
+
+    fun findByAlorOrderId(alorOrderId: String): Position? {
+        val sql = "SELECT * FROM positions WHERE alor_order_id = :alorOrderId"
+        return namedTemplate.query(sql, mapOf("alorOrderId" to alorOrderId), rowMapper).firstOrNull()
     }
 
     fun findAll(): List<Position> {
@@ -70,9 +88,13 @@ class PositionRepository(
     private fun insert(position: Position): Position {
         val sql = """
             INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
-                stop_loss, take_profit, trailing_stop_price, pnl, status, alor_order_id, close_reason, opened_at, closed_at)
+                stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
+                liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
+                alor_order_id, close_reason, opened_at, closed_at)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
-                :stopLoss, :takeProfit, :trailingStopPrice, :pnl, :status, :alorOrderId, :closeReason, :openedAt, :closedAt)
+                :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
+                :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
+                :alorOrderId, :closeReason, :openedAt, :closedAt)
             RETURNING id    
         """.trimIndent()
         val keyHolder = GeneratedKeyHolder()
@@ -85,9 +107,12 @@ class PositionRepository(
             UPDATE positions SET
                 ticker = :ticker, direction = :direction, quantity = :quantity, entry_price = :entryPrice,
                 current_price = :currentPrice, close_price = :closePrice, stop_loss = :stopLoss,
-                take_profit = :takeProfit, trailing_stop_price = :trailingStopPrice, pnl = :pnl,
-                status = :status, alor_order_id = :alorOrderId, close_reason = :closeReason,
-                opened_at = :openedAt, closed_at = :closedAt
+                take_profit = :takeProfit, instrument_type = :instrumentType, leverage = :leverage,
+                go_per_contract = :goPerContract, margin_used = :marginUsed, liquidation_price = :liquidationPrice,
+                variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
+                trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
+                alor_order_id = :alorOrderId, close_reason = :closeReason, opened_at = :openedAt,
+                closed_at = :closedAt
             WHERE id = :id
         """.trimIndent()
         namedTemplate.update(sql, createParams(position).addValue("id", position.id))
@@ -107,6 +132,13 @@ class PositionRepository(
             .addValue("closePrice", position.closePrice)
             .addValue("stopLoss", position.stopLoss)
             .addValue("takeProfit", position.takeProfit)
+            .addValue("instrumentType", position.instrumentType.name)
+            .addValue("leverage", position.leverage)
+            .addValue("goPerContract", position.goPerContract)
+            .addValue("marginUsed", position.marginUsed)
+            .addValue("liquidationPrice", position.liquidationPrice)
+            .addValue("variationMargin", position.variationMargin)
+            .addValue("stopLossPoints", position.stopLossPoints)
             .addValue("trailingStopPrice", position.trailingStopPrice)
             .addValue("pnl", position.pnl)
             .addValue("status", position.status.name)

@@ -22,8 +22,22 @@ class MoexClient(
     private val baseUrl = "https://iss.moex.com/iss"
 
     suspend fun getCandles(ticker: String, days: Int, from: LocalDateTime): List<Candle> {
+        val stock = fetchCandles("stock", "shares", "TQBR", ticker, from)
+        if (stock.isNotEmpty()) return stock
+        // Фьючерсы (Si и др.) торгуются на FORTS — ищем там
+        val futures = fetchCandles("futures", "forts", "RFUD", ticker, from)
+        return if (futures.isNotEmpty()) futures else stock
+    }
+
+    private suspend fun fetchCandles(
+        engine: String,
+        market: String,
+        board: String,
+        ticker: String,
+        from: LocalDateTime
+    ): List<Candle> {
         return try {
-            val url = "$baseUrl/engines/stock/markets/shares/boards/TQBR/securities/$ticker/candles.json" +
+            val url = "$baseUrl/engines/$engine/markets/$market/boards/$board/securities/$ticker/candles.json" +
                 "?interval=10&from=${from.format(timeFormatter)}&until=${LocalDateTime.now().format(timeFormatter)}"
 
             val raw: String = webClient.get()
@@ -35,7 +49,7 @@ class MoexClient(
 
             parseCandles(raw, ticker)
         } catch (e: Exception) {
-            logger.warn(e) { "MOEX candles request failed for $ticker" }
+            logger.warn(e) { "MOEX candles request failed for $ticker ($engine/$board)" }
             emptyList()
         }
     }

@@ -12,5 +12,8 @@ data class AgentLog(
     val reasoning: String? = null,
     val rawOutput: String? = null,
     val latencyMs: Long? = null,
+    val tokensUsed: Int? = null,
+    val isCached: Boolean = false,
+    val overrideReason: String? = null,
     val createdAt: LocalDateTime = LocalDateTime.now()
 )

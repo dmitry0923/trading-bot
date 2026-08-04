@@ -1,16 +1,21 @@
 package com.trading.bot.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.client.LlmClient
+import com.trading.bot.infrastructure.llm.PromptRegistry
+import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.model.*
 import com.trading.bot.repository.AgentLogRepository
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import mu.KotlinLogging
 import org.springframework.stereotype.Component
 
 @Component
 class ContrarianAgent(
-    private val llmClient: LlmClient,
+    private val llmClient: ResilientLlmClient,
+    private val promptRegistry: PromptRegistry,
     private val agentLogRepository: AgentLogRepository,
+    private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
 ) {
     private val logger = KotlinLogging.logger {}
@@ -22,22 +27,17 @@ class ContrarianAgent(
         val confidence: Double
     )
 
-    private val systemPrompt = """
-        Ты — контрариан (адвокат дьявола) в торговой системе.
-        Твоя задача — найти слабые места в предлагаемой сделке и оценить её риск.
-        riskLevel: LOW | MEDIUM | HIGH | CRITICAL.
-        Ответь СТРОГО JSON: {"isValid":true,"riskLevel":"LOW","critique":"string","confidence":0.0}.
-    """.trimIndent()
-
     suspend fun challenge(
         draft: StrategyAgent.Draft,
         tech: TechnicalReport,
         fund: FundamentalReport,
         snapshot: MarketSnapshot,
-        cycleId: String
+        cycleId: String,
+        version: String = PromptRegistry.DEFAULT_VERSION
     ): ChallengeReport {
         val start = System.currentTimeMillis()
 
+        // GUARDRAIL: если стратег сказал HOLD — LLM не вызываем, риск низкий
         if (draft.action == StrategyAction.HOLD) {
             return logAndReturn(
                 ChallengeReport(isValid = true, riskLevel = "LOW", critique = "No position proposed", confidence = 1.0),
@@ -45,16 +45,31 @@ class ContrarianAgent(
             )
         }
 
-        val prompt = """
-            Предлагаемая сделка: ${draft.action} ${draft.quantity} лотов по ${draft.targetPrice}
-            Reasoning стратега: ${draft.reasoning}
-            Технический анализ: ${tech.conclusion} (conf=${tech.confidence}), reasoning=${tech.reasoning}
-            Фундаментальный анализ: ${fund.conclusion} (conf=${fund.confidence})
-            Рыночная цена: ${snapshot.currentPrice}
-            Критикуй сделку. Если есть высокие риски — isValid=false и riskLevel=HIGH/CRITICAL.
-        """.trimIndent()
+        val variables = mapOf(
+            "action" to draft.action.name,
+            "quantity" to draft.quantity,
+            "targetPrice" to draft.targetPrice.toPlainString(),
+            "strategyReasoning" to draft.reasoning,
+            "techConclusion" to tech.conclusion,
+            "techConfidence" to tech.confidence,
+            "techReasoning" to tech.reasoning,
+            "fundConclusion" to fund.conclusion,
+            "fundConfidence" to fund.confidence,
+            "currentPrice" to snapshot.currentPrice.toPlainString(),
+            "trend" to tech.trend,
+            "rsi" to tech.rsi,
+            "atr" to tech.atr
+        )
 
-        val resp = llmClient.chat(systemPrompt, prompt, temperature = 0.1)
+        val prompt = promptRegistry.getTemplate("contrarian", version)
+        val resp = llmClient.complete(
+            agent = "contrarian",
+            ticker = snapshot.ticker,
+            prompt = prompt,
+            variables = variables,
+            temperature = 0.1
+        )
+
         val report = if (resp.isFallback) {
             logger.info { "LLM unavailable for challenge, allowing trade" }
             ChallengeReport(isValid = true, riskLevel = "LOW", critique = "LLM unavailable", confidence = 0.5)
@@ -75,10 +90,18 @@ class ContrarianAgent(
             }
         }
 
-        return logAndReturn(report, snapshot.ticker, cycleId, start, resp.content)
+        return logAndReturn(report, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache)
     }
 
-    private fun logAndReturn(report: ChallengeReport, ticker: String, cycleId: String, startMs: Long, raw: String): ChallengeReport {
+    private fun logAndReturn(
+        report: ChallengeReport,
+        ticker: String,
+        cycleId: String,
+        startMs: Long,
+        raw: String,
+        tokensUsed: Int = 0,
+        isCached: Boolean = false
+    ): ChallengeReport {
         agentLogRepository.save(
             AgentLog(
                 cycleId = cycleId,
@@ -88,9 +111,12 @@ class ContrarianAgent(
                 confidence = report.confidence,
                 reasoning = report.critique,
                 rawOutput = raw,
-                latencyMs = System.currentTimeMillis() - startMs
+                latencyMs = System.currentTimeMillis() - startMs,
+                tokensUsed = tokensUsed,
+                isCached = isCached
             )
         )
+        meterRegistry.counter("agent.contrarian.decision", Tags.of("riskLevel", report.riskLevel)).increment()
         return report
     }
 }

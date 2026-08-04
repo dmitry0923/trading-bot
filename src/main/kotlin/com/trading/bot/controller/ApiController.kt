@@ -1,5 +1,6 @@
 package com.trading.bot.controller
 
+import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import com.trading.bot.service.*
@@ -22,6 +23,7 @@ class ApiController(
     private val adaptiveRiskService: AdaptiveRiskService,
     private val blindSpotRepository: BlindSpotRepository,
     private val adjustmentRepository: StrategyAdjustmentRepository,
+    private val backtestEngine: BacktestEngine,
     private val meterRegistry: MeterRegistry
 ) {
 
@@ -64,6 +66,27 @@ class ApiController(
     fun triggerBot() {
         meterRegistry.counter("api.trigger.bot").increment()
         tradingBotService.runBotCycle()
+    }
+
+    @GetMapping("/backtest/{ticker}")
+    fun backtest(
+        @PathVariable ticker: String,
+        @RequestParam(defaultValue = "365") days: Int
+    ): Map<String, Any> {
+        meterRegistry.counter("api.backtest", io.micrometer.core.instrument.Tags.of("ticker", ticker)).increment()
+        val result = backtestEngine.run(ticker, days)
+        return mapOf(
+            "ticker" to result.ticker,
+            "totalReturn" to result.totalReturn,
+            "sharpeRatio" to result.sharpeRatio,
+            "maxDrawdown" to result.maxDrawdown,
+            "winRate" to result.winRate,
+            "profitFactor" to result.profitFactor,
+            "totalTrades" to result.totalTrades,
+            "passable" to result.isPassable(),
+            "equityCurve" to result.equityCurve,
+            "timestamp" to java.time.LocalDateTime.now().toString()
+        )
     }
 
     @GetMapping("/analytics/trade-stats")

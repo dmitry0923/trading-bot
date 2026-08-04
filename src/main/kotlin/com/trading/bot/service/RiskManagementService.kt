@@ -10,20 +10,57 @@ import java.math.RoundingMode
 class RiskManagementService(
     private val riskConfig: RiskConfig
 ) {
+    private val logger = mu.KotlinLogging.logger {}
     private var dailyPnL: BigDecimal = BigDecimal.ZERO
 
     fun isDailyLossLimitReached(): Boolean =
         dailyPnL <= riskConfig.maxDailyLossRub.negate()
 
     fun validateNewStrategy(strategy: Strategy, openPositions: List<Position>): RiskCheckResult {
-        if (isDailyLossLimitReached()) {
+        if (riskConfig.enabled && isDailyLossLimitReached()) {
             return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${riskConfig.maxDailyLossRub})", 0)
         }
-        if (openPositions.size >= riskConfig.maxOpenPositions) {
-            return RiskCheckResult(false, "Max open positions reached", 0)
+        if (riskConfig.enabled && openPositions.size >= riskConfig.maxOpenPositions) {
+            return RiskCheckResult(false, "Max open positions reached (${riskConfig.maxOpenPositions})", 0)
+        }
+        if (riskConfig.enabled && exceedsSectorExposure(strategy.ticker, openPositions)) {
+            val sector = sectorOf(strategy.ticker)
+            val count = openPositions.count { sectorOf(it.ticker) == sector }
+            return RiskCheckResult(
+                false,
+                "Sector concentration exceeded: $count open in sector $sector >= max ${riskConfig.maxSectorExposure}",
+                0
+            )
         }
         return RiskCheckResult(true, "OK", strategy.quantity)
     }
+
+    /**
+     * Проверка волатильности: ATR% от цены больше лимита → вход запрещён.
+     * Вызывается перед открытием позиции (при наличии ATR).
+     */
+    fun isVolatilityTooHigh(atr: BigDecimal?, price: BigDecimal): Boolean {
+        if (!riskConfig.enabled || atr == null || atr <= BigDecimal.ZERO || price <= BigDecimal.ZERO) return false
+        val atrPercent = atr.multiply(BigDecimal("100"))
+            .divide(price, 4, java.math.RoundingMode.HALF_UP)
+            .toDouble()
+        val result = atrPercent > riskConfig.maxVolatilityPercent
+        logger.info { "Volatility check: ATR%=$atrPercent vs limit=${riskConfig.maxVolatilityPercent}% -> ${if (result) "BLOCK" else "OK"}" }
+        return result
+    }
+
+    /**
+     * Секторная концентрация: количество открытых позиций в одном секторе.
+     * Справочник секторов — из risk.sectors (ticker -> sector), иначе "UNKNOWN".
+     */
+    fun exceedsSectorExposure(ticker: String, openPositions: List<Position>): Boolean {
+        val sector = sectorOf(ticker)
+        val count = openPositions.count { sectorOf(it.ticker) == sector }
+        return count >= riskConfig.maxSectorExposure
+    }
+
+    fun sectorOf(ticker: String): String =
+        riskConfig.sectors[ticker] ?: "UNKNOWN"
 
     fun shouldCloseBySL(pos: Position, price: BigDecimal): Boolean {
         return when (pos.direction) {

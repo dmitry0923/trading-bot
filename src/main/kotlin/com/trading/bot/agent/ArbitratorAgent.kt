@@ -1,7 +1,9 @@
 package com.trading.bot.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.client.LlmClient
+import com.trading.bot.infrastructure.llm.Guardrails
+import com.trading.bot.infrastructure.llm.PromptRegistry
+import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.model.*
 import com.trading.bot.repository.AgentLogRepository
 import io.micrometer.core.instrument.MeterRegistry
@@ -10,11 +12,12 @@ import kotlinx.coroutines.coroutineScope
 import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
-import java.math.RoundingMode
 
 @Component
 class ArbitratorAgent(
-    private val llmClient: LlmClient,
+    private val llmClient: ResilientLlmClient,
+    private val promptRegistry: PromptRegistry,
+    private val guardrails: Guardrails,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper
@@ -33,13 +36,6 @@ class ArbitratorAgent(
         val overrideReason: String? = null
     )
 
-    private val systemPrompt = """
-        Ты — главный арбитр торговой системы. Финальное решение.
-        Будь консервативен: лучше пропустить сделку, чем войти в плохую.
-        Учитывай контраргументы контрариана.
-        Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"quantity":0,"stopLoss":0.0,"takeProfit":0.0,"trailingStop":false,"confidence":0.0,"reasoning":"string"}.
-    """.trimIndent()
-
     suspend fun adjudicate(
         draft: StrategyAgent.Draft,
         challenge: ContrarianAgent.ChallengeReport,
@@ -48,15 +44,33 @@ class ArbitratorAgent(
         snapshot: MarketSnapshot,
         cycleId: String,
         contextPrompt: String? = null,
-        adaptiveConfidence: Double = 0.60
+        adaptiveConfidence: Double = 0.60,
+        riskContext: RiskContext = RiskContext(),
+        version: String = PromptRegistry.DEFAULT_VERSION
     ): Final = coroutineScope {
         val start = System.currentTimeMillis()
 
-        // DETERMINISTIC OVERRIDES — не подлежат обсуждению
+        // ===== DETERMINISTIC OVERRIDES — выполняются ДО LLM, не подлежат обсуждению =====
         if (challenge.riskLevel == "CRITICAL") {
             meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "CRITICAL_CHALLENGE")).increment()
             return@coroutineScope logAndReturn(
                 hold(snapshot.currentPrice, "Blocked by Contrarian: ${challenge.critique}", "DETERMINISTIC: CRITICAL_CHALLENGE"),
+                snapshot.ticker, cycleId, start, "{}"
+            )
+        }
+
+        if (riskContext.shouldPause) {
+            meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "RISK_CONTEXT_PAUSE")).increment()
+            return@coroutineScope logAndReturn(
+                hold(snapshot.currentPrice, "Trading paused by adaptive risk", "DETERMINISTIC: RISK_CONTEXT_PAUSE"),
+                snapshot.ticker, cycleId, start, "{}"
+            )
+        }
+
+        if (riskContext.dailyLossLimitReached) {
+            meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "DAILY_LOSS_LIMIT")).increment()
+            return@coroutineScope logAndReturn(
+                hold(snapshot.currentPrice, "Daily loss limit reached", "DETERMINISTIC: DAILY_LOSS_LIMIT"),
                 snapshot.ticker, cycleId, start, "{}"
             )
         }
@@ -78,22 +92,32 @@ class ArbitratorAgent(
 
         val memoryBlock = contextPrompt?.let { "\n\nCONTEXT MEMORY (recent trades results):\n$it" } ?: ""
 
-        val prompt = """
-            STRATEGY: ${draft.action} @ ${draft.targetPrice} qty=${draft.quantity} conf=${String.format("%.2f", draft.confidence)}.
-            Reasoning: ${draft.reasoning}.
-            COUNTERARGUMENTS: ${challenge.riskLevel} — ${challenge.critique}.
-            Tech: ${tech.conclusion} (${tech.trend}, RSI=${String.format("%.1f", tech.rsi)}).
-            Fund: ${fund.conclusion}.
-            Price: ${snapshot.currentPrice}.
-            Adaptive confidence threshold: $adaptiveConfidence.
-            $memoryBlock
+        val variables = mapOf(
+            "action" to draft.action.name,
+            "targetPrice" to draft.targetPrice.toPlainString(),
+            "quantity" to draft.quantity,
+            "confidence" to String.format("%.2f", draft.confidence),
+            "strategyReasoning" to draft.reasoning,
+            "riskLevel" to challenge.riskLevel,
+            "critique" to challenge.critique,
+            "techConclusion" to tech.conclusion,
+            "techTrend" to tech.trend,
+            "techRsi" to String.format("%.1f", tech.rsi),
+            "fundConclusion" to fund.conclusion,
+            "currentPrice" to snapshot.currentPrice.toPlainString(),
+            "adaptiveThreshold" to adaptiveConfidence,
+            "memoryBlock" to memoryBlock
+        )
 
-            RULES:
-            1. Если counterarguments сильные (riskLevel HIGH) или конфиденс ниже $adaptiveConfidence — HOLD.
-            2. Если сделка всё же оправдана — подтверди action с обоснованием.
-        """.trimIndent()
+        val prompt = promptRegistry.getTemplate("arbitrator", version)
+        val resp = llmClient.complete(
+            agent = "arbitrator",
+            ticker = snapshot.ticker,
+            prompt = prompt,
+            variables = variables,
+            temperature = 0.1
+        )
 
-        val resp = llmClient.chat(systemPrompt, prompt, temperature = 0.1)
         val dec = if (resp.isFallback) {
             logger.info { "LLM unavailable for arbitration of ${snapshot.ticker}, HOLD" }
             hold(snapshot.currentPrice, "LLM unavailable", "FALLBACK: LLM_UNAVAILABLE")
@@ -107,29 +131,40 @@ class ArbitratorAgent(
             }
         }
 
-        val guarded = applyGuardrails(dec, snapshot, adaptiveConfidence)
-        logAndReturn(guarded, snapshot.ticker, cycleId, start, resp.content)
-    }
+        // ===== POST-PROCESSING GUARDRAILS =====
+        val guarded = guardrails.apply(
+            signal = Guardrails.Signal(
+                action = dec.action,
+                targetPrice = dec.targetPrice,
+                quantity = dec.quantity,
+                stopLoss = dec.stopLoss,
+                takeProfit = dec.takeProfit,
+                trailingStop = dec.trailingStop,
+                confidence = dec.confidence
+            ),
+            marketPrice = snapshot.currentPrice,
+            adaptiveThreshold = adaptiveConfidence,
+            riskLevel = challenge.riskLevel,
+            dailyLossLimitReached = riskContext.dailyLossLimitReached
+        )
 
-    private fun applyGuardrails(dec: Final, snapshot: MarketSnapshot, threshold: Double): Final {
-        if (dec.action != StrategyAction.HOLD && dec.confidence < threshold) {
-            return dec.copy(
-                action = StrategyAction.HOLD,
-                quantity = 0,
-                reasoning = dec.reasoning + " [GUARDRAIL: confidence ${dec.confidence} < $threshold]",
-                overrideReason = "GUARDRAIL: LOW_CONFIDENCE"
+        val finalDec = if (guarded.overridden) {
+            dec.copy(
+                action = guarded.signal.action,
+                targetPrice = guarded.signal.targetPrice,
+                quantity = guarded.signal.quantity,
+                stopLoss = guarded.signal.stopLoss,
+                takeProfit = guarded.signal.takeProfit,
+                trailingStop = guarded.signal.trailingStop,
+                confidence = guarded.signal.confidence,
+                reasoning = dec.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]",
+                overrideReason = guarded.overrideReason
             )
+        } else {
+            dec
         }
-        val deviation = dec.targetPrice.subtract(snapshot.currentPrice).abs()
-            .divide(snapshot.currentPrice, 4, RoundingMode.HALF_UP)
-        if (deviation > BigDecimal("0.03")) {
-            return dec.copy(
-                targetPrice = snapshot.currentPrice,
-                reasoning = dec.reasoning + " [GUARDRAIL: price adjusted to market]",
-                overrideReason = "GUARDRAIL: PRICE_DEVIATION"
-            )
-        }
-        return dec
+
+        logAndReturn(finalDec, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache)
     }
 
     private fun parseFinal(c: String, fallback: StrategyAgent.Draft): Final {
@@ -153,7 +188,15 @@ class ArbitratorAgent(
     private fun hold(price: BigDecimal, reason: String, overrideReason: String?): Final =
         Final(StrategyAction.HOLD, price, 0, null, null, false, 0.0, reason, overrideReason)
 
-    private fun logAndReturn(dec: Final, ticker: String, cycleId: String, startMs: Long, raw: String): Final {
+    private fun logAndReturn(
+        dec: Final,
+        ticker: String,
+        cycleId: String,
+        startMs: Long,
+        raw: String,
+        tokensUsed: Int = 0,
+        isCached: Boolean = false
+    ): Final {
         agentLogRepository.save(
             AgentLog(
                 cycleId = cycleId,
@@ -163,7 +206,10 @@ class ArbitratorAgent(
                 confidence = dec.confidence,
                 reasoning = dec.reasoning,
                 rawOutput = raw,
-                latencyMs = System.currentTimeMillis() - startMs
+                latencyMs = System.currentTimeMillis() - startMs,
+                tokensUsed = tokensUsed,
+                isCached = isCached,
+                overrideReason = dec.overrideReason
             )
         )
         meterRegistry.counter("agent.arbitrator.decision", Tags.of("action", dec.action.name)).increment()

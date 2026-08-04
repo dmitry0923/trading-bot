@@ -35,6 +35,14 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
 
+    // Resilience4j: Circuit Breaker, Rate Limiter, Retry (программное использование с корутинами)
+    implementation("io.github.resilience4j:resilience4j-spring-boot3:2.2.0")
+    implementation("io.github.resilience4j:resilience4j-kotlin:2.2.0")
+    implementation("org.springframework.boot:spring-boot-starter-aop")
+
+    // Jackson YAML — для PromptRegistry (чтение prompts/*.yml)
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml")
+
     runtimeOnly("org.postgresql:postgresql")
 
     // ✅ ИСПРАВЛЕННЫЕ ТЕСТОВЫЕ ЗАВИСИМОСТИ

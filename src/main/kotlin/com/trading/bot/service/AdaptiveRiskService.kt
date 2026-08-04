@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
+import kotlin.math.sqrt
 
 /**
  * Адаптивный риск-менеджмент на основе статистики сделок (Kelly).
@@ -18,6 +19,7 @@ import java.time.LocalDateTime
  * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
  * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
  * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
+ * - correlationOf()/exceedsCorrelationLimit(): корреляционный фильтр по закрытиям из Redis
  * - Все решения логируются в метрики adaptive.*
  */
 @Service
@@ -25,9 +27,69 @@ class AdaptiveRiskService(
     private val riskConfig: RiskConfig,
     private val tradeAnalysisService: TradeAnalysisService,
     private val positionRepo: PositionRepository,
+    private val candleCache: CandleCacheService,
     private val meterRegistry: MeterRegistry
 ) {
     private val logger = KotlinLogging.logger {}
+    private val correlationThreshold = 0.8
+    private val correlationMinSamples = 30
+
+    /**
+     * Коэффициент корреляции Пирсона между ценами закрытия двух тикеров
+     * за последние [period] свечей из Redis-кэша.
+     *
+     * @param a первый тикер
+     * @param b второй тикер
+     * @param timeframe таймфрейм свечей
+     * @param period глубина расчёта
+     * @return корреляция в [-1, 1] или null, если данных недостаточно
+     */
+    fun correlationOf(a: String, b: String, timeframe: String = "MINUTE_10", period: Int = 50): Double? {
+        if (a == b) return 1.0
+        val x = candleCache.getRecentCandles(a, timeframe, period).map { it.closePrice.toDouble() }
+        val y = candleCache.getRecentCandles(b, timeframe, period).map { it.closePrice.toDouble() }
+        if (x.size < correlationMinSamples || y.size < correlationMinSamples) return null
+        val n = minOf(x.size, y.size)
+        val xs = x.takeLast(n)
+        val ys = y.takeLast(n)
+        val mx = xs.average()
+        val my = ys.average()
+        var num = 0.0
+        var dx2 = 0.0
+        var dy2 = 0.0
+        for (i in 0 until n) {
+            val dx = xs[i] - mx
+            val dy = ys[i] - my
+            num += dx * dy
+            dx2 += dx * dx
+            dy2 += dy * dy
+        }
+        if (dx2 == 0.0 || dy2 == 0.0) return null
+        return num / sqrt(dx2 * dy2)
+    }
+
+    /**
+     * Корреляционный фильтр: запрещает открытие позиции, если корреляция
+     * с любой открытой позицией превышает [correlationThreshold].
+     *
+     * При недостатке данных (менее 30 свечей в кэше) фильтр пропускает сделку.
+     *
+     * @param candidateTicker тикер входа
+     * @param openPositions открытые позиции
+     * @return true, если вход запрещён по корреляции
+     */
+    fun exceedsCorrelationLimit(candidateTicker: String, openPositions: List<Position>): Boolean {
+        if (candidateTicker == "Si") return false // фьючерсный хедж не фильтруется
+        val blocked = openPositions.any { pos ->
+            if (pos.ticker == candidateTicker || pos.ticker == "Si") return@any false
+            (correlationOf(candidateTicker, pos.ticker) ?: 0.0) > correlationThreshold
+        }
+        if (blocked) {
+            meterRegistry.counter("adaptive.correlation.blocked", Tags.of("ticker", candidateTicker)).increment()
+        }
+        return blocked
+    }
+
 
     /**
      * Оптимальный размер позиции по критерию Келли для тикера.

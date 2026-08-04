@@ -7,3 +7,5 @@ databaseChangeLog:
       file: db/changelog/changes/003-order-outbox.sql
   - include:
       file: db/changelog/changes/004-futures-risk.sql
+  - include:
+      file: db/changelog/changes/005-trade-events.sql

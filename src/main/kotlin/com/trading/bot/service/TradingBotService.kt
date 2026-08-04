@@ -4,6 +4,7 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorWebSocketClient
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import io.micrometer.core.instrument.MeterRegistry
@@ -38,6 +39,7 @@ class TradingBotService(
     private val adaptiveRisk: AdaptiveRiskService,
     private val positionRepo: PositionRepository,
     private val agentLogRepo: AgentLogRepository,
+    private val tradeEventService: TradeEventService,
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry
 ) {
@@ -46,6 +48,9 @@ class TradingBotService(
 
     /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */
     private val lastWsTickAt = ConcurrentHashMap<String, Instant>()
+
+    /** Текущий P&L открытых позиций (Gauge position.pnl, обновляется на каждом тике). */
+    private val positionPnlGauges = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicReference<Double>>()
 
     init {
         scope.launch {
@@ -62,6 +67,8 @@ class TradingBotService(
                 alorWsClient.subscribeToQuotes(tradingConfig.tickers).collect { tick ->
                     try {
                         lastWsTickAt[tick.ticker] = Instant.now()
+                        meterRegistry.timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
+                            .record(Duration.between(tick.receivedAt, Instant.now()).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
                         eventPublisher.publishPriceChanged(tick.ticker, tick.price)
                     } catch (e: Exception) {
                         logger.error(e) { "WS quote processing error for ${tick.ticker}" }
@@ -79,7 +86,7 @@ class TradingBotService(
     fun pollMarketData() {
         scope.launch {
             val now = Instant.now()
-            val open = positionRepo.findByStatus(PositionStatus.OPEN)
+            val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
             open.map { it.ticker }.distinct()
                 .filter { ticker ->
                     val lastWs = lastWsTickAt[ticker]
@@ -111,7 +118,7 @@ class TradingBotService(
                     logger.warn { "Daily loss limit reached, skip entry ${strat.ticker}" }
                     return@launch
                 }
-                val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
                 if (open.any { it.ticker == strat.ticker }) return@launch
                 if (open.size > tradingConfig.maxOpenPositionsForNewEntry) {
                     logger.info { "Open positions ${open.size} > max ${tradingConfig.maxOpenPositionsForNewEntry}, skip ${strat.ticker}" }
@@ -145,8 +152,9 @@ class TradingBotService(
     @EventListener
     fun onPriceChanged(event: com.trading.bot.event.PriceChangedEvent) {
         scope.launch {
+            val handlerStart = System.nanoTime()
             try {
-                val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
                     .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
                 open.forEach { pos ->
                     val price = event.price
@@ -156,6 +164,7 @@ class TradingBotService(
                         PositionDirection.SHORT -> pos.entryPrice.subtract(price).multiply(BigDecimal(pos.quantity))
                     }
                     pos.pnl = pnl
+                    updatePositionPnlGauge(pos.ticker, pnl.toDouble())
 
                     if (risk.shouldCloseBySL(pos, price)) { closePosition(pos, price, "STOP_LOSS"); return@forEach }
                     if (risk.shouldCloseByTP(pos, price)) { closePosition(pos, price, "TAKE_PROFIT"); return@forEach }
@@ -163,7 +172,9 @@ class TradingBotService(
 
                     risk.updateTrailingStop(pos, price)
 
-                    redis.getStrategy(pos.ticker)?.let { strat ->
+                    var slUpdated = false
+                    var tpUpdated = false
+                    BlockingDb.io { redis.getStrategy(pos.ticker) }?.let { strat ->
                         if (strat.action == StrategyAction.CLOSE) {
                             closePosition(pos, price, "STRATEGY_CLOSE")
                             return@forEach
@@ -173,23 +184,40 @@ class TradingBotService(
                                 PositionDirection.LONG -> pos.stopLoss == null || newSL > pos.stopLoss!!
                                 PositionDirection.SHORT -> pos.stopLoss == null || newSL < pos.stopLoss!!
                             }
-                            if (shouldUpd) { pos.stopLoss = newSL; logger.info { "SL updated ${pos.ticker} -> $newSL" } }
+                            if (shouldUpd) { pos.stopLoss = newSL; logger.info { "SL updated ${pos.ticker} -> $newSL" }; slUpdated = true }
                         }
                         strat.takeProfit?.let { newTP ->
                             val shouldUpd = when (pos.direction) {
                                 PositionDirection.LONG -> pos.takeProfit == null || newTP > pos.takeProfit!!
                                 PositionDirection.SHORT -> pos.takeProfit == null || newTP < pos.takeProfit!!
                             }
-                            if (shouldUpd) { pos.takeProfit = newTP; logger.info { "TP updated ${pos.ticker} -> $newTP" } }
+                            if (shouldUpd) { pos.takeProfit = newTP; logger.info { "TP updated ${pos.ticker} -> $newTP" }; tpUpdated = true }
                         }
                     }
-                    positionRepo.save(pos)
+                    BlockingDb.io { positionRepo.save(pos) }
+                    if (slUpdated || tpUpdated) {
+                        tradeEventService.recordPositionUpdated(pos)
+                    }
                 }
             } catch (e: Exception) {
                 logger.error(e) { "Price change handler error ${event.ticker}" }
                 meterRegistry.counter("bot.monitor.error", Tags.of("ticker", event.ticker)).increment()
+            } finally {
+                meterRegistry.timer("bot.latency", Tags.of("ticker", event.ticker))
+                    .record(System.nanoTime() - handlerStart, java.util.concurrent.TimeUnit.NANOSECONDS)
             }
         }
+    }
+
+    /**
+     * Обновляет Gauge position.pnl для тикера (регистрируется один раз на тикер).
+     */
+    private fun updatePositionPnlGauge(ticker: String, pnl: Double) {
+        positionPnlGauges.computeIfAbsent(ticker) { t ->
+            val ref = java.util.concurrent.atomic.AtomicReference(0.0)
+            meterRegistry.gauge("position.pnl", Tags.of("ticker", t), ref) { it.get() }
+            ref
+        }.set(pnl)
     }
 
     /**
@@ -197,10 +225,12 @@ class TradingBotService(
      */
     @EventListener
     fun onExecutionReport(event: com.trading.bot.event.ExecutionReportEvent) {
-        try {
-            applyExecutionReport(event.report)
-        } catch (e: Exception) {
-            logger.error(e) { "Execution report handler error for order ${event.report.orderId}" }
+        scope.launch {
+            try {
+                applyExecutionReport(event.report)
+            } catch (e: Exception) {
+                logger.error(e) { "Execution report handler error for order ${event.report.orderId}" }
+            }
         }
     }
 
@@ -210,20 +240,27 @@ class TradingBotService(
     fun runBotCycle() {
         logger.info { "=== BOT CYCLE (manual trigger) ===" }
         meterRegistry.counter("bot.cycle").increment()
-        val strategies = redis.getAllStrategies(tradingConfig.tickers)
-        strategies.values.forEach { eventPublisher.publishStrategyGenerated(it) }
+        scope.launch {
+            val strategies = BlockingDb.io { redis.getAllStrategies(tradingConfig.tickers) }
+            strategies.values.forEach { eventPublisher.publishStrategyGenerated(it) }
+        }
     }
 
     private suspend fun openPosition(strat: Strategy) {
-        val open = positionRepo.findByStatus(PositionStatus.OPEN)
+        val open = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }
         val check = risk.validateNewStrategy(strat, open)
         if (!check.allowed) {
             logger.warn { "Risk reject ${strat.ticker}: ${check.reason}" }
             meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker)).increment()
             return
         }
+        if (BlockingDb.io { adaptiveRisk.exceedsCorrelationLimit(strat.ticker, open) }) {
+            logger.warn { "Correlation filter reject ${strat.ticker}: correlated with an open position" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "CORRELATION")).increment()
+            return
+        }
 
-        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(strat.ticker)
+        val kellySizeRub = BlockingDb.io { adaptiveRisk.calculateOptimalPositionSize(strat.ticker) }
         val kellyQty = if (kellySizeRub > BigDecimal.ZERO) {
             kellySizeRub.divide(strat.targetPrice, 0, RoundingMode.DOWN).toInt().coerceAtLeast(1)
         } else {
@@ -261,18 +298,21 @@ class TradingBotService(
             trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
             alorOrderId = orderId
         )
-        positionRepo.save(pos)
+        BlockingDb.io { positionRepo.save(pos) }
+        tradeEventService.recordPositionOpened(pos)
         risk.updateDailyPnL(BigDecimal.ZERO)
-        agentLogRepo.save(
-            AgentLog(
-                cycleId = strat.cycleId,
-                agentName = "TradingBot",
-                ticker = strat.ticker,
-                action = "OPEN",
-                confidence = strat.confidence,
-                reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)"
+        BlockingDb.io {
+            agentLogRepo.save(
+                AgentLog(
+                    cycleId = strat.cycleId,
+                    agentName = "TradingBot",
+                    ticker = strat.ticker,
+                    action = "OPEN",
+                    confidence = strat.confidence,
+                    reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)"
+                )
             )
-        )
+        }
         meterRegistry.counter("bot.position.opened", Tags.of("ticker", strat.ticker, "direction", dir.name)).increment()
         logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ $fillPrice (adaptive qty=$qty)" }
     }
@@ -298,7 +338,8 @@ class TradingBotService(
             PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(BigDecimal(pos.quantity))
         }
         pos.pnl = pnl
-        positionRepo.save(pos)
+        BlockingDb.io { positionRepo.save(pos) }
+        tradeEventService.recordPositionClosed(pos, reason)
         risk.updateDailyPnL(pnl)
         meterRegistry.counter("bot.position.closed", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
         meterRegistry.gauge("bot.pnl", Tags.of("ticker", pos.ticker), pnl.toDouble())
@@ -309,10 +350,10 @@ class TradingBotService(
      * Применяет ExecutionReport из WebSocket: фиксирует фактическую цену
      * исполнения в closePrice открытой позиции (slippage tracking).
      */
-    private fun applyExecutionReport(report: ExecutionReport) {
+    private suspend fun applyExecutionReport(report: ExecutionReport) {
         if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
         val orderId = report.orderId
-        val pos = positionRepo.findByAlorOrderId(orderId) ?: return
+        val pos = BlockingDb.io { positionRepo.findByAlorOrderId(orderId) } ?: return
         if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
         if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
 
@@ -326,7 +367,10 @@ class TradingBotService(
         pos.status = if (report.status == OrderStatus.PARTIALLY_FILLED) PositionStatus.OPEN else PositionStatus.CLOSED
         pos.closedAt = if (report.status == OrderStatus.PARTIALLY_FILLED) null else LocalDateTime.now()
         pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
-        positionRepo.save(pos)
+        BlockingDb.io { positionRepo.save(pos) }
+        if (pos.status == PositionStatus.CLOSED) {
+            tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
+        }
         alorClient.recordSlippage(pos.entryPrice, fillPrice, pos.quantity)
         meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()
         logger.info { "WS fill applied for ${pos.ticker}: order=$orderId price=$fillPrice pnl=$pnl" }

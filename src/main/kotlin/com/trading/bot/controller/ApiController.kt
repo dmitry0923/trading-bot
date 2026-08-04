@@ -39,6 +39,7 @@ class ApiController(
     private val adaptiveRiskService: AdaptiveRiskService,
     private val blindSpotRepository: BlindSpotRepository,
     private val adjustmentRepository: StrategyAdjustmentRepository,
+    private val tradeEventRepository: TradeEventRepository,
     private val backtestEngine: BacktestEngine,
     private val historicalDataLoader: HistoricalDataLoader,
     private val dashboardService: DashboardService,
@@ -101,6 +102,16 @@ class ApiController(
 
     @GetMapping("/risk/daily-pnl")
     fun getDailyPnl() = mapOf("dailyPnl" to riskManagementService.getDailyPnL())
+
+    /**
+     * Append-only audit trail позиции (Event Sourcing): события
+     * POSITION_OPENED / POSITION_UPDATED / POSITION_CLOSED в порядке sequence.
+     */
+    @GetMapping("/positions/{positionId}/events")
+    fun getPositionEvents(@PathVariable positionId: Long): List<com.trading.bot.model.TradeEvent> {
+        val aggregateId = java.util.UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
+        return tradeEventRepository.findByAggregateId(aggregateId)
+    }
 
     @PostMapping("/strategy/trigger")
     fun triggerStrategy() {

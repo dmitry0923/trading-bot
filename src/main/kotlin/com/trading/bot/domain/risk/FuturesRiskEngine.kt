@@ -117,6 +117,11 @@ class FuturesRiskEngine(
 
         meterRegistry.gauge("futures.position.size", size.quantity.toDouble())
         meterRegistry.gauge("futures.margin.used", size.marginRequired.toDouble())
+        val marginUtilizationPercent = size.marginRequired
+            .multiply(BigDecimal("100"))
+            .divide(portfolioMoney, 4, RoundingMode.HALF_UP)
+            .toDouble()
+        meterRegistry.gauge("risk.margin.utilization", marginUtilizationPercent)
         size.liquidationPrice?.let {
             meterRegistry.gauge(
                 "futures.liquidation.distance",

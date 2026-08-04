@@ -7,6 +7,7 @@ import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.*
 import com.trading.bot.repository.*
 import io.micrometer.core.instrument.MeterRegistry
@@ -52,6 +53,7 @@ class StrategyService(
     private val positionRepo: PositionRepository,
     private val riskConfig: RiskConfig,
     private val redis: RedisCacheService,
+    private val candleCache: CandleCacheService,
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
     private val agentLogRepo: AgentLogRepository,
@@ -91,6 +93,7 @@ class StrategyService(
      */
     private suspend fun executeCycle(cycleId: String) {
         val tickers = tradingConfig.tickers
+        val cycleStart = System.nanoTime()
         try {
             coroutineScope {
                 val feedback = tickers.associateWith { ticker ->
@@ -120,6 +123,9 @@ class StrategyService(
             }
         } catch (e: Exception) {
             logger.error(e) { "Strategy cycle failed" }
+        } finally {
+            meterRegistry.timer("strategy.latency")
+                .record(System.nanoTime() - cycleStart, java.util.concurrent.TimeUnit.NANOSECONDS)
         }
     }
 
@@ -140,7 +146,7 @@ class StrategyService(
         feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>
     ) {
         // Локальный adaptive risk — без LLM, проверяем первым
-        if (adaptiveRisk.shouldPauseTrading(ticker)) {
+        if (BlockingDb.io { adaptiveRisk.shouldPauseTrading(ticker) }) {
             logger.info { "Skipping $ticker — trading paused by adaptive risk" }
             meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker)).increment()
             return
@@ -166,15 +172,15 @@ class StrategyService(
             techDeferred.await() to fundDeferred.await()
         }
 
-        val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
+        val adaptiveConf = BlockingDb.io { adaptiveRisk.getAdaptiveConfidenceThreshold(ticker) }
         val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId, adaptiveThreshold = adaptiveConf)
         val challenge = contrAgent.challenge(draft, tech, fund, snapshot, cycleId)
 
         val riskContext = RiskContext(
-            shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
+            shouldPause = BlockingDb.io { adaptiveRisk.shouldPauseTrading(ticker) },
             dailyLossLimitReached = riskManagement.isDailyLossLimitReached(),
-            drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
-            openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
+            drawdownRecovery = BlockingDb.io { adaptiveRisk.isInDrawdownRecovery() },
+            openPositionsCount = BlockingDb.io { positionRepo.findByStatus(PositionStatus.OPEN) }.size,
             maxOpenPositions = riskConfig.maxOpenPositions
         )
         val final = arbAgent.adjudicate(
@@ -197,8 +203,8 @@ class StrategyService(
             final
         }
 
-        val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr)
-        val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr)
+        val adaptiveSL = BlockingDb.io { adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr) }
+        val adaptiveTP = BlockingDb.io { adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr) }
         val effectiveConfidence = effectiveFinal.confidence.coerceAtLeast(adaptiveConf)
 
         val strategy = Strategy(
@@ -216,19 +222,32 @@ class StrategyService(
             validUntil = LocalDateTime.now().plusMinutes(10)
         )
 
-        strategyRepo.save(strategy)
-        redis.saveStrategy(strategy)
+        BlockingDb.io { strategyRepo.save(strategy) }
+        BlockingDb.io { redis.saveStrategy(strategy) }
         eventPublisher.publishStrategyGenerated(strategy)
         meterRegistry.counter("strategy.saved", Tags.of("ticker", ticker, "action", effectiveFinal.action.name)).increment()
         logger.info { "Strategy $ticker: ${effectiveFinal.action} @ ${effectiveFinal.targetPrice} (adaptive conf=$adaptiveConf, atr=$atr)" }
     }
 
     private suspend fun loadCandles(ticker: String): List<Candle> {
+        // 1. Redis-кэш (Sorted Set) — дешёвое чтение последних свечей
+        val cached = candleCache.getRecentCandles(ticker, tradingConfig.timeframe, 200)
+        if (cached.size >= 50) return cached.sortedBy { it.time }
+
+        // 2. PostgreSQL — долгосрочное хранение
         val from = LocalDateTime.now().minusDays(7)
-        val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, tradingConfig.timeframe, from, LocalDateTime.now())
-        if (db.size >= 50) return db.sortedBy { it.time }
+        val db = BlockingDb.io { candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, tradingConfig.timeframe, from, LocalDateTime.now()) }
+        if (db.size >= 50) {
+            candleCache.addCandles(db)
+            return db.sortedBy { it.time }
+        }
+
+        // 3. MOEX — последний источник, с write-through в кэш
         val moex = moexClient.getCandles(ticker, 10, from)
-        moex.forEach { if (!candleRepo.existsByTickerAndTimeframeAndTime(it.ticker, it.timeframe, it.time)) candleRepo.save(it) }
+        BlockingDb.io {
+            moex.forEach { if (!candleRepo.existsByTickerAndTimeframeAndTime(it.ticker, it.timeframe, it.time)) candleRepo.save(it) }
+        }
+        candleCache.addCandles(moex)
         return moex.sortedBy { it.time }
     }
 }

@@ -7,17 +7,24 @@ import com.trading.bot.model.OrderStatus
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import java.net.URI
 import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import org.springframework.web.reactive.socket.WebSocketSession
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import reactor.core.publisher.BufferOverflowStrategy
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -25,10 +32,12 @@ import java.util.UUID
  *
  * @param ticker тикер инструмента
  * @param price последняя цена сделки (Last), либо mid между лучшим Bid/Offer
+ * @param receivedAt момент получения тика из WS — для метрики задержки обработки
  */
 data class QuoteTick(
     val ticker: String,
-    val price: BigDecimal
+    val price: BigDecimal,
+    val receivedAt: Instant = Instant.now()
 )
 
 /**
@@ -36,7 +45,16 @@ data class QuoteTick(
  *
  * Подписывается на исполнения ордеров (OrdersGetAndSubscribeV2) и на
  * real-time котировки (QuotesSubscribe). Оба потока имеют встроенное
- * переподключение (до 5 попыток с экспоненциальным backoff).
+ * переподключение с экспоненциальным backoff (1s, 2s, 4s, ... max 60s),
+ * heartbeat (ping каждые 30s, watchdog по pong 45s) и backpressure
+ * с семантикой DROP_OLDEST на входящих сообщениях.
+ *
+ * Метрики:
+ * - alor.ws.reconnect / alor.ws.quotes.reconnect — переподключения
+ * - alor.ws.disconnected / alor.ws.quotes.disconnected — отказ после MAX_ATTEMPTS
+ * - alor.ws.drop / alor.ws.quotes.drop — сброшенные сообщения при переполнении буфера
+ * - alor.ws.quote_received / alor.ws.execution_received — входящие сообщения
+ * - alor.ws.message.lag — задержка от приёма тика до обработки (Timer)
  *
  * @see <a href="https://alor.dev/docs">Alor API документация</a>
  */
@@ -48,7 +66,10 @@ class AlorWebSocketClient(
 ) {
     private val logger = KotlinLogging.logger {}
     private val wsClient = ReactorNettyWebSocketClient()
-    private val maxAttempts = 5
+    private val maxAttempts = 10
+    private val heartbeatInterval = Duration.ofSeconds(30)
+    private val heartbeatTimeout = Duration.ofSeconds(45)
+    private val incomingBufferCapacity = 1000
 
     /**
      * Поток отчётов об исполнении. Переподключение встроено.
@@ -66,7 +87,7 @@ class AlorWebSocketClient(
                 meterRegistry.counter("alor.ws.disconnected", Tags.of("reason", "MAX_ATTEMPTS")).increment()
                 close()
             } else {
-                val backoffSeconds = nextAttempt * 5L
+                val backoffSeconds = reconnectDelaySeconds(nextAttempt)
                 logger.warn { "Alor WS: reconnecting in ${backoffSeconds}s (attempt $nextAttempt/$maxAttempts)" }
                 meterRegistry.counter("alor.ws.reconnect").increment()
                 launch {
@@ -79,53 +100,56 @@ class AlorWebSocketClient(
         connect = { currentAttempt: Int ->
             if (!cancelled) {
                 try {
-                val url = URI.create(wsUrl())
-                wsClient.execute(url) { session ->
-                    val subscribeMsg = session.textMessage(
-                        objectMapper.writeValueAsString(
-                            mapOf(
-                                "opcode" to "OrdersGetAndSubscribeV2",
-                                "guid" to UUID.randomUUID().toString(),
-                                "token" to alorConfig.token,
-                                "portfolio" to alorConfig.portfolio,
-                                "exchange" to alorConfig.exchange,
-                                "format" to "Simple"
+                    val url = URI.create(wsUrl())
+                    wsClient.execute(url) { session ->
+                        val subscribeMsg = session.textMessage(
+                            objectMapper.writeValueAsString(
+                                mapOf(
+                                    "opcode" to "OrdersGetAndSubscribeV2",
+                                    "guid" to UUID.randomUUID().toString(),
+                                    "token" to alorConfig.token,
+                                    "portfolio" to alorConfig.portfolio,
+                                    "exchange" to alorConfig.exchange,
+                                    "format" to "Simple"
+                                )
                             )
                         )
+                        startHeartbeat(session, "alor.ws")
+                        session.receive()
+                            .timeout(heartbeatTimeout)
+                            .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
+                            .mapNotNull { msg -> parseExecution(msg.payloadAsText) }
+                            .doOnNext { report ->
+                                meterRegistry.counter("alor.ws.execution_received").increment()
+                                if (report != null) {
+                                    val result = trySend(report)
+                                    if (result.isFailure) meterRegistry.counter("alor.ws.drop").increment()
+                                }
+                            }
+                            .then()
+                    }.subscribe(
+                        { /* connection closed normally */ },
+                        { err ->
+                            logger.warn(err) { "Alor WS stream error" }
+                            meterRegistry.counter("alor.ws.error").increment()
+                            if (!cancelled) scheduleReconnect(currentAttempt + 1)
+                        },
+                        {
+                            logger.info { "Alor WS connection closed" }
+                            meterRegistry.counter("alor.ws.closed").increment()
+                            if (!cancelled) scheduleReconnect(currentAttempt + 1)
+                        }
                     )
-                    session.send(Mono.just(subscribeMsg))
-                        .thenMany(session.receive())
-                        .mapNotNull { msg ->
-                            parseExecution(msg.payloadAsText)
-                        }
-                        .doOnNext { report ->
-                            meterRegistry.counter("alor.ws.execution_received").increment()
-                            report?.let { trySend(it) }
-                        }
-                        .then()
-                }.subscribe(
-                    { /* connection closed normally */ },
-                    { err ->
-                        logger.warn(err) { "Alor WS stream error" }
-                        meterRegistry.counter("alor.ws.error").increment()
-                        if (!cancelled) scheduleReconnect(currentAttempt + 1)
-                    },
-                    {
-                        logger.info { "Alor WS connection closed" }
-                        meterRegistry.counter("alor.ws.closed").increment()
-                        if (!cancelled) scheduleReconnect(currentAttempt + 1)
-                    }
-                )
-            } catch (e: Exception) {
-                logger.warn(e) { "Alor WS connect failed" }
-                if (!cancelled) scheduleReconnect(currentAttempt + 1)
-            }
+                } catch (e: Exception) {
+                    logger.warn(e) { "Alor WS connect failed" }
+                    if (!cancelled) scheduleReconnect(currentAttempt + 1)
+                }
             }
         }
 
         connect(0)
         awaitClose { cancelled = true }
-    }
+    }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /**
      * Поток real-time котировок для списка символов. Переподключение встроено.
@@ -150,7 +174,7 @@ class AlorWebSocketClient(
                 meterRegistry.counter("alor.ws.quotes.disconnected", Tags.of("reason", "MAX_ATTEMPTS")).increment()
                 close()
             } else {
-                val backoffSeconds = nextAttempt * 5L
+                val backoffSeconds = reconnectDelaySeconds(nextAttempt)
                 logger.warn { "Alor WS quotes: reconnecting in ${backoffSeconds}s (attempt $nextAttempt/$maxAttempts)" }
                 meterRegistry.counter("alor.ws.quotes.reconnect").increment()
                 launch {
@@ -179,12 +203,20 @@ class AlorWebSocketClient(
                                 )
                             )
                         )
-                        session.send(Mono.just(subscribeMsg))
-                            .thenMany(session.receive())
+                        startHeartbeat(session, "alor.ws.quotes")
+                        session.receive()
+                            .timeout(heartbeatTimeout)
+                            .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
                             .mapNotNull { msg -> parseQuote(msg.payloadAsText) }
                             .doOnNext { tick ->
                                 meterRegistry.counter("alor.ws.quote_received", Tags.of("ticker", tick?.ticker ?: "UNKNOWN")).increment()
-                                tick?.let { trySend(it) }
+                                if (tick != null) {
+                                    val result = trySend(tick)
+                                    if (result.isFailure) {
+                                        meterRegistry.counter("alor.ws.quotes.drop").increment()
+                                        meterRegistry.counter("alor.ws.drop").increment()
+                                    }
+                                }
                             }
                             .then()
                     }.subscribe(
@@ -209,11 +241,42 @@ class AlorWebSocketClient(
 
         connect(0)
         awaitClose { cancelled = true }
-    }
+    }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private fun wsUrl(): String {
         val base = alorConfig.wsUrl.removeSuffix("/")
         return if (base.contains("?")) "$base&token=${alorConfig.token}" else "$base?token=${alorConfig.token}"
+    }
+
+    /**
+     * Экспоненциальный backoff: 1s, 2s, 4s, 8s, 16s, 32s, затем плато 60s.
+     *
+     * @param attempt номер попытки (>= 1)
+     */
+    private fun reconnectDelaySeconds(attempt: Int): Long =
+        minOf(1L shl (attempt - 1), 60L)
+
+    /**
+     * Heartbeat: ping каждые 30s — сервер отвечает pong'ами, что держит
+     * поток данных живым. Watchdog по liveness реализован через timeout()
+     * на основном потоке данных: любое сообщение (включая pong) сбрасывает
+     * таймер, а 45s тишины роняют поток → переподключение.
+     *
+     * @param session активная WebSocket-сессия
+     * @param metricPrefix префикс метрик (alor.ws | alor.ws.quotes)
+     */
+    private fun startHeartbeat(session: WebSocketSession, metricPrefix: String) {
+        Flux.interval(heartbeatInterval)
+            .onErrorResume { Mono.empty() }
+            .concatMap { session.send(Mono.just(session.pingMessage { it.allocateBuffer(1) })) }
+            .onErrorResume { err ->
+                logger.warn(err) { "$metricPrefix heartbeat ping failed" }
+                Mono.empty()
+            }
+            .subscribe(
+                { /* ping sent */ },
+                { err -> logger.warn(err) { "$metricPrefix heartbeat stopped" } }
+            )
     }
 
     /**

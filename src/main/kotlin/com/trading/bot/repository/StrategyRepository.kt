@@ -74,7 +74,7 @@ class StrategyRepository(
                 .bindOrNull("cycleId", strategy.cycleId)
                 .bind("validUntil", strategy.validUntil)
                 .bind("createdAt", strategy.createdAt)
-                .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+                .map { row, _ -> row.require("id", Long::class.javaObjectType) }
                 .one()
                 .awaitSingle()
         return strategy.copy(id = id)

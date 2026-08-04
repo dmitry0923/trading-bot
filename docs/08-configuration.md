@@ -126,7 +126,7 @@ trading:
     - ALRS
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}       # цикл бота: 5 мин
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}  # цикл стратегий: 10 мин
-  monitor-interval-ms: ${MONITOR_INTERVAL_MS:600000}    # мониторинг позиций: 10 мин
+  monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}    # fallback-мониторинг: 10 сек
   max-open-positions-for-new-entry: ${MAX_OPEN_POS:0}   # 0 = НЕ открывать позиции (страховка)
   timeframe: MINUTE_10
 
@@ -187,7 +187,7 @@ logging:
 | `TRADING_MODE` | `SIMULATION` | **да** | SIMULATION / LIVE | `SIMULATION` |
 | `BOT_INTERVAL_MS` | `300000` | | интервал бот-цикла | `300000` |
 | `STRATEGY_INTERVAL_MS` | `600000` | | интервал стратегий | `600000` |
-| `MONITOR_INTERVAL_MS` | `600000` | | интервал мониторинга | `600000` |
+| `MONITOR_INTERVAL_MS` | `10000` | | fallback-мониторинг и порог stale WS | `10000` |
 | `MAX_OPEN_POS` | `0` | | макс. новых позиций за цикл (0 = не открывать) | `3` |
 
 ## 8.3. .env для local development
@@ -222,7 +222,7 @@ TRADING_MODE=SIMULATION
 MAX_OPEN_POS=0
 BOT_INTERVAL_MS=300000
 STRATEGY_INTERVAL_MS=600000
-MONITOR_INTERVAL_MS=600000
+MONITOR_INTERVAL_MS=10000
 ```
 
 > На Windows переменные можно передать так: `$env:KIMI_API_KEY="sk-..."; $env:TRADING_MODE="SIMULATION"; .\gradlew.bat bootRun`.

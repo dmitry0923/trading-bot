@@ -1,32 +1,83 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from "react";
 
-const BASE = '';
+const AUTH_STORAGE_KEY = "trading-bot.basic-auth";
+export const AUTH_REQUIRED_EVENT = "trading-bot:auth-required";
 
-const AUTH_HEADER: Record<string, string> = {};
-const authUser = process.env.REACT_APP_AUTH_USER;
-const authPass = process.env.REACT_APP_AUTH_PASSWORD;
-if (authUser && authPass) {
-  AUTH_HEADER.Authorization = 'Basic ' + btoa(`${authUser}:${authPass}`);
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export function hasCredentials(): boolean {
+  return sessionStorage.getItem(AUTH_STORAGE_KEY) !== null;
+}
+
+export function setCredentials(username: string, password: string): void {
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  const raw = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+  sessionStorage.setItem(AUTH_STORAGE_KEY, `Basic ${btoa(raw)}`);
+}
+
+export function clearCredentials(): void {
+  sessionStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
 function headers(extra?: Record<string, string>): Record<string, string> {
-  return { ...AUTH_HEADER, ...(extra || {}) };
+  const authorization = sessionStorage.getItem(AUTH_STORAGE_KEY);
+  return {
+    ...(authorization ? { Authorization: authorization } : {}),
+    ...(extra ?? {}),
+  };
+}
+
+async function request(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const response = await fetch(path, {
+    ...init,
+    headers: headers(init.headers as Record<string, string> | undefined),
+  });
+  if (!response.ok) {
+    if (response.status === 401) {
+      clearCredentials();
+      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+    }
+    throw new ApiError(`${path}: HTTP ${response.status}`, response.status);
+  }
+  return response;
+}
+
+async function parseJson<T>(response: Response): Promise<T> {
+  if (
+    response.status === 204 ||
+    response.headers.get("content-length") === "0"
+  ) {
+    return undefined as T;
+  }
+  return response.json() as Promise<T>;
 }
 
 export async function get<T = unknown>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { headers: headers() });
-  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-  return r.json() as Promise<T>;
+  return parseJson<T>(await request(path));
 }
 
-export async function post<T = unknown>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(BASE + path, {
-    method: 'POST',
-    headers: headers({ 'Content-Type': 'application/json' }),
-    body: body ? JSON.stringify(body) : undefined
-  });
-  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
-  return r.json() as Promise<T>;
+export async function post<T = unknown>(
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  return parseJson<T>(
+    await request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
 }
 
 interface FetchResult<T> {
@@ -35,68 +86,95 @@ interface FetchResult<T> {
   reload: () => void;
 }
 
-export function useFetch<T = unknown>(path: string, intervalMs = 0): FetchResult<T> {
+export function useFetch<T = unknown>(
+  path: string,
+  intervalMs = 0,
+): FetchResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    if (!path) return;
     get<T>(path)
-      .then(d => { setData(d); setError(null); })
-      .catch((e: Error) => setError(e.message));
+      .then((value) => {
+        setData(value);
+        setError(null);
+      })
+      .catch((reason: Error) => setError(reason.message));
   }, [path]);
 
   useEffect(() => {
     let active = true;
-    const doLoad = () =>
-      get<T>(path)
-        .then(d => { if (active) { setData(d); setError(null); } })
-        .catch((e: Error) => { if (active) setError(e.message); });
-    doLoad();
-    if (intervalMs > 0) {
-      const id = setInterval(doLoad, intervalMs);
-      return () => { active = false; clearInterval(id); };
+    if (!path) {
+      setData(null);
+      setError(null);
+      return () => {
+        active = false;
+      };
     }
-    return () => { active = false; };
+
+    const doLoad = () => {
+      get<T>(path)
+        .then((value) => {
+          if (active) {
+            setData(value);
+            setError(null);
+          }
+        })
+        .catch((reason: Error) => {
+          if (active) setError(reason.message);
+        });
+    };
+
+    doLoad();
+    const interval =
+      intervalMs > 0 ? window.setInterval(doLoad, intervalMs) : null;
+    return () => {
+      active = false;
+      if (interval !== null) window.clearInterval(interval);
+    };
   }, [path, intervalMs]);
 
   return { data, error, reload: load };
 }
 
-/**
- * SSE-поток через fetch: EventSource не умеет отправлять Authorization-заголовок,
- * поэтому читаем `text/event-stream` вручную через ReadableStream.
- */
+/** Читает SSE через fetch, поскольку EventSource не поддерживает Authorization header. */
 export async function subscribeSse(
   path: string,
   eventName: string,
   onEvent: (data: string) => void,
-  signal: AbortSignal
+  signal: AbortSignal,
 ): Promise<void> {
-  const r = await fetch(BASE + path, { headers: headers({ Accept: 'text/event-stream' }), signal });
-  if (!r.ok || !r.body) throw new Error(`${path}: HTTP ${r.status}`);
+  const response = await request(path, {
+    headers: { Accept: "text/event-stream" },
+    signal,
+  });
+  if (!response.body)
+    throw new ApiError(`${path}: empty response body`, response.status);
 
-  const reader = r.body.getReader();
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = "";
 
   while (true) {
     const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
 
-    let idx: number;
-    while ((idx = buffer.indexOf('\n\n')) !== -1) {
-      const frame = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      let currentEvent = 'message';
-      let data = '';
-      for (const line of frame.split('\n')) {
-        if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
-        if (line.startsWith('data:')) data += line.slice(5).trim();
+    let separator: number;
+    while ((separator = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      let currentEvent = "message";
+      const dataLines: string[] = [];
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) currentEvent = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
       }
-      if (currentEvent === eventName && data) {
-        try { onEvent(data); } catch { /* ignore malformed frame */ }
+      if (currentEvent === eventName && dataLines.length > 0) {
+        onEvent(dataLines.join("\n"));
       }
     }
+
+    if (done) break;
   }
 }

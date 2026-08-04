@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.MacroConfig
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
@@ -28,6 +29,7 @@ class MacroContextService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
+    private val gauges = MutableGauges(meterRegistry)
 
     data class MacroContext(
         val cbrRate: BigDecimal,
@@ -49,9 +51,9 @@ class MacroContextService(
                 brentPrice = macroConfig.brentPrice,
                 usdRub = liveUsdRub ?: macroConfig.usdRub,
             )
-        meterRegistry.gauge("macro.usd_rub", ctx.usdRub.toDouble())
-        meterRegistry.gauge("macro.cbr_rate", ctx.cbrRate.toDouble())
-        meterRegistry.gauge("macro.brent", ctx.brentPrice.toDouble())
+        gauges.set("macro.usd_rub", ctx.usdRub)
+        gauges.set("macro.cbr_rate", ctx.cbrRate)
+        gauges.set("macro.brent", ctx.brentPrice)
         return ctx
     }
 

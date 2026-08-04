@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.model.Candle
+import com.trading.bot.model.PositionDirection
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -114,8 +115,55 @@ class BacktestEngineTest {
     }
 
     @Test
-    fun `commission and slippage constants`() {
+    fun `commission is charged on full turnover`() {
         assertEquals(BigDecimal("0.0005"), SimulatedExecution.COMMISSION_RATE)
         assertEquals(BigDecimal("0.001"), SimulatedExecution.MARKET_SLIPPAGE_RATE)
+        assertEquals(BigDecimal("5.0000"), SimulatedExecution.commissionOn(BigDecimal("100"), 100))
+    }
+
+    @Test
+    fun `short stop and target use the correct candle sides`() {
+        val stopCandle =
+            candle(price = 104.0, i = 1).copy(
+                highPrice = BigDecimal("106"),
+                lowPrice = BigDecimal("103"),
+            )
+        val targetCandle =
+            candle(price = 94.0, i = 2).copy(
+                highPrice = BigDecimal("97"),
+                lowPrice = BigDecimal("93"),
+            )
+
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(
+                stopCandle,
+                PositionDirection.SHORT,
+                BigDecimal("105"),
+                BigDecimal("95"),
+            ),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.TARGET,
+            SimulatedExecution.hitStopOrTarget(
+                targetCandle,
+                PositionDirection.SHORT,
+                BigDecimal("105"),
+                BigDecimal("95"),
+            ),
+        )
+    }
+
+    @Test
+    fun `backtest equity starts with initial capital`() {
+        val initialCapital = BigDecimal("123456")
+        val result =
+            engine.simulate(
+                ticker = "SBER",
+                candles = candles(seed = 300.0, count = 60, step = 0.1),
+                initialCapital = initialCapital,
+            )
+
+        assertEquals(initialCapital, result.equityCurve.first())
     }
 }

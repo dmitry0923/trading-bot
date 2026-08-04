@@ -72,7 +72,7 @@ class BlindSpotRepository(
                 .bind("isActive", entity.isActive)
                 .bind("detectedAt", entity.detectedAt)
                 .bindOrNull("resolvedAt", entity.resolvedAt)
-                .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+                .map { row, _ -> row.require("id", Long::class.javaObjectType) }
                 .one()
                 .awaitSingle()
         return entity.copy(id = id)
@@ -97,7 +97,7 @@ class BlindSpotRepository(
             .bind("isActive", entity.isActive)
             .bind("detectedAt", entity.detectedAt)
             .bindOrNull("resolvedAt", entity.resolvedAt)
-            .bind("id", entity.id!!)
+            .bind("id", requireNotNull(entity.id))
             .then()
             .awaitSingleOrNull()
     }

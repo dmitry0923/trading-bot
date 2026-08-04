@@ -1,7 +1,6 @@
 package com.trading.bot.model
 
 import java.math.BigDecimal
-import java.time.LocalDateTime
 
 data class TradeStats(
     val ticker: String,

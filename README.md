@@ -10,6 +10,7 @@ Production-ready trading bot for Moscow Exchange (MOEX) with AI-driven strategy 
 - **Redis** for caching
 - **Micrometer** + **Prometheus** metrics
 - **Docker** + **Docker Compose**
+- **React 18** + **TypeScript** + **Vite** dashboard
 
 ## Quick Start
 
@@ -37,6 +38,9 @@ AUTH_PASSWORD=change-me-now
 > **Important**: set a strong `AUTH_PASSWORD` before exposing the bot outside
 > localhost. The API (`/api/v1/**`) and Actuator endpoints are protected with
 > Spring Security Basic Auth; only `/actuator/health` is public (Docker healthcheck).
+> In `LIVE` mode startup is rejected when the password is default or shorter than
+> 12 characters. The dashboard asks for credentials at runtime and never embeds
+> them into the public JavaScript bundle.
 
 ### 3. Run with Docker Compose
 
@@ -106,6 +110,8 @@ See `application.yml` for all options. Key env vars:
 | `REDIS_HOST` | localhost | Redis host |
 | `REDIS_PORT` | 6379 | Redis port |
 | `TRADING_MODE` | SIMULATION | SIMULATION or LIVE |
+| `MAX_OPEN_POS` | 0 in Docker Compose | New-entry kill switch / spot-position cap |
+| `MONITOR_INTERVAL_MS` | 10000 | Quote fallback interval and WS staleness threshold |
 | `ALOR_TOKEN` | — | Alor API token |
 | `KIMI_API_KEY` | — | Kimi LLM API key |
 | `AUTH_USER` | admin | Basic Auth username |
@@ -120,15 +126,19 @@ See `application.yml` for all options. Key env vars:
   (e.g. confidence adjustment in [-0.20, +0.20], SL/TP adjustment in [-0.30, +0.30]),
   NaN/Infinity collapse to 0. Signals also pass through `Guardrails`
   (daily loss limit, price deviation, confidence threshold).
-- **Daily loss circuit breaker**: when the daily P&L reaches `max-daily-loss-rub`,
-  the bot halts new entries until the next day.
+- **Daily loss circuit breaker**: one thread-safe daily P&L ledger is shared by
+  stocks and futures. When it reaches `max-daily-loss-rub`, the bot halts new
+  entries until the next day and restores the state after restart.
+- **Runtime settings**: the Settings page immediately controls the trading kill
+  switch and risk limits. Risk management cannot be disabled while trading is on.
 
 ## CI/CD
 
 `.github/workflows/ci.yml` runs on every push/PR:
-- `./gradlew ktlintCheck` (lint, baseline in `config/ktlint/baseline.xml`)
+- `./gradlew ktlintCheck` (lint without suppressing baseline debt)
 - `./gradlew test` (unit + Testcontainers integration tests)
-- `npm run build` (TypeScript frontend)
+- `npm run build` (TypeScript + Vite frontend)
+- `npm audit` reports zero known frontend vulnerabilities
 
 ## Monitoring
 

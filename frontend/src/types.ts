@@ -64,7 +64,7 @@ export interface TradeStats {
 export interface BlindSpot {
   id?: number;
   conditionPattern: string;
-  description?: string;
+  recommendation: string;
   lossRate: number;
   occurrenceCount: number;
 }

@@ -28,6 +28,10 @@ class BacktestEngine(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    private companion object {
+        const val INDICATOR_LOOKBACK_BARS = 500
+    }
+
     data class PositionSim(
         val direction: PositionDirection,
         val quantity: Int,
@@ -102,9 +106,15 @@ class BacktestEngine(
         slPercent: Double = 0.02,
         tpPercent: Double = 0.04,
     ): BacktestResult {
+        require(initialCapital > BigDecimal.ZERO) { "initialCapital must be positive" }
+        require(minBarsForSignal > 0) { "minBarsForSignal must be positive" }
+        require(slPercent > 0.0) { "slPercent must be positive" }
+        require(tpPercent > 0.0) { "tpPercent must be positive" }
+
         var cash = initialCapital
-        val equityCurve = ArrayList<BigDecimal>()
+        val equityCurve = arrayListOf(initialCapital)
         val tradeReturns = ArrayList<Double>()
+        val holdBars = ArrayList<Int>()
 
         var position: PositionSim? = null
         val sorted = candles.sortedBy { it.time }
@@ -115,14 +125,36 @@ class BacktestEngine(
             // Закрытие по SL/TP на внутрисвечном диапазоне текущей свечи
             val pos0 = position
             if (pos0 != null && pos0.stopLoss != null && pos0.takeProfit != null) {
-                when (SimulatedExecution.hitStopOrTarget(current, pos0.stopLoss, pos0.takeProfit)) {
+                when (SimulatedExecution.hitStopOrTarget(current, pos0.direction, pos0.stopLoss, pos0.takeProfit)) {
                     SimulatedExecution.StopTpHit.STOP -> {
-                        cash = closePosition(ticker, pos0, "STOP_LOSS", pos0.stopLoss, cash, equityCurve, tradeReturns)
+                        cash =
+                            closePosition(
+                                ticker,
+                                pos0,
+                                "STOP_LOSS",
+                                pos0.stopLoss,
+                                cash,
+                                equityCurve,
+                                tradeReturns,
+                                holdBars,
+                                i,
+                            )
                         position = null
                     }
 
                     SimulatedExecution.StopTpHit.TARGET -> {
-                        cash = closePosition(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, cash, equityCurve, tradeReturns)
+                        cash =
+                            closePosition(
+                                ticker,
+                                pos0,
+                                "TAKE_PROFIT",
+                                pos0.takeProfit,
+                                cash,
+                                equityCurve,
+                                tradeReturns,
+                                holdBars,
+                                i,
+                            )
                         position = null
                     }
 
@@ -142,7 +174,18 @@ class BacktestEngine(
                 // Инверсия сигнала: закрыть текущую позицию и открыть встречную
                 val opposite = if (signal == StrategyAction.BUY) PositionDirection.SHORT else PositionDirection.LONG
                 if (curPos.direction == opposite) {
-                    cash = closePosition(ticker, curPos, "REVERSAL", current.openPrice, cash, equityCurve, tradeReturns)
+                    cash =
+                        closePosition(
+                            ticker,
+                            curPos,
+                            "REVERSAL",
+                            current.openPrice,
+                            cash,
+                            equityCurve,
+                            tradeReturns,
+                            holdBars,
+                            i,
+                        )
                     position = openPosition(signal, current.openPrice, cash, i, slPercent, tpPercent)
                     if (position != null) {
                         cash = applyOpen(cash, position)
@@ -162,11 +205,22 @@ class BacktestEngine(
 
         // Закрыть оставшуюся позицию по последней цене
         position?.let { pos ->
-            cash = closePosition(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, cash, equityCurve, tradeReturns)
+            cash =
+                closePosition(
+                    ticker,
+                    pos,
+                    "END_OF_PERIOD",
+                    sorted.last().closePrice,
+                    cash,
+                    equityCurve,
+                    tradeReturns,
+                    holdBars,
+                    sorted.lastIndex,
+                )
         }
         equityCurve.add(cash)
 
-        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns)
+        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns, holdBars)
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, MDD=${String.format("%.2f%%", result.maxDrawdown * 100)}, " +
@@ -183,7 +237,7 @@ class BacktestEngine(
     private fun applyOpen(
         cash: BigDecimal,
         pos: PositionSim,
-    ): BigDecimal = cash.subtract(SimulatedExecution.commissionOn(pos.entryPrice))
+    ): BigDecimal = cash.subtract(SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity))
 
     /** Оценка текущего капитала: cash + нереализованный PnL позиции (mark-to-market). */
     private fun equityAt(
@@ -249,10 +303,12 @@ class BacktestEngine(
         cash: BigDecimal,
         equityCurve: MutableList<BigDecimal>,
         tradeReturns: MutableList<Double>,
+        holdBars: MutableList<Int>,
+        exitBar: Int,
     ): BigDecimal {
         val fill = SimulatedExecution.marketFill(price, pos.direction == PositionDirection.SHORT)
-        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice)
-        val commissionExit = SimulatedExecution.commissionOn(fill.price)
+        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity)
+        val commissionExit = SimulatedExecution.commissionOn(fill.price, pos.quantity)
         val gross =
             when (pos.direction) {
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
@@ -261,6 +317,7 @@ class BacktestEngine(
         val pnl = gross.subtract(commissionEntry).subtract(commissionExit)
 
         tradeReturns.add(pnl.toDouble())
+        holdBars.add((exitBar - pos.entryBars).coerceAtLeast(0))
         // Комиссия входа уже списана при открытии; здесь добавляется gross за вычетом комиссии выхода
         val newCash = cash.add(gross).subtract(commissionExit)
         equityCurve.add(newCash)
@@ -277,8 +334,11 @@ class BacktestEngine(
         index: Int,
         minBars: Int,
     ): StrategyAction {
-        val window = candles.subList(0, index + 1)
-        if (window.size < minBars) return StrategyAction.HOLD
+        if (index + 1 < minBars) return StrategyAction.HOLD
+        // Ограниченное rolling-окно исключает O(N²) на многолетней истории.
+        // 500 баров достаточно для стабилизации используемых EMA/RSI/ATR.
+        val fromIndex = (index + 1 - INDICATOR_LOOKBACK_BARS).coerceAtLeast(0)
+        val window = candles.subList(fromIndex, index + 1)
         val ind = IndicatorCalculator.calculate(window) ?: return StrategyAction.HOLD
 
         return when {

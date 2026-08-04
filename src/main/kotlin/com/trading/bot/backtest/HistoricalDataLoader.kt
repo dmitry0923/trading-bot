@@ -58,11 +58,8 @@ class HistoricalDataLoader(
         val to = LocalDateTime.now()
         val candles = moexClient.getCandlesPaged(ticker, from, to)
         var saved = 0
-        candles.forEach { c ->
-            if (!candleRepo.existsByTickerAndTimeframeAndTime(c.ticker, c.timeframe, c.time)) {
-                candleRepo.save(c)
-                saved++
-            }
+        candles.forEach { candle ->
+            if (candleRepo.save(candle)) saved++
         }
         meterRegistry.counter("backtest.history.loaded", Tags.of("ticker", ticker)).increment(candles.size.toDouble())
         logger.info { "HistoricalDataLoader $ticker: loaded=${candles.size}, saved=$saved (days=$days)" }

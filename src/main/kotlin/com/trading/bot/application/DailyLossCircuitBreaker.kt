@@ -39,6 +39,9 @@ class DailyLossCircuitBreaker(
      */
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
+        // Акции учитываются RiskManagementService непосредственно при закрытии.
+        // Этот breaker обслуживает только фьючерсный риск-движок.
+        if (!event.ticker.equals("Si", ignoreCase = true)) return
         futuresRiskEngine.updateDailyPnL(event.pnl)
         if (futuresRiskEngine.isDailyLossLimitReached()) {
             logger.error {

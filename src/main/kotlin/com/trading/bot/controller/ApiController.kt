@@ -2,9 +2,11 @@ package com.trading.bot.controller
 
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.BlindSpotEntity
 import com.trading.bot.model.BotSettings
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.Strategy
 import com.trading.bot.model.StrategyAdjustment
 import com.trading.bot.model.TimePattern
 import com.trading.bot.model.TradeEvent
@@ -25,6 +27,7 @@ import com.trading.bot.service.StrategyService
 import com.trading.bot.service.TradeAnalysisService
 import com.trading.bot.service.TradingBotService
 import io.micrometer.core.instrument.MeterRegistry
+import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -32,6 +35,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 
 /**
@@ -47,6 +51,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 @RestController
 @RequestMapping("/api/v1")
 class ApiController(
+    private val tradingConfig: TradingConfig,
     private val strategyRepository: StrategyRepository,
     private val positionRepository: PositionRepository,
     private val agentLogRepository: AgentLogRepository,
@@ -72,10 +77,12 @@ class ApiController(
     @PostMapping("/settings")
     fun updateSettings(
         @RequestBody settings: BotSettings,
-    ): BotSettings {
-        settingsService.updateSettings(settings)
-        return settings
-    }
+    ): BotSettings =
+        try {
+            settingsService.updateSettings(settings)
+        } catch (e: IllegalArgumentException) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, e.message, e)
+        }
 
     /**
      * Агрегированная панель для React Dashboard: открытые позиции с live P&L,
@@ -106,8 +113,11 @@ class ApiController(
     @GetMapping("/strategies/{ticker}")
     suspend fun getStrategy(
         @PathVariable ticker: String,
-    ) = redisCacheService.getStrategy(ticker)
-        ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(ticker)
+    ): Strategy? {
+        val normalizedTicker = validateTicker(ticker)
+        return redisCacheService.getStrategy(normalizedTicker)
+            ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(normalizedTicker)
+    }
 
     @GetMapping("/positions")
     suspend fun getOpenPositions() = positionRepository.findByStatus(PositionStatus.OPEN)
@@ -133,20 +143,23 @@ class ApiController(
     suspend fun getPositionEvents(
         @PathVariable positionId: Long,
     ): List<TradeEvent> {
+        if (positionId <= 0) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "positionId must be positive")
         val aggregateId = java.util.UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
         return tradeEventRepository.findByAggregateId(aggregateId)
     }
 
     @PostMapping("/strategy/trigger")
-    fun triggerStrategy() {
+    fun triggerStrategy(): Map<String, String> {
         meterRegistry.counter("api.trigger.strategy").increment()
         strategyService.runStrategyCycle()
+        return mapOf("status" to "accepted")
     }
 
     @PostMapping("/bot/trigger")
-    fun triggerBot() {
+    fun triggerBot(): Map<String, String> {
         meterRegistry.counter("api.trigger.bot").increment()
         tradingBotService.runBotCycle()
+        return mapOf("status" to "accepted")
     }
 
     @GetMapping("/backtest/{ticker}")
@@ -155,16 +168,18 @@ class ApiController(
         @RequestParam(defaultValue = "365") days: Int,
         @RequestParam(defaultValue = "false") loadHistory: Boolean,
     ): Map<String, Any> {
+        val normalizedTicker = validateTicker(ticker)
+        val normalizedDays = validateDays(days, max = 1_095)
         meterRegistry
             .counter(
                 "api.backtest",
                 io.micrometer.core.instrument.Tags
-                    .of("ticker", ticker),
+                    .of("ticker", normalizedTicker),
             ).increment()
         if (loadHistory) {
-            historicalDataLoader.loadAndSave(ticker, days)
+            historicalDataLoader.loadAndSave(normalizedTicker, normalizedDays)
         }
-        val result = backtestEngine.run(ticker, days)
+        val result = backtestEngine.run(normalizedTicker, normalizedDays)
         return mapOf(
             "ticker" to result.ticker,
             "totalReturn" to result.totalReturn,
@@ -187,25 +202,26 @@ class ApiController(
         @RequestParam(defaultValue = "14") days: Int,
     ): Map<String, TradeStats> {
         meterRegistry.counter("api.analytics.trade-stats").increment()
-        return tradeAnalysisService.analyzeLastNDays(days)
+        return tradeAnalysisService.analyzeLastNDays(validateDays(days))
     }
 
     @GetMapping("/analytics/adaptive-params/{ticker}")
     suspend fun getAdaptiveParams(
         @PathVariable ticker: String,
     ): Map<String, Any> {
+        val normalizedTicker = validateTicker(ticker)
         meterRegistry
             .counter(
                 "api.analytics.adaptive-params",
                 io.micrometer.core.instrument.Tags
-                    .of("ticker", ticker),
+                    .of("ticker", normalizedTicker),
             ).increment()
         return mapOf(
-            "ticker" to ticker,
-            "confidenceThreshold" to adaptiveRiskService.getAdaptiveConfidenceThreshold(ticker),
-            "maxPositionRub" to adaptiveRiskService.calculateOptimalPositionSize(ticker),
+            "ticker" to normalizedTicker,
+            "confidenceThreshold" to adaptiveRiskService.getAdaptiveConfidenceThreshold(normalizedTicker),
+            "maxPositionRub" to adaptiveRiskService.calculateOptimalPositionSize(normalizedTicker),
             "isInRecovery" to adaptiveRiskService.isInDrawdownRecovery(),
-            "shouldPause" to adaptiveRiskService.shouldPauseTrading(ticker),
+            "shouldPause" to adaptiveRiskService.shouldPauseTrading(normalizedTicker),
         )
     }
 
@@ -221,7 +237,7 @@ class ApiController(
     ): List<StrategyAdjustment> {
         meterRegistry.counter("api.analytics.adjustments").increment()
         return if (ticker != null) {
-            adjustmentRepository.findByTickerOrderByCreatedAtDesc(ticker)
+            adjustmentRepository.findByTickerOrderByCreatedAtDesc(validateTicker(ticker))
         } else {
             adjustmentRepository.findAll()
         }
@@ -232,13 +248,14 @@ class ApiController(
         @PathVariable ticker: String,
         @RequestParam(defaultValue = "30") days: Int,
     ): TimePattern {
+        val normalizedTicker = validateTicker(ticker)
         meterRegistry
             .counter(
                 "api.analytics.time-pattern",
                 io.micrometer.core.instrument.Tags
-                    .of("ticker", ticker),
+                    .of("ticker", normalizedTicker),
             ).increment()
-        return tradeAnalysisService.timePatternAnalysis(ticker, days)
+        return tradeAnalysisService.timePatternAnalysis(normalizedTicker, validateDays(days))
     }
 
     @GetMapping("/analytics/health")
@@ -256,5 +273,24 @@ class ApiController(
                     .now()
                     .toString(),
         )
+    }
+
+    private fun validateDays(
+        days: Int,
+        max: Int = 365,
+    ): Int {
+        if (days !in 1..max) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "days must be between 1 and $max")
+        }
+        return days
+    }
+
+    private fun validateTicker(ticker: String): String {
+        val value = ticker.trim()
+        if (!value.matches(Regex("[A-Za-z0-9._-]{1,20}"))) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid ticker")
+        }
+        return tradingConfig.tickers.firstOrNull { it.equals(value, ignoreCase = true) }
+            ?: value.uppercase()
     }
 }

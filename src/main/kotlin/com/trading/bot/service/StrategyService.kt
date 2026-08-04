@@ -1,24 +1,46 @@
 package com.trading.bot.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.trading.bot.agent.*
+import com.trading.bot.agent.ArbitratorAgent
+import com.trading.bot.agent.ContrarianAgent
+import com.trading.bot.agent.FundamentalAnalysisAgent
+import com.trading.bot.agent.PerformanceFeedbackAgent
+import com.trading.bot.agent.StrategyAgent
+import com.trading.bot.agent.TechnicalAnalysisAgent
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
-import com.trading.bot.model.*
-import com.trading.bot.repository.*
+import com.trading.bot.model.Candle
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.RiskContext
+import com.trading.bot.model.Strategy
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.PositionRepository
+import com.trading.bot.repository.StrategyRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.*
+import jakarta.annotation.PreDestroy
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import mu.KotlinLogging
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Оркестратор стратегического цикла (мульти-тикер, параллельный).
@@ -50,19 +72,20 @@ class StrategyService(
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
     private val riskManagement: RiskManagementService,
+    private val settingsService: SettingsService,
     private val positionRepo: PositionRepository,
     private val riskConfig: RiskConfig,
     private val redis: RedisCacheService,
     private val candleCache: CandleCacheService,
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
-    private val agentLogRepo: AgentLogRepository,
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val cycleRunning = AtomicBoolean(false)
 
     /**
      * Scheduled-точка входа стратегического цикла. Не блокирует поток планировщика:
@@ -70,16 +93,38 @@ class StrategyService(
      */
     @Scheduled(fixedDelayString = "#{@tradingConfig.strategyIntervalMs}")
     fun run() {
+        if (!settingsService.isTradingEnabled()) {
+            logger.info { "Strategy cycle skipped: trading is disabled" }
+            meterRegistry.counter("strategy.skipped", Tags.of("reason", "TRADING_DISABLED")).increment()
+            return
+        }
+        if (!cycleRunning.compareAndSet(false, true)) {
+            logger.warn { "Strategy cycle skipped: previous cycle is still running" }
+            meterRegistry.counter("strategy.skipped", Tags.of("reason", "CYCLE_ALREADY_RUNNING")).increment()
+            return
+        }
+
         val cycleId = UUID.randomUUID().toString()
         logger.info { "=== STRATEGY CYCLE $cycleId ===" }
         meterRegistry.counter("strategy.cycle").increment()
-        scope.launch { executeCycle(cycleId) }
+        scope.launch {
+            try {
+                executeCycle(cycleId)
+            } finally {
+                cycleRunning.set(false)
+            }
+        }
     }
 
     /**
      * Ручной триггер (API /api/v1/strategy/trigger).
      */
     fun runStrategyCycle() = run()
+
+    @PreDestroy
+    fun shutdown() {
+        scope.cancel("StrategyService is shutting down")
+    }
 
     /**
      * Исполняет цикл стратегии. Feedback Meta-Agent'а генерируется ПАРАЛЛЕЛЬНО
@@ -200,8 +245,7 @@ class StrategyService(
                 riskContext = riskContext,
             )
 
-        val atr = BigDecimal.valueOf(tech.atr)
-        val direction = if (final.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        val atr = BigDecimal.valueOf(tech.atr.coerceAtLeast(0.0))
 
         val highVolatility =
             final.action != StrategyAction.HOLD &&
@@ -215,9 +259,23 @@ class StrategyService(
                 final
             }
 
-        val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr)
-        val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr)
-        val effectiveConfidence = effectiveFinal.confidence.coerceAtLeast(adaptiveConf)
+        val direction =
+            when (effectiveFinal.action) {
+                StrategyAction.BUY -> PositionDirection.LONG
+                StrategyAction.SELL -> PositionDirection.SHORT
+                else -> null
+            }
+        val adaptiveSL =
+            direction?.let {
+                adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, it, ticker, atr)
+            }
+        val adaptiveTP =
+            direction?.let {
+                adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, it, ticker, atr)
+            }
+        // Не повышаем искусственно низкую уверенность до порога: это скрывало
+        // фактическую оценку агента в БД и UI. Guardrails уже применил adaptiveConf.
+        val effectiveConfidence = effectiveFinal.confidence.coerceIn(0.0, 1.0)
 
         val strategy =
             Strategy(
@@ -257,11 +315,7 @@ class StrategyService(
 
         // 3. MOEX — последний источник, с write-through в кэш
         val moex = moexClient.getCandles(ticker, 10, from)
-        moex.forEach { candle ->
-            if (!candleRepo.existsByTickerAndTimeframeAndTime(candle.ticker, candle.timeframe, candle.time)) {
-                candleRepo.save(candle)
-            }
-        }
+        moex.forEach { candle -> candleRepo.save(candle) }
         candleCache.addCandles(moex)
         return moex.sortedBy { it.time }
     }

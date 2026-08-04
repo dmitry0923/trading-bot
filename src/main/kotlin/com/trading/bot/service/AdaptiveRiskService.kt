@@ -1,7 +1,9 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.*
+import com.trading.bot.infrastructure.metrics.MutableGauges
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -31,6 +33,7 @@ class AdaptiveRiskService(
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
+    private val gauges = MutableGauges(meterRegistry)
     private val correlationThreshold = 0.8
     private val correlationMinSamples = 30
 
@@ -108,7 +111,7 @@ class AdaptiveRiskService(
     suspend fun calculateOptimalPositionSize(ticker: String): BigDecimal {
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
         if (stats == null || stats.totalTrades < 5) {
-            meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), riskConfig.maxPositionRub.toDouble())
+            gauges.set("adaptive.position_size", riskConfig.maxPositionRub, Tags.of("ticker", ticker))
             return riskConfig.maxPositionRub
         }
 
@@ -127,7 +130,7 @@ class AdaptiveRiskService(
                 BigDecimal.ZERO
             }
 
-        meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), size.toDouble())
+        gauges.set("adaptive.position_size", size, Tags.of("ticker", ticker))
         logger.info { "Kelly size for $ticker: ${size.toInt()} (kelly=$kelly, safe=$safeKelly)" }
         return size
     }
@@ -221,7 +224,7 @@ class AdaptiveRiskService(
                     (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO
                 }.count()
         val result = consecutiveLosses >= 3
-        meterRegistry.gauge("adaptive.drawdown_recovery", if (result) 1.0 else 0.0)
+        gauges.set("adaptive.drawdown_recovery", if (result) 1.0 else 0.0)
         return result
     }
 
@@ -240,7 +243,7 @@ class AdaptiveRiskService(
                 stats.profitFactor in 0.0..0.5 && stats.totalTrades >= 5 -> true
                 else -> false
             }
-        meterRegistry.gauge("adaptive.pause", Tags.of("ticker", ticker), if (result) 1.0 else 0.0)
+        gauges.set("adaptive.pause", if (result) 1.0 else 0.0, Tags.of("ticker", ticker))
         return result
     }
 }

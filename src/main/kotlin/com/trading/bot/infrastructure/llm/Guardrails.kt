@@ -63,8 +63,40 @@ class Guardrails(
         var current = signal
         val applied = mutableListOf<String>()
 
+        if (marketPrice <= BigDecimal.ZERO) {
+            recordOverride("INVALID_MARKET_PRICE")
+            applied += "marketPrice<=0 -> HOLD"
+            return GuardedSignal(
+                hold(marketPrice),
+                overridden = true,
+                overrideReason = "GUARDRAIL: INVALID_MARKET_PRICE",
+                appliedRules = applied,
+            )
+        }
+
+        if (!current.confidence.isFinite()) {
+            recordOverride("INVALID_CONFIDENCE")
+            applied += "confidence is not finite -> HOLD"
+            return GuardedSignal(
+                hold(marketPrice),
+                overridden = true,
+                overrideReason = "GUARDRAIL: INVALID_CONFIDENCE",
+                appliedRules = applied,
+            )
+        }
+
+        if (current.confidence !in 0.0..1.0) {
+            current = current.copy(confidence = current.confidence.coerceIn(0.0, 1.0))
+            applied += "confidence clamped to [0,1]"
+        }
+
         if (current.action == StrategyAction.HOLD) {
-            return GuardedSignal(current, overridden = false, overrideReason = null, appliedRules = applied)
+            return GuardedSignal(
+                current,
+                overridden = applied.isNotEmpty(),
+                overrideReason = applied.takeIf { it.isNotEmpty() }?.let { "GUARDRAIL: VALUE_CLAMPED" },
+                appliedRules = applied,
+            )
         }
 
         if (riskLevel == "CRITICAL") {
@@ -103,6 +135,18 @@ class Guardrails(
             return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: ZERO_QUANTITY", appliedRules = applied)
         }
 
+        if (current.targetPrice <= BigDecimal.ZERO) {
+            recordOverride("INVALID_TARGET_PRICE")
+            applied += "targetPrice<=0 -> adjust target to market"
+            current = current.copy(targetPrice = marketPrice)
+            return GuardedSignal(
+                current,
+                overridden = true,
+                overrideReason = "GUARDRAIL: INVALID_TARGET_PRICE",
+                appliedRules = applied,
+            )
+        }
+
         val deviation =
             current.targetPrice
                 .subtract(marketPrice)
@@ -116,7 +160,12 @@ class Guardrails(
             return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: PRICE_DEVIATION", appliedRules = applied)
         }
 
-        return GuardedSignal(current, overridden = false, overrideReason = null, appliedRules = applied)
+        return GuardedSignal(
+            current,
+            overridden = applied.isNotEmpty(),
+            overrideReason = applied.takeIf { it.isNotEmpty() }?.let { "GUARDRAIL: VALUE_CLAMPED" },
+            appliedRules = applied,
+        )
     }
 
     private fun hold(marketPrice: BigDecimal): Signal = Signal(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0)

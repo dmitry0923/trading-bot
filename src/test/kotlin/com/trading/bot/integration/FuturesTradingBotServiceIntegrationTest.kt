@@ -68,8 +68,25 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))
-            Mockito.`when`(alorClient.placeLimitOrder("Si", "buy", 1, BigDecimal("92000"))).thenReturn("ord-limit-1")
-            Mockito.`when`(alorClient.placeMarketOrder("Si", "sell", 1)).thenReturn("ord-market-1")
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        nonNullEq("Si"),
+                        nonNullEq("buy"),
+                        nonNullEq(1),
+                        nonNullEq(BigDecimal("92000")),
+                        nonNullAnyString(),
+                    ),
+                ).thenReturn("ord-limit-1")
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        nonNullEq("Si"),
+                        nonNullEq("sell"),
+                        nonNullEq(1),
+                        nonNullAnyString(),
+                    ),
+                ).thenReturn("ord-market-1")
         }
     }
 
@@ -200,6 +217,16 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             cycleId = "test-cycle",
             validUntil = LocalDateTime.now().plusMinutes(5),
         )
+
+    private fun <T> nonNullEq(value: T): T {
+        Mockito.eq(value)
+        return value
+    }
+
+    private fun nonNullAnyString(): String {
+        Mockito.anyString()
+        return ""
+    }
 
     private fun awaitUntil(
         timeoutMs: Long = 10_000,

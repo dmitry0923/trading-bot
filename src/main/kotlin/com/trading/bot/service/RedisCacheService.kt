@@ -61,8 +61,7 @@ class RedisCacheService(
      * @param tickers список тикеров
      * @return карта тикер -> стратегия (только найденные в кэше)
      */
-    fun getAllStrategies(tickers: List<String>): Map<String, Strategy> =
-        tickers.mapNotNull { ticker -> getStrategy(ticker)?.let { s -> ticker to s } }.toMap()
+    fun getAllStrategies(tickers: List<String>): Map<String, Strategy> = tickers.mapNotNull { ticker -> getStrategy(ticker)?.let { s -> ticker to s } }.toMap()
 
     /**
      * Сохраняет feedback-ответ в кэш с TTL 60 минут.

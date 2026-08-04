@@ -321,7 +321,8 @@ class AlorWebSocketClient(
             val statusRaw = j.path("status").asText("").lowercase()
             val status =
                 when {
-                    statusRaw.contains("fill") && j.path("filledQty").asInt(0) > 0 &&
+                    statusRaw.contains("fill") &&
+                        j.path("filledQty").asInt(0) > 0 &&
                         j.path("filledQty").asInt(0) >= j.path("quantity").asInt(0) -> OrderStatus.FILLED
 
                     statusRaw.contains("fill") -> OrderStatus.PARTIALLY_FILLED

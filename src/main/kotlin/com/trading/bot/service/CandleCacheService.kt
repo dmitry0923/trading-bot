@@ -23,17 +23,19 @@ import java.time.ZoneOffset
 @Service
 class CandleCacheService(
     private val redisTemplate: StringRedisTemplate,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
     private val prefix = "candles:"
     private val ttl = Duration.ofHours(24)
     private val maxCandlesPerKey = 500
 
-    private fun key(ticker: String, timeframe: String): String = "$prefix$ticker:$timeframe"
+    private fun key(
+        ticker: String,
+        timeframe: String,
+    ): String = "$prefix$ticker:$timeframe"
 
-    private fun scoreOf(candle: Candle): Double =
-        candle.time.toEpochSecond(ZoneOffset.UTC) * 1000.0
+    private fun scoreOf(candle: Candle): Double = candle.time.toEpochSecond(ZoneOffset.UTC) * 1000.0
 
     /**
      * Сохраняет свечу в кэш (ZADD + trim + TTL).
@@ -61,13 +63,23 @@ class CandleCacheService(
      *
      * @return пустой список, если свечей нет или Redis недоступен
      */
-    fun getRecentCandles(ticker: String, timeframe: String, limit: Int): List<Candle> {
+    fun getRecentCandles(
+        ticker: String,
+        timeframe: String,
+        limit: Int,
+    ): List<Candle> {
         return try {
-            val members = redisTemplate.opsForZSet().reverseRange(key(ticker, timeframe), 0, (limit - 1).toLong())
-                ?: return emptyList()
+            val members =
+                redisTemplate.opsForZSet().reverseRange(key(ticker, timeframe), 0, (limit - 1).toLong())
+                    ?: return emptyList()
             members
-                .mapNotNull { raw -> try { objectMapper.readValue(raw, Candle::class.java) } catch (e: Exception) { null } }
-                .sortedBy { it.time }
+                .mapNotNull { raw ->
+                    try {
+                        objectMapper.readValue(raw, Candle::class.java)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }.sortedBy { it.time }
         } catch (e: Exception) {
             logger.error(e) { "Candle cache read error" }
             emptyList()
@@ -81,18 +93,23 @@ class CandleCacheService(
      *
      * @return ATR в единицах цены или null, если недостаточно данных
      */
-    fun calculateAtr(ticker: String, timeframe: String, period: Int = 14): BigDecimal? {
+    fun calculateAtr(
+        ticker: String,
+        timeframe: String,
+        period: Int = 14,
+    ): BigDecimal? {
         val candles = getRecentCandles(ticker, timeframe, period + 1)
         if (candles.size < period + 1) return null
         var sum = BigDecimal.ZERO
         for (i in 1 until candles.size) {
             val c = candles[i]
             val prevClose = candles[i - 1].closePrice
-            val tr = listOf(
-                c.highPrice.subtract(c.lowPrice),
-                c.highPrice.subtract(prevClose).abs(),
-                c.lowPrice.subtract(prevClose).abs()
-            ).maxByOrNull { it } ?: BigDecimal.ZERO
+            val tr =
+                listOf(
+                    c.highPrice.subtract(c.lowPrice),
+                    c.highPrice.subtract(prevClose).abs(),
+                    c.lowPrice.subtract(prevClose).abs(),
+                ).maxByOrNull { it } ?: BigDecimal.ZERO
             sum = sum.add(tr)
         }
         return sum.divide(BigDecimal(period), 4, RoundingMode.HALF_UP)
@@ -103,7 +120,11 @@ class CandleCacheService(
      *
      * @return средняя цена закрытия или null, если недостаточно данных
      */
-    fun calculateSma(ticker: String, timeframe: String, period: Int): BigDecimal? {
+    fun calculateSma(
+        ticker: String,
+        timeframe: String,
+        period: Int,
+    ): BigDecimal? {
         val candles = getRecentCandles(ticker, timeframe, period)
         if (candles.size < period) return null
         val sum = candles.sumOf { it.closePrice }

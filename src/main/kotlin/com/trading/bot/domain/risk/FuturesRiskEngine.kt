@@ -46,7 +46,7 @@ class FuturesRiskEngine(
     private val tradingHoursGuard: TradingHoursGuard,
     private val instrumentsConfig: InstrumentsConfig,
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
@@ -74,7 +74,7 @@ class FuturesRiskEngine(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         portfolioMoney: BigDecimal,
-        currentGo: BigDecimal
+        currentGo: BigDecimal,
     ): EntryValidationResult {
         resetDailyStateIfNewDay()
 
@@ -97,36 +97,40 @@ class FuturesRiskEngine(
         if (size.quantity == 0) return reject(size.reason ?: "ZERO_RISK_SIZE")
 
         // 6. Маржинальная проверка: marginRequired <= депозит * 30%
-        val marginBudget = portfolioMoney
-            .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
-            .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
+        val marginBudget =
+            portfolioMoney
+                .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
+                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         if (size.marginRequired > marginBudget) return reject("INSUFFICIENT_MARGIN")
 
         // SL/TP в ценах: entry ± пункты * priceStep
         val priceStep = instrument.priceStep
         val slOffset = BigDecimal(stopLossPoints).multiply(priceStep)
         val tpOffset = BigDecimal(riskConfig.defaultTakeProfitPoints).multiply(priceStep)
-        val stopLossPrice = when (direction) {
-            PositionDirection.LONG -> entryPrice.subtract(slOffset)
-            PositionDirection.SHORT -> entryPrice.add(slOffset)
-        }
-        val takeProfitPrice = when (direction) {
-            PositionDirection.LONG -> entryPrice.add(tpOffset)
-            PositionDirection.SHORT -> entryPrice.subtract(tpOffset)
-        }
+        val stopLossPrice =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.subtract(slOffset)
+                PositionDirection.SHORT -> entryPrice.add(slOffset)
+            }
+        val takeProfitPrice =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.add(tpOffset)
+                PositionDirection.SHORT -> entryPrice.subtract(tpOffset)
+            }
 
         meterRegistry.gauge("futures.position.size", size.quantity.toDouble())
         meterRegistry.gauge("futures.margin.used", size.marginRequired.toDouble())
-        val marginUtilizationPercent = size.marginRequired
-            .multiply(BigDecimal("100"))
-            .divide(portfolioMoney, 4, RoundingMode.HALF_UP)
-            .toDouble()
+        val marginUtilizationPercent =
+            size.marginRequired
+                .multiply(BigDecimal("100"))
+                .divide(portfolioMoney, 4, RoundingMode.HALF_UP)
+                .toDouble()
         meterRegistry.gauge("risk.margin.utilization", marginUtilizationPercent)
         size.liquidationPrice?.let {
             meterRegistry.gauge(
                 "futures.liquidation.distance",
                 Tags.of("ticker", ticker),
-                distanceToLiquidation(entryPrice, it, entryPrice).toDouble()
+                distanceToLiquidation(entryPrice, it, entryPrice).toDouble(),
             )
         }
 
@@ -141,7 +145,7 @@ class FuturesRiskEngine(
             stopLossPrice = stopLossPrice,
             takeProfitPrice = takeProfitPrice,
             liquidationPrice = size.liquidationPrice,
-            reason = null
+            reason = null,
         )
     }
 
@@ -155,7 +159,7 @@ class FuturesRiskEngine(
             stopLossPrice = BigDecimal.ZERO,
             takeProfitPrice = BigDecimal.ZERO,
             liquidationPrice = null,
-            reason = reason
+            reason = reason,
         )
     }
 
@@ -222,12 +226,13 @@ class FuturesRiskEngine(
     }
 
     private fun loadDailyState(today: LocalDate) {
-        val snapshot = try {
-            dailyRiskSnapshotRepo.findByDate(today)
-        } catch (e: Exception) {
-            logger.warn(e) { "Daily risk snapshot load failed" }
-            null
-        }
+        val snapshot =
+            try {
+                dailyRiskSnapshotRepo.findByDate(today)
+            } catch (e: Exception) {
+                logger.warn(e) { "Daily risk snapshot load failed" }
+                null
+            }
         dailyPnL = snapshot?.dailyPnl ?: BigDecimal.ZERO
         dailyLossLimitReached = snapshot?.limitReached ?: false
         maxDrawdownToday = snapshot?.maxDrawdownToday ?: BigDecimal.ZERO
@@ -268,7 +273,10 @@ class FuturesRiskEngine(
      *
      * Для Si: buffer = 15 ₽, на стопе (0.5 ₽) остаётся 96.7% → SAFE; guardrail — страховка при пробое стопа.
      */
-    fun checkLiquidationDistance(position: Position, currentPrice: BigDecimal): LiquidationStatus {
+    fun checkLiquidationDistance(
+        position: Position,
+        currentPrice: BigDecimal,
+    ): LiquidationStatus {
         val liq = position.liquidationPrice
         if (liq == null || liq <= BigDecimal.ZERO || currentPrice <= BigDecimal.ZERO) {
             return LiquidationStatus.SAFE
@@ -279,11 +287,12 @@ class FuturesRiskEngine(
         val distancePercent = distanceToLiquidation(position.entryPrice, liq, currentPrice)
         meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), distancePercent.toDouble())
 
-        val status = when {
-            distancePercent < criticalLiquidationPercent -> LiquidationStatus.CRITICAL
-            distancePercent < riskConfig.minLiquidationDistancePercent -> LiquidationStatus.WARNING
-            else -> LiquidationStatus.SAFE
-        }
+        val status =
+            when {
+                distancePercent < criticalLiquidationPercent -> LiquidationStatus.CRITICAL
+                distancePercent < riskConfig.minLiquidationDistancePercent -> LiquidationStatus.WARNING
+                else -> LiquidationStatus.SAFE
+            }
         if (status != LiquidationStatus.SAFE) {
             logger.warn {
                 "${position.ticker} ${position.direction} distanceToLiquidation=$distancePercent% " +
@@ -293,7 +302,11 @@ class FuturesRiskEngine(
         return status
     }
 
-    private fun distanceToLiquidation(entry: BigDecimal, liq: BigDecimal, current: BigDecimal): Double {
+    private fun distanceToLiquidation(
+        entry: BigDecimal,
+        liq: BigDecimal,
+        current: BigDecimal,
+    ): Double {
         val totalBuffer = entry.subtract(liq).abs()
         if (totalBuffer <= BigDecimal.ZERO) return 0.0
         val remaining = current.subtract(liq).abs()
@@ -311,39 +324,54 @@ class FuturesRiskEngine(
      * - Двигает trailing stop только в прибыль (vm > 0) и только в «улучшающую» сторону.
      * - Никогда не ослабляет ниже жёсткого stopLoss.
      */
-    fun updateTrailingStop(position: Position, currentPrice: BigDecimal) {
+    fun updateTrailingStop(
+        position: Position,
+        currentPrice: BigDecimal,
+    ) {
         if (!riskConfig.trailingStopEnabled) return
         if (position.instrumentType != InstrumentType.FUTURES) return
 
         val pointValue = instrumentsConfig.pointValue(position.ticker)
         val qty = BigDecimal(position.quantity)
-        val variationMargin = when (position.direction) {
-            PositionDirection.LONG -> currentPrice.subtract(position.entryPrice).multiply(pointValue).multiply(qty)
-            PositionDirection.SHORT -> position.entryPrice.subtract(currentPrice).multiply(pointValue).multiply(qty)
-        }
+        val variationMargin =
+            when (position.direction) {
+                PositionDirection.LONG -> {
+                    currentPrice.subtract(position.entryPrice).multiply(pointValue).multiply(qty)
+                }
+
+                PositionDirection.SHORT -> {
+                    position.entryPrice
+                        .subtract(currentPrice)
+                        .multiply(pointValue)
+                        .multiply(qty)
+                }
+            }
         position.variationMargin = variationMargin
 
         if (variationMargin <= BigDecimal.ZERO) return
 
         val percent = BigDecimal(riskConfig.trailingStopPercent.toString()).divide(BigDecimal("100"))
-        var candidate = when (position.direction) {
-            PositionDirection.LONG -> currentPrice.multiply(BigDecimal.ONE.subtract(percent))
-            PositionDirection.SHORT -> currentPrice.multiply(BigDecimal.ONE.add(percent))
-        }
+        var candidate =
+            when (position.direction) {
+                PositionDirection.LONG -> currentPrice.multiply(BigDecimal.ONE.subtract(percent))
+                PositionDirection.SHORT -> currentPrice.multiply(BigDecimal.ONE.add(percent))
+            }
 
         // Не ослабляем ниже жёсткого стопа
         position.stopLoss?.let { hardStop ->
-            candidate = when (position.direction) {
-                PositionDirection.LONG -> if (candidate < hardStop) hardStop else candidate
-                PositionDirection.SHORT -> if (candidate > hardStop) hardStop else candidate
-            }
+            candidate =
+                when (position.direction) {
+                    PositionDirection.LONG -> if (candidate < hardStop) hardStop else candidate
+                    PositionDirection.SHORT -> if (candidate > hardStop) hardStop else candidate
+                }
         }
 
         val currentStop = position.trailingStopPrice
-        val improved = when (position.direction) {
-            PositionDirection.LONG -> currentStop == null || candidate > currentStop
-            PositionDirection.SHORT -> currentStop == null || candidate < currentStop
-        }
+        val improved =
+            when (position.direction) {
+                PositionDirection.LONG -> currentStop == null || candidate > currentStop
+                PositionDirection.SHORT -> currentStop == null || candidate < currentStop
+            }
         if (improved) {
             position.trailingStopPrice = candidate.setScale(4, RoundingMode.HALF_UP)
             logger.debug { "Trailing stop updated ${position.ticker} -> $candidate (vm=$variationMargin)" }
@@ -359,7 +387,7 @@ class FuturesRiskEngine(
         val stopLossPrice: BigDecimal,
         val takeProfitPrice: BigDecimal,
         val liquidationPrice: BigDecimal?,
-        val reason: String?
+        val reason: String?,
     )
 
     enum class LiquidationStatus { SAFE, WARNING, CRITICAL }

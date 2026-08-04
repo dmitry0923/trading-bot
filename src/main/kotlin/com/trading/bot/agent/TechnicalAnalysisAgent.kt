@@ -33,7 +33,7 @@ class TechnicalAnalysisAgent(
     private val semanticCache: SemanticCache,
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -52,7 +52,7 @@ class TechnicalAnalysisAgent(
         candles: List<Candle>,
         snapshot: MarketSnapshot,
         cycleId: String,
-        version: String = PromptRegistry.DEFAULT_VERSION
+        version: String = PromptRegistry.DEFAULT_VERSION,
     ): TechnicalReport {
         val start = System.currentTimeMillis()
         val indicators = IndicatorCalculator.calculate(candles)
@@ -60,63 +60,75 @@ class TechnicalAnalysisAgent(
         if (indicators == null) {
             return logAndReturn(
                 TechnicalReport(
-                    trend = "NEUTRAL", rsi = 50.0, atr = 0.0,
-                    conclusion = "INSUFFICIENT_DATA", confidence = 0.0,
-                    reasoning = "Not enough candles (need >= 30, got ${candles.size})"
+                    trend = "NEUTRAL",
+                    rsi = 50.0,
+                    atr = 0.0,
+                    conclusion = "INSUFFICIENT_DATA",
+                    confidence = 0.0,
+                    reasoning = "Not enough candles (need >= 30, got ${candles.size})",
                 ),
-                ticker, cycleId, start, "{}", isCached = false
+                ticker,
+                cycleId,
+                start,
+                "{}",
+                isCached = false,
             )
         }
 
-        val baseline = TechnicalReport(
-            trend = indicators.trend,
-            rsi = round2(indicators.rsi),
-            atr = round2(indicators.atr),
-            macd = round2(indicators.macdHistogram),
-            bbUpper = indicators.bbUpper,
-            bbLower = indicators.bbLower,
-            conclusion = indicators.conclusion,
-            confidence = 0.55,
-            reasoning = "RSI=${round2(indicators.rsi)}, MACD=${round2(indicators.macdHistogram)}, " +
-                "BB=[${indicators.bbLower}..${indicators.bbUpper}], trend=${indicators.trend}"
-        )
+        val baseline =
+            TechnicalReport(
+                trend = indicators.trend,
+                rsi = round2(indicators.rsi),
+                atr = round2(indicators.atr),
+                macd = round2(indicators.macdHistogram),
+                bbUpper = indicators.bbUpper,
+                bbLower = indicators.bbLower,
+                conclusion = indicators.conclusion,
+                confidence = 0.55,
+                reasoning =
+                    "RSI=${round2(indicators.rsi)}, MACD=${round2(indicators.macdHistogram)}, " +
+                        "BB=[${indicators.bbLower}..${indicators.bbUpper}], trend=${indicators.trend}",
+            )
 
         val volatilityRegime = volatilityRegime(indicators.atr, snapshot.currentPrice)
         val atrPercentile = IndicatorCalculator.atrPercentile(candles)
 
         // Семантический отпечаток: цена (1 знак) + RSI-бакет + trend + vol regime + MACD + ATR pct + сессия
-        val fingerprint = semanticCache.fingerprint(
-            snapshot.currentPrice,
-            indicators.rsi,
-            indicators.trend,
-            volatilityRegime,
-            macdHistogram = indicators.macdHistogram,
-            atrPercentile = atrPercentile
-        )
+        val fingerprint =
+            semanticCache.fingerprint(
+                snapshot.currentPrice,
+                indicators.rsi,
+                indicators.trend,
+                volatilityRegime,
+                macdHistogram = indicators.macdHistogram,
+                atrPercentile = atrPercentile,
+            )
 
-        val variables = mapOf(
-            "ticker" to ticker,
-            "currentPrice" to snapshot.currentPrice.toPlainString(),
-            "rsi" to round2(indicators.rsi),
-            "atr" to round2(indicators.atr),
-            "macdHistogram" to round2(indicators.macdHistogram),
-            "bbLower" to indicators.bbLower.toPlainString(),
-            "bbMiddle" to indicators.bbMiddle.toPlainString(),
-            "bbUpper" to indicators.bbUpper.toPlainString(),
-            "trend" to indicators.trend,
-            "volume" to (snapshot.volume ?: 0),
-            "timeframe" to "MINUTE_10"
-        )
+        val variables =
+            mapOf(
+                "ticker" to ticker,
+                "currentPrice" to snapshot.currentPrice.toPlainString(),
+                "rsi" to round2(indicators.rsi),
+                "atr" to round2(indicators.atr),
+                "macdHistogram" to round2(indicators.macdHistogram),
+                "bbLower" to indicators.bbLower.toPlainString(),
+                "bbMiddle" to indicators.bbMiddle.toPlainString(),
+                "bbUpper" to indicators.bbUpper.toPlainString(),
+                "trend" to indicators.trend,
+                "volume" to (snapshot.volume ?: 0),
+                "timeframe" to "MINUTE_10",
+            )
 
         val prompt = promptRegistry.getTemplate("technical-analysis", version)
-        val resp = llmClient.complete(
-            agent = "technical",
-            ticker = ticker,
-            prompt = prompt,
-            variables = variables,
-            fingerprint = fingerprint,
-            temperature = 0.1
-        )
+        val resp =
+            llmClient.complete(
+                agent = "technical",
+                ticker = ticker,
+                prompt = prompt,
+                variables = variables,
+                fingerprint = fingerprint,
+                temperature = 0.1,
+            )
 
         if (resp.isFallback) {
             logger.info { "LLM unavailable for $ticker, using deterministic technical analysis" }
@@ -125,13 +137,15 @@ class TechnicalAnalysisAgent(
 
         return try {
             val j = objectMapper.readTree(resp.content)
-            val enhanced = baseline.copy(
-                conclusion = j.path("conclusion").asText("NEUTRAL").uppercase().let {
-                    if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
-                },
-                confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-                reasoning = j.path("reasoning").asText(baseline.reasoning)
-            )
+            val enhanced =
+                baseline.copy(
+                    conclusion =
+                        j.path("conclusion").asText("NEUTRAL").uppercase().let {
+                            if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
+                        },
+                    confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                    reasoning = j.path("reasoning").asText(baseline.reasoning),
+                )
             logAndReturn(enhanced, ticker, cycleId, start, resp.content, isCached = resp.fromCache, tokensUsed = resp.tokensUsed)
         } catch (e: Exception) {
             logger.warn(e) { "Technical LLM parse error for $ticker" }
@@ -139,10 +153,16 @@ class TechnicalAnalysisAgent(
         }
     }
 
-    private fun volatilityRegime(atr: Double, price: BigDecimal): String {
+    private fun volatilityRegime(
+        atr: Double,
+        price: BigDecimal,
+    ): String {
         if (price <= BigDecimal.ZERO) return "UNKNOWN"
-        val atrPercent = BigDecimal(atr).divide(price, 4, RoundingMode.HALF_UP)
-            .multiply(BigDecimal("100")).toDouble()
+        val atrPercent =
+            BigDecimal(atr)
+                .divide(price, 4, RoundingMode.HALF_UP)
+                .multiply(BigDecimal("100"))
+                .toDouble()
         return when {
             atrPercent < 1.0 -> "LOW_VOLATILITY"
             atrPercent < 2.5 -> "MEDIUM_VOLATILITY"
@@ -157,7 +177,7 @@ class TechnicalAnalysisAgent(
         startMs: Long,
         raw: String,
         isCached: Boolean,
-        tokensUsed: Int = 0
+        tokensUsed: Int = 0,
     ): TechnicalReport {
         agentLogRepository.save(
             AgentLog(
@@ -170,8 +190,8 @@ class TechnicalAnalysisAgent(
                 rawOutput = raw,
                 latencyMs = System.currentTimeMillis() - startMs,
                 tokensUsed = tokensUsed,
-                isCached = isCached
-            )
+                isCached = isCached,
+            ),
         )
         meterRegistry.counter("agent.technical.decision", Tags.of("action", report.conclusion)).increment()
         return report

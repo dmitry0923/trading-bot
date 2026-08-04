@@ -11,5 +11,5 @@ data class StrategyAdjustment(
     val newValue: BigDecimal? = null,
     val triggeredBy: String,
     val reason: String,
-    val createdAt: LocalDateTime = LocalDateTime.now()
+    val createdAt: LocalDateTime = LocalDateTime.now(),
 )

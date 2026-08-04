@@ -27,7 +27,10 @@ class PromptRegistry {
     private val cache = ConcurrentHashMap<String, PromptTemplate>()
     private val yamlMapper = ObjectMapper(YAMLFactory())
 
-    private fun key(name: String, version: String) = "$name::$version"
+    private fun key(
+        name: String,
+        version: String,
+    ) = "$name::$version"
 
     @PostConstruct
     fun init() = load()
@@ -36,18 +39,20 @@ class PromptRegistry {
     fun load() {
         cache.clear()
         val resolver = PathMatchingResourcePatternResolver()
-        val resources = resolver.getResources("classpath:prompts/*.yml") +
-            resolver.getResources("classpath:prompts/*.yaml")
+        val resources =
+            resolver.getResources("classpath:prompts/*.yml") +
+                resolver.getResources("classpath:prompts/*.yaml")
         if (resources.isEmpty()) {
             logger.warn { "No prompt files found in classpath:prompts/ — PromptRegistry is empty" }
             return
         }
         for (resource in resources) {
             try {
-                val filename = resource.filename
-                    ?.removeSuffix(".yml")
-                    ?.removeSuffix(".yaml")
-                    ?: continue
+                val filename =
+                    resource.filename
+                        ?.removeSuffix(".yml")
+                        ?.removeSuffix(".yaml")
+                        ?: continue
                 val tree = yamlMapper.readTree(resource.inputStream)
                 val promptsNode = tree.path("prompts")
                 if (!promptsNode.isObject) {
@@ -57,12 +62,13 @@ class PromptRegistry {
                 var loaded = 0
                 promptsNode.fieldNames().forEach { version ->
                     val v = promptsNode.get(version)
-                    val template = PromptTemplate(
-                        name = filename,
-                        version = version,
-                        system = v.path("system").asText(""),
-                        userTemplate = v.path("user_template").asText("")
-                    )
+                    val template =
+                        PromptTemplate(
+                            name = filename,
+                            version = version,
+                            system = v.path("system").asText(""),
+                            userTemplate = v.path("user_template").asText(""),
+                        )
                     cache[key(filename, version)] = template
                     loaded++
                 }
@@ -75,17 +81,23 @@ class PromptRegistry {
     }
 
     /** Возвращает шаблон по имени и версии (по умолчанию default). */
-    fun getTemplate(name: String, version: String = DEFAULT_VERSION): PromptTemplate {
-        return cache[key(name, version)]
+    fun getTemplate(
+        name: String,
+        version: String = DEFAULT_VERSION,
+    ): PromptTemplate =
+        cache[key(name, version)]
             ?: cache[key(name, DEFAULT_VERSION)]
             ?: throw NoSuchElementException(
                 "Prompt template not found: name=$name, version=$version. " +
-                    "Available: ${availableNames()}"
+                    "Available: ${availableNames()}",
             )
-    }
 
     /** Все загруженные имена промптов (для диагностики). */
-    fun availableNames(): List<String> = cache.keys.map { it.substringBefore("::") }.distinct().sorted()
+    fun availableNames(): List<String> =
+        cache.keys
+            .map { it.substringBefore("::") }
+            .distinct()
+            .sorted()
 
     companion object {
         const val DEFAULT_VERSION = "default"

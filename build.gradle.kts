@@ -1,11 +1,8 @@
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
-
 plugins {
-    id("org.springframework.boot") version "3.2.0"
-    id("io.spring.dependency-management") version "1.1.5"
-    kotlin("jvm") version "1.9.21"
-    kotlin("plugin.spring") version "1.9.21"
-    id("org.jlleitschuh.gradle.ktlint") version "12.1.0"
+    alias(libs.plugins.springBoot)
+    alias(libs.plugins.kotlinJvm)
+    alias(libs.plugins.kotlinSpring)
+    alias(libs.plugins.ktlint)
 }
 
 group = "com.trading.bot"
@@ -19,7 +16,13 @@ repositories {
     mavenCentral()
 }
 
+// BOM Spring Boot через нативный Gradle platform(), а не io.spring.dependency-management.
+// Это ограничивает версии (в т.ч. Kotlin 1.9.21) только конфигурациями приложения,
+// а изолированная конфигурация ktlint* получает собственный совместимый Kotlin (2.2.x).
 dependencies {
+    implementation(platform(libs.springBootBom))
+    runtimeOnly(platform(libs.springBootBom))
+
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     // R2DBC: реактивный доступ к PostgreSQL из всех репозиториев приложения
@@ -38,11 +41,11 @@ dependencies {
     implementation("io.projectreactor.kotlin:reactor-kotlin-extensions")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
-    implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
+    implementation(libs.kotlinLogging)
 
     // Resilience4j: Circuit Breaker, Rate Limiter, Retry (программное использование с корутинами)
-    implementation("io.github.resilience4j:resilience4j-spring-boot3:2.2.0")
-    implementation("io.github.resilience4j:resilience4j-kotlin:2.2.0")
+    implementation(libs.resilience4jSpringBoot3)
+    implementation(libs.resilience4jKotlin)
     implementation("org.springframework.boot:spring-boot-starter-aop")
 
     // Jackson YAML — для PromptRegistry (чтение prompts/*.yml)
@@ -51,20 +54,19 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
     runtimeOnly("org.postgresql:r2dbc-postgresql")
 
-    // ✅ ИСПРАВЛЕННЫЕ ТЕСТОВЫЕ ЗАВИСИМОСТИ
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-    testImplementation("org.testcontainers:junit-jupiter:1.21.4")
-    testImplementation("org.testcontainers:postgresql:1.21.4")
-    testImplementation("org.testcontainers:testcontainers:1.21.4")
+    testImplementation(libs.testcontainersJunitJupiter)
+    testImplementation(libs.testcontainersPostgresql)
+    testImplementation(libs.testcontainersCore)
 
-    // ✅ ЯВНО ДОБАВЛЯЕМ JUNIT PLATFORM LAUNCHER
+    // JUnit Platform Launcher для запуска тестов
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-tasks.withType<KotlinCompile> {
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
     kotlinOptions {
         freeCompilerArgs += "-Xjsr305=strict"
         jvmTarget = "21"
@@ -82,8 +84,14 @@ tasks.withType<Test> {
 }
 
 ktlint {
-    version.set("1.0.1")
+    version.set(libs.versions.ktlint.get())
+    outputToConsole.set(true)
+    verbose.set(true)
     filter {
         exclude { it.file.path.contains("/generated/") }
     }
+}
+
+tasks.named("check") {
+    dependsOn("ktlintCheck")
 }

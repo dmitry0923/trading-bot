@@ -18,7 +18,7 @@ import java.time.Duration
 @Service
 class RedisCacheService(
     private val redisTemplate: StringRedisTemplate,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
     private val prefix = "strategy:"
@@ -45,8 +45,8 @@ class RedisCacheService(
      * @param ticker тикер инструмента
      * @return стратегия или null (нет в кэше / ошибка чтения)
      */
-    fun getStrategy(ticker: String): Strategy? {
-        return try {
+    fun getStrategy(ticker: String): Strategy? =
+        try {
             redisTemplate.opsForValue().get("$prefix$ticker")?.let {
                 objectMapper.readValue(it, Strategy::class.java)
             }
@@ -54,7 +54,6 @@ class RedisCacheService(
             logger.error(e) { "Redis get error" }
             null
         }
-    }
 
     /**
      * Массовое получение стратегий по списку тикеров.
@@ -62,8 +61,7 @@ class RedisCacheService(
      * @param tickers список тикеров
      * @return карта тикер -> стратегия (только найденные в кэше)
      */
-    fun getAllStrategies(tickers: List<String>): Map<String, Strategy> =
-        tickers.mapNotNull { ticker -> getStrategy(ticker)?.let { s -> ticker to s } }.toMap()
+    fun getAllStrategies(tickers: List<String>): Map<String, Strategy> = tickers.mapNotNull { ticker -> getStrategy(ticker)?.let { s -> ticker to s } }.toMap()
 
     /**
      * Сохраняет feedback-ответ в кэш с TTL 60 минут.
@@ -72,13 +70,17 @@ class RedisCacheService(
      * @param feedbackJson сериализованный JSON feedback
      * @param statsHash хеш статистики, по которому валидируется кэш
      */
-    fun saveFeedback(ticker: String, feedbackJson: String, statsHash: String) {
+    fun saveFeedback(
+        ticker: String,
+        feedbackJson: String,
+        statsHash: String,
+    ) {
         try {
             val entry = FeedbackCacheEntry(ticker, feedbackJson, statsHash)
             redisTemplate.opsForValue().set(
                 "$feedbackPrefix$ticker",
                 objectMapper.writeValueAsString(entry),
-                feedbackTtl
+                feedbackTtl,
             )
         } catch (e: Exception) {
             logger.error(e) { "Redis feedback save error" }
@@ -92,8 +94,11 @@ class RedisCacheService(
      * @param currentStatsHash текущий хеш статистики
      * @return JSON feedback или null (нет в кэше / устарел / ошибка чтения)
      */
-    fun getFeedback(ticker: String, currentStatsHash: String): String? {
-        return try {
+    fun getFeedback(
+        ticker: String,
+        currentStatsHash: String,
+    ): String? =
+        try {
             redisTemplate.opsForValue().get("$feedbackPrefix$ticker")?.let {
                 val entry = objectMapper.readValue(it, FeedbackCacheEntry::class.java)
                 if (entry.statsHash == currentStatsHash) entry.feedbackJson else null
@@ -102,5 +107,4 @@ class RedisCacheService(
             logger.error(e) { "Redis feedback get error" }
             null
         }
-    }
 }

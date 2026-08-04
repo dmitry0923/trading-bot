@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicInteger
  * elapsed будет ~10× больше порога и тест упадёт.
  */
 class StrategyCycleParallelismTest {
-
     private companion object {
         const val TICKERS = 10
         const val STEP_MS = 40L
@@ -32,43 +31,47 @@ class StrategyCycleParallelismTest {
     }
 
     @Test
-    fun `ten tickers are processed within a single pipeline latency, not ten times it`() = runBlocking {
-        val completed = AtomicInteger(0)
-        val start = System.currentTimeMillis()
+    fun `ten tickers are processed within a single pipeline latency, not ten times it`() =
+        runBlocking {
+            val completed = AtomicInteger(0)
+            val start = System.currentTimeMillis()
 
-        coroutineScope {
-            val feedback = (1..TICKERS).associateWith { ticker ->
-                async { delay(STEP_MS); ticker }
+            coroutineScope {
+                val feedback =
+                    (1..TICKERS).associateWith { ticker ->
+                        async {
+                            delay(STEP_MS)
+                            ticker
+                        }
+                    }
+
+                (1..TICKERS)
+                    .map { ticker ->
+                        async {
+                            feedback.getValue(ticker).await()
+                            processTickerSim()
+                            completed.incrementAndGet()
+                        }
+                    }.awaitAll()
             }
 
-            (1..TICKERS)
-                .map { ticker ->
-                    async {
-                        feedback.getValue(ticker).await()
-                        processTickerSim()
-                        completed.incrementAndGet()
-                    }
-                }
-                .awaitAll()
+            val elapsed = System.currentTimeMillis() - start
+
+            assertEquals(TICKERS, completed.get())
+
+            // Критический путь: feedback (оверлапится с загрузкой данных) + tech/fund (парал-но)
+            // + strat + contr + arb = 1 + 1 + 3 = 5 шагов
+            val criticalPathMs = STEP_MS * CHAIN_STEPS
+            val parallelBoundMs = criticalPathMs + STEP_MS * 2
+            val sequentialMs = criticalPathMs.toLong() * TICKERS
+
+            assertTrue(
+                elapsed < parallelBoundMs,
+                "10 тикеров должны обрабатываться ПАРАЛЛЕЛЬНО: elapsed=${elapsed}ms, " +
+                    "критический путь=${criticalPathMs}ms, порог=$parallelBoundMs; " +
+                    "при последовательной обработке было бы ~${sequentialMs}ms",
+            )
         }
-
-        val elapsed = System.currentTimeMillis() - start
-
-        assertEquals(TICKERS, completed.get())
-
-        // Критический путь: feedback (оверлапится с загрузкой данных) + tech/fund (парал-но)
-        // + strat + contr + arb = 1 + 1 + 3 = 5 шагов
-        val criticalPathMs = STEP_MS * CHAIN_STEPS
-        val parallelBoundMs = criticalPathMs + STEP_MS * 2
-        val sequentialMs = criticalPathMs.toLong() * TICKERS
-
-        assertTrue(
-            elapsed < parallelBoundMs,
-            "10 тикеров должны обрабатываться ПАРАЛЛЕЛЬНО: elapsed=${elapsed}ms, " +
-                "критический путь=${criticalPathMs}ms, порог=$parallelBoundMs; " +
-                "при последовательной обработке было бы ~${sequentialMs}ms"
-        )
-    }
 
     /**
      * Имитация обработки одного тикера: два независимых LLM-агента параллельно,
@@ -78,7 +81,8 @@ class StrategyCycleParallelismTest {
         coroutineScope {
             val tech = async { delay(STEP_MS) }
             val fund = async { delay(STEP_MS) }
-            tech.await(); fund.await()
+            tech.await()
+            fund.await()
         }
         delay(STEP_MS) // strategist (зависит от tech+fund)
         delay(STEP_MS) // contrarian (зависит от draft)

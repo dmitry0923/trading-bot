@@ -14,30 +14,33 @@ import java.time.LocalDateTime
 class CandleRepository(
     private val databaseClient: DatabaseClient,
 ) {
-    private fun toCandle(row: Row): Candle = Candle(
-        id = row.get("id", Long::class.javaObjectType),
-        ticker = row.require("ticker", String::class.java),
-        timeframe = row.require("timeframe", String::class.java),
-        openPrice = row.require("open_price", BigDecimal::class.java),
-        highPrice = row.require("high_price", BigDecimal::class.java),
-        lowPrice = row.require("low_price", BigDecimal::class.java),
-        closePrice = row.require("close_price", BigDecimal::class.java),
-        volume = row.require("volume", Long::class.javaObjectType),
-        time = row.require("time", LocalDateTime::class.java)
-    )
+    private fun toCandle(row: Row): Candle =
+        Candle(
+            id = row.get("id", Long::class.javaObjectType),
+            ticker = row.require("ticker", String::class.java),
+            timeframe = row.require("timeframe", String::class.java),
+            openPrice = row.require("open_price", BigDecimal::class.java),
+            highPrice = row.require("high_price", BigDecimal::class.java),
+            lowPrice = row.require("low_price", BigDecimal::class.java),
+            closePrice = row.require("close_price", BigDecimal::class.java),
+            volume = row.require("volume", Long::class.javaObjectType),
+            time = row.require("time", LocalDateTime::class.java),
+        )
 
     suspend fun findByTickerAndTimeframeAndTimeBetween(
         ticker: String,
         timeframe: String,
         from: LocalDateTime,
-        to: LocalDateTime
+        to: LocalDateTime,
     ): List<Candle> {
-        val sql = """
+        val sql =
+            """
             SELECT * FROM candles
             WHERE ticker = :ticker AND timeframe = :timeframe AND time BETWEEN :from AND :to
             ORDER BY time
-        """.trimIndent()
-        return databaseClient.sql(sql)
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
             .bind("ticker", ticker)
             .bind("timeframe", timeframe)
             .bind("from", from)
@@ -51,26 +54,30 @@ class CandleRepository(
     suspend fun existsByTickerAndTimeframeAndTime(
         ticker: String,
         timeframe: String,
-        time: LocalDateTime
+        time: LocalDateTime,
     ): Boolean {
         val sql = "SELECT COUNT(*) AS c FROM candles WHERE ticker = :ticker AND timeframe = :timeframe AND time = :time"
-        val count = databaseClient.sql(sql)
-            .bind("ticker", ticker)
-            .bind("timeframe", timeframe)
-            .bind("time", time)
-            .map { row, _ -> row.get("c", Long::class.javaObjectType)!! }
-            .one()
-            .awaitSingle()
+        val count =
+            databaseClient
+                .sql(sql)
+                .bind("ticker", ticker)
+                .bind("timeframe", timeframe)
+                .bind("time", time)
+                .map { row, _ -> row.get("c", Long::class.javaObjectType)!! }
+                .one()
+                .awaitSingle()
         return count > 0
     }
 
     suspend fun save(candle: Candle) {
-        val sql = """
+        val sql =
+            """
             INSERT INTO candles (ticker, timeframe, open_price, high_price, low_price, close_price, volume, time)
             VALUES (:ticker, :timeframe, :openPrice, :highPrice, :lowPrice, :closePrice, :volume, :time)
             ON CONFLICT (ticker, timeframe, time) DO NOTHING
-        """.trimIndent()
-        databaseClient.sql(sql)
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
             .bind("ticker", candle.ticker)
             .bind("timeframe", candle.timeframe)
             .bind("openPrice", candle.openPrice)

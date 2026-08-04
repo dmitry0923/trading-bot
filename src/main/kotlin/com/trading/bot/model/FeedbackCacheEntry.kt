@@ -14,5 +14,5 @@ data class FeedbackCacheEntry(
     val ticker: String,
     val feedbackJson: String,
     val statsHash: String,
-    val createdAt: LocalDateTime = LocalDateTime.now()
+    val createdAt: LocalDateTime = LocalDateTime.now(),
 )

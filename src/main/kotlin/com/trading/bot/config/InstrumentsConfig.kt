@@ -24,19 +24,109 @@ import java.math.RoundingMode
 @Component
 @ConfigurationProperties(prefix = "instruments")
 class InstrumentsConfig {
-
-    var instruments: List<InstrumentSpec> = mutableListOf(
-        InstrumentSpec(ticker = "Si", type = "FUTURES", lotSize = 1, priceStep = BigDecimal("0.01"), priceStepCost = BigDecimal("10.0"), go = BigDecimal("15000"), leverage = BigDecimal("2.0"), baseAsset = "USD"),
-        InstrumentSpec(ticker = "SBER", type = "STOCK", lotSize = 10, priceStep = BigDecimal("0.01"), priceStepCost = BigDecimal("0.1"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "GAZP", type = "STOCK", lotSize = 10, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.5"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "LKOH", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "VTBR", type = "STOCK", lotSize = 1000, priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("0.1"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "ROSN", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.05"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "NVTK", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "PLZL", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "MGNT", type = "STOCK", lotSize = 1, priceStep = BigDecimal("1.0"), priceStepCost = BigDecimal("1.0"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB"),
-        InstrumentSpec(ticker = "TATN", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.05"), go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "RUB")
-    )
+    var instruments: List<InstrumentSpec> =
+        mutableListOf(
+            InstrumentSpec(
+                ticker = "Si",
+                type = "FUTURES",
+                lotSize = 1,
+                priceStep = BigDecimal("0.01"),
+                priceStepCost = BigDecimal("10.0"),
+                go = BigDecimal("15000"),
+                leverage = BigDecimal("2.0"),
+                baseAsset = "USD",
+            ),
+            InstrumentSpec(
+                ticker = "SBER",
+                type = "STOCK",
+                lotSize = 10,
+                priceStep = BigDecimal("0.01"),
+                priceStepCost = BigDecimal("0.1"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "GAZP",
+                type = "STOCK",
+                lotSize = 10,
+                priceStep = BigDecimal("0.05"),
+                priceStepCost = BigDecimal("0.5"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "LKOH",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("1.0"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "VTBR",
+                type = "STOCK",
+                lotSize = 1000,
+                priceStep = BigDecimal("0.0001"),
+                priceStepCost = BigDecimal("0.1"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "ROSN",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("0.05"),
+                priceStepCost = BigDecimal("0.05"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "NVTK",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("1.0"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "PLZL",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("1.0"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "MGNT",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("1.0"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "TATN",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("0.05"),
+                priceStepCost = BigDecimal("0.05"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "RUB",
+            ),
+        )
 
     data class InstrumentSpec(
         var ticker: String = "Si",
@@ -46,11 +136,10 @@ class InstrumentsConfig {
         var priceStepCost: BigDecimal = BigDecimal("10.0"),
         var go: BigDecimal = BigDecimal("15000"),
         var leverage: BigDecimal = BigDecimal("2.0"),
-        var baseAsset: String = "USD"
+        var baseAsset: String = "USD",
     )
 
-    fun find(ticker: String): InstrumentSpec? =
-        instruments.firstOrNull { it.ticker.equals(ticker, ignoreCase = true) }
+    fun find(ticker: String): InstrumentSpec? = instruments.firstOrNull { it.ticker.equals(ticker, ignoreCase = true) }
 
     fun isFutures(ticker: String): Boolean = find(ticker)?.type == "FUTURES"
 

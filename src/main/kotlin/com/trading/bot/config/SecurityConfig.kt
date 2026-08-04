@@ -33,11 +33,13 @@ class SecurityConfig(
             .cors { it.disable() }
             .authorizeHttpRequests { auth ->
                 auth
-                    .requestMatchers("/actuator/health").permitAll()
-                    .requestMatchers("/api/v1/**", "/actuator/**").authenticated()
-                    .anyRequest().permitAll()
-            }
-            .httpBasic(Customizer.withDefaults())
+                    .requestMatchers("/actuator/health")
+                    .permitAll()
+                    .requestMatchers("/api/v1/**", "/actuator/**")
+                    .authenticated()
+                    .anyRequest()
+                    .permitAll()
+            }.httpBasic(Customizer.withDefaults())
         return http.build()
     }
 
@@ -45,7 +47,8 @@ class SecurityConfig(
     fun userDetailsService(): UserDetailsService {
         val effectivePassword = authPassword.ifBlank { "change-me-now" }
         val user =
-            User.withUsername(authUser)
+            User
+                .withUsername(authUser)
                 .password(passwordEncoder().encode(effectivePassword))
                 .roles("USER")
                 .build()

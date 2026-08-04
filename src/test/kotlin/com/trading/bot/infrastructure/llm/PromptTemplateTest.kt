@@ -4,19 +4,20 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 class PromptTemplateTest {
-
-    private val template = PromptTemplate(
-        name = "test",
-        version = "default",
-        system = "Ты эксперт по тикеру {{ticker}}",
-        userTemplate = "Тикер: {{ticker}}\nЦена: {{currentPrice}}\nRSI: {{rsi}}"
-    )
+    private val template =
+        PromptTemplate(
+            name = "test",
+            version = "default",
+            system = "Ты эксперт по тикеру {{ticker}}",
+            userTemplate = "Тикер: {{ticker}}\nЦена: {{currentPrice}}\nRSI: {{rsi}}",
+        )
 
     @Test
     fun `renderUser substitutes variables`() {
-        val rendered = template.renderUser(
-            mapOf("ticker" to "SBER", "currentPrice" to "280.5", "rsi" to "62")
-        )
+        val rendered =
+            template.renderUser(
+                mapOf("ticker" to "SBER", "currentPrice" to "280.5", "rsi" to "62"),
+            )
         assertEquals("Тикер: SBER\nЦена: 280.5\nRSI: 62", rendered)
     }
 

@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 class LlmRequestQueue(
     private val capacity: Int = 64,
     private val concurrency: Int = 2,
-    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val queue = Channel<suspend () -> Unit>(capacity)
 

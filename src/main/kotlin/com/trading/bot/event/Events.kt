@@ -22,19 +22,19 @@ import java.time.LocalDateTime
 data class PriceChangedEvent(
     val ticker: String,
     val price: BigDecimal,
-    val timestamp: Instant = Instant.now()
+    val timestamp: Instant = Instant.now(),
 )
 
 data class StrategyGeneratedEvent(
-    val strategy: Strategy
+    val strategy: Strategy,
 )
 
 data class EntrySignalEvent(
-    val strategy: Strategy
+    val strategy: Strategy,
 )
 
 data class ExecutionReportEvent(
-    val report: ExecutionReport
+    val report: ExecutionReport,
 )
 
 /**
@@ -46,7 +46,7 @@ data class PositionClosedEvent(
     val ticker: String,
     val pnl: BigDecimal,
     val reason: String,
-    val closedAt: LocalDateTime = LocalDateTime.now()
+    val closedAt: LocalDateTime = LocalDateTime.now(),
 )
 
 data class PositionOpenedEvent(
@@ -55,7 +55,7 @@ data class PositionOpenedEvent(
     val quantity: Int,
     val direction: PositionDirection,
     val entryPrice: BigDecimal,
-    val openedAt: LocalDateTime = LocalDateTime.now()
+    val openedAt: LocalDateTime = LocalDateTime.now(),
 )
 
 /**
@@ -63,5 +63,5 @@ data class PositionOpenedEvent(
  */
 data class TradingHaltedEvent(
     val reason: String,
-    val timestamp: Instant = Instant.now()
+    val timestamp: Instant = Instant.now(),
 )

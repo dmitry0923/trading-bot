@@ -24,10 +24,12 @@ class LeverageConfig {
 
     /** Эффективное плечо: пользовательское, ограниченное хард-кэпами. */
     fun effective(): BigDecimal =
-        if (!enabled) BigDecimal.ONE
-        else userLeverage.coerceIn(minLeverage, maxLeverage)
+        if (!enabled) {
+            BigDecimal.ONE
+        } else {
+            userLeverage.coerceIn(minLeverage, maxLeverage)
+        }
 
     /** Валидация значения плеча против допустимого диапазона. */
-    fun isValid(leverage: BigDecimal): Boolean =
-        leverage >= minLeverage && leverage <= maxLeverage
+    fun isValid(leverage: BigDecimal): Boolean = leverage >= minLeverage && leverage <= maxLeverage
 }

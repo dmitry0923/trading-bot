@@ -14,7 +14,6 @@ import kotlin.math.sqrt
  * - Все методы чисто функциональные и потокобезопасные (без состояния)
  */
 object IndicatorCalculator {
-
     data class Indicators(
         val rsi: Double,
         val atr: Double,
@@ -25,7 +24,7 @@ object IndicatorCalculator {
         val bbMiddle: BigDecimal,
         val bbLower: BigDecimal,
         val trend: String,
-        val conclusion: String
+        val conclusion: String,
     )
 
     /**
@@ -44,18 +43,20 @@ object IndicatorCalculator {
 
         val emaFast = ema(closes, 12).last()
         val emaSlow = ema(closes, 26).last()
-        val trend = when {
-            emaFast > emaSlow -> "UP"
-            emaFast < emaSlow -> "DOWN"
-            else -> "SIDEWAYS"
-        }
-        val conclusion = when {
-            rsi < 30 && closes.last() <= bbLower -> "BULLISH"
-            rsi > 70 && closes.last() >= bbUpper -> "BEARISH"
-            macdHist > 0 -> "BULLISH"
-            macdHist < 0 -> "BEARISH"
-            else -> "NEUTRAL"
-        }
+        val trend =
+            when {
+                emaFast > emaSlow -> "UP"
+                emaFast < emaSlow -> "DOWN"
+                else -> "SIDEWAYS"
+            }
+        val conclusion =
+            when {
+                rsi < 30 && closes.last() <= bbLower -> "BULLISH"
+                rsi > 70 && closes.last() >= bbUpper -> "BEARISH"
+                macdHist > 0 -> "BULLISH"
+                macdHist < 0 -> "BEARISH"
+                else -> "NEUTRAL"
+            }
 
         return Indicators(
             rsi = rsi,
@@ -67,7 +68,7 @@ object IndicatorCalculator {
             bbMiddle = bbMiddle,
             bbLower = bbLower,
             trend = trend,
-            conclusion = conclusion
+            conclusion = conclusion,
         )
     }
 
@@ -78,7 +79,10 @@ object IndicatorCalculator {
      * @param period период RSI (по умолчанию 14)
      * @return RSI от 0 до 100 (50 при недостатке данных)
      */
-    fun rsi(closes: List<BigDecimal>, period: Int): Double {
+    fun rsi(
+        closes: List<BigDecimal>,
+        period: Int,
+    ): Double {
         if (closes.size < period + 1) return 50.0
         var gain = 0.0
         var loss = 0.0
@@ -107,14 +111,18 @@ object IndicatorCalculator {
      * @param period период ATR (по умолчанию 14)
      * @return ATR в денежных единицах (0 при недостатке данных)
      */
-    fun atr(candles: List<Candle>, period: Int): Double {
+    fun atr(
+        candles: List<Candle>,
+        period: Int,
+    ): Double {
         if (candles.size < period + 1) return 0.0
-        val trueRanges = (1 until candles.size).map { i ->
-            val h = candles[i].highPrice.toDouble()
-            val l = candles[i].lowPrice.toDouble()
-            val prevC = candles[i - 1].closePrice.toDouble()
-            maxOf(h - l, kotlin.math.abs(h - prevC), kotlin.math.abs(l - prevC))
-        }
+        val trueRanges =
+            (1 until candles.size).map { i ->
+                val h = candles[i].highPrice.toDouble()
+                val l = candles[i].lowPrice.toDouble()
+                val prevC = candles[i - 1].closePrice.toDouble()
+                maxOf(h - l, kotlin.math.abs(h - prevC), kotlin.math.abs(l - prevC))
+            }
         var a = trueRanges.take(period).average()
         for (i in period until trueRanges.size) {
             a = (a * (period - 1) + trueRanges[i]) / period
@@ -142,7 +150,10 @@ object IndicatorCalculator {
      * @param period период EMA
      * @return список EMA той же длины, что и входной ряд
      */
-    fun ema(values: List<BigDecimal>, period: Int): List<Double> {
+    fun ema(
+        values: List<BigDecimal>,
+        period: Int,
+    ): List<Double> {
         if (values.isEmpty()) return emptyList()
         val k = 2.0 / (period + 1)
         val result = ArrayList<Double>()
@@ -155,7 +166,10 @@ object IndicatorCalculator {
         return result
     }
 
-    private fun emaFromDoubles(values: List<Double>, period: Int): List<Double> {
+    private fun emaFromDoubles(
+        values: List<Double>,
+        period: Int,
+    ): List<Double> {
         if (values.isEmpty()) return emptyList()
         val k = 2.0 / (period + 1)
         val result = ArrayList<Double>()
@@ -190,7 +204,11 @@ object IndicatorCalculator {
      * @param mult количество стандартных отклонений (по умолчанию 2.0)
      * @return Triple(средняя, верхняя, нижняя полоса)
      */
-    fun bollinger(closes: List<BigDecimal>, period: Int, mult: Double): Triple<BigDecimal, BigDecimal, BigDecimal> {
+    fun bollinger(
+        closes: List<BigDecimal>,
+        period: Int,
+        mult: Double,
+    ): Triple<BigDecimal, BigDecimal, BigDecimal> {
         val window = closes.takeLast(period).map { it.toDouble() }
         val mid = window.average()
         val variance = window.map { (it - mid) * (it - mid) }.average()
@@ -198,7 +216,7 @@ object IndicatorCalculator {
         return Triple(
             BigDecimal(mid).setScale(4, RoundingMode.HALF_UP),
             BigDecimal(mid + mult * sd).setScale(4, RoundingMode.HALF_UP),
-            BigDecimal(mid - mult * sd).setScale(4, RoundingMode.HALF_UP)
+            BigDecimal(mid - mult * sd).setScale(4, RoundingMode.HALF_UP),
         )
     }
 }

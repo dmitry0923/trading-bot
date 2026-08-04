@@ -7,13 +7,13 @@ import org.junit.jupiter.api.Test
 import java.time.LocalTime
 
 class TradingHoursGuardTest {
-
-    private val guard = TradingHoursGuard(
-        RiskConfig().apply {
-            tradingHoursStart = "10:00"
-            tradingHoursEnd = "18:30"
-        }
-    )
+    private val guard =
+        TradingHoursGuard(
+            RiskConfig().apply {
+                tradingHoursStart = "10:00"
+                tradingHoursEnd = "18:30"
+            },
+        )
 
     @Test
     fun `trading blocked at 19 00`() {
@@ -43,12 +43,13 @@ class TradingHoursGuardTest {
 
     @Test
     fun `inverted window always blocks`() {
-        val broken = TradingHoursGuard(
-            RiskConfig().apply {
-                tradingHoursStart = "19:00"
-                tradingHoursEnd = "18:00"
-            }
-        )
+        val broken =
+            TradingHoursGuard(
+                RiskConfig().apply {
+                    tradingHoursStart = "19:00"
+                    tradingHoursEnd = "18:00"
+                },
+            )
         assertFalse(broken.isTradingAllowed(LocalTime.of(12, 0)))
     }
 }

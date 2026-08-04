@@ -21,7 +21,7 @@ import java.math.RoundingMode
 @Component
 class Guardrails(
     private val llmConfig: LlmConfig,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     data class Signal(
         val action: StrategyAction,
@@ -30,18 +30,19 @@ class Guardrails(
         val stopLoss: BigDecimal?,
         val takeProfit: BigDecimal?,
         val trailingStop: Boolean,
-        val confidence: Double
+        val confidence: Double,
     ) {
         companion object {
-            fun hold(marketPrice: BigDecimal): Signal = Signal(
-                action = StrategyAction.HOLD,
-                targetPrice = marketPrice,
-                quantity = 0,
-                stopLoss = null,
-                takeProfit = null,
-                trailingStop = false,
-                confidence = 0.0
-            )
+            fun hold(marketPrice: BigDecimal): Signal =
+                Signal(
+                    action = StrategyAction.HOLD,
+                    targetPrice = marketPrice,
+                    quantity = 0,
+                    stopLoss = null,
+                    takeProfit = null,
+                    trailingStop = false,
+                    confidence = 0.0,
+                )
         }
     }
 
@@ -49,7 +50,7 @@ class Guardrails(
         val signal: Signal,
         val overridden: Boolean,
         val overrideReason: String?,
-        val appliedRules: List<String>
+        val appliedRules: List<String>,
     )
 
     fun apply(
@@ -57,7 +58,7 @@ class Guardrails(
         marketPrice: BigDecimal,
         adaptiveThreshold: Double,
         riskLevel: String = "LOW",
-        dailyLossLimitReached: Boolean = false
+        dailyLossLimitReached: Boolean = false,
     ): GuardedSignal {
         var current = signal
         val applied = mutableListOf<String>()
@@ -69,13 +70,23 @@ class Guardrails(
         if (riskLevel == "CRITICAL") {
             recordOverride("RISK_CRITICAL")
             applied += "riskLevel=CRITICAL -> HOLD"
-            return GuardedSignal(hold(marketPrice), overridden = true, overrideReason = "DETERMINISTIC: RISK_CRITICAL", appliedRules = applied)
+            return GuardedSignal(
+                hold(marketPrice),
+                overridden = true,
+                overrideReason = "DETERMINISTIC: RISK_CRITICAL",
+                appliedRules = applied,
+            )
         }
 
         if (dailyLossLimitReached) {
             recordOverride("DAILY_LOSS_LIMIT")
             applied += "dailyLossLimitReached -> HOLD"
-            return GuardedSignal(hold(marketPrice), overridden = true, overrideReason = "DETERMINISTIC: DAILY_LOSS_LIMIT", appliedRules = applied)
+            return GuardedSignal(
+                hold(marketPrice),
+                overridden = true,
+                overrideReason = "DETERMINISTIC: DAILY_LOSS_LIMIT",
+                appliedRules = applied,
+            )
         }
 
         if (current.confidence < adaptiveThreshold) {
@@ -92,8 +103,11 @@ class Guardrails(
             return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: ZERO_QUANTITY", appliedRules = applied)
         }
 
-        val deviation = current.targetPrice.subtract(marketPrice).abs()
-            .divide(marketPrice, 4, RoundingMode.HALF_UP)
+        val deviation =
+            current.targetPrice
+                .subtract(marketPrice)
+                .abs()
+                .divide(marketPrice, 4, RoundingMode.HALF_UP)
         val maxDeviation = BigDecimal(llmConfig.guardrailsMaxPriceDeviationPercent).divide(BigDecimal("100"))
         if (deviation > maxDeviation) {
             recordOverride("PRICE_DEVIATION")
@@ -105,8 +119,7 @@ class Guardrails(
         return GuardedSignal(current, overridden = false, overrideReason = null, appliedRules = applied)
     }
 
-    private fun hold(marketPrice: BigDecimal): Signal =
-        Signal(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0)
+    private fun hold(marketPrice: BigDecimal): Signal = Signal(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0)
 
     private fun recordOverride(reason: String) {
         meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", reason)).increment()

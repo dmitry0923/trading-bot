@@ -24,7 +24,7 @@ import java.time.LocalDateTime
  */
 @Service
 class BacktestEngine(
-    private val candleRepo: CandleRepository
+    private val candleRepo: CandleRepository,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -34,7 +34,7 @@ class BacktestEngine(
         val entryPrice: BigDecimal,
         val stopLoss: BigDecimal?,
         val takeProfit: BigDecimal?,
-        val entryBars: Int
+        val entryBars: Int,
     )
 
     /**
@@ -55,7 +55,7 @@ class BacktestEngine(
         initialCapital: BigDecimal = BigDecimal("100000"),
         minBarsForSignal: Int = 30,
         slPercent: Double = 0.02,
-        tpPercent: Double = 0.04
+        tpPercent: Double = 0.04,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -81,7 +81,7 @@ class BacktestEngine(
         ticker: String,
         days: Int = 730,
         slPercent: Double = 0.02,
-        tpPercent: Double = 0.04
+        tpPercent: Double = 0.04,
     ): BacktestResult {
         loader.loadAndSave(ticker, days)
         return run(ticker, days, slPercent = slPercent, tpPercent = tpPercent)
@@ -100,7 +100,7 @@ class BacktestEngine(
         initialCapital: BigDecimal = BigDecimal("100000"),
         minBarsForSignal: Int = 30,
         slPercent: Double = 0.02,
-        tpPercent: Double = 0.04
+        tpPercent: Double = 0.04,
     ): BacktestResult {
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
@@ -120,10 +120,12 @@ class BacktestEngine(
                         cash = closePosition(ticker, pos0, "STOP_LOSS", pos0.stopLoss, cash, equityCurve, tradeReturns)
                         position = null
                     }
+
                     SimulatedExecution.StopTpHit.TARGET -> {
                         cash = closePosition(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, cash, equityCurve, tradeReturns)
                         position = null
                     }
+
                     null -> {}
                 }
             }
@@ -178,17 +180,24 @@ class BacktestEngine(
      * Учёт открытия позиции: комиссия входа списывается, номинал остаётся в кэше
      * (позиция учитывается как нереализованный PnL в [equityAt]).
      */
-    private fun applyOpen(cash: BigDecimal, pos: PositionSim): BigDecimal =
-        cash.subtract(SimulatedExecution.commissionOn(pos.entryPrice))
+    private fun applyOpen(
+        cash: BigDecimal,
+        pos: PositionSim,
+    ): BigDecimal = cash.subtract(SimulatedExecution.commissionOn(pos.entryPrice))
 
     /** Оценка текущего капитала: cash + нереализованный PnL позиции (mark-to-market). */
-    private fun equityAt(cash: BigDecimal, position: PositionSim?, marketPrice: BigDecimal): BigDecimal {
+    private fun equityAt(
+        cash: BigDecimal,
+        position: PositionSim?,
+        marketPrice: BigDecimal,
+    ): BigDecimal {
         if (position == null) return cash
         val qty = position.quantity.toBigDecimal()
-        val unrealized = when (position.direction) {
-            PositionDirection.LONG -> marketPrice.subtract(position.entryPrice)
-            PositionDirection.SHORT -> position.entryPrice.subtract(marketPrice)
-        }.multiply(qty)
+        val unrealized =
+            when (position.direction) {
+                PositionDirection.LONG -> marketPrice.subtract(position.entryPrice)
+                PositionDirection.SHORT -> position.entryPrice.subtract(marketPrice)
+            }.multiply(qty)
         return cash.add(unrealized)
     }
 
@@ -198,7 +207,7 @@ class BacktestEngine(
         cash: BigDecimal,
         bar: Int,
         slPercent: Double,
-        tpPercent: Double
+        tpPercent: Double,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val capitalSlice = cash.multiply(BigDecimal("0.20"))
@@ -214,15 +223,17 @@ class BacktestEngine(
             direction = direction,
             quantity = lotQty,
             entryPrice = fill.price,
-            stopLoss = when (direction) {
-                PositionDirection.LONG -> fill.price.multiply(BigDecimal.ONE.subtract(sl)).setScale(2, RoundingMode.HALF_UP)
-                PositionDirection.SHORT -> fill.price.multiply(BigDecimal.ONE.add(sl)).setScale(2, RoundingMode.HALF_UP)
-            },
-            takeProfit = when (direction) {
-                PositionDirection.LONG -> fill.price.multiply(BigDecimal.ONE.add(tp)).setScale(2, RoundingMode.HALF_UP)
-                PositionDirection.SHORT -> fill.price.multiply(BigDecimal.ONE.subtract(tp)).setScale(2, RoundingMode.HALF_UP)
-            },
-            entryBars = bar
+            stopLoss =
+                when (direction) {
+                    PositionDirection.LONG -> fill.price.multiply(BigDecimal.ONE.subtract(sl)).setScale(2, RoundingMode.HALF_UP)
+                    PositionDirection.SHORT -> fill.price.multiply(BigDecimal.ONE.add(sl)).setScale(2, RoundingMode.HALF_UP)
+                },
+            takeProfit =
+                when (direction) {
+                    PositionDirection.LONG -> fill.price.multiply(BigDecimal.ONE.add(tp)).setScale(2, RoundingMode.HALF_UP)
+                    PositionDirection.SHORT -> fill.price.multiply(BigDecimal.ONE.subtract(tp)).setScale(2, RoundingMode.HALF_UP)
+                },
+            entryBars = bar,
         )
     }
 
@@ -237,15 +248,16 @@ class BacktestEngine(
         price: BigDecimal,
         cash: BigDecimal,
         equityCurve: MutableList<BigDecimal>,
-        tradeReturns: MutableList<Double>
+        tradeReturns: MutableList<Double>,
     ): BigDecimal {
         val fill = SimulatedExecution.marketFill(price, pos.direction == PositionDirection.SHORT)
         val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice)
         val commissionExit = SimulatedExecution.commissionOn(fill.price)
-        val gross = when (pos.direction) {
-            PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
-            PositionDirection.SHORT -> pos.entryPrice.subtract(fill.price)
-        }.multiply(BigDecimal(pos.quantity))
+        val gross =
+            when (pos.direction) {
+                PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
+                PositionDirection.SHORT -> pos.entryPrice.subtract(fill.price)
+            }.multiply(BigDecimal(pos.quantity))
         val pnl = gross.subtract(commissionEntry).subtract(commissionExit)
 
         tradeReturns.add(pnl.toDouble())
@@ -260,7 +272,11 @@ class BacktestEngine(
      * Сигнал на основе индикаторов (RSI + MACD + Bollinger).
      * Возвращает BUY/SELL/HOLD.
      */
-    fun signalAt(candles: List<Candle>, index: Int, minBars: Int): StrategyAction {
+    fun signalAt(
+        candles: List<Candle>,
+        index: Int,
+        minBars: Int,
+    ): StrategyAction {
         val window = candles.subList(0, index + 1)
         if (window.size < minBars) return StrategyAction.HOLD
         val ind = IndicatorCalculator.calculate(window) ?: return StrategyAction.HOLD
@@ -272,16 +288,17 @@ class BacktestEngine(
         }
     }
 
-    private fun emptyResult(ticker: String): BacktestResult = BacktestResult(
-        ticker = ticker,
-        totalReturn = 0.0,
-        sharpeRatio = 0.0,
-        maxDrawdown = 0.0,
-        winRate = 0.0,
-        profitFactor = 0.0,
-        totalTrades = 0,
-        avgHoldBars = 0.0,
-        equityCurve = emptyList(),
-        monthlyReturns = emptyMap()
-    )
+    private fun emptyResult(ticker: String): BacktestResult =
+        BacktestResult(
+            ticker = ticker,
+            totalReturn = 0.0,
+            sharpeRatio = 0.0,
+            maxDrawdown = 0.0,
+            winRate = 0.0,
+            profitFactor = 0.0,
+            totalTrades = 0,
+            avgHoldBars = 0.0,
+            equityCurve = emptyList(),
+            monthlyReturns = emptyMap(),
+        )
 }

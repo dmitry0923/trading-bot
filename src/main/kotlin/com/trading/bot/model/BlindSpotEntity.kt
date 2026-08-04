@@ -11,5 +11,5 @@ data class BlindSpotEntity(
     val recommendation: String,
     var isActive: Boolean = true,
     val detectedAt: LocalDateTime = LocalDateTime.now(),
-    var resolvedAt: LocalDateTime? = null
+    var resolvedAt: LocalDateTime? = null,
 )

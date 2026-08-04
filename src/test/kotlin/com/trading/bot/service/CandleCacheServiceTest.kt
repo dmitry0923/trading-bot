@@ -22,16 +22,21 @@ import java.time.ZoneOffset
  * Критерий приёмки: адаптивный стоп-лосс пересчитывается по ATR корректно.
  */
 class CandleCacheServiceTest {
-
     private val redisTemplate = Mockito.mock(StringRedisTemplate::class.java)
     private val zset: ZSetOperations<String, String> = Mockito.mock(ZSetOperations::class.java) as ZSetOperations<String, String>
-    private val objectMapper = ObjectMapper().apply {
-        registerModule(JavaTimeModule())
-        registerModule(KotlinModule.Builder().build())
-    }
+    private val objectMapper =
+        ObjectMapper().apply {
+            registerModule(JavaTimeModule())
+            registerModule(KotlinModule.Builder().build())
+        }
     private val service = CandleCacheService(redisTemplate, objectMapper)
 
-    private fun candle(high: String, low: String, close: String, time: LocalDateTime) = Candle(
+    private fun candle(
+        high: String,
+        low: String,
+        close: String,
+        time: LocalDateTime,
+    ) = Candle(
         ticker = "SBER",
         timeframe = "MINUTE_10",
         openPrice = BigDecimal(close),
@@ -39,32 +44,34 @@ class CandleCacheServiceTest {
         lowPrice = BigDecimal(low),
         closePrice = BigDecimal(close),
         volume = 0,
-        time = time
+        time = time,
     )
 
     private fun mockCandles(candles: List<Candle>) {
         Mockito.`when`(redisTemplate.opsForZSet()).thenReturn(zset)
         val json = candles.map { objectMapper.writeValueAsString(it) }
-        Mockito.`when`(
-            zset.reverseRange(
-                ArgumentMatchers.anyString(),
-                ArgumentMatchers.anyLong(),
-                ArgumentMatchers.anyLong()
-            )
-        ).thenAnswer { inv ->
-            val end = inv.getArgument<Long>(2).toInt() + 1
-            json.takeLast(end).toSet()
-        }
+        Mockito
+            .`when`(
+                zset.reverseRange(
+                    ArgumentMatchers.anyString(),
+                    ArgumentMatchers.anyLong(),
+                    ArgumentMatchers.anyLong(),
+                ),
+            ).thenAnswer { inv ->
+                val end = inv.getArgument<Long>(2).toInt() + 1
+                json.takeLast(end).toSet()
+            }
     }
 
     @Test
     fun `atr uses true range against previous close`() {
         // TR1 = max(1.5, 1.5, 0) = 1.5; TR2 = max(2, 2, 0) = 2.0 → ATR(2) = 1.75
-        val candles = listOf(
-            candle("10", "9", "9.5", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)),
-            candle("11", "9.5", "10", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 10)),
-            candle("12", "10", "11", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 20))
-        )
+        val candles =
+            listOf(
+                candle("10", "9", "9.5", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)),
+                candle("11", "9.5", "10", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 10)),
+                candle("12", "10", "11", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 20)),
+            )
         mockCandles(candles)
 
         val atr = service.calculateAtr("SBER", "MINUTE_10", period = 2)
@@ -74,11 +81,12 @@ class CandleCacheServiceTest {
 
     @Test
     fun `sma averages close prices`() {
-        val candles = listOf(
-            candle("10", "9", "9", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)),
-            candle("11", "9", "10", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 10)),
-            candle("12", "10", "11", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 20))
-        )
+        val candles =
+            listOf(
+                candle("10", "9", "9", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)),
+                candle("11", "9", "10", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 10)),
+                candle("12", "10", "11", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 20)),
+            )
         mockCandles(candles)
 
         assertEquals(0, BigDecimal("10.5").compareTo(service.calculateSma("SBER", "MINUTE_10", 2)!!))

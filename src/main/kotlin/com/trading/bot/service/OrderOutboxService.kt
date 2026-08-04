@@ -34,7 +34,7 @@ class OrderOutboxService(
     private val outboxRepo: OrderOutboxRepository,
     private val alorClient: AlorClient,
     private val objectMapper: ObjectMapper,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -42,7 +42,7 @@ class OrderOutboxService(
     data class PlaceOrderResult(
         val outboxId: UUID,
         val alorOrderId: String?,
-        val success: Boolean
+        val success: Boolean,
     )
 
     /**
@@ -53,19 +53,20 @@ class OrderOutboxService(
         side: String,
         qty: Int,
         price: BigDecimal?,
-        type: String
+        type: String,
     ): PlaceOrderResult {
         val idempotencyKey = orderIdempotencyKey(ticker, side, qty, price, type)
-        val payload = objectMapper.writeValueAsString(
-            mapOf(
-                "ticker" to ticker,
-                "side" to side,
-                "qty" to qty,
-                "price" to price?.toPlainString(),
-                "type" to type,
-                "idempotencyKey" to idempotencyKey
+        val payload =
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "ticker" to ticker,
+                    "side" to side,
+                    "qty" to qty,
+                    "price" to price?.toPlainString(),
+                    "type" to type,
+                    "idempotencyKey" to idempotencyKey,
+                ),
             )
-        )
         val outbox = outboxRepo.save(OrderOutbox(payloadJson = payload))
         logger.info { "Outbox order saved: ${outbox.id} $side $qty $ticker ($type)" }
         meterRegistry.counter("outbox.saved", Tags.of("type", type)).increment()
@@ -77,15 +78,21 @@ class OrderOutboxService(
         val ticker = payload.path("ticker").asText()
         val side = payload.path("side").asText()
         val qty = payload.path("qty").asInt()
-        val price = payload.path("price").asText().takeIf { it.isNotBlank() && it != "null" }?.toBigDecimal()
+        val price =
+            payload
+                .path("price")
+                .asText()
+                .takeIf { it.isNotBlank() && it != "null" }
+                ?.toBigDecimal()
         val type = payload.path("type").asText("limit")
 
         return try {
-            val orderId = when (type) {
-                "limit" -> price?.let { alorClient.placeLimitOrder(ticker, side, qty, it) }
-                "market" -> alorClient.placeMarketOrder(ticker, side, qty)
-                else -> null
-            }
+            val orderId =
+                when (type) {
+                    "limit" -> price?.let { alorClient.placeLimitOrder(ticker, side, qty, it) }
+                    "market" -> alorClient.placeMarketOrder(ticker, side, qty)
+                    else -> null
+                }
             if (orderId != null) {
                 outboxRepo.markSent(outbox.id!!, orderId)
                 meterRegistry.counter("outbox.sent", Tags.of("type", type)).increment()
@@ -128,9 +135,16 @@ class OrderOutboxService(
         }
     }
 
-    private fun orderIdempotencyKey(ticker: String, side: String, qty: Int, price: BigDecimal?, type: String): String {
+    private fun orderIdempotencyKey(
+        ticker: String,
+        side: String,
+        qty: Int,
+        price: BigDecimal?,
+        type: String,
+    ): String {
         val raw = "$ticker|$side|$qty|$price|$type|${System.currentTimeMillis()}"
-        return java.security.MessageDigest.getInstance("SHA-256")
+        return java.security.MessageDigest
+            .getInstance("SHA-256")
             .digest(raw.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
             .take(32)

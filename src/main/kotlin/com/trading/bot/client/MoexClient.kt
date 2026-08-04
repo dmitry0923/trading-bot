@@ -22,7 +22,7 @@ import java.time.format.DateTimeFormatter
  */
 @Component
 class MoexClient(
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -38,7 +38,11 @@ class MoexClient(
      * @param from начальная дата-время
      * @return список свечей (до 500, отсортированных по времени)
      */
-    suspend fun getCandles(ticker: String, days: Int, from: LocalDateTime): List<Candle> {
+    suspend fun getCandles(
+        ticker: String,
+        days: Int,
+        from: LocalDateTime,
+    ): List<Candle> {
         val stock = fetchCandles("stock", "shares", "TQBR", ticker, from)
         if (stock.isNotEmpty()) return stock
         // Фьючерсы (Si и др.) торгуются на FORTS — ищем там
@@ -61,14 +65,15 @@ class MoexClient(
         ticker: String,
         from: LocalDateTime,
         to: LocalDateTime,
-        intervalMinutes: Int = 10
+        intervalMinutes: Int = 10,
     ): List<Candle> {
         val stock = fetchCandlesPaged("stock", "shares", "TQBR", ticker, from, to, intervalMinutes)
-        val result = if (stock.isNotEmpty()) {
-            stock
-        } else {
-            fetchCandlesPaged("futures", "forts", "RFUD", ticker, from, to, intervalMinutes)
-        }
+        val result =
+            if (stock.isNotEmpty()) {
+                stock
+            } else {
+                fetchCandlesPaged("futures", "forts", "RFUD", ticker, from, to, intervalMinutes)
+            }
         return result.sortedBy { it.time }.distinctBy { it.time }
     }
 
@@ -83,7 +88,7 @@ class MoexClient(
         ticker: String,
         from: LocalDateTime,
         to: LocalDateTime,
-        intervalMinutes: Int
+        intervalMinutes: Int,
     ): List<Candle> {
         val all = ArrayList<Candle>()
         var start = 0
@@ -91,14 +96,17 @@ class MoexClient(
         val toStr = to.format(timeFormatter)
         while (true) {
             try {
-                val url = "$baseUrl/engines/$engine/markets/$market/boards/$board/securities/$ticker/candles.json" +
-                    "?interval=$intervalMinutes&from=$fromStr&until=$toStr&start=$start"
-                val raw: String = webClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String::class.java)
-                    .timeout(Duration.ofSeconds(15))
-                    .awaitSingle()
+                val url =
+                    "$baseUrl/engines/$engine/markets/$market/boards/$board/securities/$ticker/candles.json" +
+                        "?interval=$intervalMinutes&from=$fromStr&until=$toStr&start=$start"
+                val raw: String =
+                    webClient
+                        .get()
+                        .uri(url)
+                        .retrieve()
+                        .bodyToMono(String::class.java)
+                        .timeout(Duration.ofSeconds(15))
+                        .awaitSingle()
                 val page = parseCandlesAll(raw, ticker)
                 if (page.isEmpty()) break
                 all.addAll(page)
@@ -117,30 +125,37 @@ class MoexClient(
         market: String,
         board: String,
         ticker: String,
-        from: LocalDateTime
-    ): List<Candle> {
-        return try {
-            val url = "$baseUrl/engines/$engine/markets/$market/boards/$board/securities/$ticker/candles.json" +
-                "?interval=10&from=${from.format(timeFormatter)}&until=${LocalDateTime.now().format(timeFormatter)}"
+        from: LocalDateTime,
+    ): List<Candle> =
+        try {
+            val url =
+                "$baseUrl/engines/$engine/markets/$market/boards/$board/securities/$ticker/candles.json" +
+                    "?interval=10&from=${from.format(timeFormatter)}&until=${LocalDateTime.now().format(timeFormatter)}"
 
-            val raw: String = webClient.get()
-                .uri(url)
-                .retrieve()
-                .bodyToMono(String::class.java)
-                .timeout(Duration.ofSeconds(10))
-                .awaitSingle()
+            val raw: String =
+                webClient
+                    .get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
 
             parseCandles(raw, ticker)
         } catch (e: Exception) {
             logger.warn(e) { "MOEX candles request failed for $ticker ($engine/$board)" }
             emptyList()
         }
-    }
 
-    private fun parseCandles(raw: String, ticker: String): List<Candle> =
-        parseCandlesAll(raw, ticker).takeLast(500)
+    private fun parseCandles(
+        raw: String,
+        ticker: String,
+    ): List<Candle> = parseCandlesAll(raw, ticker).takeLast(500)
 
-    private fun parseCandlesAll(raw: String, ticker: String): List<Candle> {
+    private fun parseCandlesAll(
+        raw: String,
+        ticker: String,
+    ): List<Candle> {
         val candles = objectMapper.readTree(raw).path("candles")
         if (!candles.path("data").isArray) return emptyList()
 
@@ -154,7 +169,8 @@ class MoexClient(
         val volumeIdx = indexOf("volume")
         if (listOf(beginIdx, openIdx, highIdx, lowIdx, closeIdx, volumeIdx).any { it < 0 }) return emptyList()
 
-        return candles.path("data")
+        return candles
+            .path("data")
             .map { row -> toCandle(row, ticker, beginIdx, openIdx, highIdx, lowIdx, closeIdx, volumeIdx) }
             .filterNotNull()
             .sortedBy { it.time }
@@ -168,9 +184,9 @@ class MoexClient(
         highIdx: Int,
         lowIdx: Int,
         closeIdx: Int,
-        volumeIdx: Int
-    ): Candle? {
-        return try {
+        volumeIdx: Int,
+    ): Candle? =
+        try {
             Candle(
                 ticker = ticker,
                 timeframe = "MINUTE_10",
@@ -179,11 +195,10 @@ class MoexClient(
                 highPrice = BigDecimal(row.get(highIdx).asText()),
                 lowPrice = BigDecimal(row.get(lowIdx).asText()),
                 closePrice = BigDecimal(row.get(closeIdx).asText()),
-                volume = row.get(volumeIdx).asLong()
+                volume = row.get(volumeIdx).asLong(),
             )
         } catch (e: Exception) {
             logger.debug { "Skipping malformed candle row for $ticker: ${e.message}" }
             null
         }
-    }
 }

@@ -13,7 +13,7 @@ import java.time.ZoneId
  */
 @Component
 class TradingHoursGuard(
-    private val riskConfig: RiskConfig
+    private val riskConfig: RiskConfig,
 ) {
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 

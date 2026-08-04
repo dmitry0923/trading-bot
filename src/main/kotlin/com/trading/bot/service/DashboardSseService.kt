@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong
 class DashboardSseService(
     private val dashboardService: DashboardService,
     private val objectMapper: ObjectMapper,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -60,19 +60,29 @@ class DashboardSseService(
     }
 
     @EventListener
-    fun onPositionOpened(@Suppress("UNUSED_PARAMETER") event: PositionOpenedEvent) = throttledBroadcast("POSITION_OPENED")
+    fun onPositionOpened(
+        @Suppress("UNUSED_PARAMETER") event: PositionOpenedEvent,
+    ) = throttledBroadcast("POSITION_OPENED")
 
     @EventListener
-    fun onPositionClosed(@Suppress("UNUSED_PARAMETER") event: PositionClosedEvent) = throttledBroadcast("POSITION_CLOSED")
+    fun onPositionClosed(
+        @Suppress("UNUSED_PARAMETER") event: PositionClosedEvent,
+    ) = throttledBroadcast("POSITION_CLOSED")
 
     @EventListener
-    fun onStrategyGenerated(@Suppress("UNUSED_PARAMETER") event: StrategyGeneratedEvent) = throttledBroadcast("STRATEGY")
+    fun onStrategyGenerated(
+        @Suppress("UNUSED_PARAMETER") event: StrategyGeneratedEvent,
+    ) = throttledBroadcast("STRATEGY")
 
     @EventListener
-    fun onExecutionReport(@Suppress("UNUSED_PARAMETER") event: ExecutionReportEvent) = throttledBroadcast("EXECUTION")
+    fun onExecutionReport(
+        @Suppress("UNUSED_PARAMETER") event: ExecutionReportEvent,
+    ) = throttledBroadcast("EXECUTION")
 
     @EventListener
-    fun onPriceChanged(@Suppress("UNUSED_PARAMETER") event: PriceChangedEvent) = throttledBroadcast("PRICE")
+    fun onPriceChanged(
+        @Suppress("UNUSED_PARAMETER") event: PriceChangedEvent,
+    ) = throttledBroadcast("PRICE")
 
     /**
      * Рассылка с троттлингом: не чаще одного раза за [minIntervalMs].
@@ -93,12 +103,13 @@ class DashboardSseService(
      * @param reason источник события
      */
     private fun broadcast(reason: String) {
-        val payload = try {
-            objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
-        } catch (e: Exception) {
-            logger.error(e) { "Dashboard payload build failed" }
-            return
-        }
+        val payload =
+            try {
+                objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
+            } catch (e: Exception) {
+                logger.error(e) { "Dashboard payload build failed" }
+                return
+            }
         meterRegistry.counter("dashboard.sse.broadcasts", Tags.of("reason", reason)).increment()
         emitters.forEach { send(it, payload) }
     }
@@ -109,13 +120,17 @@ class DashboardSseService(
      * @param emitter подписчик
      * @param payload готовый JSON (если null — строится заново)
      */
-    private fun send(emitter: SseEmitter, payload: String? = null) {
-        val json = payload ?: try {
-            objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
-        } catch (e: Exception) {
-            logger.error(e) { "Dashboard payload build failed" }
-            return
-        }
+    private fun send(
+        emitter: SseEmitter,
+        payload: String? = null,
+    ) {
+        val json =
+            payload ?: try {
+                objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
+            } catch (e: Exception) {
+                logger.error(e) { "Dashboard payload build failed" }
+                return
+            }
         try {
             synchronized(emitter) {
                 emitter.send(SseEmitter.event().name("dashboard").data(json))

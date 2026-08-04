@@ -18,33 +18,42 @@ object SimulatedExecution {
 
     data class Fill(
         val price: BigDecimal,
-        val commission: BigDecimal
+        val commission: BigDecimal,
     )
 
     /** Цена исполнения limit-ордера с учётом лимита (исполнение ровно по лимиту или лучше). */
-    fun limitFill(limitPrice: BigDecimal, nextOpen: BigDecimal, isBuy: Boolean): Fill {
+    fun limitFill(
+        limitPrice: BigDecimal,
+        nextOpen: BigDecimal,
+        isBuy: Boolean,
+    ): Fill {
         val price = if (isBuy) nextOpen.min(limitPrice) else nextOpen.max(limitPrice)
         return Fill(price, commissionOn(price))
     }
 
     /** Цена исполнения market-ордера с проскальзыванием 0.1%. */
-    fun marketFill(reference: BigDecimal, isBuy: Boolean): Fill {
+    fun marketFill(
+        reference: BigDecimal,
+        isBuy: Boolean,
+    ): Fill {
         val slip = reference.multiply(MARKET_SLIPPAGE_RATE)
         val price = if (isBuy) reference.add(slip) else reference.subtract(slip)
         return Fill(price, commissionOn(price))
     }
 
-    fun commissionOn(price: BigDecimal): BigDecimal =
-        price.multiply(COMMISSION_RATE).setScale(4, RoundingMode.HALF_UP)
+    fun commissionOn(price: BigDecimal): BigDecimal = price.multiply(COMMISSION_RATE).setScale(4, RoundingMode.HALF_UP)
 
     /**
      * Округление до целого лота (вниз). Если меньше 1 лота — 0 (позиция не открывается).
      */
-    fun lotRounded(quantity: Int): Int =
-        if (quantity < 1) 0 else quantity
+    fun lotRounded(quantity: Int): Int = if (quantity < 1) 0 else quantity
 
     /** Проверка достижения SL/TP внутри диапазона свечи (intraday high/low). */
-    fun hitStopOrTarget(candle: com.trading.bot.model.Candle, sl: BigDecimal, tp: BigDecimal): StopTpHit? {
+    fun hitStopOrTarget(
+        candle: com.trading.bot.model.Candle,
+        sl: BigDecimal,
+        tp: BigDecimal,
+    ): StopTpHit? {
         val high = candle.highPrice
         val low = candle.lowPrice
         return when {

@@ -21,7 +21,7 @@ import java.time.temporal.ChronoUnit
 @Service
 class TradeAnalysisService(
     private val positionRepo: PositionRepository,
-    private val blindSpotRepo: BlindSpotRepository
+    private val blindSpotRepo: BlindSpotRepository,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -45,16 +45,23 @@ class TradeAnalysisService(
         }
     }
 
-    private suspend fun buildStats(ticker: String, trades: List<Position>): TradeStats {
+    private suspend fun buildStats(
+        ticker: String,
+        trades: List<Position>,
+    ): TradeStats {
         val total = trades.size
         val wins = trades.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
         val losses = total - wins
         val winRate = if (total > 0) wins.toDouble() / total else 0.0
 
-        val grossProfit = trades.filter { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
-            .sumOf { it.pnl ?: BigDecimal.ZERO }
-        val grossLoss = trades.filter { (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO }
-            .sumOf { kotlin.math.abs((it.pnl ?: BigDecimal.ZERO).toDouble()) }
+        val grossProfit =
+            trades
+                .filter { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
+                .sumOf { it.pnl ?: BigDecimal.ZERO }
+        val grossLoss =
+            trades
+                .filter { (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO }
+                .sumOf { kotlin.math.abs((it.pnl ?: BigDecimal.ZERO).toDouble()) }
         val profitFactor = if (grossLoss > 0) grossProfit.toDouble() / grossLoss else 0.0
 
         val avgWin = if (wins > 0) grossProfit.divide(BigDecimal(wins), 2, RoundingMode.HALF_UP) else BigDecimal.ZERO
@@ -69,19 +76,28 @@ class TradeAnalysisService(
 
         val maxConsecutiveLosses = calculateMaxConsecutiveLosses(trades)
 
-        val avgHoldTime = if (trades.isNotEmpty()) {
-            trades.mapNotNull { pos ->
-                if (pos.closedAt != null)
-                    ChronoUnit.MINUTES.between(pos.openedAt, pos.closedAt)
-                else null
-            }.average().toLong()
-        } else 0L
-
-        val hourly = trades.groupBy { it.openedAt.hour }
-            .mapValues { (_, list) ->
-                val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
-                if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
+        val avgHoldTime =
+            if (trades.isNotEmpty()) {
+                trades
+                    .mapNotNull { pos ->
+                        if (pos.closedAt != null) {
+                            ChronoUnit.MINUTES.between(pos.openedAt, pos.closedAt)
+                        } else {
+                            null
+                        }
+                    }.average()
+                    .toLong()
+            } else {
+                0L
             }
+
+        val hourly =
+            trades
+                .groupBy { it.openedAt.hour }
+                .mapValues { (_, list) ->
+                    val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
+                    if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
+                }
         val bestEntryHour = hourly.filter { it.value > 0 }.maxByOrNull { it.value }?.key
         val worstEntryHour = hourly.filter { it.value < 1.0 }.minByOrNull { it.value }?.key
 
@@ -103,7 +119,7 @@ class TradeAnalysisService(
             strategyCloseRate = strategyCloseRate,
             bestEntryHour = bestEntryHour,
             worstEntryHour = worstEntryHour,
-            blindSpots = blindSpots
+            blindSpots = blindSpots,
         )
     }
 
@@ -121,7 +137,10 @@ class TradeAnalysisService(
         return maxStreak
     }
 
-    private suspend fun detectAndPersistBlindSpots(ticker: String, trades: List<Position>): List<BlindSpot> {
+    private suspend fun detectAndPersistBlindSpots(
+        ticker: String,
+        trades: List<Position>,
+    ): List<BlindSpot> {
         val losing = trades.filter { (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO }
         if (losing.size < 3) return emptyList()
 
@@ -129,12 +148,13 @@ class TradeAnalysisService(
 
         val slLosses = losing.count { it.closeReason == "STOP_LOSS" }
         if (slLosses.toDouble() / losing.size > 0.6) {
-            val spot = BlindSpot(
-                conditionPattern = "Stop-Loss hit rate > 60% for $ticker",
-                lossRate = slLosses.toDouble() / losing.size,
-                occurrenceCount = slLosses,
-                recommendation = "Increase ATR multiplier for stop-loss or review entry points"
-            )
+            val spot =
+                BlindSpot(
+                    conditionPattern = "Stop-Loss hit rate > 60% for $ticker",
+                    lossRate = slLosses.toDouble() / losing.size,
+                    occurrenceCount = slLosses,
+                    recommendation = "Increase ATR multiplier for stop-loss or review entry points",
+                )
             spots.add(spot)
             persistBlindSpot(ticker, spot)
         }
@@ -142,12 +162,13 @@ class TradeAnalysisService(
         val hourlyLosses = losing.groupBy { it.openedAt.hour }
         hourlyLosses.forEach { (hour, list) ->
             if (list.size >= 3) {
-                val spot = BlindSpot(
-                    conditionPattern = "Entry at hour $hour for $ticker",
-                    lossRate = list.size.toDouble() / losing.size,
-                    occurrenceCount = list.size,
-                    recommendation = "Avoid entries at $hour:00, possibly low liquidity"
-                )
+                val spot =
+                    BlindSpot(
+                        conditionPattern = "Entry at hour $hour for $ticker",
+                        lossRate = list.size.toDouble() / losing.size,
+                        occurrenceCount = list.size,
+                        recommendation = "Avoid entries at $hour:00, possibly low liquidity",
+                    )
                 spots.add(spot)
                 persistBlindSpot(ticker, spot)
             }
@@ -156,9 +177,14 @@ class TradeAnalysisService(
         return spots
     }
 
-    private suspend fun persistBlindSpot(ticker: String, spot: BlindSpot) {
-        val existing = blindSpotRepo.findByTickerAndIsActiveTrue(ticker)
-            .find { it.conditionPattern == spot.conditionPattern }
+    private suspend fun persistBlindSpot(
+        ticker: String,
+        spot: BlindSpot,
+    ) {
+        val existing =
+            blindSpotRepo
+                .findByTickerAndIsActiveTrue(ticker)
+                .find { it.conditionPattern == spot.conditionPattern }
         if (existing != null) {
             existing.occurrenceCount += spot.occurrenceCount
             blindSpotRepo.save(existing)
@@ -169,8 +195,8 @@ class TradeAnalysisService(
                     conditionPattern = spot.conditionPattern,
                     lossRate = spot.lossRate,
                     occurrenceCount = spot.occurrenceCount,
-                    recommendation = spot.recommendation
-                )
+                    recommendation = spot.recommendation,
+                ),
             )
         }
     }
@@ -182,14 +208,19 @@ class TradeAnalysisService(
      * @param days количество дней для анализа (по умолчанию 30)
      * @return почасовая карта час -> win rate
      */
-    suspend fun timePatternAnalysis(ticker: String, days: Int = 30): TimePattern {
+    suspend fun timePatternAnalysis(
+        ticker: String,
+        days: Int = 30,
+    ): TimePattern {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val trades = positionRepo.findClosedByTickerSince(ticker, since)
-        val hourly = trades.groupBy { it.openedAt.hour }
-            .mapValues { (_, list) ->
-                val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
-                if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
-            }
+        val hourly =
+            trades
+                .groupBy { it.openedAt.hour }
+                .mapValues { (_, list) ->
+                    val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
+                    if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
+                }
         return TimePattern(ticker, hourly)
     }
 }

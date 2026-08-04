@@ -27,7 +27,7 @@ import org.springframework.stereotype.Component
 class DailyLossCircuitBreaker(
     private val futuresRiskEngine: FuturesRiskEngine,
     private val eventPublisher: TradingEventPublisher,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
 

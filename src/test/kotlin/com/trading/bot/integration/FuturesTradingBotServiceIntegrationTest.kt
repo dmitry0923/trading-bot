@@ -39,7 +39,6 @@ import java.time.LocalDateTime
  * всё остальное — реальные бины (Postgres, outbox, риск-движок).
  */
 class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
-
     @Autowired
     lateinit var eventPublisher: TradingEventPublisher
 
@@ -98,27 +97,28 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `critical liquidation distance closes position at market`() {
-        val opened = runBlocking {
-            positionRepo.save(
-                Position(
-                    ticker = "Si",
-                    direction = PositionDirection.LONG,
-                    quantity = 1,
-                    entryPrice = BigDecimal("92000"),
-                    currentPrice = BigDecimal("92000"),
-                    stopLoss = BigDecimal("91999.50"),
-                    takeProfit = BigDecimal("92001.00"),
-                    instrumentType = InstrumentType.FUTURES,
-                    leverage = BigDecimal("2.0"),
-                    goPerContract = BigDecimal("15000"),
-                    marginUsed = BigDecimal("7500"),
-                    liquidationPrice = BigDecimal("91985"),
-                    variationMargin = BigDecimal.ZERO,
-                    stopLossPoints = 50,
-                    status = PositionStatus.OPEN
+        val opened =
+            runBlocking {
+                positionRepo.save(
+                    Position(
+                        ticker = "Si",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("92000"),
+                        currentPrice = BigDecimal("92000"),
+                        stopLoss = BigDecimal("91999.50"),
+                        takeProfit = BigDecimal("92001.00"),
+                        instrumentType = InstrumentType.FUTURES,
+                        leverage = BigDecimal("2.0"),
+                        goPerContract = BigDecimal("15000"),
+                        marginUsed = BigDecimal("7500"),
+                        liquidationPrice = BigDecimal("91985"),
+                        variationMargin = BigDecimal.ZERO,
+                        stopLossPoints = 50,
+                        status = PositionStatus.OPEN,
+                    ),
                 )
-            )
-        }
+            }
 
         // 91986: остаток буфера 1/15 = 6.7% < 10% → CRITICAL → market close
         eventPublisher.publishPriceChanged("Si", BigDecimal("91986"))
@@ -160,8 +160,8 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                     entryPrice = BigDecimal("92000"),
                     instrumentType = InstrumentType.FUTURES,
                     liquidationPrice = BigDecimal("91985"),
-                    status = PositionStatus.OPEN
-                )
+                    status = PositionStatus.OPEN,
+                ),
             )
         }
 
@@ -185,7 +185,11 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
 
-    private fun strategy(ticker: String, action: StrategyAction, target: BigDecimal): Strategy =
+    private fun strategy(
+        ticker: String,
+        action: StrategyAction,
+        target: BigDecimal,
+    ): Strategy =
         Strategy(
             ticker = ticker,
             action = action,
@@ -194,10 +198,14 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             confidence = 0.9,
             reasoning = "integration test",
             cycleId = "test-cycle",
-            validUntil = LocalDateTime.now().plusMinutes(5)
+            validUntil = LocalDateTime.now().plusMinutes(5),
         )
 
-    private fun awaitUntil(timeoutMs: Long = 10_000, intervalMs: Long = 100, condition: () -> Boolean) {
+    private fun awaitUntil(
+        timeoutMs: Long = 10_000,
+        intervalMs: Long = 100,
+        condition: () -> Boolean,
+    ) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (condition()) return

@@ -11,22 +11,24 @@ import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
 class GuardrailsTest {
-
     private fun guardrails(): Guardrails {
         val cfg = LlmConfig().apply { guardrailsMaxPriceDeviationPercent = 3.0 }
         return Guardrails(cfg, SimpleMeterRegistry())
     }
 
-    private fun buySignal(confidence: Double = 0.8, price: BigDecimal = BigDecimal("100"), qty: Int = 10) =
-        Guardrails.Signal(
-            action = StrategyAction.BUY,
-            targetPrice = price,
-            quantity = qty,
-            stopLoss = BigDecimal("98"),
-            takeProfit = BigDecimal("104"),
-            trailingStop = true,
-            confidence = confidence
-        )
+    private fun buySignal(
+        confidence: Double = 0.8,
+        price: BigDecimal = BigDecimal("100"),
+        qty: Int = 10,
+    ) = Guardrails.Signal(
+        action = StrategyAction.BUY,
+        targetPrice = price,
+        quantity = qty,
+        stopLoss = BigDecimal("98"),
+        takeProfit = BigDecimal("104"),
+        trailingStop = true,
+        confidence = confidence,
+    )
 
     @Test
     fun `high confidence buy passes through unchanged`() {
@@ -62,11 +64,12 @@ class GuardrailsTest {
 
     @Test
     fun `price deviation above threshold is adjusted to market price`() {
-        val result = guardrails().apply(
-            buySignal(price = BigDecimal("105")),
-            marketPrice = BigDecimal("100"),
-            adaptiveThreshold = 0.6
-        )
+        val result =
+            guardrails().apply(
+                buySignal(price = BigDecimal("105")),
+                marketPrice = BigDecimal("100"),
+                adaptiveThreshold = 0.6,
+            )
         assertTrue(result.overridden)
         assertEquals(StrategyAction.BUY, result.signal.action)
         assertEquals(BigDecimal("100"), result.signal.targetPrice)
@@ -75,11 +78,12 @@ class GuardrailsTest {
 
     @Test
     fun `small price deviation is kept`() {
-        val result = guardrails().apply(
-            buySignal(price = BigDecimal("101")),
-            marketPrice = BigDecimal("100"),
-            adaptiveThreshold = 0.6
-        )
+        val result =
+            guardrails().apply(
+                buySignal(price = BigDecimal("101")),
+                marketPrice = BigDecimal("100"),
+                adaptiveThreshold = 0.6,
+            )
         assertFalse(result.overridden)
         assertEquals(BigDecimal("101"), result.signal.targetPrice)
     }

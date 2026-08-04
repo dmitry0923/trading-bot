@@ -57,7 +57,7 @@ class FuturesTradingBotService(
     private val riskConfig: RiskConfig,
     private val eventPublisher: TradingEventPublisher,
     private val tradeEventService: TradeEventService,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -102,7 +102,11 @@ class FuturesTradingBotService(
         meterRegistry.counter("futures.trading.halted", Tags.of("reason", event.reason)).increment()
     }
 
-    private suspend fun openFuturesPosition(ticker: String, targetPrice: BigDecimal, action: StrategyAction) {
+    private suspend fun openFuturesPosition(
+        ticker: String,
+        targetPrice: BigDecimal,
+        action: StrategyAction,
+    ) {
         if (futuresRiskEngine.isDailyLossLimitReached()) {
             logger.warn { "Daily loss limit reached — entry blocked $ticker" }
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).increment()
@@ -135,31 +139,33 @@ class FuturesTradingBotService(
         val execution = alorClient.verifyOrder(placed.alorOrderId)
         val fillPrice = execution?.avgPrice ?: entryPrice
 
-        val pos = Position(
-            ticker = ticker,
-            direction = direction,
-            quantity = validation.quantity,
-            entryPrice = fillPrice,
-            currentPrice = fillPrice,
-            stopLoss = validation.stopLossPrice,
-            takeProfit = validation.takeProfitPrice,
-            trailingStopPrice = validation.stopLossPrice,
-            instrumentType = InstrumentType.FUTURES,
-            leverage = leverageConfig.effective(),
-            goPerContract = currentGo,
-            marginUsed = validation.marginRequired,
-            liquidationPrice = validation.liquidationPrice,
-            variationMargin = BigDecimal.ZERO,
-            stopLossPoints = riskConfig.defaultStopLossPoints,
-            alorOrderId = placed.alorOrderId
-        )
+        val pos =
+            Position(
+                ticker = ticker,
+                direction = direction,
+                quantity = validation.quantity,
+                entryPrice = fillPrice,
+                currentPrice = fillPrice,
+                stopLoss = validation.stopLossPrice,
+                takeProfit = validation.takeProfitPrice,
+                trailingStopPrice = validation.stopLossPrice,
+                instrumentType = InstrumentType.FUTURES,
+                leverage = leverageConfig.effective(),
+                goPerContract = currentGo,
+                marginUsed = validation.marginRequired,
+                liquidationPrice = validation.liquidationPrice,
+                variationMargin = BigDecimal.ZERO,
+                stopLossPoints = riskConfig.defaultStopLossPoints,
+                alorOrderId = placed.alorOrderId,
+            )
         positionRepo.save(pos)
         tradeEventService.recordPositionOpened(pos)
         eventPublisher.publishPositionOpened(pos)
-        meterRegistry.counter(
-            "futures.position.opened",
-            Tags.of("ticker", ticker, "direction", direction.name)
-        ).increment()
+        meterRegistry
+            .counter(
+                "futures.position.opened",
+                Tags.of("ticker", ticker, "direction", direction.name),
+            ).increment()
         logger.info {
             "Opened futures $ticker $direction qty=${validation.quantity} @ $fillPrice " +
                 "sl=${validation.stopLossPrice} tp=${validation.takeProfitPrice} " +
@@ -167,7 +173,10 @@ class FuturesTradingBotService(
         }
     }
 
-    private suspend fun monitorOpenPositions(ticker: String, price: BigDecimal) {
+    private suspend fun monitorOpenPositions(
+        ticker: String,
+        price: BigDecimal,
+    ) {
         val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.ticker == ticker }
         for (pos in open) {
             if (pos.instrumentType != InstrumentType.FUTURES) continue
@@ -180,23 +189,35 @@ class FuturesTradingBotService(
                     closeFuturesPosition(pos, price, "LIQUIDATION_CRITICAL")
                     continue
                 }
+
                 FuturesRiskEngine.LiquidationStatus.WARNING -> {
                     logger.warn {
                         "LIQUIDATION_WARNING ${pos.ticker} @ $price — " +
                             "distance < ${riskConfig.minLiquidationDistancePercent}%"
                     }
-                    meterRegistry.counter(
-                        "futures.liquidation.warning",
-                        Tags.of("ticker", pos.ticker)
-                    ).increment()
+                    meterRegistry
+                        .counter(
+                            "futures.liquidation.warning",
+                            Tags.of("ticker", pos.ticker),
+                        ).increment()
                 }
+
                 FuturesRiskEngine.LiquidationStatus.SAFE -> {}
             }
 
             // 2. SL / TP / trailing
-            if (riskManagement.shouldCloseBySL(pos, price)) { closeFuturesPosition(pos, price, "STOP_LOSS"); continue }
-            if (riskManagement.shouldCloseByTP(pos, price)) { closeFuturesPosition(pos, price, "TAKE_PROFIT"); continue }
-            if (riskManagement.shouldCloseByTrailing(pos, price)) { closeFuturesPosition(pos, price, "TRAILING_STOP"); continue }
+            if (riskManagement.shouldCloseBySL(pos, price)) {
+                closeFuturesPosition(pos, price, "STOP_LOSS")
+                continue
+            }
+            if (riskManagement.shouldCloseByTP(pos, price)) {
+                closeFuturesPosition(pos, price, "TAKE_PROFIT")
+                continue
+            }
+            if (riskManagement.shouldCloseByTrailing(pos, price)) {
+                closeFuturesPosition(pos, price, "TRAILING_STOP")
+                continue
+            }
 
             // 3. Подтягивание trailing (только в прибыль, с учётом вариационной маржи)
             futuresRiskEngine.updateTrailingStop(pos, price)
@@ -204,7 +225,11 @@ class FuturesTradingBotService(
         }
     }
 
-    private suspend fun closeFuturesPosition(pos: Position, price: BigDecimal, reason: String) {
+    private suspend fun closeFuturesPosition(
+        pos: Position,
+        price: BigDecimal,
+        reason: String,
+    ) {
         val side = if (pos.direction == PositionDirection.LONG) "sell" else "buy"
         val placed = orderOutboxService.placeOrder(pos.ticker, side, pos.quantity, null, "market")
         val execution = placed.alorOrderId?.let { alorClient.verifyOrder(it, expectedPrice = price) }
@@ -213,10 +238,19 @@ class FuturesTradingBotService(
         // P&L фьючерса (₽): (close - entry) * qty * pointValue
         val pointValue = instrumentsConfig.pointValue(pos.ticker)
         val qty = BigDecimal(pos.quantity)
-        val pnl = when (pos.direction) {
-            PositionDirection.LONG -> closePrice.subtract(pos.entryPrice).multiply(pointValue).multiply(qty)
-            PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(pointValue).multiply(qty)
-        }
+        val pnl =
+            when (pos.direction) {
+                PositionDirection.LONG -> {
+                    closePrice.subtract(pos.entryPrice).multiply(pointValue).multiply(qty)
+                }
+
+                PositionDirection.SHORT -> {
+                    pos.entryPrice
+                        .subtract(closePrice)
+                        .multiply(pointValue)
+                        .multiply(qty)
+                }
+            }
 
         pos.closePrice = closePrice
         pos.pnl = pnl

@@ -59,7 +59,7 @@ class StrategyService(
     private val agentLogRepo: AgentLogRepository,
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -96,17 +96,18 @@ class StrategyService(
         val cycleStart = System.nanoTime()
         try {
             coroutineScope {
-                val feedback = tickers.associateWith { ticker ->
-                    async {
-                        try {
-                            feedbackAgent.generateFeedback(ticker)
-                        } catch (e: Exception) {
-                            logger.error(e) { "Feedback generation failed for $ticker" }
-                            meterRegistry.counter("strategy.feedback.error", Tags.of("ticker", ticker)).increment()
-                            null
+                val feedback =
+                    tickers.associateWith { ticker ->
+                        async {
+                            try {
+                                feedbackAgent.generateFeedback(ticker)
+                            } catch (e: Exception) {
+                                logger.error(e) { "Feedback generation failed for $ticker" }
+                                meterRegistry.counter("strategy.feedback.error", Tags.of("ticker", ticker)).increment()
+                                null
+                            }
                         }
                     }
-                }
 
                 tickers
                     .map { ticker ->
@@ -118,13 +119,13 @@ class StrategyService(
                                 meterRegistry.counter("strategy.error", Tags.of("ticker", ticker)).increment()
                             }
                         }
-                    }
-                    .awaitAll()
+                    }.awaitAll()
             }
         } catch (e: Exception) {
             logger.error(e) { "Strategy cycle failed" }
         } finally {
-            meterRegistry.timer("strategy.latency")
+            meterRegistry
+                .timer("strategy.latency")
                 .record(System.nanoTime() - cycleStart, java.util.concurrent.TimeUnit.NANOSECONDS)
         }
     }
@@ -143,7 +144,7 @@ class StrategyService(
     private suspend fun processTicker(
         ticker: String,
         cycleId: String,
-        feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>
+        feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>,
     ) {
         // Локальный adaptive risk — без LLM, проверяем первым
         if (adaptiveRisk.shouldPauseTrading(ticker)) {
@@ -152,11 +153,12 @@ class StrategyService(
             return
         }
 
-        val (candles, snapshot, fb) = coroutineScope {
-            val candlesDeferred = async { loadCandles(ticker) }
-            val snapshotDeferred = async { alorClient.getMarketSnapshot(ticker) }
-            Triple(candlesDeferred.await(), snapshotDeferred.await(), feedbackDeferred.await())
-        }
+        val (candles, snapshot, fb) =
+            coroutineScope {
+                val candlesDeferred = async { loadCandles(ticker) }
+                val snapshotDeferred = async { alorClient.getMarketSnapshot(ticker) }
+                Triple(candlesDeferred.await(), snapshotDeferred.await(), feedbackDeferred.await())
+            }
 
         if (fb?.shouldPauseTrading == true) {
             logger.warn { "PAUSE recommended for $ticker by Meta-Agent" }
@@ -166,61 +168,72 @@ class StrategyService(
         if (snapshot == null) return
 
         // Независимые агенты Tech + Fund — параллельно (экономит ~1 LLM-вызов за такт)
-        val (tech, fund) = coroutineScope {
-            val techDeferred = async { techAgent.analyze(ticker, candles, snapshot, cycleId) }
-            val fundDeferred = async { fundAgent.analyze(ticker, cycleId) }
-            techDeferred.await() to fundDeferred.await()
-        }
+        val (tech, fund) =
+            coroutineScope {
+                val techDeferred = async { techAgent.analyze(ticker, candles, snapshot, cycleId) }
+                val fundDeferred = async { fundAgent.analyze(ticker, cycleId) }
+                techDeferred.await() to fundDeferred.await()
+            }
 
         val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
         val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId, adaptiveThreshold = adaptiveConf)
         val challenge = contrAgent.challenge(draft, tech, fund, snapshot, cycleId)
 
-        val riskContext = RiskContext(
-            shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
-            dailyLossLimitReached = riskManagement.isDailyLossLimitReached(),
-            drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
-            openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
-            maxOpenPositions = riskConfig.maxOpenPositions
-        )
-        val final = arbAgent.adjudicate(
-            draft, challenge, tech, fund, snapshot, cycleId,
-            contextPrompt = fb?.contextPrompt,
-            adaptiveConfidence = adaptiveConf,
-            riskContext = riskContext
-        )
+        val riskContext =
+            RiskContext(
+                shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
+                dailyLossLimitReached = riskManagement.isDailyLossLimitReached(),
+                drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
+                openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
+                maxOpenPositions = riskConfig.maxOpenPositions,
+            )
+        val final =
+            arbAgent.adjudicate(
+                draft,
+                challenge,
+                tech,
+                fund,
+                snapshot,
+                cycleId,
+                contextPrompt = fb?.contextPrompt,
+                adaptiveConfidence = adaptiveConf,
+                riskContext = riskContext,
+            )
 
         val atr = BigDecimal.valueOf(tech.atr)
         val direction = if (final.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
 
-        val highVolatility = final.action != StrategyAction.HOLD &&
-            riskManagement.isVolatilityTooHigh(atr, snapshot.currentPrice)
-        val effectiveFinal = if (highVolatility) {
-            logger.warn { "Volatility guard: $ticker ATR=$atr > ${riskConfig.maxVolatilityPercent}%, strategy -> HOLD" }
-            meterRegistry.counter("strategy.volatility.blocked", Tags.of("ticker", ticker)).increment()
-            final.copy(action = StrategyAction.HOLD, quantity = 0, reasoning = final.reasoning + " [VOLATILITY_GUARD]")
-        } else {
-            final
-        }
+        val highVolatility =
+            final.action != StrategyAction.HOLD &&
+                riskManagement.isVolatilityTooHigh(atr, snapshot.currentPrice)
+        val effectiveFinal =
+            if (highVolatility) {
+                logger.warn { "Volatility guard: $ticker ATR=$atr > ${riskConfig.maxVolatilityPercent}%, strategy -> HOLD" }
+                meterRegistry.counter("strategy.volatility.blocked", Tags.of("ticker", ticker)).increment()
+                final.copy(action = StrategyAction.HOLD, quantity = 0, reasoning = final.reasoning + " [VOLATILITY_GUARD]")
+            } else {
+                final
+            }
 
         val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr)
         val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr)
         val effectiveConfidence = effectiveFinal.confidence.coerceAtLeast(adaptiveConf)
 
-        val strategy = Strategy(
-            ticker = ticker,
-            action = effectiveFinal.action,
-            targetPrice = effectiveFinal.targetPrice,
-            quantity = effectiveFinal.quantity,
-            stopLoss = adaptiveSL,
-            takeProfit = adaptiveTP,
-            trailingStop = effectiveFinal.trailingStop,
-            confidence = effectiveConfidence,
-            reasoning = effectiveFinal.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}, SL/TP adapted, atr=${atr}",
-            rawJson = objectMapper.writeValueAsString(effectiveFinal),
-            cycleId = cycleId,
-            validUntil = LocalDateTime.now().plusMinutes(10)
-        )
+        val strategy =
+            Strategy(
+                ticker = ticker,
+                action = effectiveFinal.action,
+                targetPrice = effectiveFinal.targetPrice,
+                quantity = effectiveFinal.quantity,
+                stopLoss = adaptiveSL,
+                takeProfit = adaptiveTP,
+                trailingStop = effectiveFinal.trailingStop,
+                confidence = effectiveConfidence,
+                reasoning = effectiveFinal.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}, SL/TP adapted, atr=$atr",
+                rawJson = objectMapper.writeValueAsString(effectiveFinal),
+                cycleId = cycleId,
+                validUntil = LocalDateTime.now().plusMinutes(10),
+            )
 
         strategyRepo.save(strategy)
         BlockingDb.io { redis.saveStrategy(strategy) }

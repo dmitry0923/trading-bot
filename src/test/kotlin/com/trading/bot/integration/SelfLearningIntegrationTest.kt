@@ -12,7 +12,6 @@ import java.math.BigDecimal
 import java.time.LocalDateTime
 
 class SelfLearningIntegrationTest : AbstractTestContainerTest() {
-
     @Autowired
     lateinit var tradeAnalysisService: TradeAnalysisService
 
@@ -124,10 +123,17 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         close: BigDecimal,
         status: PositionStatus,
         reason: String,
-        hour: Int = 12
+        hour: Int = 12,
     ) {
         val pnl = close.subtract(entry).multiply(BigDecimal(10))
-        val opened = LocalDateTime.now().minusDays(1).withHour(hour).withMinute(0).withSecond(0).withNano(0)
+        val opened =
+            LocalDateTime
+                .now()
+                .minusDays(1)
+                .withHour(hour)
+                .withMinute(0)
+                .withSecond(0)
+                .withNano(0)
         val closed = LocalDateTime.now()
         runBlocking {
             positionRepository.save(
@@ -143,8 +149,8 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
                     alorOrderId = "test-${System.nanoTime()}",
                     closeReason = reason,
                     openedAt = opened,
-                    closedAt = closed
-                )
+                    closedAt = closed,
+                ),
             )
         }
     }

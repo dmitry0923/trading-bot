@@ -18,12 +18,10 @@ import java.time.ZoneId
  * и восстановление снапшота после рестарта.
  */
 class RiskManagementServiceDailyPnLTest {
-
     private val repo = Mockito.mock(DailyRiskSnapshotRepository::class.java)
     private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
-    private fun service(maxDailyLoss: BigDecimal) =
-        RiskManagementService(RiskConfig().apply { maxDailyLossRub = maxDailyLoss }, repo)
+    private fun service(maxDailyLoss: BigDecimal) = RiskManagementService(RiskConfig().apply { maxDailyLossRub = maxDailyLoss }, repo)
 
     @Test
     fun `daily pnl accumulates closed trades`() {
@@ -64,8 +62,8 @@ class RiskManagementServiceDailyPnLTest {
                 tradeDate = moscowToday,
                 dailyPnl = BigDecimal("-3000"),
                 limitReached = false,
-                maxDrawdownToday = BigDecimal("-3000")
-            )
+                maxDrawdownToday = BigDecimal("-3000"),
+            ),
         )
         val s = service(BigDecimal("5000"))
 
@@ -80,8 +78,8 @@ class RiskManagementServiceDailyPnLTest {
                 tradeDate = moscowToday,
                 dailyPnl = BigDecimal("-6000"),
                 limitReached = true,
-                maxDrawdownToday = BigDecimal("-6000")
-            )
+                maxDrawdownToday = BigDecimal("-6000"),
+            ),
         )
         val s = service(BigDecimal("5000"))
 

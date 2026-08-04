@@ -2,11 +2,36 @@ package com.trading.bot.controller
 
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.HistoricalDataLoader
-import com.trading.bot.model.*
-import com.trading.bot.repository.*
-import com.trading.bot.service.*
+import com.trading.bot.model.BlindSpotEntity
+import com.trading.bot.model.BotSettings
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.StrategyAdjustment
+import com.trading.bot.model.TimePattern
+import com.trading.bot.model.TradeEvent
+import com.trading.bot.model.TradeStats
+import com.trading.bot.repository.AgentLogRepository
+import com.trading.bot.repository.BlindSpotRepository
+import com.trading.bot.repository.PositionRepository
+import com.trading.bot.repository.StrategyAdjustmentRepository
+import com.trading.bot.repository.StrategyRepository
+import com.trading.bot.repository.TradeEventRepository
+import com.trading.bot.service.AdaptiveRiskService
+import com.trading.bot.service.DashboardService
+import com.trading.bot.service.DashboardSseService
+import com.trading.bot.service.RedisCacheService
+import com.trading.bot.service.RiskManagementService
+import com.trading.bot.service.SettingsService
+import com.trading.bot.service.StrategyService
+import com.trading.bot.service.TradeAnalysisService
+import com.trading.bot.service.TradingBotService
 import io.micrometer.core.instrument.MeterRegistry
-import org.springframework.web.bind.annotation.*
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 
 /**
@@ -39,14 +64,15 @@ class ApiController(
     private val historicalDataLoader: HistoricalDataLoader,
     private val dashboardService: DashboardService,
     private val dashboardSseService: DashboardSseService,
-    private val meterRegistry: MeterRegistry
+    private val meterRegistry: MeterRegistry,
 ) {
-
     @GetMapping("/settings")
     fun getSettings(): BotSettings = settingsService.getSettings()
 
     @PostMapping("/settings")
-    fun updateSettings(@RequestBody settings: BotSettings): BotSettings {
+    fun updateSettings(
+        @RequestBody settings: BotSettings,
+    ): BotSettings {
         settingsService.updateSettings(settings)
         return settings
     }
@@ -78,9 +104,10 @@ class ApiController(
     suspend fun getStrategies() = strategyRepository.findTop50ByOrderByCreatedAtDesc()
 
     @GetMapping("/strategies/{ticker}")
-    suspend fun getStrategy(@PathVariable ticker: String) =
-        redisCacheService.getStrategy(ticker)
-            ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(ticker)
+    suspend fun getStrategy(
+        @PathVariable ticker: String,
+    ) = redisCacheService.getStrategy(ticker)
+        ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(ticker)
 
     @GetMapping("/positions")
     suspend fun getOpenPositions() = positionRepository.findByStatus(PositionStatus.OPEN)
@@ -92,7 +119,7 @@ class ApiController(
     suspend fun getLogs(
         @RequestParam(required = false) ticker: String?,
         @RequestParam(required = false) agent: String?,
-        @RequestParam(defaultValue = "100") limit: Int
+        @RequestParam(defaultValue = "100") limit: Int,
     ) = agentLogRepository.findFiltered(ticker, agent, limit)
 
     @GetMapping("/risk/daily-pnl")
@@ -103,7 +130,9 @@ class ApiController(
      * POSITION_OPENED / POSITION_UPDATED / POSITION_CLOSED в порядке sequence.
      */
     @GetMapping("/positions/{positionId}/events")
-    suspend fun getPositionEvents(@PathVariable positionId: Long): List<TradeEvent> {
+    suspend fun getPositionEvents(
+        @PathVariable positionId: Long,
+    ): List<TradeEvent> {
         val aggregateId = java.util.UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
         return tradeEventRepository.findByAggregateId(aggregateId)
     }
@@ -124,9 +153,14 @@ class ApiController(
     suspend fun backtest(
         @PathVariable ticker: String,
         @RequestParam(defaultValue = "365") days: Int,
-        @RequestParam(defaultValue = "false") loadHistory: Boolean
+        @RequestParam(defaultValue = "false") loadHistory: Boolean,
     ): Map<String, Any> {
-        meterRegistry.counter("api.backtest", io.micrometer.core.instrument.Tags.of("ticker", ticker)).increment()
+        meterRegistry
+            .counter(
+                "api.backtest",
+                io.micrometer.core.instrument.Tags
+                    .of("ticker", ticker),
+            ).increment()
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, days)
         }
@@ -141,25 +175,37 @@ class ApiController(
             "totalTrades" to result.totalTrades,
             "passable" to result.isPassable(),
             "equityCurve" to result.equityCurve,
-            "timestamp" to java.time.LocalDateTime.now().toString()
+            "timestamp" to
+                java.time.LocalDateTime
+                    .now()
+                    .toString(),
         )
     }
 
     @GetMapping("/analytics/trade-stats")
-    suspend fun getTradeStats(@RequestParam(defaultValue = "14") days: Int): Map<String, TradeStats> {
+    suspend fun getTradeStats(
+        @RequestParam(defaultValue = "14") days: Int,
+    ): Map<String, TradeStats> {
         meterRegistry.counter("api.analytics.trade-stats").increment()
         return tradeAnalysisService.analyzeLastNDays(days)
     }
 
     @GetMapping("/analytics/adaptive-params/{ticker}")
-    suspend fun getAdaptiveParams(@PathVariable ticker: String): Map<String, Any> {
-        meterRegistry.counter("api.analytics.adaptive-params", io.micrometer.core.instrument.Tags.of("ticker", ticker)).increment()
+    suspend fun getAdaptiveParams(
+        @PathVariable ticker: String,
+    ): Map<String, Any> {
+        meterRegistry
+            .counter(
+                "api.analytics.adaptive-params",
+                io.micrometer.core.instrument.Tags
+                    .of("ticker", ticker),
+            ).increment()
         return mapOf(
             "ticker" to ticker,
             "confidenceThreshold" to adaptiveRiskService.getAdaptiveConfidenceThreshold(ticker),
             "maxPositionRub" to adaptiveRiskService.calculateOptimalPositionSize(ticker),
             "isInRecovery" to adaptiveRiskService.isInDrawdownRecovery(),
-            "shouldPause" to adaptiveRiskService.shouldPauseTrading(ticker)
+            "shouldPause" to adaptiveRiskService.shouldPauseTrading(ticker),
         )
     }
 
@@ -170,18 +216,28 @@ class ApiController(
     }
 
     @GetMapping("/analytics/adjustments")
-    suspend fun getAdjustments(@RequestParam(required = false) ticker: String?): List<StrategyAdjustment> {
+    suspend fun getAdjustments(
+        @RequestParam(required = false) ticker: String?,
+    ): List<StrategyAdjustment> {
         meterRegistry.counter("api.analytics.adjustments").increment()
-        return if (ticker != null) adjustmentRepository.findByTickerOrderByCreatedAtDesc(ticker)
-        else adjustmentRepository.findAll()
+        return if (ticker != null) {
+            adjustmentRepository.findByTickerOrderByCreatedAtDesc(ticker)
+        } else {
+            adjustmentRepository.findAll()
+        }
     }
 
     @GetMapping("/analytics/time-pattern/{ticker}")
     suspend fun getTimePattern(
         @PathVariable ticker: String,
-        @RequestParam(defaultValue = "30") days: Int
+        @RequestParam(defaultValue = "30") days: Int,
     ): TimePattern {
-        meterRegistry.counter("api.analytics.time-pattern", io.micrometer.core.instrument.Tags.of("ticker", ticker)).increment()
+        meterRegistry
+            .counter(
+                "api.analytics.time-pattern",
+                io.micrometer.core.instrument.Tags
+                    .of("ticker", ticker),
+            ).increment()
         return tradeAnalysisService.timePatternAnalysis(ticker, days)
     }
 
@@ -195,7 +251,10 @@ class ApiController(
             "totalTradesLast7Days" to totalTrades,
             "averageWinRate" to String.format("%.2f", avgWinRate * 100) + "%",
             "pausedTickers" to stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys,
-            "timestamp" to java.time.LocalDateTime.now().toString()
+            "timestamp" to
+                java.time.LocalDateTime
+                    .now()
+                    .toString(),
         )
     }
 }

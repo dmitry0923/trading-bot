@@ -18,19 +18,21 @@ import java.time.LocalDate
  */
 @Repository
 class DailyRiskSnapshotRepository(
-    private val databaseClient: DatabaseClient
+    private val databaseClient: DatabaseClient,
 ) {
-    private fun toDailyRiskSnapshot(row: Row): DailyRiskSnapshot = DailyRiskSnapshot(
-        id = row.get("id", Long::class.javaObjectType),
-        tradeDate = row.require("trade_date", LocalDate::class.java),
-        dailyPnl = row.require("daily_pnl", BigDecimal::class.java),
-        limitReached = row.require("limit_reached", Boolean::class.javaObjectType),
-        maxDrawdownToday = row.require("max_drawdown_today", BigDecimal::class.java)
-    )
+    private fun toDailyRiskSnapshot(row: Row): DailyRiskSnapshot =
+        DailyRiskSnapshot(
+            id = row.get("id", Long::class.javaObjectType),
+            tradeDate = row.require("trade_date", LocalDate::class.java),
+            dailyPnl = row.require("daily_pnl", BigDecimal::class.java),
+            limitReached = row.require("limit_reached", Boolean::class.javaObjectType),
+            maxDrawdownToday = row.require("max_drawdown_today", BigDecimal::class.java),
+        )
 
     fun findByDate(tradeDate: LocalDate): DailyRiskSnapshot? {
         val sql = "SELECT * FROM daily_risk_snapshot WHERE trade_date = :tradeDate"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("tradeDate", tradeDate)
             .map { row, _ -> toDailyRiskSnapshot(row) }
             .one()
@@ -44,8 +46,14 @@ class DailyRiskSnapshotRepository(
     /**
      * Upsert снапшота для торгового дня (одна строка на дату).
      */
-    fun upsert(tradeDate: LocalDate, dailyPnl: BigDecimal, limitReached: Boolean, maxDrawdownToday: BigDecimal) {
-        val sql = """
+    fun upsert(
+        tradeDate: LocalDate,
+        dailyPnl: BigDecimal,
+        limitReached: Boolean,
+        maxDrawdownToday: BigDecimal,
+    ) {
+        val sql =
+            """
             INSERT INTO daily_risk_snapshot (trade_date, daily_pnl, limit_reached, max_drawdown_today, updated_at)
             VALUES (:tradeDate, :dailyPnl, :limitReached, :maxDrawdownToday, NOW())
             ON CONFLICT (trade_date) DO UPDATE SET
@@ -53,8 +61,9 @@ class DailyRiskSnapshotRepository(
                 limit_reached = EXCLUDED.limit_reached,
                 max_drawdown_today = EXCLUDED.max_drawdown_today,
                 updated_at = NOW()
-        """.trimIndent()
-        databaseClient.sql(sql)
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
             .bind("tradeDate", tradeDate)
             .bind("dailyPnl", dailyPnl)
             .bind("limitReached", limitReached)

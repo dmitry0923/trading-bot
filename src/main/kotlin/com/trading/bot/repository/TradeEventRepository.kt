@@ -18,19 +18,21 @@ import java.util.UUID
  */
 @Repository
 class TradeEventRepository(
-    private val databaseClient: DatabaseClient
+    private val databaseClient: DatabaseClient,
 ) {
-    private fun toTradeEvent(row: Row): TradeEvent = TradeEvent(
-        id = row.get("id", Long::class.javaObjectType),
-        aggregateId = row.require("aggregate_id", UUID::class.java),
-        eventType = row.require("event_type", String::class.java),
-        payload = row.require("payload", String::class.java),
-        occurredAt = row.require("occurred_at", LocalDateTime::class.java),
-        sequenceNumber = row.require("sequence_number", Long::class.javaObjectType)
-    )
+    private fun toTradeEvent(row: Row): TradeEvent =
+        TradeEvent(
+            id = row.get("id", Long::class.javaObjectType),
+            aggregateId = row.require("aggregate_id", UUID::class.java),
+            eventType = row.require("event_type", String::class.java),
+            payload = row.require("payload", String::class.java),
+            occurredAt = row.require("occurred_at", LocalDateTime::class.java),
+            sequenceNumber = row.require("sequence_number", Long::class.javaObjectType),
+        )
 
     suspend fun append(event: TradeEvent) {
-        val sql = """
+        val sql =
+            """
             INSERT INTO trade_events (aggregate_id, event_type, payload, occurred_at, sequence_number)
             VALUES (
                 :aggregateId,
@@ -39,8 +41,9 @@ class TradeEventRepository(
                 :occurredAt,
                 (SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM trade_events WHERE aggregate_id = :aggregateId)
             )
-        """.trimIndent()
-        databaseClient.sql(sql)
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
             .bind("aggregateId", event.aggregateId)
             .bind("eventType", event.eventType)
             .bind("payload", event.payload)
@@ -51,7 +54,8 @@ class TradeEventRepository(
 
     suspend fun findByAggregateId(aggregateId: UUID): List<TradeEvent> {
         val sql = "SELECT * FROM trade_events WHERE aggregate_id = :aggregateId ORDER BY sequence_number"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("aggregateId", aggregateId)
             .map { row, _ -> toTradeEvent(row) }
             .all()
@@ -61,7 +65,8 @@ class TradeEventRepository(
 
     suspend fun findRecent(limit: Int): List<TradeEvent> {
         val sql = "SELECT * FROM trade_events ORDER BY occurred_at DESC LIMIT :limit"
-        return databaseClient.sql(sql)
+        return databaseClient
+            .sql(sql)
             .bind("limit", limit)
             .map { row, _ -> toTradeEvent(row) }
             .all()

@@ -4,7 +4,9 @@ import java.time.LocalDateTime
 import java.util.UUID
 
 enum class OutboxStatus {
-    PENDING, SENT, FAILED
+    PENDING,
+    SENT,
+    FAILED,
 }
 
 /**
@@ -25,5 +27,5 @@ data class OrderOutbox(
     val alorOrderId: String? = null,
     val createdAt: LocalDateTime = LocalDateTime.now(),
     val processedAt: LocalDateTime? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
 )

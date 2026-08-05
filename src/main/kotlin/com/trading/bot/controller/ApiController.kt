@@ -2,6 +2,7 @@ package com.trading.bot.controller
 
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.BlindSpotEntity
 import com.trading.bot.model.BotSettings
 import com.trading.bot.model.PositionStatus
@@ -16,15 +17,20 @@ import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.repository.StrategyRepository
 import com.trading.bot.repository.TradeEventRepository
 import com.trading.bot.service.AdaptiveRiskService
+import com.trading.bot.service.ClearingService
 import com.trading.bot.service.DashboardService
 import com.trading.bot.service.DashboardSseService
+import com.trading.bot.service.InvestorService
+import com.trading.bot.service.ProfitForecastService
 import com.trading.bot.service.RedisCacheService
 import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.SettingsService
 import com.trading.bot.service.StrategyService
 import com.trading.bot.service.TradeAnalysisService
 import com.trading.bot.service.TradingBotService
+import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.MeterRegistry
+import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -33,6 +39,10 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+import java.math.BigDecimal
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.util.UUID
 
 /**
  * REST API для React Dashboard.
@@ -64,6 +74,10 @@ class ApiController(
     private val historicalDataLoader: HistoricalDataLoader,
     private val dashboardService: DashboardService,
     private val dashboardSseService: DashboardSseService,
+    private val investorService: InvestorService,
+    private val clearingService: ClearingService,
+    private val profitForecastService: ProfitForecastService,
+    private val tradingControlService: TradingControlService,
     private val meterRegistry: MeterRegistry,
 ) {
     @GetMapping("/settings")
@@ -252,9 +266,146 @@ class ApiController(
             "averageWinRate" to String.format("%.2f", avgWinRate * 100) + "%",
             "pausedTickers" to stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys,
             "timestamp" to
-                java.time.LocalDateTime
+                LocalDateTime
                     .now()
                     .toString(),
         )
+    }
+
+    // ---------- Текущий пользователь и роли ----------
+
+    @GetMapping("/me")
+    fun me(): Map<String, Any> {
+        val auth = SecurityContextHolder.getContext().authentication
+        return mapOf(
+            "username" to auth.name,
+            "roles" to auth.authorities.map { it.authority },
+        )
+    }
+
+    // ---------- LLM провайдеры ----------
+
+    @GetMapping("/llm/providers")
+    fun getLlmProviders(): Map<String, Any> {
+        val settings = settingsService.getSettings()
+        return mapOf(
+            "providers" to LlmProvider.entries.map { it.name },
+            "active" to (settings.llmProvider.ifBlank { "ROUTER_AI" }),
+            "model" to settings.llmModel,
+            "default" to "ROUTER_AI",
+        )
+    }
+
+    // ---------- Инвесторы и статистика ----------
+
+    @GetMapping("/investors")
+    suspend fun getInvestors() = investorService.listInvestors()
+
+    @PostMapping("/investors")
+    suspend fun createInvestor(
+        @RequestBody request: Map<String, Any>,
+    ): Any {
+        val name = request["name"] as? String ?: throw IllegalArgumentException("name is required")
+        val email = request["email"] as? String
+        val deposit = BigDecimal((request["initialDeposit"] ?: "0").toString())
+        return investorService.createInvestor(name, email, deposit)
+    }
+
+    @GetMapping("/investors/{investorId}")
+    suspend fun getInvestor(
+        @PathVariable investorId: UUID,
+    ) = investorService.getInvestor(investorId)
+
+    @PostMapping("/investors/{investorId}/deposit")
+    suspend fun depositInvestor(
+        @PathVariable investorId: UUID,
+        @RequestBody request: Map<String, Any>,
+    ) = investorService.deposit(investorId, BigDecimal((request["amount"] ?: "0").toString()))
+
+    @PostMapping("/investors/{investorId}/withdraw")
+    suspend fun withdrawInvestor(
+        @PathVariable investorId: UUID,
+        @RequestBody request: Map<String, Any>,
+    ) = investorService.withdraw(investorId, BigDecimal((request["amount"] ?: "0").toString()), request["description"] as? String)
+
+    @GetMapping("/investors/{investorId}/transactions")
+    suspend fun getInvestorTransactions(
+        @PathVariable investorId: UUID,
+    ) = investorService.transactions(investorId)
+
+    @GetMapping("/investors/allocations")
+    suspend fun getInvestorAllocations() = investorService.allocations()
+
+    // ---------- Прогноз прибыли ----------
+
+    @GetMapping("/forecast")
+    suspend fun getForecast(
+        @RequestParam(defaultValue = "90") horizonDays: Int,
+        @RequestParam(defaultValue = "1000000") capitalBase: BigDecimal,
+    ) = profitForecastService.forecast(horizonDays, capitalBase)
+
+    // ---------- Клиринг с инвесторами ----------
+
+    @GetMapping("/clearing/quote")
+    suspend fun getClearingQuote(
+        @RequestParam investorId: UUID,
+        @RequestParam(required = false) date: LocalDateTime?,
+    ) = clearingService.calculateWithdrawal(investorId, date ?: LocalDateTime.now())
+
+    @PostMapping("/clearing/settle")
+    suspend fun settleClearing(
+        @RequestParam investorId: UUID,
+        @RequestParam(required = false) date: LocalDateTime?,
+    ) = clearingService.settleWithdrawal(investorId, date ?: LocalDateTime.now())
+
+    @GetMapping("/clearing/pool")
+    suspend fun getClearingPool() = clearingService.poolStats()
+
+    // ---------- Управление торговлей ----------
+
+    @GetMapping("/trading/status")
+    suspend fun getTradingStatus(): Map<String, Any> {
+        val settings = settingsService.getSettings()
+        return mapOf(
+            "tradingEnabled" to tradingControlService.isTradingEnabled(),
+            "tradingMode" to settings.tradingMode,
+            "forceCloseEnabled" to settings.forceCloseEnabled,
+            "forceCloseTime" to settings.forceCloseTime,
+            "openPositions" to positionRepository.findOpenCount(),
+        )
+    }
+
+    @PostMapping("/trading/enable")
+    fun enableTrading(): Map<String, Any> {
+        tradingControlService.setTradingEnabled(true)
+        return mapOf("tradingEnabled" to true)
+    }
+
+    @PostMapping("/trading/disable")
+    fun disableTrading(): Map<String, Any> {
+        tradingControlService.setTradingEnabled(false)
+        return mapOf("tradingEnabled" to false)
+    }
+
+    @PostMapping("/trading/force-close")
+    suspend fun forceClose(
+        @RequestParam(defaultValue = "FORCE_CLOSE") reason: String,
+    ): Map<String, Any> = mapOf("closed" to tradingControlService.forceCloseNow(reason))
+
+    @PostMapping("/trading/force-close-at")
+    fun forceCloseAt(
+        @RequestParam time: String,
+    ): Map<String, Any> {
+        LocalTime.parse(time) // валидация формата HH:mm
+        val current = settingsService.getSettings()
+        settingsService.updateSettings(current.copy(forceCloseEnabled = true, forceCloseTime = time))
+        return mapOf("forceCloseEnabled" to true, "forceCloseTime" to time)
+    }
+
+    @PostMapping("/trading/force-close-cancel")
+    fun cancelForceClose(): Map<String, Any> {
+        val current = settingsService.getSettings()
+        settingsService.updateSettings(current.copy(forceCloseEnabled = false, forceCloseTime = ""))
+        return mapOf("forceCloseEnabled" to false)
     }
 }

@@ -2,6 +2,7 @@ package com.trading.bot.infrastructure.llm
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.LlmConfig
+import com.trading.bot.service.SettingsService
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.kotlin.circuitbreaker.decorateSuspendFunction
 import io.github.resilience4j.kotlin.ratelimiter.decorateSuspendFunction
@@ -23,6 +24,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Отказоустойчивый LLM-клиент.
  *
+ * - Гибкий провайдер: RouterAI (по умолчанию) / Kimi / DeepSeek / Qwen.
+ *   Активный провайдер и модель переключаются через UI/настройки
+ *   (см. [com.trading.bot.service.SettingsService]).
  * - Circuit Breaker / Rate Limiter / Retry через Resilience4j (конфиг в application.yml: resilience4j.*)
  * - Очередь запросов [LlmRequestQueue]: ограничение параллельных вызовов + FIFO
  * - Таймаут HTTP 30 секунд
@@ -40,6 +44,7 @@ class ResilientLlmClient(
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val retryRegistry: RetryRegistry,
+    private val settingsService: SettingsService,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -52,7 +57,6 @@ class ResilientLlmClient(
     private val webClient: WebClient =
         WebClient
             .builder()
-            .baseUrl(llmConfig.baseUrl)
             .clientConnector(
                 ReactorClientHttpConnector(
                     HttpClient
@@ -61,6 +65,12 @@ class ResilientLlmClient(
                         .responseTimeout(Duration.ofSeconds(llmConfig.timeoutSec)),
                 ),
             ).build()
+
+    private data class ResolvedEndpoint(
+        val baseUrl: String,
+        val model: String,
+        val apiKey: String,
+    )
 
     /**
      * Выполняет LLM-вызов с resilience-обвязкой и semantic cache.
@@ -80,7 +90,9 @@ class ResilientLlmClient(
         fingerprint: String? = null,
         temperature: Double = llmConfig.temperature,
     ): LlmResponse {
-        if (llmConfig.apiKey.isBlank()) {
+        val endpoint = resolveEndpoint()
+
+        if (endpoint.apiKey.isBlank()) {
             meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "NO_API_KEY")).increment()
             return LlmResponse.fallback("NO_API_KEY")
         }
@@ -94,7 +106,7 @@ class ResilientLlmClient(
 
         val response =
             try {
-                llmQueue.submit { decoratedCall { callLlm(system, user, temperature, agent) } }
+                llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
             } catch (e: Exception) {
                 logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
                 meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
@@ -105,6 +117,20 @@ class ResilientLlmClient(
             semanticCache.put(agent, ticker, fingerprint, response)
         }
         return response
+    }
+
+    /**
+     * Определяет активный провайдер: приоритет у настроек из UI (SettingsService),
+     * иначе значения из application.yml.
+     */
+    private fun resolveEndpoint(): ResolvedEndpoint {
+        val settings = settingsService.getSettings()
+        val provider = settings.llmProvider() ?: llmConfig.provider
+        val (defaultBaseUrl, defaultModel) = llmConfig.endpointFor(provider)
+        val baseUrl = settings.llmBaseUrl.takeIf { it.isNotBlank() } ?: defaultBaseUrl
+        val model = settings.llmModel.takeIf { it.isNotBlank() } ?: defaultModel
+        val apiKey = settings.llmApiKey.takeIf { it.isNotBlank() } ?: llmConfig.apiKey
+        return ResolvedEndpoint(baseUrl = baseUrl, model = model, apiKey = apiKey)
     }
 
     /**
@@ -128,6 +154,7 @@ class ResilientLlmClient(
     }
 
     private suspend fun callLlm(
+        endpoint: ResolvedEndpoint,
         system: String,
         user: String,
         temperature: Double,
@@ -136,7 +163,7 @@ class ResilientLlmClient(
         val start = System.currentTimeMillis()
         val body =
             mapOf(
-                "model" to llmConfig.model,
+                "model" to endpoint.model,
                 "messages" to
                     listOf(
                         mapOf("role" to "system", "content" to system),
@@ -150,8 +177,8 @@ class ResilientLlmClient(
         val raw: String =
             webClient
                 .post()
-                .uri("/chat/completions")
-                .header("Authorization", "Bearer ${llmConfig.apiKey}")
+                .uri(endpoint.baseUrl.trimEnd('/') + "/chat/completions")
+                .header("Authorization", "Bearer ${endpoint.apiKey}")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(objectMapper.writeValueAsString(body))
                 .retrieve()
@@ -172,8 +199,8 @@ class ResilientLlmClient(
         val tokens = tree.path("usage").path("total_tokens").asInt(0)
         val latency = System.currentTimeMillis() - start
 
-        meterRegistry.counter("llm.tokens.used", Tags.of("agent", agent, "model", llmConfig.model)).increment(tokens.toDouble())
+        meterRegistry.counter("llm.tokens.used", Tags.of("agent", agent, "model", endpoint.model)).increment(tokens.toDouble())
         meterRegistry.timer("llm.latency", Tags.of("agent", agent)).record(latency, TimeUnit.MILLISECONDS)
-        return LlmResponse(content = content, tokensUsed = tokens, latencyMs = latency, model = llmConfig.model)
+        return LlmResponse(content = content, tokensUsed = tokens, latencyMs = latency, model = endpoint.model)
     }
 }

@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component
  * @property strategyIntervalMs период стратегического цикла, мс
  * @property monitorIntervalMs период fallback-поллинга котировок, мс
  * @property maxOpenPositionsForNewEntry максимум открытых позиций для новых входов
- * @property timeframe таймфрейм свечей
+ * @property timeframe основной таймфрейм свечей (обратная совместимость)
+ * @property timeframes список таймфреймов для мульти-таймфрейм анализа
  * @property wsQuotesEnabled признак того, что real-time котировки идут через WebSocket
  */
 @Component
@@ -25,5 +26,6 @@ class TradingConfig {
     var monitorIntervalMs: Long = 10000
     var maxOpenPositionsForNewEntry: Int = 3
     var timeframe: String = "MINUTE_10"
+    var timeframes: List<String> = listOf("MINUTE_10")
     var wsQuotesEnabled: Boolean = true
 }

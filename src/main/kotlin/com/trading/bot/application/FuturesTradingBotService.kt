@@ -57,6 +57,7 @@ class FuturesTradingBotService(
     private val riskConfig: RiskConfig,
     private val eventPublisher: TradingEventPublisher,
     private val tradeEventService: TradeEventService,
+    private val tradingGate: TradingGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -70,6 +71,10 @@ class FuturesTradingBotService(
         val strat = event.strategy
         if (strat.ticker != "Si") return
         if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
+        if (!tradingGate.isTradingEnabled()) {
+            logger.info { "Trading disabled (single flag) — futures entry skipped ${strat.ticker}" }
+            return
+        }
         scope.launch {
             try {
                 openFuturesPosition(strat.ticker, strat.targetPrice, strat.action)
@@ -100,6 +105,30 @@ class FuturesTradingBotService(
     fun onTradingHalted(event: TradingHaltedEvent) {
         logger.error { "TRADING HALTED: ${event.reason}. New entries are blocked, open positions still monitored." }
         meterRegistry.counter("futures.trading.halted", Tags.of("reason", event.reason)).increment()
+    }
+
+    /**
+     * Принудительное закрытие всех открытых фьючерсных позиций
+     * (настройка "закрыть торговлю сейчас").
+     *
+     * @param reason причина закрытия
+     * @return количество закрытых позиций
+     */
+    suspend fun forceCloseAll(reason: String = "FORCE_CLOSE"): Int {
+        val open =
+            positionRepo
+                .findByStatus(PositionStatus.OPEN)
+                .filter { it.instrumentType == InstrumentType.FUTURES }
+        open.forEach { pos ->
+            try {
+                val price = alorClient.getLastPrice(pos.ticker) ?: pos.currentPrice ?: pos.entryPrice
+                closeFuturesPosition(pos, price, reason)
+            } catch (e: Exception) {
+                logger.error(e) { "Futures force close failed ${pos.ticker}" }
+            }
+        }
+        logger.info { "Force close (futures): ${open.size} positions, reason=$reason" }
+        return open.size
     }
 
     private suspend fun openFuturesPosition(

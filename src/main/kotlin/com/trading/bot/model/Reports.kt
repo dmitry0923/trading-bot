@@ -35,7 +35,26 @@ data class BotSettings(
     val riskEnabled: Boolean = true,
     val maxPositionRub: Int = 500000,
     val maxDailyLossRub: Int = 50000,
-)
+    val tradingMode: String = "SIMULATION",
+    val maxOpenPositions: Int = 3,
+    val botIntervalMs: Long = 300000,
+    val strategyIntervalMs: Long = 600000,
+    val kellyFraction: Double = 0.5,
+    val timeframes: List<String> = listOf("MINUTE_10"),
+    val llmProvider: String = "ROUTER_AI",
+    val llmModel: String = "",
+    val llmBaseUrl: String = "",
+    val llmApiKey: String = "",
+    val forceCloseEnabled: Boolean = false,
+    val forceCloseTime: String = "",
+    val investorManagementEnabled: Boolean = true,
+) {
+    fun llmProvider(): com.trading.bot.config.LlmProvider? =
+        runCatching {
+            com.trading.bot.config.LlmProvider
+                .valueOf(llmProvider)
+        }.getOrNull()
+}
 
 data class RiskCheckResult(
     val allowed: Boolean,

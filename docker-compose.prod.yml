@@ -1,0 +1,17 @@
+version: "3.9"
+
+# Прод-оверрайд для docker compose: вместо сборки на VM тянем готовые
+# образы из Yandex Container Registry (образы собираются в CI, см.
+# .github/workflows/deploy.yml).
+#
+# Использование на VM:
+#   REGISTRY=cr.yandex/<id-реестра> TAG=<sha> \
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  app:
+    image: ${REGISTRY:?REGISTRY is required}/trading-bot-app:${TAG:?TAG is required}
+    build: null
+  frontend:
+    image: ${REGISTRY}/trading-bot-frontend:${TAG}
+    build: null

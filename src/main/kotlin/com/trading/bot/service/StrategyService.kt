@@ -37,7 +37,6 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.LocalDateTime
-import java.util.UUID
 
 /**
  * Оркестратор стратегического цикла (мульти-тикер, параллельный).
@@ -76,6 +75,7 @@ class StrategyService(
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
     private val eventPublisher: TradingEventPublisher,
+    private val settingsService: SettingsService,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
 ) {
@@ -88,7 +88,9 @@ class StrategyService(
      */
     @Scheduled(fixedDelayString = "#{@tradingConfig.strategyIntervalMs}")
     fun run() {
-        val cycleId = UUID.randomUUID().toString()
+        val cycleId =
+            com.trading.bot.infrastructure.UuidV7
+                .uuidString()
         logger.info { "=== STRATEGY CYCLE $cycleId ===" }
         meterRegistry.counter("strategy.cycle").increment()
         scope.launch { executeCycle(cycleId) }
@@ -104,6 +106,9 @@ class StrategyService(
      * с обработкой тикеров: цикл больше не ждёт завершения всех feedback-вызовов,
      * каждый тикер ожидает только свой feedback внутри [processTicker].
      *
+     * Поддерживается мульти-таймфрейм: каждый тикер анализируется на всех
+     * настроенных таймфреймах (настройки через UI либо trading.timeframes).
+     *
      * Критический путь цикла сокращается с `feedback + tickerChain` до
      * `max(feedback, tickerChain)` — экономит один LLM-roundtrip на каждый цикл.
      *
@@ -111,6 +116,7 @@ class StrategyService(
      */
     private suspend fun executeCycle(cycleId: String) {
         val tickers = tradingConfig.tickers
+        val timeframes = effectiveTimeframes()
         val cycleStart = System.nanoTime()
         try {
             coroutineScope {
@@ -128,12 +134,13 @@ class StrategyService(
                     }
 
                 tickers
-                    .map { ticker ->
+                    .flatMap { ticker -> timeframes.map { timeframe -> ticker to timeframe } }
+                    .map { (ticker, timeframe) ->
                         async {
                             try {
-                                processTicker(ticker, cycleId, feedback.getValue(ticker))
+                                processTicker(ticker, timeframe, cycleId, feedback.getValue(ticker))
                             } catch (e: Exception) {
-                                logger.error(e) { "Strategy error $ticker" }
+                                logger.error(e) { "Strategy error $ticker/$timeframe" }
                                 meterRegistry.counter("strategy.error", Tags.of("ticker", ticker)).increment()
                             }
                         }
@@ -149,18 +156,31 @@ class StrategyService(
     }
 
     /**
-     * Обработка одного тикера.
+     * Активные таймфреймы: приоритет у настроек UI (SettingsService.timeframes),
+     * затем trading.timeframes, затем основной trading.timeframe.
+     */
+    private fun effectiveTimeframes(): List<String> {
+        val fromSettings = settingsService.getSettings().timeframes
+        if (fromSettings.isNotEmpty()) return fromSettings.distinct()
+        if (tradingConfig.timeframes.isNotEmpty()) return tradingConfig.timeframes.distinct()
+        return listOf(tradingConfig.timeframe)
+    }
+
+    /**
+     * Обработка одного тикера на одном таймфрейме.
      *
      * Данные для анализа (свечи, снапшот) загружаются ПАРАЛЛЕЛЬНО с ожиданием
      * feedback Meta-Agent'а — все три источника независимы, что убирает задержку
      * LLM-вызова feedback из последовательной цепочки тикера.
      *
      * @param ticker тикер инструмента
+     * @param timeframe таймфрейм свечей (MINUTE_10, HOUR_1, DAY_1, ...)
      * @param cycleId идентификатор цикла
      * @param feedbackDeferred результат feedback Meta-Agent'а (может быть null)
      */
     private suspend fun processTicker(
         ticker: String,
+        timeframe: String,
         cycleId: String,
         feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>,
     ) {
@@ -173,7 +193,7 @@ class StrategyService(
 
         val (candles, snapshot, fb) =
             coroutineScope {
-                val candlesDeferred = async { loadCandles(ticker) }
+                val candlesDeferred = async { loadCandles(ticker, timeframe) }
                 val snapshotDeferred = async { alorClient.getMarketSnapshot(ticker) }
                 Triple(candlesDeferred.await(), snapshotDeferred.await(), feedbackDeferred.await())
             }
@@ -250,24 +270,34 @@ class StrategyService(
                 reasoning = effectiveFinal.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}, SL/TP adapted, atr=$atr",
                 rawJson = objectMapper.writeValueAsString(effectiveFinal),
                 cycleId = cycleId,
+                timeframe = timeframe,
                 validUntil = LocalDateTime.now().plusMinutes(10),
             )
 
         strategyRepo.save(strategy)
         BlockingDb.io { redis.saveStrategy(strategy) }
         eventPublisher.publishStrategyGenerated(strategy)
-        meterRegistry.counter("strategy.saved", Tags.of("ticker", ticker, "action", effectiveFinal.action.name)).increment()
-        logger.info { "Strategy $ticker: ${effectiveFinal.action} @ ${effectiveFinal.targetPrice} (adaptive conf=$adaptiveConf, atr=$atr)" }
+        meterRegistry
+            .counter(
+                "strategy.saved",
+                Tags.of("ticker", ticker, "timeframe", timeframe, "action", effectiveFinal.action.name),
+            ).increment()
+        logger.info {
+            "Strategy $ticker/$timeframe: ${effectiveFinal.action} @ ${effectiveFinal.targetPrice} (adaptive conf=$adaptiveConf, atr=$atr)"
+        }
     }
 
-    private suspend fun loadCandles(ticker: String): List<Candle> {
+    private suspend fun loadCandles(
+        ticker: String,
+        timeframe: String,
+    ): List<Candle> {
         // 1. Redis-кэш (Sorted Set) — дешёвое чтение последних свечей
-        val cached = candleCache.getRecentCandles(ticker, tradingConfig.timeframe, 200)
+        val cached = candleCache.getRecentCandles(ticker, timeframe, 200)
         if (cached.size >= 50) return cached.sortedBy { it.time }
 
         // 2. PostgreSQL — долгосрочное хранение (R2DBC, без Dispatchers.IO)
         val from = LocalDateTime.now().minusDays(7)
-        val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, tradingConfig.timeframe, from, LocalDateTime.now())
+        val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
         if (db.size >= 50) {
             candleCache.addCandles(db)
             return db.sortedBy { it.time }

@@ -53,12 +53,22 @@ services:
       ALOR_REFRESH_TOKEN: ${ALOR_REFRESH_TOKEN:-}
       ALOR_PORTFOLIO: ${ALOR_PORTFOLIO:-D12345}
       ALOR_EXCHANGE: ${ALOR_EXCHANGE:-MOEX}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ROUTER_AI}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      ROUTER_AI_BASE_URL: ${ROUTER_AI_BASE_URL:-https://routerai.ru/api/v1}
+      ROUTER_AI_MODEL: ${ROUTER_AI_MODEL:-auto}
       KIMI_API_KEY: ${KIMI_API_KEY:-}
       KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.moonshot.cn/v1}
       KIMI_MODEL: ${KIMI_MODEL:-kimi-k3}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
       TRADING_MODE: ${TRADING_MODE:-SIMULATION}
       AUTH_USER: ${AUTH_USER:-admin}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
+      ANALYTICS_USER: ${ANALYTICS_USER:-analytics}
+      ANALYTICS_PASSWORD: ${ANALYTICS_PASSWORD:-analytics-view-only}
       BOT_INTERVAL_MS: ${BOT_INTERVAL_MS:-300000}
       STRATEGY_INTERVAL_MS: ${STRATEGY_INTERVAL_MS:-600000}
       MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-600000}

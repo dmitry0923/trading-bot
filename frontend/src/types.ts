@@ -100,6 +100,118 @@ export interface BotSettings {
   riskEnabled: boolean;
   maxPositionRub: number;
   maxDailyLossRub: number;
+  tradingMode: string;
+  maxOpenPositions: number;
+  botIntervalMs: number;
+  strategyIntervalMs: number;
+  kellyFraction: number;
+  timeframes: string[];
+  llmProvider: string;
+  llmModel: string;
+  llmBaseUrl: string;
+  llmApiKey: string;
+  forceCloseEnabled: boolean;
+  forceCloseTime: string;
+  investorManagementEnabled: boolean;
+}
+
+export interface Investor {
+  id: string;
+  name: string;
+  email?: string | null;
+  status: string;
+  createdAt?: string;
+}
+
+export interface InvestorAccount {
+  id: string;
+  investorId: string;
+  currency: string;
+  balance: number | string;
+  totalDeposited: number | string;
+  totalWithdrawn: number | string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface InvestorView {
+  investor: Investor;
+  account: InvestorAccount;
+  realizedPnL: number | string;
+  totalReturnPercent: number;
+}
+
+export interface InvestorTransaction {
+  id: string;
+  investorId: string;
+  accountId: string;
+  type: string;
+  amount: number | string;
+  currency: string;
+  description?: string | null;
+  createdAt?: string;
+}
+
+export interface InvestorAllocation {
+  id: string;
+  investorId: string;
+  accountId: string;
+  amount: number | string;
+  allocatedAt?: string;
+}
+
+export interface ProfitForecast {
+  asOf?: string;
+  horizonDays: number;
+  expectedReturnPercent: number;
+  expectedReturnAnnualPercent: number;
+  confidenceLowPercent: number;
+  confidenceHighPercent: number;
+  dailyMeanReturnPercent: number;
+  dailyVolatilityPercent: number;
+  tradesAnalyzed: number;
+  note?: string;
+}
+
+export interface ClearingQuote {
+  investorId: string;
+  investorName: string;
+  requestedDate?: string;
+  sharesAtTime: number | string;
+  poolEquity: number | string;
+  poolContributed: number | string;
+  poolRealizedPnL: number | string;
+  attributedPnL: number | string;
+  forecastComponent: number | string;
+  estimatedWithdrawalAmount: number | string;
+  breakdown?: Record<string, string>;
+}
+
+export interface TradingStatus {
+  tradingEnabled: boolean;
+  tradingMode: string;
+  forceCloseEnabled: boolean;
+  forceCloseTime: string;
+  openPositions: number;
+}
+
+export interface PoolStats {
+  poolContributed: number | string;
+  poolRealizedPnL: number | string;
+  poolEquity: number | string;
+  openPositions: number;
+}
+
+export interface LlmProviders {
+  providers: string[];
+  active: string;
+  model: string;
+  default: string;
+}
+
+export interface CurrentUser {
+  username: string;
+  roles: string[];
 }
 
 export interface TimePattern {

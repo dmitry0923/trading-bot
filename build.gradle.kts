@@ -67,6 +67,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    jvmArgs("-Xshare:off", "-XX:+EnableDynamicAgentLoading")
     testLogging {
         events("passed", "skipped", "failed")
         showExceptions = true

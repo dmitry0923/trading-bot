@@ -22,8 +22,10 @@ import java.time.ZoneOffset
  * Критерий приёмки: адаптивный стоп-лосс пересчитывается по ATR корректно.
  */
 class CandleCacheServiceTest {
-    private val redisTemplate = Mockito.mock(StringRedisTemplate::class.java)
-    private val zset: ZSetOperations<String, String> = Mockito.mock(ZSetOperations::class.java) as ZSetOperations<String, String>
+    private inline fun <reified T : Any> mock(): T = Mockito.mock(T::class.java)
+
+    private val redisTemplate = mock<StringRedisTemplate>()
+    private val zset: ZSetOperations<String, String> = mock()
     private val objectMapper =
         ObjectMapper().apply {
             registerModule(JavaTimeModule())

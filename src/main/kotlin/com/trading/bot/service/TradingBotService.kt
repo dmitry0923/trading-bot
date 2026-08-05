@@ -53,6 +53,7 @@ class TradingBotService(
     private val agentLogRepo: AgentLogRepository,
     private val tradeEventService: TradeEventService,
     private val eventPublisher: TradingEventPublisher,
+    private val tradingGate: com.trading.bot.application.TradingGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -126,6 +127,10 @@ class TradingBotService(
         val strat = event.strategy
         if (strat.ticker == "Si") return // фьючерсы обрабатывает FuturesTradingBotService
         if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
+        if (!tradingGate.isTradingEnabled()) {
+            logger.info { "Trading disabled (single flag) — entry skipped ${strat.ticker}" }
+            return
+        }
         scope.launch {
             try {
                 if (risk.isDailyLossLimitReached()) {
@@ -287,6 +292,30 @@ class TradingBotService(
             val strategies = BlockingDb.io { redis.getAllStrategies(tradingConfig.tickers) }
             strategies.values.forEach { eventPublisher.publishStrategyGenerated(it) }
         }
+    }
+
+    /**
+     * Принудительное закрытие всех открытых акций/валютных позиций
+     * (настройка "закрыть торговлю сейчас"). Для фьючерсов — см. FuturesTradingBotService.
+     *
+     * @param reason причина закрытия (FORCE_CLOSE, FORCE_CLOSE_SCHEDULED и т.п.)
+     * @return количество закрытых позиций
+     */
+    suspend fun forceCloseAll(reason: String = "FORCE_CLOSE"): Int {
+        val open =
+            positionRepo
+                .findByStatus(PositionStatus.OPEN)
+                .filter { it.instrumentType != InstrumentType.FUTURES }
+        open.forEach { pos ->
+            try {
+                val price = alorClient.getLastPrice(pos.ticker) ?: pos.currentPrice ?: pos.entryPrice
+                closePosition(pos, price, reason)
+            } catch (e: Exception) {
+                logger.error(e) { "Force close failed ${pos.ticker}" }
+            }
+        }
+        logger.info { "Force close (stocks): ${open.size} positions, reason=$reason" }
+        return open.size
     }
 
     private suspend fun openPosition(strat: Strategy) {

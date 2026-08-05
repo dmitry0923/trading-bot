@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- Тесты не ходят в Alor: WS-reconnect это ожидаемый шум, а не ошибка. -->
+    <logger name="com.trading.bot.client.AlorWebSocketClient" level="ERROR"/>
+    <!-- Reactor Netty логирует закрытие WS-соединений на завершении тестового JVM. -->
+    <logger name="reactor.netty.http.client.HttpClientConnect" level="ERROR"/>
+    <!-- Outbox worker при завершении тестового контекста ловит закрытие R2DBC-пула. -->
+    <logger name="com.trading.bot.service.OrderOutboxService" level="OFF"/>
+    <!-- Lettuce (Redis) watchdog пытается переподключиться после остановки redis-контейнера. -->
+    <logger name="io.lettuce.core.protocol.ConnectionWatchdog" level="ERROR"/>
+    <!-- Ожидаемые сценарии риск-тестов: срабатывание дневного лимита, CRITICAL-ликвидация,
+         остановка торговли и отклонённые входы проверяются через метрики/БД, а не через логи. -->
+    <logger name="com.trading.bot.domain.risk.FuturesRiskEngine" level="OFF"/>
+    <logger name="com.trading.bot.application.DailyLossCircuitBreaker" level="OFF"/>
+    <logger name="com.trading.bot.application.FuturesTradingBotService" level="OFF"/>
+    <logger name="com.trading.bot.service.RiskManagementService" level="OFF"/>
+    <logger name="com.trading.bot.application.TradingControlService" level="OFF"/>
+</configuration>

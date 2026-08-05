@@ -16,15 +16,21 @@ import org.springframework.security.web.SecurityFilterChain
 /**
  * Spring Security with Basic Auth for all sensitive endpoints.
  *
- * /actuator/health stays public (needed for Docker healthcheck).
- * All /api/v1/ paths and the rest of /actuator/ require Basic Auth.
- * Credentials come from env: AUTH_USER / AUTH_PASSWORD.
+ * Два отдельных пользователя:
+ *  - ADMIN (AUTH_USER / AUTH_PASSWORD, роль ADMIN) — полный доступ, включая изменение настроек
+ *  - ANALYTICS (ANALYTICS_USER / ANALYTICS_PASSWORD, роль ANALYTICS) — только просмотр аналитики
+ *
+ * /actuator/health остаётся публичным (нужен Docker healthcheck).
+ * Все endpoints /api/v1/ и /actuator/ требуют Basic Auth.
+ * Изменение настроек (POST /api/v1/settings) доступно только ADMIN.
  */
 @Configuration
 @EnableWebSecurity
 class SecurityConfig(
     @Value("\${security.auth.user:admin}") private val authUser: String,
     @Value("\${security.auth.password:}") private val authPassword: String,
+    @Value("\${security.analytics.user:analytics}") private val analyticsUser: String,
+    @Value("\${security.analytics.password:}") private val analyticsPassword: String,
 ) {
     @Bean
     fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
@@ -35,6 +41,8 @@ class SecurityConfig(
                 auth
                     .requestMatchers("/actuator/health")
                     .permitAll()
+                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/settings")
+                    .hasRole("ADMIN")
                     .requestMatchers("/api/v1/**", "/actuator/**")
                     .authenticated()
                     .anyRequest()
@@ -45,14 +53,21 @@ class SecurityConfig(
 
     @Bean
     fun userDetailsService(): UserDetailsService {
-        val effectivePassword = authPassword.ifBlank { "change-me-now" }
-        val user =
+        val effectiveAdminPassword = authPassword.ifBlank { "change-me-now" }
+        val effectiveAnalyticsPassword = analyticsPassword.ifBlank { "analytics-view-only" }
+        val admin =
             User
                 .withUsername(authUser)
-                .password(passwordEncoder().encode(effectivePassword))
-                .roles("USER")
+                .password(passwordEncoder().encode(effectiveAdminPassword))
+                .roles("ADMIN")
                 .build()
-        return InMemoryUserDetailsManager(user)
+        val analytics =
+            User
+                .withUsername(analyticsUser)
+                .password(passwordEncoder().encode(effectiveAnalyticsPassword))
+                .roles("ANALYTICS")
+                .build()
+        return InMemoryUserDetailsManager(admin, analytics)
     }
 
     @Bean

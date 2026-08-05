@@ -13,6 +13,8 @@ import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import mu.KotlinLogging
+import org.springframework.boot.context.event.ApplicationReadyEvent
+import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -59,7 +61,12 @@ class FuturesRiskEngine(
     /** Доля остаточного буфера маржи для CRITICAL-ликвидации (10%). */
     private val criticalLiquidationPercent = 10.0
 
-    init {
+    /**
+     * Восстановление daily-состояния после Liquibase-миграций: таблица
+     * daily_risk_snapshot ещё не существует во время конструирования бина.
+     */
+    @EventListener(ApplicationReadyEvent::class)
+    fun onReady() {
         restoreDailyState()
     }
 

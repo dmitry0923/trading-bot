@@ -62,9 +62,18 @@ macro:
   usd-rub-ticker: USD000UTSTOM
 
 llm:
-  api-key: ${KIMI_API_KEY:}
+  provider: ${LLM_PROVIDER:ROUTER_AI}
+  api-key: ${LLM_API_KEY:}
   base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
   model: ${KIMI_MODEL:kimi-k3}
+  router-ai-base-url: ${ROUTER_AI_BASE_URL:https://routerai.ru/api/v1}
+  router-ai-model: ${ROUTER_AI_MODEL:auto}
+  kimi-base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
+  kimi-model: ${KIMI_MODEL:kimi-k3}
+  deepseek-base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com/v1}
+  deepseek-model: ${DEEPSEEK_MODEL:deepseek-chat}
+  qwen-base-url: ${QWEN_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+  qwen-model: ${QWEN_MODEL:qwen-plus}
   timeout-sec: 30
   max-tokens: 4096
   temperature: 0.15
@@ -132,6 +141,10 @@ trading:
   monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}
   max-open-positions-for-new-entry: ${MAX_OPEN_POS:3}
   timeframe: MINUTE_10
+  timeframes:
+    - MINUTE_10
+    - HOUR_1
+    - DAY_1
   ws-quotes-enabled: ${WS_QUOTES_ENABLED:true}
 
 leverage:
@@ -266,3 +279,6 @@ security:
   auth:
     user: ${AUTH_USER:admin}
     password: ${AUTH_PASSWORD:change-me-now}
+  analytics:
+    user: ${ANALYTICS_USER:analytics}
+    password: ${ANALYTICS_PASSWORD:analytics-view-only}

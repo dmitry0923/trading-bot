@@ -58,6 +58,16 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    suspend fun findOpenCount(): Int {
+        val sql = "SELECT COUNT(*) AS cnt FROM positions WHERE status = 'OPEN'"
+        return databaseClient
+            .sql(sql)
+            .map { row, _ -> row.get("cnt", java.lang.Long::class.java)?.toInt() ?: 0 }
+            .one()
+            .awaitSingleOrNull()
+            ?: 0
+    }
+
     suspend fun findById(id: Long): Position {
         val sql = "SELECT * FROM positions WHERE id = :id"
         return databaseClient

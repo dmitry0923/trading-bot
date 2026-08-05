@@ -1,0 +1,100 @@
+name: Deploy to Yandex Cloud
+
+# Автодеплой на прод после merge в основную ветку (main/master):
+#  1. CI уже прогнал тесты и ktlint (workflow ci.yml).
+#  2. Здесь собираются образы backend + frontend и пушатся в Yandex Container Registry.
+#  3. По SSH на VM выполняется docker compose pull && up -d.
+
+on:
+  push:
+    branches: [ main, master ]
+
+env:
+  REGISTRY: cr.yandex/${{ secrets.YC_REGISTRY_ID }}
+  TAG: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    name: Build & push images to YCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
+
+      - name: Authenticate to Yandex Cloud
+        run: |
+          echo "${{ secrets.YC_SA_JSON }}" > /tmp/sa.json
+          yc config profile create bot
+          yc config set service-account-key /tmp/sa.json
+          yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
+          yc container registry configure-docker
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$REGISTRY/trading-bot-app:$TAG" -t "$REGISTRY/trading-bot-app:latest" .
+          docker push "$REGISTRY/trading-bot-app:$TAG"
+          docker push "$REGISTRY/trading-bot-app:latest"
+
+      - name: Build and push frontend image
+        run: |
+          docker build \
+            --build-arg REACT_APP_AUTH_USER="${{ secrets.AUTH_USER }}" \
+            --build-arg REACT_APP_AUTH_PASSWORD="${{ secrets.AUTH_PASSWORD }}" \
+            -t "$REGISTRY/trading-bot-frontend:$TAG" \
+            -t "$REGISTRY/trading-bot-frontend:latest" \
+            ./frontend
+          docker push "$REGISTRY/trading-bot-frontend:$TAG"
+          docker push "$REGISTRY/trading-bot-frontend:latest"
+
+  deploy:
+    name: Deploy to VM
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy compose files to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml"
+          target: /opt/trading-bot
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/trading-bot
+            export REGISTRY="$REGISTRY"
+            export TAG="$TAG"
+
+            # runtime-секреты пишем в .env (compose подхватит автоматически)
+            cat > .env <<'EOF'
+            REGISTRY=${{ env.REGISTRY }}
+            TAG=${{ env.TAG }}
+            ALOR_TOKEN=${{ secrets.ALOR_TOKEN }}
+            ALOR_REFRESH_TOKEN=${{ secrets.ALOR_REFRESH_TOKEN }}
+            LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
+            LLM_API_KEY=${{ secrets.LLM_API_KEY }}
+            TRADING_MODE=${{ secrets.TRADING_MODE }}
+            AUTH_USER=${{ secrets.AUTH_USER }}
+            AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
+            ANALYTICS_USER=${{ secrets.ANALYTICS_USER }}
+            ANALYTICS_PASSWORD=${{ secrets.ANALYTICS_PASSWORD }}
+            EOF
+
+            echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            docker image prune -f
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps

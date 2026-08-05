@@ -17,7 +17,7 @@
 | 7. API интерфейс | `07-api.md` | Все REST endpoints с примерами |
 | 8. Конфигурация | `08-configuration.md` | application.yml, env-переменные, .env, режимы |
 | 9. Мониторинг | `09-monitoring.md` | Prometheus метрики, Grafana, Alertmanager, логи |
-| 10. Деплой на cloud.ru | `10-deployment.md` | k8s манифесты, CI/CD, безопасность |
+| 10. Деплой | `10-deployment.md` | Yandex Cloud (VM + docker compose), CI/CD, секреты, k8s-альтернатива |
 | 11. Backtest | `11-backtest.md` | Фреймворк бэктеста, метрики, критерии приёма |
 | 12. Troubleshooting | `12-troubleshooting.md` | Частые проблемы и диагностика |
 | 13. Roadmap | `13-roadmap.md` | Текущее состояние и план v2.1–v2.4 |
@@ -53,4 +53,5 @@ curl http://localhost:8080/actuator/health
 
 - Сборка: **BUILD SUCCESSFUL**, все **69 тестов** зелёные (PromptTemplateTest, PromptRegistryTest, GuardrailsTest, SemanticCacheTest, SelfLearningIntegrationTest, BacktestEngineTest + фьючерсный контур: FuturesPositionSizerTest, FuturesRiskEngineTest, AlorFuturesClientTest, DailyLossCircuitBreakerTest, FuturesTradingBotServiceIntegrationTest).
 - Реализовано: LLM-инфраструктура (resilience + semantic cache + prompts), мультиагентный конвейер, Alor REST/WS интеграция с Outbox и slippage control, **event-driven слой** (раздел 2.3), **sector/volatility guard** (раздел 5), **backtest framework** (раздел 11), **фьючерсный контур Si** (раздел 15): риск-first сайзинг, ликвидационные guardrails, daily loss limit с персистентностью в `daily_risk_snapshot`, торговые часы, e2e-подтверждение в SIMULATION.
-- На стадии проектирования: k8s-манифесты и CI/CD (раздел 10), emergency stop endpoint (раздел 5.8), партиционирование БД (раздел 6.4).
+- На стадии проектирования: emergency stop endpoint (раздел 5.8), партиционирование БД (раздел 6.4).
+- **CI/CD**: реализован (`.github/workflows/ci.yml`) — ktlint + tests + Kover (порог 50%) + сборка фронтенда; автодеплой в Yandex Cloud после merge в `main`/`master` при зелёных тестах. Детерминированный бэктест на реальных данных MOEX через закоммиченную фикстуру `src/test/resources/fixtures/moex_sber_minute10.csv`.

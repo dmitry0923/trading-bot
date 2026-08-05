@@ -1,5 +1,6 @@
 package com.trading.bot.model
 
+import com.trading.bot.infrastructure.UuidV7
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.UUID
@@ -7,9 +8,11 @@ import java.util.UUID
 /**
  * Инвестор робота: пассивный участник, вносящий капитал.
  * Статистика бота (закрытые сделки) используется для расчёта доли и прогноза доходности.
+ *
+ * Все идентификаторы — UUIDv7 ([com.trading.bot.infrastructure.UuidV7]).
  */
 data class Investor(
-    val id: UUID = UUID.randomUUID(),
+    val id: UUID = UuidV7.uuid(),
     val name: String,
     val email: String? = null,
     val status: String = "ACTIVE",
@@ -24,7 +27,7 @@ enum class InvestorTransactionType {
 }
 
 data class InvestorAccount(
-    val id: UUID = UUID.randomUUID(),
+    val id: UUID = UuidV7.uuid(),
     val investorId: UUID,
     val currency: String = "RUB",
     val balance: BigDecimal = BigDecimal.ZERO,
@@ -35,7 +38,7 @@ data class InvestorAccount(
 )
 
 data class InvestorTransaction(
-    val id: UUID = UUID.randomUUID(),
+    val id: UUID = UuidV7.uuid(),
     val investorId: UUID,
     val accountId: UUID,
     val type: String,
@@ -48,7 +51,7 @@ data class InvestorTransaction(
 )
 
 data class InvestorAllocation(
-    val id: UUID = UUID.randomUUID(),
+    val id: UUID = UuidV7.uuid(),
     val investorId: UUID,
     val accountId: UUID,
     val amount: BigDecimal,

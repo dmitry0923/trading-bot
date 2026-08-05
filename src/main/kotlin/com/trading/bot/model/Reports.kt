@@ -30,13 +30,30 @@ data class MarketSnapshot(
     val timestamp: Instant = Instant.now(),
 )
 
+/**
+ * Настройки бота, доступные через UI (SettingsPage) и хранящиеся в БД (bot_settings).
+ *
+ * Дефолты синхронизированы с application.yml (risk.*, leverage.*), чтобы
+ * отображаемые в UI значения совпадали с фактически применяемыми.
+ * Сервис SettingsService применяет изменения в RiskConfig/LeverageConfig сразу.
+ */
 data class BotSettings(
     val tradingEnabled: Boolean = true,
     val riskEnabled: Boolean = true,
-    val maxPositionRub: Int = 500000,
-    val maxDailyLossRub: Int = 50000,
+    val maxPositionRub: Int = 50000,
+    val maxDailyLossRub: Int = 5000,
     val tradingMode: String = "SIMULATION",
     val maxOpenPositions: Int = 3,
+    val futuresMaxOpenPositions: Int = 1,
+    val maxSectorExposure: Int = 2,
+    val maxVolatilityPercent: Double = 5.0,
+    val defaultStopLossPercent: Double = 2.0,
+    val defaultTakeProfitPercent: Double = 4.0,
+    val trailingStopEnabled: Boolean = true,
+    val trailingStopPercent: Double = 1.0,
+    val riskPerTradePercent: Double = 1.0,
+    val tradingHoursStart: String = "10:00",
+    val tradingHoursEnd: String = "18:30",
     val botIntervalMs: Long = 300000,
     val strategyIntervalMs: Long = 600000,
     val kellyFraction: Double = 0.5,
@@ -48,6 +65,10 @@ data class BotSettings(
     val forceCloseEnabled: Boolean = false,
     val forceCloseTime: String = "",
     val investorManagementEnabled: Boolean = true,
+    val leverageEnabled: Boolean = true,
+    val userLeverage: Double = 2.0,
+    val minLeverage: Double = 1.0,
+    val maxLeverage: Double = 3.0,
 ) {
     fun llmProvider(): com.trading.bot.config.LlmProvider? =
         runCatching {

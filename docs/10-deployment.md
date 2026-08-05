@@ -1,6 +1,73 @@
-# 10. Деплой на cloud.ru
+# 10. Деплой
 
-> **Статус**: k8s-манифесты и CI/CD находятся на стадии проектирования. Ниже — готовые к использованию артефакты и требования.
+> **Фактический прод**: Yandex Cloud (VM + Managed PostgreSQL + Managed Redis + Container Registry + docker compose).
+> Автодеплой выполняется GitHub Actions после merge в `main`/`master` и прохождения всех тестов
+> (`.github/workflows/ci.yml`, job `deploy`).
+> Разделы 10.2 (k8s-манифесты) — альтернативный/архивный вариант развёртывания.
+
+## 10.0. Фактический прод: Yandex Cloud
+
+### 10.0.1. Инфраструктура
+
+| Сервис | YC-продукт | Комментарий |
+|---|---|---|
+| Compute VM | Yandex Compute (Ubuntu 22.04, 2 vCPU / 4 GB, 30 GB) | бот + docker compose |
+| PostgreSQL | Yandex Managed PostgreSQL (15, daily backup) | основной боевой БД |
+| Redis | Yandex Managed Redis (7, AOF) | semantic cache, стратегии |
+| Registry | Yandex Container Registry | образы `trading-bot-app`, `trading-bot-frontend` |
+| Мониторинг | Prometheus + Grafana в docker compose на той же VM | `:9090`, `:3000` |
+
+### 10.0.2. Шаги первоначального поднятия
+
+```bash
+# 1. Создать VM, реестр, Managed БД (через yc CLI или консоль)
+yc compute instance create --name trading-bot \
+  --cores 2 --memory 4 --create-boot-disk size=30GB,image-folder-id=standard-images,image-family=ubuntu-2204-lts
+yc container registry create --name trading-bot-registry
+
+# 2. На VM: установить docker + docker compose plugin
+curl -fsSL https://get.docker.com | sh
+
+# 3. Склонировать репо и поднять compose-стек
+mkdir -p /opt/trading-bot && cd /opt/trading-bot
+git clone git@github.com:dmitry0923/trading-bot.git .
+# .env заполняется workflow при деплое (см. 10.0.4)
+
+# 4. Проверить здоровье
+curl http://localhost:8080/actuator/health
+curl -u "$AUTH_USER:$AUTH_PASSWORD" http://localhost:8080/api/v1/trading/status
+```
+
+### 10.0.3. GitHub Secrets (обязательные)
+
+| Secret | Назначение |
+|---|---|
+| `YC_FOLDER_ID` | ID каталога YC |
+| `YC_REGISTRY_ID` | ID Yandex Container Registry (для `cr.yandex/<id>`) |
+| `YC_SA_JSON` | JSON-ключ сервисного аккаунта (права: container registry push, read) |
+| `VM_HOST` / `VM_USER` / `VM_SSH_KEY` | SSH-доступ к VM для деплоя |
+| `ALOR_TOKEN` / `ALOR_REFRESH_TOKEN` | доступ к Alor |
+| `LLM_PROVIDER` | `ROUTER_AI` (по умолчанию) / `KIMI` / `DEEPSEEK` / `QWEN` |
+| `LLM_API_KEY` | API-ключ активного LLM-провайдера |
+| `TRADING_MODE` | `SIMULATION` (рекоменд.) или `LIVE` |
+| `AUTH_USER` / `AUTH_PASSWORD` | UI/API администратор (роль ADMIN) |
+| `ANALYTICS_USER` / `ANALYTICS_PASSWORD` | отдельный read-only пользователь аналитики |
+
+### 10.0.4. Pipeline деплоя (`.github/workflows/ci.yml`)
+
+```
+push / PR → [backend: ktlint + test + koverVerify] + [frontend: npm build]
+        ↓ (needs: оба прошли)
+push в main/master → [deploy]: сборка образов → push в YCR → SSH на VM →
+        docker compose pull && up -d
+```
+
+Ключевые моменты:
+- Деплой **не запускается**, пока не пройдут тесты (job `deploy` имеет `needs: [backend, frontend]`).
+- `REGISTRY`/`TAG` передаются в удалённую оболочку через `envs: REGISTRY,TAG` (appleboy/ssh-action), иначе compose упадёт с `${REGISTRY:?}`.
+- Runtime-секреты пишутся в `/opt/trading-bot/.env`, docker-compose подхватывает их автоматически.
+- `docker-compose.prod.yml` отключает сборку на VM — образы тянутся из YCR по тегу `$TAG` (= `$GITHUB_SHA`).
+
 
 ## 10.1. Требования к инфраструктуре
 
@@ -217,6 +284,9 @@ spec:
 ```
 
 ## 10.3. CI/CD pipeline
+
+> **Актуальный pipeline** — см. раздел 10.0.4 и `.github/workflows/ci.yml`.
+> Ниже — архивный вариант под k8s (cloud.ru), сохранённый для справки.
 
 ### GitHub Actions
 

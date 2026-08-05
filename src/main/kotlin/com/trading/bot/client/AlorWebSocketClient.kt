@@ -2,6 +2,7 @@ package com.trading.bot.client
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.OrderStatus
 import io.micrometer.core.instrument.MeterRegistry
@@ -25,7 +26,6 @@ import java.math.RoundingMode
 import java.net.URI
 import java.time.Duration
 import java.time.Instant
-import java.util.UUID
 
 /**
  * Тик котировки из WebSocket Alor.
@@ -108,7 +108,7 @@ class AlorWebSocketClient(
                                         objectMapper.writeValueAsString(
                                             mapOf(
                                                 "opcode" to "OrdersGetAndSubscribeV2",
-                                                "guid" to UUID.randomUUID().toString(),
+                                                "guid" to UuidV7.uuidString(),
                                                 "token" to alorConfig.token,
                                                 "portfolio" to alorConfig.portfolio,
                                                 "exchange" to alorConfig.exchange,
@@ -201,7 +201,7 @@ class AlorWebSocketClient(
                                         objectMapper.writeValueAsString(
                                             mapOf(
                                                 "opcode" to "QuotesSubscribe",
-                                                "guid" to UUID.randomUUID().toString(),
+                                                "guid" to UuidV7.uuidString(),
                                                 "token" to alorConfig.token,
                                                 "exchange" to alorConfig.exchange,
                                                 "format" to "Simple",

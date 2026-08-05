@@ -18,11 +18,13 @@ import org.springframework.security.web.SecurityFilterChain
  *
  * Два отдельных пользователя:
  *  - ADMIN (AUTH_USER / AUTH_PASSWORD, роль ADMIN) — полный доступ, включая изменение настроек
- *  - ANALYTICS (ANALYTICS_USER / ANALYTICS_PASSWORD, роль ANALYTICS) — только просмотр аналитики
+ *  - ANALYTICS (ANALYTICS_USER / ANALYTICS_PASSWORD, роль ANALYTICS) — только просмотр
  *
  * /actuator/health остаётся публичным (нужен Docker healthcheck).
  * Все endpoints /api/v1/ и /actuator/ требуют Basic Auth.
- * Изменение настроек (POST /api/v1/settings) доступно только ADMIN.
+ * Все изменяющие POST-эндпоинты (settings, trading enable/disable/force-close,
+ * clearing/settle, investors, triggers) доступны ТОЛЬКО роли ADMIN.
+ * ANALYTICS получает read-only доступ: любые GET /api/v1/ и /actuator/.
  */
 @Configuration
 @EnableWebSecurity
@@ -41,7 +43,7 @@ class SecurityConfig(
                 auth
                     .requestMatchers("/actuator/health")
                     .permitAll()
-                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/settings")
+                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/**")
                     .hasRole("ADMIN")
                     .requestMatchers("/api/v1/**", "/actuator/**")
                     .authenticated()

@@ -1,5 +1,7 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.LeverageConfig
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.BotSettings
 import com.trading.bot.repository.SettingsRepository
 import kotlinx.coroutines.runBlocking
@@ -7,18 +9,22 @@ import mu.KotlinLogging
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
 
 /**
  * Персистентное хранилище настроек бота.
  *
  * - Настройки читаются из PostgreSQL после старта контекста (после миграций Liquibase)
  *   и кэшируются в памяти.
- * - updateSettings() пишет в БД и обновляет кэш — изменения применяются сразу.
+ * - updateSettings() пишет в БД, обновляет кэш и применяет значения в
+ *   [RiskConfig] / [LeverageConfig] — изменения влияют на торговлю сразу.
  * - getSettings() неблокирующий (in-memory), чтобы не нагружать R2DBC на горячем пути.
  */
 @Service
 class SettingsService(
     private val settingsRepository: SettingsRepository,
+    private val riskConfig: RiskConfig,
+    private val leverageConfig: LeverageConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -37,6 +43,7 @@ class SettingsService(
                 logger.info { "No persisted settings found, saved defaults" }
             }
         }
+        applyRuntimeConfig(settings)
     }
 
     /**
@@ -45,13 +52,43 @@ class SettingsService(
     fun getSettings(): BotSettings = settings
 
     /**
-     * Заменяет настройки бота новыми значениями и персистит их.
+     * Заменяет настройки бота новыми значениями, персистит их и применяет
+     * в runtime-конфиги (риск, плечо) — без перезапуска.
      */
     fun updateSettings(newSettings: BotSettings) {
         settings = newSettings
         runBlocking {
             settingsRepository.saveSettings(newSettings)
         }
+        applyRuntimeConfig(newSettings)
         logger.info { "Bot settings updated: tradingEnabled=${newSettings.tradingEnabled} provider=${newSettings.llmProvider}" }
+    }
+
+    /**
+     * Применяет значения из BotSettings в [RiskConfig] и [LeverageConfig].
+     * Эти конфиги читаются торговыми сервисами на каждом цикле, поэтому
+     * изменения из UI вступают в силу немедленно.
+     */
+    private fun applyRuntimeConfig(s: BotSettings) {
+        riskConfig.enabled = s.riskEnabled
+        riskConfig.maxPositionRub = BigDecimal(s.maxPositionRub)
+        riskConfig.maxDailyLossRub = BigDecimal(s.maxDailyLossRub)
+        riskConfig.maxOpenPositions = s.maxOpenPositions
+        riskConfig.futuresMaxOpenPositions = s.futuresMaxOpenPositions
+        riskConfig.maxSectorExposure = s.maxSectorExposure
+        riskConfig.maxVolatilityPercent = s.maxVolatilityPercent
+        riskConfig.defaultStopLossPercent = s.defaultStopLossPercent
+        riskConfig.defaultTakeProfitPercent = s.defaultTakeProfitPercent
+        riskConfig.trailingStopEnabled = s.trailingStopEnabled
+        riskConfig.trailingStopPercent = s.trailingStopPercent
+        riskConfig.riskPerTradePercent = s.riskPerTradePercent
+        riskConfig.kellyFraction = s.kellyFraction
+        riskConfig.tradingHoursStart = s.tradingHoursStart
+        riskConfig.tradingHoursEnd = s.tradingHoursEnd
+
+        leverageConfig.enabled = s.leverageEnabled
+        leverageConfig.userLeverage = BigDecimal(s.userLeverage)
+        leverageConfig.minLeverage = BigDecimal(s.minLeverage)
+        leverageConfig.maxLeverage = BigDecimal(s.maxLeverage)
     }
 }

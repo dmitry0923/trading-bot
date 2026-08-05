@@ -1,5 +1,6 @@
 package com.trading.bot.repository
 
+import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.OrderOutbox
@@ -28,7 +29,7 @@ class OrderOutboxRepository(
         )
 
     suspend fun save(outbox: OrderOutbox): OrderOutbox {
-        val id = outbox.id ?: UUID.randomUUID()
+        val id = outbox.id ?: UuidV7.uuid()
         val sql =
             """
             INSERT INTO order_outbox (id, payload, status, alor_order_id, created_at, processed_at, error_message)

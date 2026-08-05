@@ -3,6 +3,7 @@ springBoot = "3.2.0"
 kotlin = "1.9.21"
 ktlintPlugin = "14.2.0"
 ktlint = "1.8.0"
+kover = "0.7.6"
 kotlinLogging = "3.0.5"
 resilience4j = "2.2.0"
 testcontainers = "1.21.4"
@@ -21,3 +22,4 @@ springBoot = { id = "org.springframework.boot", version.ref = "springBoot" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinSpring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }

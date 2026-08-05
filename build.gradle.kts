@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.kotlinSpring)
     alias(libs.plugins.ktlint)
+    alias(libs.plugins.kover)
 }
 
 group = "com.trading.bot"
@@ -114,4 +115,19 @@ tasks.register("checkUnused") {
     group = "verification"
     description = "Check for unused imports, parameters, and members"
     dependsOn("ktlintCheck")
+}
+
+// НАСТРОЙКА KOVER (покрытие тестами)
+// Отчёт: build/reports/kover/ (html/xml/verify)
+// Проверка порога: ./gradlew koverVerify (подключена к check)
+koverReport {
+    defaults {
+        verify {
+            onCheck = true
+            rule("Минимальное покрытие строк") {
+                // План повышения до 100% — см. docs/13-roadmap.md
+                minBound(50)
+            }
+        }
+    }
 }

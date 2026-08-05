@@ -211,12 +211,15 @@ See `application.yml` for all options. Key env vars:
 `.github/workflows/ci.yml` runs on every push/PR:
 - `./gradlew ktlintCheck` (lint, baseline in `config/ktlint/baseline.xml`)
 - `./gradlew test` (unit + Testcontainers integration tests)
+- `./gradlew koverVerify` (coverage gate, min 50%, `koverReport` is uploaded as artifact)
 - `npm run build` (TypeScript frontend)
 
-`.github/workflows/deploy.yml` — автодеплой на **Yandex Cloud** после merge в `main`/`master`:
+Dеплой — job `deploy` в том же `ci.yml`, после merge в `main`/`master` (и только если
+прошли все тесты, `needs: [backend, frontend]`):
 1. Образы backend (`trading-bot-app`) и frontend (`trading-bot-frontend`) собираются
-   и пушатся в **Yandex Container Registry**.
-2. По SSH на VM выполняется `docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && up -d`.
+   и пушатся в **Yandex Container Registry** (`cr.yandex`).
+2. По SSH на VM (`/opt/trading-bot`) пишется `.env` с runtime-секретами, затем
+   `docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && up -d`.
 
 Требуемые GitHub Secrets:
 - `YC_FOLDER_ID`, `YC_REGISTRY_ID`, `YC_SA_JSON` (ключ сервисного аккаунта с правами на YCR)

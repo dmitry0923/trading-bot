@@ -15,6 +15,15 @@ const LLM_FIELDS: { key: 'llmModel' | 'llmBaseUrl' | 'llmApiKey'; label: string 
   { key: 'llmApiKey', label: 'API Key' }
 ];
 
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ borderTop: '1px solid #ddd', paddingTop: 12, marginTop: 8 }}>
+      <h3 style={{ margin: '0 0 8px' }}>{title}</h3>
+      {children}
+    </div>
+  );
+}
+
 export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
   const { data: settings, error, reload } = useFetch<BotSettings>('/api/v1/settings');
   const { data: llmProviders } = useFetch<LlmProviders>('/api/v1/llm/providers');
@@ -56,6 +65,21 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
 
   const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 };
 
+  const num = (key: keyof BotSettings, step?: string) => (
+    <input
+      type="number"
+      step={step}
+      value={String(form[key])}
+      disabled={!canEdit}
+      onChange={e => update(key, Number(e.target.value))}
+      style={{ width: 140 }}
+    />
+  );
+
+  const bool = (key: 'tradingEnabled' | 'riskEnabled' | 'trailingStopEnabled' | 'leverageEnabled' | 'forceCloseEnabled') => (
+    <input type="checkbox" checked={form[key]} disabled={!canEdit} onChange={e => update(key, e.target.checked)} />
+  );
+
   return (
     <div>
       <h2>Runtime Settings</h2>
@@ -64,14 +88,14 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
           У вас роль ANALYTICS — только просмотр. Изменение настроек доступно администратору.
         </div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 520 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 560 }}>
         <label style={row}>
           Trading Enabled
-          <input type="checkbox" checked={form.tradingEnabled} disabled={!canEdit} onChange={e => update('tradingEnabled', e.target.checked)} />
+          {bool('tradingEnabled')}
         </label>
         <label style={row}>
           Risk Enabled
-          <input type="checkbox" checked={form.riskEnabled} disabled={!canEdit} onChange={e => update('riskEnabled', e.target.checked)} />
+          {bool('riskEnabled')}
         </label>
         <label style={row}>
           Trading Mode
@@ -80,25 +104,100 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
             <option value="LIVE">LIVE</option>
           </select>
         </label>
-        <label style={row}>
-          Max Position (RUB)
-          <input type="number" value={form.maxPositionRub} disabled={!canEdit} onChange={e => update('maxPositionRub', Number(e.target.value))} />
-        </label>
-        <label style={row}>
-          Max Daily Loss (RUB)
-          <input type="number" value={form.maxDailyLossRub} disabled={!canEdit} onChange={e => update('maxDailyLossRub', Number(e.target.value))} />
-        </label>
-        <label style={row}>
-          Kelly Fraction
-          <input type="number" step="0.05" min="0" max="1" value={form.kellyFraction} disabled={!canEdit} onChange={e => update('kellyFraction', Number(e.target.value))} />
-        </label>
-        <label style={row}>
-          Max Open Positions
-          <input type="number" value={form.maxOpenPositions} disabled={!canEdit} onChange={e => update('maxOpenPositions', Number(e.target.value))} />
-        </label>
 
-        <div style={{ borderTop: '1px solid #ddd', paddingTop: 12 }}>
-          <h3 style={{ margin: '0 0 8px' }}>LLM Provider</h3>
+        <Section title="Риск-менеджмент (применяется сразу)">
+          <label style={row}>
+            Max Position (RUB)
+            {num('maxPositionRub')}
+          </label>
+          <label style={row}>
+            Max Daily Loss (RUB)
+            {num('maxDailyLossRub')}
+          </label>
+          <label style={row}>
+            Max Open Positions
+            {num('maxOpenPositions')}
+          </label>
+          <label style={row}>
+            Futures Max Open Positions
+            {num('futuresMaxOpenPositions')}
+          </label>
+          <label style={row}>
+            Max Sector Exposure
+            {num('maxSectorExposure')}
+          </label>
+          <label style={row}>
+            Max Volatility (%)
+            {num('maxVolatilityPercent', '0.5')}
+          </label>
+          <label style={row}>
+            Default Stop Loss (%)
+            {num('defaultStopLossPercent', '0.1')}
+          </label>
+          <label style={row}>
+            Default Take Profit (%)
+            {num('defaultTakeProfitPercent', '0.1')}
+          </label>
+          <label style={row}>
+            Trailing Stop Enabled
+            {bool('trailingStopEnabled')}
+          </label>
+          <label style={row}>
+            Trailing Stop (%)
+            {num('trailingStopPercent', '0.1')}
+          </label>
+          <label style={row}>
+            Risk per Trade (%)
+            {num('riskPerTradePercent', '0.1')}
+          </label>
+          <label style={row}>
+            Kelly Fraction
+            {num('kellyFraction', '0.05')}
+          </label>
+          <label style={row}>
+            Trading Hours Start (МСК)
+            <input type="time" value={form.tradingHoursStart} disabled={!canEdit} onChange={e => update('tradingHoursStart', e.target.value)} />
+          </label>
+          <label style={row}>
+            Trading Hours End (МСК)
+            <input type="time" value={form.tradingHoursEnd} disabled={!canEdit} onChange={e => update('tradingHoursEnd', e.target.value)} />
+          </label>
+        </Section>
+
+        <Section title="Плечо (фьючерсы, применяется сразу)">
+          <label style={row}>
+            Leverage Enabled
+            {bool('leverageEnabled')}
+          </label>
+          <label style={row}>
+            User Leverage
+            {num('userLeverage', '0.1')}
+          </label>
+          <label style={row}>
+            Min Leverage
+            {num('minLeverage', '0.1')}
+          </label>
+          <label style={row}>
+            Max Leverage
+            {num('maxLeverage', '0.1')}
+          </label>
+        </Section>
+
+        <Section title="Интервалы циклов (применяются после перезапуска)">
+          <label style={row}>
+            Bot Interval (ms)
+            {num('botIntervalMs')}
+          </label>
+          <label style={row}>
+            Strategy Interval (ms)
+            {num('strategyIntervalMs')}
+          </label>
+          <div style={{ color: '#666', fontSize: 13 }}>
+            Планировщик @Scheduled фиксирует интервалы при старте — изменения вступят в силу после перезапуска.
+          </div>
+        </Section>
+
+        <Section title="LLM Provider">
           <label style={row}>
             Provider
             <select value={form.llmProvider} disabled={!canEdit} onChange={e => update('llmProvider', e.target.value)}>
@@ -116,17 +215,16 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
                 disabled={!canEdit}
                 placeholder={f.key === 'llmModel' ? llmProviders?.active + ' default' : ''}
                 onChange={e => update(f.key, e.target.value)}
-                style={{ width: 260 }}
+                style={{ width: 300 }}
               />
             </label>
           ))}
           <div style={{ color: '#666', fontSize: 13 }}>
             По умолчанию: {llmProviders?.active || 'ROUTER_AI'} ({llmProviders?.default || 'ROUTER_AI'}). Пустое поле «Модель» = модель агрегатора.
           </div>
-        </div>
+        </Section>
 
-        <div style={{ borderTop: '1px solid #ddd', paddingTop: 12 }}>
-          <h3 style={{ margin: '0 0 8px' }}>Timeframes</h3>
+        <Section title="Timeframes">
           <div style={row}>
             <span>Активные</span>
             <span>{form.timeframes.join(', ') || '—'}</span>
@@ -143,13 +241,12 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
             DAY_1
             <input type="checkbox" checked={form.timeframes.includes('DAY_1')} disabled={!canEdit} onChange={e => update('timeframes', toggle(e.target.checked, form.timeframes, 'DAY_1'))} />
           </label>
-        </div>
+        </Section>
 
-        <div style={{ borderTop: '1px solid #ddd', paddingTop: 12 }}>
-          <h3 style={{ margin: '0 0 8px' }}>Force Close</h3>
+        <Section title="Force Close">
           <label style={row}>
             Enabled
-            <input type="checkbox" checked={form.forceCloseEnabled} disabled={!canEdit} onChange={e => update('forceCloseEnabled', e.target.checked)} />
+            {bool('forceCloseEnabled')}
           </label>
           <label style={row}>
             Time (HH:mm)
@@ -160,7 +257,7 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
               Активно: авто-закрытие всех позиций в {tradingStatus.forceCloseTime} (Europe/Moscow).
             </div>
           )}
-        </div>
+        </Section>
 
         <button onClick={save} disabled={!canEdit} style={{ padding: 10, cursor: canEdit ? 'pointer' : 'not-allowed' }}>Save Settings</button>
         {saved && <div style={{ color: '#2e7d32' }}>{saved}</div>}

@@ -102,6 +102,16 @@ export interface BotSettings {
   maxDailyLossRub: number;
   tradingMode: string;
   maxOpenPositions: number;
+  futuresMaxOpenPositions: number;
+  maxSectorExposure: number;
+  maxVolatilityPercent: number;
+  defaultStopLossPercent: number;
+  defaultTakeProfitPercent: number;
+  trailingStopEnabled: boolean;
+  trailingStopPercent: number;
+  riskPerTradePercent: number;
+  tradingHoursStart: string;
+  tradingHoursEnd: string;
   botIntervalMs: number;
   strategyIntervalMs: number;
   kellyFraction: number;
@@ -113,6 +123,10 @@ export interface BotSettings {
   forceCloseEnabled: boolean;
   forceCloseTime: string;
   investorManagementEnabled: boolean;
+  leverageEnabled: boolean;
+  userLeverage: number;
+  minLeverage: number;
+  maxLeverage: number;
 }
 
 export interface Investor {

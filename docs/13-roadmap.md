@@ -297,3 +297,26 @@ flowchart LR
 5. **Промоушн**: только если KPI достигнуты; обновить README и статусы в этом разделе.
 
 Этот процесс гарантирует, что статус в документации («🔜» / «✅») всегда честно отражает код — как это сделано для v2.1 (раздел 13.5).
+
+## 13.17. Покрытие тестами (Kover)
+
+- **Гейт в CI**: `./gradlew koverVerify` — правило `minBound(50%)` по всем модулям, `onCheck=true`.
+  Отчёт `build/reports/kover/report/index.html` выгружается артефактом каждого PR.
+- **Локальная проверка**: `.\gradlew.bat koverReport` (HTML/XML/Binary), затем `.\gradlew.bat koverVerify`.
+- Текущий уровень покрытия и разбивка по пакетам — в отчёте Kover.
+
+**План повышения покрытия до 100% (к v2.2):**
+
+| Пакет / класс | Что добавить | Приоритет |
+|---|---|---|
+| `client.AlorRestClient` / `AlorWebSocketClient` | unit-тесты на mock WebClient/WS-потока (парсинг, fallback, outbox-повторы) | P0 |
+| `service.RiskManagementService` | пороговые сценарии: maxPositionRub, daily loss limit, sector/volatility, restart-resume daily PnL | P0 |
+| `service.FeedbackService` / `SelfLearningService` | feedback-парсинг, обучение агентов, fallback на дефолт | P1 |
+| `service.StrategyService` | HOLD при `confidence < 0.5`, учёт sector/volatility guard | P1 |
+| `service.SettingsService` | применённые настройки → RiskConfig/LeverageConfig (runtime), валидация | P1 |
+| `controller.*` | `@WebMvcTest` для всех endpoints (роли ADMIN/ANALYTICS, в т.ч. запрет POST для ANALYTICS) | P1 |
+| `infrastructure.*` (UuidV7, outbox poller, промпты) | краевые случаи, retry, таймауты | P2 |
+| `backtest.BacktestEngine` | реальная фикстура MOEX уже покрыта (`RealDataBacktestFixtureTest`); добавить edge-кейсы (пустой вход, деление на 0) | P2 |
+
+> Критерий «100% покрытие» применяется к критичным торговым путям (client, risk, execution, settings);
+> для генерации отчётов и инфраструктуры допускается исключение через `@Generated`/фильтры Kover.

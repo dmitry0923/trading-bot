@@ -7,7 +7,7 @@ on:
 
 jobs:
   backend:
-    name: Backend (Gradle test + ktlint)
+    name: Backend (Gradle test + ktlint + coverage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,20 @@ jobs:
       - name: Compile and run tests
         run: ./gradlew test --no-daemon
 
+      - name: Coverage verification (Kover)
+        run: ./gradlew koverVerify --no-daemon
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kover-report
+          path: |
+            build/reports/kover/html/
+            build/reports/kover/xml/
+            build/reports/kover/verify/
+          retention-days: 30
+
   frontend:
     name: Frontend (TypeScript build)
     runs-on: ubuntu-latest
@@ -55,3 +69,90 @@ jobs:
 
       - name: TypeScript build
         run: npm run build
+
+  # Автодеплой на прод в Yandex Cloud.
+  # Запускается ТОЛЬКО после успешного прохождения backend+frontend (needs)
+  # и только при push (мерже) в main/master.
+  deploy:
+    name: Deploy to Yandex Cloud
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: cr.yandex/${{ secrets.YC_REGISTRY_ID }}
+      TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
+
+      - name: Authenticate to Yandex Cloud
+        run: |
+          echo "${{ secrets.YC_SA_JSON }}" > /tmp/sa.json
+          yc config profile create bot
+          yc config set service-account-key /tmp/sa.json
+          yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
+          yc container registry configure-docker
+
+      - name: Build and push backend image
+        run: |
+          docker build -t "$REGISTRY/trading-bot-app:$TAG" -t "$REGISTRY/trading-bot-app:latest" .
+          docker push "$REGISTRY/trading-bot-app:$TAG"
+          docker push "$REGISTRY/trading-bot-app:latest"
+
+      - name: Build and push frontend image
+        run: |
+          docker build \
+            --build-arg REACT_APP_AUTH_USER="${{ secrets.AUTH_USER }}" \
+            --build-arg REACT_APP_AUTH_PASSWORD="${{ secrets.AUTH_PASSWORD }}" \
+            -t "$REGISTRY/trading-bot-frontend:$TAG" \
+            -t "$REGISTRY/trading-bot-frontend:latest" \
+            ./frontend
+          docker push "$REGISTRY/trading-bot-frontend:$TAG"
+          docker push "$REGISTRY/trading-bot-frontend:latest"
+
+      - name: Copy compose files to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml"
+          target: /opt/trading-bot
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        # Явно передаём REGISTRY/TAG в удалённую оболочку, иначе
+        # $REGISTRY/$TAG на VM будут пустыми и compose упадёт.
+        envs: REGISTRY,TAG
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/trading-bot
+
+            # runtime-секреты пишем в .env (compose подхватит автоматически)
+            cat > .env <<'EOF'
+            REGISTRY=${{ env.REGISTRY }}
+            TAG=${{ env.TAG }}
+            ALOR_TOKEN=${{ secrets.ALOR_TOKEN }}
+            ALOR_REFRESH_TOKEN=${{ secrets.ALOR_REFRESH_TOKEN }}
+            LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
+            LLM_API_KEY=${{ secrets.LLM_API_KEY }}
+            TRADING_MODE=${{ secrets.TRADING_MODE }}
+            AUTH_USER=${{ secrets.AUTH_USER }}
+            AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
+            ANALYTICS_USER=${{ secrets.ANALYTICS_USER }}
+            ANALYTICS_PASSWORD=${{ secrets.ANALYTICS_PASSWORD }}
+            EOF
+
+            echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            docker image prune -f
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps

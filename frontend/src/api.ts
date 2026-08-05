@@ -3,8 +3,8 @@ import React, { useEffect, useState, useCallback } from 'react';
 const BASE = '';
 
 const AUTH_HEADER: Record<string, string> = {};
-const authUser = process.env.REACT_APP_AUTH_USER;
-const authPass = process.env.REACT_APP_AUTH_PASSWORD;
+const authUser = import.meta.env.VITE_AUTH_USER;
+const authPass = import.meta.env.VITE_AUTH_PASSWORD;
 if (authUser && authPass) {
   AUTH_HEADER.Authorization = 'Basic ' + btoa(`${authUser}:${authPass}`);
 }

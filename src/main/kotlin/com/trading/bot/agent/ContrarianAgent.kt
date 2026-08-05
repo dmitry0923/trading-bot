@@ -1,6 +1,5 @@
 package com.trading.bot.agent
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -10,10 +9,11 @@ import com.trading.bot.model.MarketSnapshot
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.TechnicalReport
 import com.trading.bot.repository.AgentLogRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 
 /**
  * Контрариан-агент (Agent-4) — «адвокат дьявола».
@@ -122,10 +122,10 @@ class ContrarianAgent(
                     ChallengeReport(
                         isValid = j.path("isValid").asBoolean(true),
                         riskLevel =
-                            j.path("riskLevel").asText("LOW").uppercase().let {
+                            j.path("riskLevel").asString("LOW").uppercase().let {
                                 if (it in setOf("LOW", "MEDIUM", "HIGH", "CRITICAL")) it else "LOW"
                             },
-                        critique = j.path("critique").asText(""),
+                        critique = j.path("critique").asString(""),
                         confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
                     )
                 } catch (e: Exception) {

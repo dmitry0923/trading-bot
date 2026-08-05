@@ -1,6 +1,6 @@
 package com.trading.bot.backtest
 
-import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.Candle
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -21,16 +21,6 @@ object SimulatedExecution {
         val commission: BigDecimal,
     )
 
-    /** Цена исполнения limit-ордера с учётом лимита (исполнение ровно по лимиту или лучше). */
-    fun limitFill(
-        limitPrice: BigDecimal,
-        nextOpen: BigDecimal,
-        isBuy: Boolean,
-    ): Fill {
-        val price = if (isBuy) nextOpen.min(limitPrice) else nextOpen.max(limitPrice)
-        return Fill(price, commissionOn(price))
-    }
-
     /** Цена исполнения market-ордера с проскальзыванием 0.1%. */
     fun marketFill(
         reference: BigDecimal,
@@ -50,7 +40,7 @@ object SimulatedExecution {
 
     /** Проверка достижения SL/TP внутри диапазона свечи (intraday high/low). */
     fun hitStopOrTarget(
-        candle: com.trading.bot.model.Candle,
+        candle: Candle,
         sl: BigDecimal,
         tp: BigDecimal,
     ): StopTpHit? {

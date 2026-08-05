@@ -1,11 +1,10 @@
 package com.trading.bot.infrastructure.llm
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
-import jakarta.annotation.PostConstruct
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
+import tools.jackson.dataformat.yaml.YAMLFactory
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -27,13 +26,14 @@ class PromptRegistry {
     private val cache = ConcurrentHashMap<String, PromptTemplate>()
     private val yamlMapper = ObjectMapper(YAMLFactory())
 
+    init {
+        load()
+    }
+
     private fun key(
         name: String,
         version: String,
     ) = "$name::$version"
-
-    @PostConstruct
-    fun init() = load()
 
     @Synchronized
     fun load() {
@@ -60,14 +60,13 @@ class PromptRegistry {
                     continue
                 }
                 var loaded = 0
-                promptsNode.fieldNames().forEach { version ->
-                    val v = promptsNode.get(version)
+                promptsNode.properties().forEach { (version, v) ->
                     val template =
                         PromptTemplate(
                             name = filename,
                             version = version,
-                            system = v.path("system").asText(""),
-                            userTemplate = v.path("user_template").asText(""),
+                            system = v.path("system").asString(""),
+                            userTemplate = v.path("user_template").asString(""),
                         )
                     cache[key(filename, version)] = template
                     loaded++
@@ -102,6 +101,5 @@ class PromptRegistry {
     companion object {
         const val DEFAULT_VERSION = "default"
         const val CONSERVATIVE_VERSION = "conservative"
-        const val AGGRESSIVE_VERSION = "aggressive"
     }
 }

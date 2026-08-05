@@ -1,11 +1,11 @@
 package com.trading.bot.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.model.Position
 import com.trading.bot.model.TradeEvent
 import com.trading.bot.repository.TradeEventRepository
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.UUID

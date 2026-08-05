@@ -1,10 +1,10 @@
 package com.trading.bot.client
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.OrderStatus
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.channels.BufferOverflow
@@ -14,13 +14,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
 import reactor.core.publisher.BufferOverflowStrategy
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.net.URI
@@ -127,10 +127,8 @@ class AlorWebSocketClient(
                                             .mapNotNull { msg -> parseExecution(msg.payloadAsText) }
                                             .doOnNext { report ->
                                                 meterRegistry.counter("alor.ws.execution_received").increment()
-                                                if (report != null) {
-                                                    val result = trySend(report)
-                                                    if (result.isFailure) meterRegistry.counter("alor.ws.drop").increment()
-                                                }
+                                                val result = trySend(report)
+                                                if (result.isFailure) meterRegistry.counter("alor.ws.drop").increment()
                                             },
                                     ).then()
                             }.subscribe(
@@ -225,14 +223,12 @@ class AlorWebSocketClient(
                                                 meterRegistry
                                                     .counter(
                                                         "alor.ws.quote_received",
-                                                        Tags.of("ticker", tick?.ticker ?: "UNKNOWN"),
+                                                        Tags.of("ticker", tick.ticker),
                                                     ).increment()
-                                                if (tick != null) {
-                                                    val result = trySend(tick)
-                                                    if (result.isFailure) {
-                                                        meterRegistry.counter("alor.ws.quotes.drop").increment()
-                                                        meterRegistry.counter("alor.ws.drop").increment()
-                                                    }
+                                                val result = trySend(tick)
+                                                if (result.isFailure) {
+                                                    meterRegistry.counter("alor.ws.quotes.drop").increment()
+                                                    meterRegistry.counter("alor.ws.drop").increment()
                                                 }
                                             },
                                     ).then()
@@ -305,7 +301,7 @@ class AlorWebSocketClient(
     fun parseExecution(json: String): ExecutionReport? {
         return try {
             val j = objectMapper.readTree(json)
-            val opcode = j.path("opcode").asText("")
+            val opcode = j.path("opcode").asString("")
             if (opcode.isNotBlank() && opcode != "OrdersGetAndSubscribeV2") {
                 // Родительские/служебные сообщения (подтверждение подписки и т.п.) — пропускаем.
                 return null
@@ -313,12 +309,12 @@ class AlorWebSocketClient(
             val orderId =
                 j
                     .path("orderNumber")
-                    .asText()
-                    .ifBlank { j.path("id").asText() }
-                    .ifBlank { j.path("orderNo").asText() }
+                    .asString()
+                    .ifBlank { j.path("id").asString() }
+                    .ifBlank { j.path("orderNo").asString() }
                     .ifBlank { return null }
 
-            val statusRaw = j.path("status").asText("").lowercase()
+            val statusRaw = j.path("status").asString("").lowercase()
             val status =
                 when {
                     statusRaw.contains("fill") &&
@@ -342,9 +338,9 @@ class AlorWebSocketClient(
                     .asInt(0)
                     .let { if (it == 0) j.path("filledQuantity").asInt(0) else it }
             val avgPrice =
-                j.path("avgFillPrice").asText().toBigDecimalOrNull()
-                    ?: j.path("filledPrice").asText().toBigDecimalOrNull()
-                    ?: j.path("price").asText().toBigDecimalOrNull()
+                j.path("avgFillPrice").asString().toBigDecimalOrNull()
+                    ?: j.path("filledPrice").asString().toBigDecimalOrNull()
+                    ?: j.path("price").asString().toBigDecimalOrNull()
 
             ExecutionReport(
                 orderId = orderId,
@@ -354,10 +350,10 @@ class AlorWebSocketClient(
                 ticker =
                     j
                         .path("ticker")
-                        .asText()
-                        .ifBlank { j.path("symbol").asText() }
+                        .asString()
+                        .ifBlank { j.path("symbol").asString() }
                         .takeIf { it.isNotBlank() },
-                side = j.path("side").asText().takeIf { it.isNotBlank() },
+                side = j.path("side").asString().takeIf { it.isNotBlank() },
             )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to parse Alor WS message: ${json.take(500)}" }
@@ -381,10 +377,10 @@ class AlorWebSocketClient(
             val symbol =
                 j
                     .path("guid")
-                    .asText()
+                    .asString()
                     .removePrefix("q-")
                     .takeIf { it.isNotBlank() }
-                    ?: j.path("symbol").asText().takeIf { it.isNotBlank() }
+                    ?: j.path("symbol").asString().takeIf { it.isNotBlank() }
                     ?: return null
 
             val quotes = j.path("quotes")
@@ -394,10 +390,10 @@ class AlorWebSocketClient(
             var bid: BigDecimal? = null
             var offer: BigDecimal? = null
             for (q in quotes) {
-                when (q.path("o").asText()) {
-                    "Last" -> last = q.path("price").asText().toBigDecimalOrNull()
-                    "Bid" -> bid = q.path("price").asText().toBigDecimalOrNull()
-                    "Offer" -> offer = q.path("price").asText().toBigDecimalOrNull()
+                when (q.path("o").asString()) {
+                    "Last" -> last = q.path("price").asString().toBigDecimalOrNull()
+                    "Bid" -> bid = q.path("price").asString().toBigDecimalOrNull()
+                    "Offer" -> offer = q.path("price").asString().toBigDecimalOrNull()
                 }
                 if (last != null) break
             }

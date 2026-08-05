@@ -1,6 +1,5 @@
 package com.trading.bot.agent
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.model.AgentLog
@@ -10,11 +9,12 @@ import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.service.RedisCacheService
 import com.trading.bot.service.TradeAnalysisService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.coroutineScope
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.security.MessageDigest
 
@@ -242,13 +242,13 @@ class PerformanceFeedbackAgent(
                         TP_ADJUSTMENT_PERCENT_MIN,
                         TP_ADJUSTMENT_PERCENT_MAX,
                     ),
-                contextPrompt = j["contextPrompt"]?.asText() ?: "",
+                contextPrompt = j["contextPrompt"]?.asString() ?: "",
                 agentSpecificNotes =
                     mapOf(
-                        "techAgentNote" to (j["techAgentNote"]?.asText() ?: ""),
-                        "fundAgentNote" to (j["fundAgentNote"]?.asText() ?: ""),
-                        "strategistNote" to (j["strategistNote"]?.asText() ?: ""),
-                        "contrarianNote" to (j["contrarianNote"]?.asText() ?: ""),
+                        "techAgentNote" to (j["techAgentNote"]?.asString() ?: ""),
+                        "fundAgentNote" to (j["fundAgentNote"]?.asString() ?: ""),
+                        "strategistNote" to (j["strategistNote"]?.asString() ?: ""),
+                        "contrarianNote" to (j["contrarianNote"]?.asString() ?: ""),
                     ),
                 shouldPauseTrading = j["shouldPauseTrading"]?.asBoolean() ?: false,
                 rawJson = clean,

@@ -212,7 +212,7 @@ See `application.yml` for all options. Key env vars:
 - `./gradlew ktlintCheck` (lint, baseline in `config/ktlint/baseline.xml`)
 - `./gradlew test` (unit + Testcontainers integration tests)
 - `./gradlew koverVerify` (coverage gate, min 50%, `koverReport` is uploaded as artifact)
-- `npm run build` (TypeScript frontend)
+- `npm run test` + `npm run build` (Vitest + TypeScript/Vite frontend)
 
 Dеплой — job `deploy` в том же `ci.yml`, после merge в `main`/`master` (и только если
 прошли все тесты, `needs: [backend, frontend]`):

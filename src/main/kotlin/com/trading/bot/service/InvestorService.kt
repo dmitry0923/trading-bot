@@ -9,7 +9,7 @@ import com.trading.bot.model.InvestorTransactionType
 import com.trading.bot.model.InvestorView
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -137,23 +137,6 @@ class InvestorService(
     suspend fun poolRealizedPnL(): BigDecimal {
         val since = LocalDateTime.now().minusYears(10)
         return positionRepo.findClosedSince(since).sumOf { it.pnl ?: BigDecimal.ZERO }
-    }
-
-    /**
-     * Атрибуция прибыли: доля инвестора (баланс / пул) * реализованный P&L пула.
-     */
-    suspend fun attributedPnL(
-        account: InvestorAccount,
-        poolContributed: BigDecimal,
-        poolRealized: BigDecimal,
-    ): BigDecimal = attributed(account.balance, poolContributed, poolRealized)
-
-    /**
-     * Текущая справедливая стоимость пула = внесённый капитал + реализованный P&L.
-     */
-    suspend fun poolEquity(): BigDecimal {
-        val contributed = poolContributed()
-        return contributed.add(poolRealizedPnL())
     }
 
     private suspend fun recordDeposit(

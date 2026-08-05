@@ -25,10 +25,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.test.context.bean.override.mockito.MockitoBean
 import java.math.BigDecimal
 import java.time.LocalDateTime
-import java.util.UUID
 
 /**
  * Интеграционный тест инвестиционных модулей против реальной Postgres:
@@ -68,7 +67,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var positionRepository: PositionRepository
 
-    @MockBean
+    @MockitoBean
     lateinit var alorClient: AlorClient
 
     @BeforeEach

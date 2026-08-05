@@ -19,13 +19,13 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradeEventService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import mu.KotlinLogging
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal

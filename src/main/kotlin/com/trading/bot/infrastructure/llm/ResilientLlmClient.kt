@@ -1,8 +1,8 @@
 package com.trading.bot.infrastructure.llm
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.LlmConfig
 import com.trading.bot.service.SettingsService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.kotlin.circuitbreaker.decorateSuspendFunction
 import io.github.resilience4j.kotlin.ratelimiter.decorateSuspendFunction
@@ -12,12 +12,12 @@ import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
-import mu.KotlinLogging
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import reactor.netty.http.client.HttpClient
+import tools.jackson.databind.ObjectMapper
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
@@ -193,7 +193,7 @@ class ResilientLlmClient(
                 .path(0)
                 .path("message")
                 .path("content")
-                .asText()
+                .asString()
         if (content.isBlank()) throw IllegalStateException("LLM returned empty content")
 
         val tokens = tree.path("usage").path("total_tokens").asInt(0)

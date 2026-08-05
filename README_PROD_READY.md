@@ -54,7 +54,7 @@ cp build.gradle.kts your-project/
 
 ### 4. UI
 ```bash
-cd frontend && npm install && npm start
+cd frontend && npm install && npm run dev
 ```
 
 ## Проверка перед продом

@@ -1,23 +1,23 @@
 package com.trading.bot.client
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.MarketSnapshot
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.reactor.awaitSingle
-import mu.KotlinLogging
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
-import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
  * REST-клиент Alor.
@@ -78,9 +78,9 @@ class AlorClient(
                 meterRegistry.counter("alor.quotes.ok", Tags.of("ticker", ticker)).increment()
                 MarketSnapshot(
                     ticker = ticker,
-                    currentPrice = BigDecimal(j.path("lastPrice").asText("0")),
-                    bid = j.path("bid").asText().toBigDecimalOrNull(),
-                    ask = j.path("ask").asText().toBigDecimalOrNull(),
+                    currentPrice = BigDecimal(j.path("lastPrice").asString("0")),
+                    bid = j.path("bid").asString().toBigDecimalOrNull(),
+                    ask = j.path("ask").asString().toBigDecimalOrNull(),
                     volume = j.path("volume").asLong(0),
                     timestamp = Instant.now(),
                 )
@@ -104,7 +104,7 @@ class AlorClient(
         return withRetry(ticker) {
             val start = System.currentTimeMillis()
             try {
-                val idempotencyKey = idempotencyKey(ticker, side, qty, price, "limit")
+                val idempotencyKey = idempotencyKey(ticker, side, qty, price)
                 val body =
                     mapOf(
                         "portfolio" to alorConfig.portfolio,
@@ -133,7 +133,7 @@ class AlorClient(
                     objectMapper
                         .readTree(raw)
                         .path("orderNumber")
-                        .asText()
+                        .asString()
                         .ifBlank { null }
                 if (orderNumber != null) {
                     meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
@@ -204,9 +204,9 @@ class AlorClient(
                 val j = objectMapper.readTree(raw)
                 val execution =
                     OrderExecution(
-                        status = j.path("status").asText("UNKNOWN"),
+                        status = j.path("status").asString("UNKNOWN"),
                         filledQuantity = j.path("filledQty").asInt(0),
-                        avgPrice = j.path("filledPrice").asText().toBigDecimalOrNull(),
+                        avgPrice = j.path("filledPrice").asString().toBigDecimalOrNull(),
                     )
                 if (expectedPrice != null && execution.avgPrice != null) {
                     recordSlippage(expectedPrice, execution.avgPrice, execution.filledQuantity)
@@ -244,9 +244,8 @@ class AlorClient(
         side: String,
         qty: Int,
         price: BigDecimal,
-        type: String,
     ): String {
-        val raw = "$ticker|$side|$qty|$price|$type|${Instant.now().toEpochMilli()}"
+        val raw = "$ticker|$side|$qty|$price|limit|${Instant.now().toEpochMilli()}"
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { "%02x".format(it) }.take(32)
     }
@@ -275,7 +274,7 @@ class AlorClient(
     ) {
         meterRegistry
             .timer("alor.api.latency", Tags.of("operation", operation))
-            .record(System.currentTimeMillis() - startMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .record(System.currentTimeMillis() - startMs, TimeUnit.MILLISECONDS)
     }
 
     private suspend fun getActualToken(): String {
@@ -299,7 +298,7 @@ class AlorClient(
                     .awaitSingle()
 
             val j = objectMapper.readTree(raw)
-            accessToken = j.path("accessToken").asText(accessToken)
+            accessToken = j.path("accessToken").asString(accessToken)
             val expiresIn = j.path("expiresIn").asLong(3600)
             tokenExpiresAt = Instant.now().plusSeconds(expiresIn)
             logger.info { "Alor access token refreshed (expires in ${expiresIn}s)" }

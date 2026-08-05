@@ -1,13 +1,13 @@
 package com.trading.bot.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.MacroConfig
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
-import mu.KotlinLogging
 import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
 
@@ -77,7 +77,7 @@ class MacroContextService(
                     .takeIf { it.isArray && it.size() > 0 }
                     ?.get(0)
                     ?.get(1)
-                    ?.asText()
+                    ?.asString()
             last?.toBigDecimalOrNull()?.also {
                 meterRegistry.counter("macro.usd_rub.live", Tags.of("status", "OK")).increment()
                 logger.info { "USD/RUB live: $it" }

@@ -12,6 +12,10 @@
         4. Специальные случаи для Spring Boot
 
         ⚠️ ВСЕ ОСТАЛЬНЫЕ ОШИБКИ ДОЛЖНЫ БЫТЬ ИСПРАВЛЕНЫ В КОДЕ!
+
+        Источники правил соответствуют ktlint 1.8.0. Правил
+        standard:unused-parameter / standard:unused-private-member
+        в ktlint 1.8.0 НЕ СУЩЕСТВУЕТ, поэтому они не перечислены.
         ═══════════════════════════════════════════════════════════════
     -->
 
@@ -27,117 +31,18 @@
     <!-- ============================================================= -->
     <file name="**/generated/**/*.kt">
         <error line="1" column="1" source="standard:no-wildcard-imports" />
-        <error line="1" column="1" source="standard:unused-imports" />
-        <error line="1" column="1" source="standard:unused-private-member" />
+        <error line="1" column="1" source="standard:no-unused-imports" />
         <error line="1" column="1" source="standard:max-line-length" />
     </file>
 
     <file name="**/build/**/*.kt">
         <error line="1" column="1" source="standard:no-wildcard-imports" />
-        <error line="1" column="1" source="standard:unused-imports" />
+        <error line="1" column="1" source="standard:no-unused-imports" />
         <error line="1" column="1" source="standard:max-line-length" />
     </file>
 
     <!-- ============================================================= -->
-    <!-- 3. SPRING BOOT КОНФИГУРАЦИИ                                   -->
-    <!-- ============================================================= -->
-    <file name="**/config/**/*.kt">
-        <!-- Параметры в @Bean методах часто не используются напрямую -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-        <!-- Поля с @Value или @ConfigurationProperties -->
-        <error line="1" column="1" source="standard:unused-private-member" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 4. SPRING BOOT КОНТРОЛЛЕРЫ                                   -->
-    <!-- ============================================================= -->
-    <file name="**/controller/**/*.kt">
-        <!-- Параметры от Spring MVC (@PathVariable, @RequestParam) -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-        <!-- Параметры для маппинга (Model, HttpSession, etc.) -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 5. SPRING BOOT СЕРВИСЫ И КОМПОНЕНТЫ                         -->
-    <!-- ============================================================= -->
-    <file name="**/service/**/*.kt">
-        <!-- Параметры в методах с @EventListener -->
-        <error line="1" column="1" source="standard:unused-parameter_ignore_annotated_by_EventListener" />
-        <!-- Параметры в методах с @Async -->
-        <error line="1" column="1" source="standard:unused-parameter_ignore_annotated_by_Async" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 6. DATA CLASSES И МОДЕЛИ                                     -->
-    <!-- ============================================================= -->
-    <file name="**/model/**/*.kt">
-        <!-- Поля для JSON сериализации -->
-        <error line="1" column="1" source="standard:unused-private-member" />
-        <!-- Поля для БД (JPA, R2DBC) -->
-        <error line="1" column="1" source="standard:unused-private-member" />
-    </file>
-
-    <file name="**/dto/**/*.kt">
-        <error line="1" column="1" source="standard:unused-private-member" />
-    </file>
-
-    <file name="**/entity/**/*.kt">
-        <error line="1" column="1" source="standard:unused-private-member" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 7. РЕПОЗИТОРИИ (Spring Data)                                 -->
-    <!-- ============================================================= -->
-    <file name="**/repository/**/*.kt">
-        <!-- Методы репозиториев используются Spring Data через прокси -->
-        <error line="1" column="1" source="standard:unused-private-member" />
-        <!-- Параметры методов запросов -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 8. SPRING BOOT ПРИЛОЖЕНИЯ                                   -->
-    <!-- ============================================================= -->
-    <file name="**/application/**/*.kt">
-        <!-- main() метод -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 9. ТЕСТЫ                                                     -->
-    <!-- ============================================================= -->
-    <file name="**/test/**/*.kt">
-        <!-- В тестах допускаются неиспользуемые переменные -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-        <error line="1" column="1" source="standard:unused-private-member" />
-        <!-- Параметры в тестах с @ParameterizedTest -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-    </file>
-
-    <file name="**/integration/**/*.kt">
-        <error line="1" column="1" source="standard:unused-parameter" />
-        <error line="1" column="1" source="standard:unused-private-member" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 10. ИНФРАСТРУКТУРА (интеграция с внешними системами)        -->
-    <!-- ============================================================= -->
-    <file name="**/infrastructure/**/*.kt">
-        <!-- Внешние интерфейсы могут иметь неиспользуемые параметры -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 11. CLIENT (HTTP клиенты, WebSocket)                         -->
-    <!-- ============================================================= -->
-    <file name="**/client/**/*.kt">
-        <!-- Параметры в методах интерфейсов -->
-        <error line="1" column="1" source="standard:unused-parameter" />
-    </file>
-
-    <!-- ============================================================= -->
-    <!-- 12. ОСОБЫЕ СЛУЧАИ - КОНКРЕТНЫЕ КЛАССЫ                       -->
+    <!-- 3. ОСОБЫЕ СЛУЧАИ - КОНКРЕТНЫЕ КЛАССЫ                       -->
     <!-- ============================================================= -->
 
     <!-- Enums часто содержат поля для Java/Kotlin совместимости -->
@@ -154,7 +59,7 @@
     </file>
 
     <!-- ============================================================= -->
-    <!-- 13. ПРОЧИЕ ФАЙЛЫ, КОТОРЫЕ МОГУТ ВЫЗЫВАТЬ ПРОБЛЕМЫ           -->
+    <!-- 4. ПРОЧИЕ ФАЙЛЫ, КОТОРЫЕ МОГУТ ВЫЗЫВАТЬ ПРОБЛЕМЫ           -->
     <!-- ============================================================= -->
 
     <!-- Файлы с большим количеством параметров в конструкторах -->
@@ -166,10 +71,5 @@
     <file name="**/service/**/*Service.kt">
         <error line="1" column="1" source="standard:function-signature" />
         <error line="1" column="1" source="standard:max-line-length" />
-    </file>
-
-    <!-- Файлы с DSL и билдерами -->
-    <file name="**/config/**/Dsl*.kt">
-        <error line="1" column="1" source="standard:unused-parameter" />
     </file>
 </baseline>

@@ -4,9 +4,9 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.repository.PositionRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import mu.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode

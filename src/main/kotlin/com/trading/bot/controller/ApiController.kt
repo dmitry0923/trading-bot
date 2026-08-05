@@ -30,6 +30,7 @@ import com.trading.bot.service.TradeAnalysisService
 import com.trading.bot.service.TradingBotService
 import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -147,7 +148,7 @@ class ApiController(
     suspend fun getPositionEvents(
         @PathVariable positionId: Long,
     ): List<TradeEvent> {
-        val aggregateId = java.util.UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
+        val aggregateId = UUID.nameUUIDFromBytes("position:$positionId".toByteArray())
         return tradeEventRepository.findByAggregateId(aggregateId)
     }
 
@@ -172,7 +173,7 @@ class ApiController(
         meterRegistry
             .counter(
                 "api.backtest",
-                io.micrometer.core.instrument.Tags
+                Tags
                     .of("ticker", ticker),
             ).increment()
         if (loadHistory) {
@@ -190,7 +191,7 @@ class ApiController(
             "passable" to result.isPassable(),
             "equityCurve" to result.equityCurve,
             "timestamp" to
-                java.time.LocalDateTime
+                LocalDateTime
                     .now()
                     .toString(),
         )
@@ -211,7 +212,7 @@ class ApiController(
         meterRegistry
             .counter(
                 "api.analytics.adaptive-params",
-                io.micrometer.core.instrument.Tags
+                Tags
                     .of("ticker", ticker),
             ).increment()
         return mapOf(
@@ -249,7 +250,7 @@ class ApiController(
         meterRegistry
             .counter(
                 "api.analytics.time-pattern",
-                io.micrometer.core.instrument.Tags
+                Tags
                     .of("ticker", ticker),
             ).increment()
         return tradeAnalysisService.timePatternAnalysis(ticker, days)
@@ -276,7 +277,9 @@ class ApiController(
 
     @GetMapping("/me")
     fun me(): Map<String, Any> {
-        val auth = SecurityContextHolder.getContext().authentication
+        val auth =
+            SecurityContextHolder.getContext().authentication
+                ?: return emptyMap()
         return mapOf(
             "username" to auth.name,
             "roles" to auth.authorities.map { it.authority },

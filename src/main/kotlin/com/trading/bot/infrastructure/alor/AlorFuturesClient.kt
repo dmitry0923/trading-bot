@@ -1,15 +1,15 @@
 package com.trading.bot.infrastructure.alor
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
 
@@ -61,7 +61,7 @@ class AlorFuturesClient(
                 j
                     .path("long")
                     .path("initialMargin")
-                    .asText()
+                    .asString()
                     .takeIf { it.isNotBlank() }
                     ?.toBigDecimalOrNull()
                     ?: configGo
@@ -94,8 +94,8 @@ class AlorFuturesClient(
 
             val j = objectMapper.readTree(raw)
             val money =
-                j.path("moneyAmount").asText().toBigDecimalOrNull()
-                    ?: j.path("money").asText().toBigDecimalOrNull()
+                j.path("moneyAmount").asString().toBigDecimalOrNull()
+                    ?: j.path("money").asString().toBigDecimalOrNull()
                     ?: defaultPortfolioMoney
 
             meterRegistry.gauge("futures.portfolio.money", money.toDouble())

@@ -2,12 +2,12 @@ package com.trading.bot.backtest
 
 import com.trading.bot.client.MoexClient
 import com.trading.bot.repository.CandleRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import mu.KotlinLogging
 import org.springframework.stereotype.Service
 import java.time.LocalDateTime
 
@@ -46,13 +46,11 @@ class HistoricalDataLoader(
      *
      * @param ticker тикер инструмента
      * @param days глубина истории в днях
-     * @param timeframe таймфрейм свечей (по умолчанию MINUTE_10)
      * @return [LoadResult] — сколько загружено и сохранено
      */
     suspend fun loadAndSave(
         ticker: String,
         days: Int,
-        timeframe: String = "MINUTE_10",
     ): LoadResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val to = LocalDateTime.now()

@@ -4,9 +4,9 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.containers.GenericContainer
-import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import org.testcontainers.postgresql.PostgreSQLContainer
 
 @SpringBootTest
 @Testcontainers
@@ -26,6 +26,7 @@ abstract class AbstractTestContainerTest {
 
         @DynamicPropertySource
         @JvmStatic
+        @Suppress("unused") // Вызывается рефлексивно Spring TestContext через @DynamicPropertySource
         fun registerProperties(registry: DynamicPropertyRegistry) {
             registry.add("spring.datasource.url", postgres::getJdbcUrl)
             registry.add("spring.datasource.username", postgres::getUsername)

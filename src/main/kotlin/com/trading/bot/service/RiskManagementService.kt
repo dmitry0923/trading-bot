@@ -6,6 +6,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.RiskCheckResult
 import com.trading.bot.model.Strategy
 import com.trading.bot.repository.DailyRiskSnapshotRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -26,7 +27,7 @@ class RiskManagementService(
     private val riskConfig: RiskConfig,
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
 ) {
-    private val logger = mu.KotlinLogging.logger {}
+    private val logger = KotlinLogging.logger {}
     private val moscowZone = ZoneId.of("Europe/Moscow")
     private var dailyPnL: BigDecimal = BigDecimal.ZERO
     private var maxDrawdownToday: BigDecimal = BigDecimal.ZERO

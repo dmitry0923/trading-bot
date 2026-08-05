@@ -1,6 +1,5 @@
 package com.trading.bot.infrastructure.alor
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
@@ -9,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 
 /**

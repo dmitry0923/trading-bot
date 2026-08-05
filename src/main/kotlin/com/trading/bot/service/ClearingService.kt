@@ -4,7 +4,7 @@ import com.trading.bot.model.ClearingQuote
 import com.trading.bot.model.InvestorTransactionType
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode

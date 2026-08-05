@@ -1,10 +1,10 @@
 package com.trading.bot.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.model.Candle
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Duration
@@ -76,7 +76,7 @@ class CandleCacheService(
                 .mapNotNull { raw ->
                     try {
                         objectMapper.readValue(raw, Candle::class.java)
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         null
                     }
                 }.sortedBy { it.time }

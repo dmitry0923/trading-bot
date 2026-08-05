@@ -1,6 +1,5 @@
 package com.trading.bot.agent
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -8,10 +7,11 @@ import com.trading.bot.model.AgentLog
 import com.trading.bot.model.FundamentalReport
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.MacroContextService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 
 /**
  * Агент фундаментального анализа (Agent-2).
@@ -85,11 +85,11 @@ class FundamentalAnalysisAgent(
                     val j = objectMapper.readTree(resp.content)
                     FundamentalReport(
                         conclusion =
-                            j.path("conclusion").asText("NEUTRAL").uppercase().let {
+                            j.path("conclusion").asString("NEUTRAL").uppercase().let {
                                 if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
                             },
                         confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-                        reasoning = j.path("reasoning").asText(""),
+                        reasoning = j.path("reasoning").asString(""),
                     )
                 } catch (e: Exception) {
                     logger.warn(e) { "Fundamental LLM parse error for $ticker" }

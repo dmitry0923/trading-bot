@@ -5,7 +5,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.service.IndicatorCalculator
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -65,26 +65,6 @@ class BacktestEngine(
         }
         logger.info { "Backtest $ticker: ${candles.size} candles loaded" }
         return simulate(ticker, candles, initialCapital, minBarsForSignal, slPercent, tpPercent)
-    }
-
-    /**
-     * Прогон бэктеста с предварительной загрузкой истории через [HistoricalDataLoader].
-     *
-     * @param loader загрузчик исторических данных
-     * @param ticker тикер инструмента
-     * @param days глубина истории в днях
-     * @param slPercent стоп-лосс в % от цены входа
-     * @param tpPercent тейк-профит в % от цены входа
-     */
-    suspend fun runWithHistory(
-        loader: HistoricalDataLoader,
-        ticker: String,
-        days: Int = 730,
-        slPercent: Double = 0.02,
-        tpPercent: Double = 0.04,
-    ): BacktestResult {
-        loader.loadAndSave(ticker, days)
-        return run(ticker, days, slPercent = slPercent, tpPercent = tpPercent)
     }
 
     /**

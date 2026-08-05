@@ -9,41 +9,49 @@ plugins {
 group = "com.trading.bot"
 version = "2.0.0"
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-}
-
 repositories {
     mavenCentral()
 }
 
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+        freeCompilerArgs.add("-Xjsr305=strict")
+    }
+}
+
 dependencies {
     implementation(platform(libs.springBootBom))
-    runtimeOnly(platform(libs.springBootBom))
 
-    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-webmvc")
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
     implementation("org.springframework.boot:spring-boot-starter-jdbc")
-    implementation("org.liquibase:liquibase-core")
+    implementation("org.springframework.boot:spring-boot-starter-liquibase")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-aspectj")
+    implementation("org.springframework.boot:spring-boot-starter-jackson")
 
     implementation("io.micrometer:micrometer-core")
     implementation("io.micrometer:micrometer-registry-prometheus")
 
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation(libs.jacksonKotlin)
     implementation("io.projectreactor.kotlin:reactor-kotlin-extensions")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.kotlinLogging)
 
-    implementation(libs.resilience4jSpringBoot3)
+    implementation(libs.resilience4jSpringBoot4)
     implementation(libs.resilience4jKotlin)
-    implementation("org.springframework.boot:spring-boot-starter-aop")
 
-    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml")
+    implementation(libs.jacksonYaml)
 
     runtimeOnly("org.postgresql:postgresql")
     runtimeOnly("org.postgresql:r2dbc-postgresql")
@@ -54,16 +62,9 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation(libs.testcontainersJunitJupiter)
     testImplementation(libs.testcontainersPostgresql)
-    testImplementation(libs.testcontainersCore)
+    testImplementation(libs.testcontainers)
 
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
-    kotlinOptions {
-        freeCompilerArgs += "-Xjsr305=strict"
-        jvmTarget = "21"
-    }
 }
 
 tasks.withType<Test> {
@@ -89,8 +90,10 @@ ktlint {
         exclude { it.file.path.contains("/build/") }
     }
 
-    // Дополнительные настройки через .editorconfig
-    // все настройки читаются из .editorconfig
+    // ВНИМАНИЕ: НЕ переносить правила ktlint в additionalEditorconfig!
+    // Эмпирически проверено: additionalEditorconfig применяется как EditorConfigOverride
+    // и меняет эффективную конфигурацию (дает сотни ложных нарушений argument-list-wrapping).
+    // Правила ktlint остаются дефолтными (ktlint_official, все standard-правила включены).
 }
 
 // Отдельная задача для генерации baseline с правильными правилами
@@ -100,9 +103,9 @@ tasks.register("generateKtlintBaseline") {
     dependsOn("ktlintBaseline")
 }
 
-// Проверка перед коммитом (можно добавить в pre-commit)
+// Проверка перед коммитом
 tasks.named("check") {
-    dependsOn("ktlintCheck")
+    dependsOn("ktlintCheck", "koverVerify")
 }
 
 // Авто-исправление стиля
@@ -120,12 +123,10 @@ tasks.register("checkUnused") {
 // НАСТРОЙКА KOVER (покрытие тестами)
 // Отчёт: build/reports/kover/ (html/xml/verify)
 // Проверка порога: ./gradlew koverVerify (подключена к check)
-koverReport {
-    defaults {
+kover {
+    reports {
         verify {
-            onCheck = true
-            rule("Минимальное покрытие строк") {
-                // План повышения до 100% — см. docs/13-roadmap.md
+            rule {
                 minBound(50)
             }
         }

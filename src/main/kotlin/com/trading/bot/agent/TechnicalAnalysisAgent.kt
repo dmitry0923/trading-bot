@@ -1,6 +1,5 @@
 package com.trading.bot.agent
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -10,10 +9,11 @@ import com.trading.bot.model.MarketSnapshot
 import com.trading.bot.model.TechnicalReport
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.IndicatorCalculator
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -140,11 +140,11 @@ class TechnicalAnalysisAgent(
             val enhanced =
                 baseline.copy(
                     conclusion =
-                        j.path("conclusion").asText("NEUTRAL").uppercase().let {
+                        j.path("conclusion").asString("NEUTRAL").uppercase().let {
                             if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
                         },
                     confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-                    reasoning = j.path("reasoning").asText(baseline.reasoning),
+                    reasoning = j.path("reasoning").asString(baseline.reasoning),
                 )
             logAndReturn(enhanced, ticker, cycleId, start, resp.content, isCached = resp.fromCache, tokensUsed = resp.tokensUsed)
         } catch (e: Exception) {

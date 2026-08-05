@@ -36,3 +36,10 @@ desktop.ini
 # Logs
 *.log
 logs/
+
+# Остатки распакованных jar (ktlint-gradle, testcontainers и др.)
+META-INF/
+org/
+about.html
+plugin.properties
+

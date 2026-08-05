@@ -1,11 +1,11 @@
 package com.trading.bot.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.BotSettings
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
+import tools.jackson.databind.ObjectMapper
 import java.time.LocalDateTime
 
 /**

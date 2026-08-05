@@ -1,8 +1,5 @@
 package com.trading.bot.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
-import com.fasterxml.jackson.module.kotlin.KotlinModule
 import com.trading.bot.model.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -11,7 +8,9 @@ import org.mockito.ArgumentMatchers
 import org.mockito.Mockito
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ZSetOperations
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.time.Duration
 import java.time.LocalDateTime
 import java.time.Month
 import java.time.ZoneOffset
@@ -26,11 +25,7 @@ class CandleCacheServiceTest {
 
     private val redisTemplate = mock<StringRedisTemplate>()
     private val zset: ZSetOperations<String, String> = mock()
-    private val objectMapper =
-        ObjectMapper().apply {
-            registerModule(JavaTimeModule())
-            registerModule(KotlinModule.Builder().build())
-        }
+    private val objectMapper = jacksonObjectMapper()
     private val service = CandleCacheService(redisTemplate, objectMapper)
 
     private fun candle(
@@ -112,6 +107,6 @@ class CandleCacheServiceTest {
         val score = c.time.toEpochSecond(ZoneOffset.UTC) * 1000.0
         Mockito.verify(zset).add(ArgumentMatchers.eq(key), Mockito.anyString(), ArgumentMatchers.eq(score))
         Mockito.verify(zset).removeRange(ArgumentMatchers.eq(key), ArgumentMatchers.eq(0L), ArgumentMatchers.eq(-501L))
-        Mockito.verify(redisTemplate).expire(ArgumentMatchers.eq(key), ArgumentMatchers.any())
+        Mockito.verify(redisTemplate).expire(ArgumentMatchers.eq(key), ArgumentMatchers.any<Duration>())
     }
 }

@@ -1,6 +1,5 @@
 package com.trading.bot.agent
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.Guardrails
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
@@ -11,10 +10,11 @@ import com.trading.bot.model.MarketSnapshot
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.TechnicalReport
 import com.trading.bot.repository.AgentLogRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 
 /**
@@ -139,19 +139,19 @@ class StrategyAgent(
                 val j = objectMapper.readTree(cleaned)
                 val action =
                     StrategyAction.entries.firstOrNull {
-                        it.name == j.path("action").asText("HOLD").uppercase()
+                        it.name == j.path("action").asString("HOLD").uppercase()
                     } ?: StrategyAction.HOLD
 
-                val rawPrice = j.path("targetPrice").asText().toBigDecimalOrNull() ?: snapshot.currentPrice
+                val rawPrice = j.path("targetPrice").asString().toBigDecimalOrNull() ?: snapshot.currentPrice
                 Draft(
                     action = action,
                     targetPrice = rawPrice,
                     quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(0).coerceIn(1, 10000),
-                    stopLoss = j.path("stopLoss").asText().toBigDecimalOrNull(),
-                    takeProfit = j.path("takeProfit").asText().toBigDecimalOrNull(),
+                    stopLoss = j.path("stopLoss").asString().toBigDecimalOrNull(),
+                    takeProfit = j.path("takeProfit").asString().toBigDecimalOrNull(),
                     trailingStop = j.path("trailingStop").asBoolean(false),
                     confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-                    reasoning = j.path("reasoning").asText(""),
+                    reasoning = j.path("reasoning").asString(""),
                 )
             } catch (e: Exception) {
                 logger.warn(e) { "Strategy LLM parse error for $ticker" }

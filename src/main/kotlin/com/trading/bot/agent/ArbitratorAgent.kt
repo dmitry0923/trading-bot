@@ -1,6 +1,5 @@
 package com.trading.bot.agent
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.infrastructure.llm.Guardrails
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
@@ -12,11 +11,12 @@ import com.trading.bot.model.RiskContext
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.TechnicalReport
 import com.trading.bot.repository.AgentLogRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.coroutineScope
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 
 /**
@@ -245,17 +245,17 @@ class ArbitratorAgent(
         val j = objectMapper.readTree(cleaned)
         val action =
             StrategyAction.entries.firstOrNull {
-                it.name == j.path("action").asText("HOLD").uppercase()
+                it.name == j.path("action").asString("HOLD").uppercase()
             } ?: StrategyAction.HOLD
         return Final(
             action = action,
-            targetPrice = j.path("targetPrice").asText().toBigDecimalOrNull() ?: fallback.targetPrice,
+            targetPrice = j.path("targetPrice").asString().toBigDecimalOrNull() ?: fallback.targetPrice,
             quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(fallback.quantity).coerceIn(1, 10000),
-            stopLoss = j.path("stopLoss").asText().toBigDecimalOrNull() ?: fallback.stopLoss,
-            takeProfit = j.path("takeProfit").asText().toBigDecimalOrNull() ?: fallback.takeProfit,
+            stopLoss = j.path("stopLoss").asString().toBigDecimalOrNull() ?: fallback.stopLoss,
+            takeProfit = j.path("takeProfit").asString().toBigDecimalOrNull() ?: fallback.takeProfit,
             trailingStop = j.path("trailingStop").asBoolean(fallback.trailingStop),
             confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
-            reasoning = j.path("reasoning").asText(fallback.reasoning),
+            reasoning = j.path("reasoning").asString(fallback.reasoning),
         )
     }
 

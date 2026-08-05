@@ -10,9 +10,9 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import mu.KotlinLogging
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
@@ -137,7 +137,7 @@ class FuturesRiskEngine(
             meterRegistry.gauge(
                 "futures.liquidation.distance",
                 Tags.of("ticker", ticker),
-                distanceToLiquidation(entryPrice, it, entryPrice).toDouble(),
+                distanceToLiquidation(entryPrice, it, entryPrice),
             )
         }
 
@@ -292,7 +292,7 @@ class FuturesRiskEngine(
         if (totalBuffer <= BigDecimal.ZERO) return LiquidationStatus.CRITICAL
 
         val distancePercent = distanceToLiquidation(position.entryPrice, liq, currentPrice)
-        meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), distancePercent.toDouble())
+        meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), distancePercent)
 
         val status =
             when {

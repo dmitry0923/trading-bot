@@ -1,6 +1,5 @@
 package com.trading.bot.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.agent.ArbitratorAgent
 import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.agent.FundamentalAnalysisAgent
@@ -22,6 +21,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CoroutineScope
@@ -32,9 +32,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import mu.KotlinLogging
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -304,7 +304,7 @@ class StrategyService(
         }
 
         // 3. MOEX — последний источник, с write-through в кэш
-        val moex = moexClient.getCandles(ticker, 10, from)
+        val moex = moexClient.getCandles(ticker, from)
         moex.forEach { candle ->
             if (!candleRepo.existsByTickerAndTimeframeAndTime(candle.ticker, candle.timeframe, candle.time)) {
                 candleRepo.save(candle)

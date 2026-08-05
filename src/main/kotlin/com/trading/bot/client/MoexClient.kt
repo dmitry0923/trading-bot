@@ -1,12 +1,12 @@
 package com.trading.bot.client
 
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.model.Candle
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
-import mu.KotlinLogging
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
+import tools.jackson.databind.JsonNode
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.LocalDateTime
@@ -30,17 +30,15 @@ class MoexClient(
     private val baseUrl = "https://iss.moex.com/iss"
 
     /**
-     * Загружает свечи по тикеру за N дней, начиная с указанного времени.
+     * Загружает свечи по тикеру за период с указанного времени.
      * Сначала ищет на фондовом рынке (акции), при пустом результате — на FORTS (фьючерсы).
      *
      * @param ticker тикер инструмента
-     * @param days количество дней истории
      * @param from начальная дата-время
      * @return список свечей (до 500, отсортированных по времени)
      */
     suspend fun getCandles(
         ticker: String,
-        days: Int,
         from: LocalDateTime,
     ): List<Candle> {
         val stock = fetchCandles("stock", "shares", "TQBR", ticker, from)
@@ -159,7 +157,7 @@ class MoexClient(
         val candles = objectMapper.readTree(raw).path("candles")
         if (!candles.path("data").isArray) return emptyList()
 
-        val columns = candles.path("columns").map { it.asText() }
+        val columns = candles.path("columns").map { it.asString() }
         val indexOf = { name: String -> columns.indexOf(name) }
         val beginIdx = indexOf("begin")
         val openIdx = indexOf("open")
@@ -171,8 +169,7 @@ class MoexClient(
 
         return candles
             .path("data")
-            .map { row -> toCandle(row, ticker, beginIdx, openIdx, highIdx, lowIdx, closeIdx, volumeIdx) }
-            .filterNotNull()
+            .mapNotNull { row -> toCandle(row, ticker, beginIdx, openIdx, highIdx, lowIdx, closeIdx, volumeIdx) }
             .sortedBy { it.time }
     }
 
@@ -190,11 +187,11 @@ class MoexClient(
             Candle(
                 ticker = ticker,
                 timeframe = "MINUTE_10",
-                time = LocalDateTime.parse(row.get(beginIdx).asText(), timeFormatter),
-                openPrice = BigDecimal(row.get(openIdx).asText()),
-                highPrice = BigDecimal(row.get(highIdx).asText()),
-                lowPrice = BigDecimal(row.get(lowIdx).asText()),
-                closePrice = BigDecimal(row.get(closeIdx).asText()),
+                time = LocalDateTime.parse(row.get(beginIdx).asString(), timeFormatter),
+                openPrice = BigDecimal(row.get(openIdx).asString()),
+                highPrice = BigDecimal(row.get(highIdx).asString()),
+                lowPrice = BigDecimal(row.get(lowIdx).asString()),
+                closePrice = BigDecimal(row.get(closeIdx).asString()),
                 volume = row.get(volumeIdx).asLong(),
             )
         } catch (e: Exception) {

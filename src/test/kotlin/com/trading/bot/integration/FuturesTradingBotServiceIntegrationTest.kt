@@ -21,7 +21,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.test.context.bean.override.mockito.MockitoBean
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -54,10 +54,10 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var meterRegistry: MeterRegistry
 
-    @MockBean
+    @MockitoBean
     lateinit var alorClient: AlorClient
 
-    @MockBean
+    @MockitoBean
     lateinit var tradingHoursGuard: TradingHoursGuard
 
     @BeforeEach
@@ -75,7 +75,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `futures entry creates position with full risk fields`() {
-        eventPublisher.publishStrategyGenerated(strategy("Si", StrategyAction.BUY, BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
 
         awaitUntil { runBlocking { positionRepo.findByStatus(PositionStatus.OPEN).isNotEmpty() } }
         val pos = runBlocking { positionRepo.findByStatus(PositionStatus.OPEN).first() }
@@ -141,7 +141,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         futuresRiskEngine.updateDailyPnL(BigDecimal("-5000"))
         assertTrue(futuresRiskEngine.isDailyLossLimitReached())
 
-        eventPublisher.publishStrategyGenerated(strategy("Si", StrategyAction.BUY, BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
 
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).count() >= 1.0
@@ -165,7 +165,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             )
         }
 
-        eventPublisher.publishStrategyGenerated(strategy("Si", StrategyAction.BUY, BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
 
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "MAX_POSITIONS")).count() >= 1.0
@@ -177,7 +177,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     fun `entry rejected outside trading hours`() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(false)
 
-        eventPublisher.publishStrategyGenerated(strategy("Si", StrategyAction.BUY, BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
 
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "OUTSIDE_HOURS")).count() >= 1.0
@@ -185,14 +185,10 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
 
-    private fun strategy(
-        ticker: String,
-        action: StrategyAction,
-        target: BigDecimal,
-    ): Strategy =
+    private fun strategy(target: BigDecimal): Strategy =
         Strategy(
-            ticker = ticker,
-            action = action,
+            ticker = "Si",
+            action = StrategyAction.BUY,
             targetPrice = target,
             quantity = 1,
             confidence = 0.9,

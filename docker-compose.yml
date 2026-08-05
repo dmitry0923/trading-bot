@@ -114,8 +114,8 @@ services:
     build:
       context: ./frontend
       args:
-        REACT_APP_AUTH_USER: ${AUTH_USER:-admin}
-        REACT_APP_AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
+        VITE_AUTH_USER: ${AUTH_USER:-admin}
+        VITE_AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
     container_name: trading-bot-frontend
     ports:
       - "80:80"

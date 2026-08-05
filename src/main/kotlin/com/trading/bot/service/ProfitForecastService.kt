@@ -2,7 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.model.ProfitForecast
 import com.trading.bot.repository.PositionRepository
-import mu.KotlinLogging
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode

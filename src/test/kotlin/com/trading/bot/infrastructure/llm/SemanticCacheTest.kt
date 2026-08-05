@@ -1,6 +1,5 @@
 package com.trading.bot.infrastructure.llm
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.trading.bot.config.LlmConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,6 +15,7 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 
 @Testcontainers

@@ -4,8 +4,8 @@ import com.trading.bot.domain.risk.FuturesRiskEngine
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
-import mu.KotlinLogging
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
 

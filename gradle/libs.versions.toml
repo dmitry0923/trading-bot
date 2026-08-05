@@ -1,21 +1,23 @@
 [versions]
-springBoot = "3.2.0"
-kotlin = "1.9.21"
+springBoot = "4.1.0"
+kotlin = "2.4.10"
 ktlintPlugin = "14.2.0"
 ktlint = "1.8.0"
-kover = "0.7.6"
-kotlinLogging = "3.0.5"
-resilience4j = "2.2.0"
-testcontainers = "1.21.4"
+kover = "0.9.9"
+kotlinLogging = "8.0.4"
+resilience4j = "2.4.0"
+testcontainers = "2.0.5"
 
 [libraries]
 springBootBom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
-kotlinLogging = { module = "io.github.microutils:kotlin-logging-jvm", version.ref = "kotlinLogging" }
-resilience4jSpringBoot3 = { module = "io.github.resilience4j:resilience4j-spring-boot3", version.ref = "resilience4j" }
+kotlinLogging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlinLogging" }
+jacksonKotlin = { module = "tools.jackson.module:jackson-module-kotlin" }
+jacksonYaml = { module = "tools.jackson.dataformat:jackson-dataformat-yaml" }
+resilience4jSpringBoot4 = { module = "io.github.resilience4j:resilience4j-spring-boot4", version.ref = "resilience4j" }
 resilience4jKotlin = { module = "io.github.resilience4j:resilience4j-kotlin", version.ref = "resilience4j" }
-testcontainersJunitJupiter = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
-testcontainersPostgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
-testcontainersCore = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
+testcontainersJunitJupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
+testcontainersPostgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
+testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 
 [plugins]
 springBoot = { id = "org.springframework.boot", version.ref = "springBoot" }

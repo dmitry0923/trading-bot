@@ -63,7 +63,7 @@ class StrategyCycleParallelismTest {
             // + strat + contr + arb = 1 + 1 + 3 = 5 шагов
             val criticalPathMs = STEP_MS * CHAIN_STEPS
             val parallelBoundMs = criticalPathMs + STEP_MS * 2
-            val sequentialMs = criticalPathMs.toLong() * TICKERS
+            val sequentialMs = criticalPathMs * TICKERS
 
             assertTrue(
                 elapsed < parallelBoundMs,

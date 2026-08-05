@@ -1,18 +1,18 @@
 package com.trading.bot.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.client.AlorClient
 import com.trading.bot.model.OrderOutbox
 import com.trading.bot.repository.OrderOutboxRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import mu.KotlinLogging
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
 
@@ -75,16 +75,16 @@ class OrderOutboxService(
 
     private suspend fun dispatch(outbox: OrderOutbox): PlaceOrderResult {
         val payload = objectMapper.readTree(outbox.payloadJson)
-        val ticker = payload.path("ticker").asText()
-        val side = payload.path("side").asText()
+        val ticker = payload.path("ticker").asString()
+        val side = payload.path("side").asString()
         val qty = payload.path("qty").asInt()
         val price =
             payload
                 .path("price")
-                .asText()
+                .asString()
                 .takeIf { it.isNotBlank() && it != "null" }
                 ?.toBigDecimal()
-        val type = payload.path("type").asText("limit")
+        val type = payload.path("type").asString("limit")
 
         return try {
             val orderId =

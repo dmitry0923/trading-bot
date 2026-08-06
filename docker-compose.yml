@@ -1,19 +1,22 @@
 version: "3.9"
 
+# ВАЖНО: пароли/токены сюда НЕ хардкодим. Значения без `?` и без дефолта
+# приходят из .env (на проде — из Yandex Lockbox / GitHub Secrets на VM).
+# Обязательные переменные задаются через `${VAR:?...}` — compose упадёт,
+# если они не заданы (никаких дефолтных кредов).
+
 services:
   postgres:
     image: postgres:15-alpine
     container_name: trading-bot-db
     environment:
-      POSTGRES_DB: trading_bot
-      POSTGRES_USER: trader
-      POSTGRES_PASSWORD: trader
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${DB_NAME:-trading_bot}
+      POSTGRES_USER: ${DB_USER:-trader}
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trader -d trading_bot"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-trader} -d ${DB_NAME:-trading_bot}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -21,8 +24,6 @@ services:
   redis:
     image: redis:7-alpine
     container_name: trading-bot-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -42,9 +43,9 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: trading_bot
-      DB_USER: trader
-      DB_PASS: trader
+      DB_NAME: ${DB_NAME:-trading_bot}
+      DB_USER: ${DB_USER:-trader}
+      DB_PASS: ${DB_PASS:?DB_PASS is required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       ALOR_API_URL: https://api.alor.ru
@@ -65,16 +66,25 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
       TRADING_MODE: ${TRADING_MODE:-SIMULATION}
-      AUTH_USER: ${AUTH_USER:-admin}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
-      ANALYTICS_USER: ${ANALYTICS_USER:-analytics}
-      ANALYTICS_PASSWORD: ${ANALYTICS_PASSWORD:-analytics-view-only}
+      AUTH_USER: ${AUTH_USER:?AUTH_USER is required}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:?AUTH_PASSWORD is required}
+      ANALYTICS_USER: ${ANALYTICS_USER:-}
+      ANALYTICS_PASSWORD: ${ANALYTICS_PASSWORD:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (min 32 bytes)}
+      JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-15}
+      JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-false}
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
+      LOCKBOX_ENABLED: ${LOCKBOX_ENABLED:-false}
+      LOCKBOX_SECRET_ID: ${LOCKBOX_SECRET_ID:-}
+      LOCKBOX_IAM_TOKEN: ${LOCKBOX_IAM_TOKEN:-}
+      LOCKBOX_SA_KEY_JSON: ${LOCKBOX_SA_KEY_JSON:-}
       BOT_INTERVAL_MS: ${BOT_INTERVAL_MS:-300000}
       STRATEGY_INTERVAL_MS: ${STRATEGY_INTERVAL_MS:-600000}
       MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-600000}
       MAX_OPEN_POS: ${MAX_OPEN_POS:-0}
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -86,13 +96,12 @@ services:
     image: prom/prometheus:v2.48.1
     container_name: trading-bot-prometheus
     environment:
-      AUTH_USER: ${AUTH_USER:-admin}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
+      METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:?METRICS_SCRAPE_TOKEN is required}
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     depends_on:
       - app
 
@@ -100,22 +109,19 @@ services:
     image: grafana/grafana:10.4.2
     container_name: trading-bot-grafana
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - prometheus
 
   frontend:
     build:
       context: ./frontend
-      args:
-        VITE_AUTH_USER: ${AUTH_USER:-admin}
-        VITE_AUTH_PASSWORD: ${AUTH_PASSWORD:-change-me-now}
     container_name: trading-bot-frontend
     ports:
       - "80:80"

@@ -4,3 +4,27 @@ app:
     # стратегический цикл, поллинг котировок и outbox-воркер не должны
     # ходить во внешние сервисы во время тестов.
     enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+security:
+  auth:
+    user: test-admin
+    password: test-admin-pass
+  analytics:
+    user: test-analytics
+    password: test-analytics-pass
+  metrics:
+    scrape-token: test-metrics-scrape-token
+  jwt:
+    secret: test-jwt-secret-key-0123456789abcdef0123456789abcdef
+    access-ttl-minutes: 15
+    refresh-ttl-days: 30

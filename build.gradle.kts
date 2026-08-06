@@ -36,6 +36,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-aspectj")
     implementation("org.springframework.boot:spring-boot-starter-jackson")
 
@@ -50,6 +51,10 @@ dependencies {
 
     implementation(libs.resilience4jSpringBoot4)
     implementation(libs.resilience4jKotlin)
+
+    implementation(libs.jjwtApi)
+    runtimeOnly(libs.jjwtImpl)
+    runtimeOnly(libs.jjwtJackson)
 
     implementation(libs.jacksonYaml)
 

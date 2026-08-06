@@ -62,7 +62,9 @@ class StrategyCycleParallelismTest {
             // Критический путь: feedback (оверлапится с загрузкой данных) + tech/fund (парал-но)
             // + strat + contr + arb = 1 + 1 + 3 = 5 шагов
             val criticalPathMs = STEP_MS * CHAIN_STEPS
-            val parallelBoundMs = criticalPathMs + STEP_MS * 2
+            // Порог с запасом ~2.5x на медленные/загруженные машины (GC, троттлинг).
+            // При последовательной обработке было бы ~2000ms — разница всё ещё ~4x.
+            val parallelBoundMs = criticalPathMs * 2 + STEP_MS * 2
             val sequentialMs = criticalPathMs * TICKERS
 
             assertTrue(

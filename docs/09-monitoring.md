@@ -308,15 +308,27 @@ bt_pass_total{result="PASS"}
 
 ### Prometheus (scrape config)
 
+Эндпоинт `/actuator/prometheus` закрыт Bearer-токеном `METRICS_SCRAPE_TOKEN`
+(см. `ScrapeTokenFilter`). Конфиг в репозитории — `prometheus.yml`:
+
 ```yaml
 scrape_configs:
   - job_name: mmvb-trading-bot
     metrics_path: /actuator/prometheus
+    authorization:
+      type: Bearer
+      credentials: ${METRICS_SCRAPE_TOKEN}
     static_configs:
-      - targets: ['localhost:8080']
+      - targets: ['app:8080']
 ```
 
 Метрики Micrometer автоматически получают суффиксы: counter → `_total`, timer → `_seconds` + `_seconds_bucket`.
+
+Ручная проверка:
+
+```bash
+curl -H "Authorization: Bearer $METRICS_SCRAPE_TOKEN" http://localhost:8080/actuator/prometheus | grep -E "bot_|llm_"
+```
 
 ### Правило для демо (докер-compose)
 

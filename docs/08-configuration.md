@@ -24,12 +24,12 @@ spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
     username: ${DB_USER:trader}
-    password: ${DB_PASS:trader}
+    password: ${DB_PASS:}
     driver-class-name: org.postgresql.Driver
   r2dbc:
     url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
     username: ${DB_USER:trader}
-    password: ${DB_PASS:trader}
+    password: ${DB_PASS:}
     pool:
       initial-size: 5
       max-size: 20
@@ -157,6 +157,27 @@ logging:
   level:
     com.trading.bot: DEBUG
     org.springframework.r2dbc: DEBUG
+
+security:                            # аутентификация (JWT) — см. SecurityConfig
+  auth:
+    user: ${AUTH_USER:}              # admin; пусто = отказ старта (дефолтов НЕТ)
+    password: ${AUTH_PASSWORD:}      # пароль admin; пусто = отказ старта
+  analytics:                         # read-only пользователь (создаётся, если заданы оба)
+    user: ${ANALYTICS_USER:}
+    password: ${ANALYTICS_PASSWORD:}
+  metrics:
+    scrape-token: ${METRICS_SCRAPE_TOKEN:}   # Bearer для /actuator/prometheus
+  jwt:
+    secret: ${JWT_SECRET:}           # HS256-ключ, >= 32 байта; пусто = отказ старта
+    access-ttl-minutes: ${JWT_ACCESS_TTL_MINUTES:15}
+    refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:30}
+    cookie-secure: ${JWT_COOKIE_SECURE:false}
+
+lockbox:                             # Yandex Lockbox (секреты как env fallback)
+  enabled: ${LOCKBOX_ENABLED:false}
+  secret-id: ${LOCKBOX_SECRET_ID:}
+  iam-token: ${LOCKBOX_IAM_TOKEN:}   # или ключ сервисного аккаунта
+  sa-key-json: ${LOCKBOX_SA_KEY_JSON:}
 ```
 
 ## 8.2. Таблица переменных окружения
@@ -167,7 +188,7 @@ logging:
 | `DB_PORT` | `5432` | | порт PostgreSQL | `5432` |
 | `DB_NAME` | `trading_bot` | | имя БД | `trading_bot` |
 | `DB_USER` | `trader` | | пользователь БД | `trader` |
-| `DB_PASS` | `trader` | | пароль БД | `s3cr3t` |
+| `DB_PASS` | `` | **да** | пароль БД, без дефолта | `s3cr3t` |
 | `REDIS_HOST` | `localhost` | | хост Redis | `redis` |
 | `REDIS_PORT` | `6379` | | порт Redis | `6379` |
 | `ALOR_API_URL` | `https://api.alor.ru` | да (для LIVE) | REST Alor | `https://api.alor.ru` |
@@ -189,16 +210,29 @@ logging:
 | `STRATEGY_INTERVAL_MS` | `600000` | | интервал стратегий | `600000` |
 | `MONITOR_INTERVAL_MS` | `600000` | | интервал мониторинга | `600000` |
 | `MAX_OPEN_POS` | `0` | | макс. новых позиций за цикл (0 = не открывать) | `3` |
+| `AUTH_USER` | `` | **да** | админ (роль ADMIN), пусто = отказ старта | `admin` |
+| `AUTH_PASSWORD` | `` | **да** | пароль админа | `Str0ng!Pass` |
+| `ANALYTICS_USER` | `` | | read-only пользователь | `analytics` |
+| `ANALYTICS_PASSWORD` | `` | | пароль аналитика | `view-only` |
+| `JWT_SECRET` | `` | **да** | HS256-ключ JWT, ≥ 32 байта | `openssl rand -base64 48` |
+| `JWT_ACCESS_TTL_MINUTES` | `15` | | TTL access-токена, мин | `15` |
+| `JWT_REFRESH_TTL_DAYS` | `30` | | TTL refresh-токена, дней | `30` |
+| `JWT_COOKIE_SECURE` | `false` | | `Secure` на refresh-cookie (за HTTPS) | `true` |
+| `METRICS_SCRAPE_TOKEN` | `` | да (для Prometheus) | Bearer на `/actuator/prometheus` | `openssl rand -base64 32` |
+| `LOCKBOX_ENABLED` | `false` | | читать секреты из Yandex Lockbox | `true` |
+| `LOCKBOX_SECRET_ID` | `` | да (при Lockbox) | ID секрета | `e6q...` |
+| `LOCKBOX_IAM_TOKEN` | `` | | IAM-токен для Lockbox API | `t1.9e...` |
+| `LOCKBOX_SA_KEY_JSON` | `` | | ключ сервисного аккаунта (fallback к IAM) | `{"id":...}` |
 
 ## 8.3. .env для local development
 
 ```dotenv
-# PostgreSQL
+# PostgreSQL (без дефолтного пароля)
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=trading_bot
 DB_USER=trader
-DB_PASS=trader
+DB_PASS=change-me-local-db-pass
 
 # Redis
 REDIS_HOST=localhost
@@ -223,6 +257,14 @@ MAX_OPEN_POS=0
 BOT_INTERVAL_MS=300000
 STRATEGY_INTERVAL_MS=600000
 MONITOR_INTERVAL_MS=600000
+
+# Auth (JWT) — без дефолтов, обязательны
+AUTH_USER=admin
+AUTH_PASSWORD=very-strong-password
+ANALYTICS_USER=analytics
+ANALYTICS_PASSWORD=view-only-password
+JWT_SECRET=change-to-32+random-bytes!
+METRICS_SCRAPE_TOKEN=change-me-prometheus-token
 ```
 
 > На Windows переменные можно передать так: `$env:KIMI_API_KEY="sk-..."; $env:TRADING_MODE="SIMULATION"; .\gradlew.bat bootRun`.
@@ -233,6 +275,8 @@ MONITOR_INTERVAL_MS=600000
 - `DB_PASS`
 - `ALOR_TOKEN`, `ALOR_REFRESH_TOKEN`, `ALOR_PORTFOLIO`
 - `KIMI_API_KEY`
+- `AUTH_USER`, `AUTH_PASSWORD`, `ANALYTICS_USER`, `ANALYTICS_PASSWORD`
+- `JWT_SECRET`, `METRICS_SCRAPE_TOKEN`
 
 **ConfigMap** (`bot-config`):
 - `application.yml` (все несекретные значения)
@@ -291,11 +335,15 @@ risk: enabled=true, maxPosition=500000, maxDailyLoss=50000, sectorExposure=2, vo
 llm: model=kimi-k3, timeout=30s, cb=true, rl=true, retry=true, cache=true
 ```
 
-Это позволяет оператору сразу увидеть, в каком режиме поднялся бот. Проверка «не пристрели себе ногу»:
+Это позволяет оператору сразу увидеть, в каком режиме поднялся бот. Проверка «не пристрели себе ногу» (требуется JWT, см. раздел 7):
 
 ```bash
-curl http://localhost:8080/api/v1/settings   # tradingEnabled / riskEnabled
-curl http://localhost:8080/api/v1/risk/daily-pnl
+# получить access-токен
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"'"$AUTH_USER"'","password":"'"$AUTH_PASSWORD"'"}' | jq -r .accessToken)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/settings   # tradingEnabled / riskEnabled
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/risk/daily-pnl
 ```
 
 ## 8.9. Нестандартные сценарии настройки

@@ -19,3 +19,5 @@ databaseChangeLog:
       file: db/changelog/changes/009-order-idempotency-reconciliation.sql
   - include:
       file: db/changelog/changes/010-order-outbox-position-id.sql
+  - include:
+      file: db/changelog/changes/011-refresh-tokens.sql

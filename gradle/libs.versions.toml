@@ -8,12 +8,16 @@ kotlinLogging = "8.0.4"
 resilience4j = "2.4.0"
 testcontainers = "2.0.5"
 mockitoKotlin = "4.1.0"
+jjwt = "0.12.6"
 
 [libraries]
 springBootBom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 kotlinLogging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlinLogging" }
 jacksonKotlin = { module = "tools.jackson.module:jackson-module-kotlin" }
 jacksonYaml = { module = "tools.jackson.dataformat:jackson-dataformat-yaml" }
+jjwtApi = { module = "io.jsonwebtoken:jjwt-api", version.ref = "jjwt" }
+jjwtImpl = { module = "io.jsonwebtoken:jjwt-impl", version.ref = "jjwt" }
+jjwtJackson = { module = "io.jsonwebtoken:jjwt-jackson", version.ref = "jjwt" }
 resilience4jSpringBoot4 = { module = "io.github.resilience4j:resilience4j-spring-boot4", version.ref = "resilience4j" }
 resilience4jKotlin = { module = "io.github.resilience4j:resilience4j-kotlin", version.ref = "resilience4j" }
 testcontainersJunitJupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }

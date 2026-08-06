@@ -26,12 +26,12 @@ spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
     username: ${DB_USER:trader}
-    password: ${DB_PASS:trader}
+    password: ${DB_PASS:}
     driver-class-name: org.postgresql.Driver
   r2dbc:
     url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
     username: ${DB_USER:trader}
-    password: ${DB_PASS:trader}
+    password: ${DB_PASS:}
     pool:
       enabled: true
       initial-size: 5
@@ -325,8 +325,22 @@ logging:
 
 security:
   auth:
-    user: ${AUTH_USER:admin}
-    password: ${AUTH_PASSWORD:change-me-now}
+    user: ${AUTH_USER:}
+    password: ${AUTH_PASSWORD:}
   analytics:
-    user: ${ANALYTICS_USER:analytics}
-    password: ${ANALYTICS_PASSWORD:analytics-view-only}
+    user: ${ANALYTICS_USER:}
+    password: ${ANALYTICS_PASSWORD:}
+  metrics:
+    scrape-token: ${METRICS_SCRAPE_TOKEN:}
+  jwt:
+    secret: ${JWT_SECRET:}
+    access-ttl-minutes: ${JWT_ACCESS_TTL_MINUTES:15}
+    refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:30}
+    issuer: ${JWT_ISSUER:trading-bot}
+    cookie-secure: ${JWT_COOKIE_SECURE:false}
+
+lockbox:
+  enabled: ${LOCKBOX_ENABLED:false}
+  secret-id: ${LOCKBOX_SECRET_ID:}
+  iam-token: ${LOCKBOX_IAM_TOKEN:}
+  sa-key-json: ${LOCKBOX_SA_KEY_JSON:}

@@ -8,7 +8,9 @@ Production-ready trading bot for Moscow Exchange (MOEX) with AI-driven strategy 
   переключение на Kimi / DeepSeek / Qwen через UI или env.
 - **Мультиинструменты + мультитаймфреймы** (10m / 1h / 1d).
 - **Единый флаг торговли** и принудительное закрытие позиций — сейчас или по времени.
-- Отдельные UI-пользователи: **ADMIN** (настройки) и **ANALYTICS** (только просмотр).
+- **Безопасность**: self-issued JWT (access + ротируемые refresh-токены в httpOnly cookie),
+  фронтенд login-флоу, секреты через Yandex Lockbox, отдельные UI-пользователи:
+  **ADMIN** (настройки) и **ANALYTICS** (только просмотр). Дефолтных кредов нет.
 - UUIDv7 для всех новых записей, CI с автодеплоем на Yandex Cloud.
 
 ## Architecture
@@ -30,33 +32,43 @@ Production-ready trading bot for Moscow Exchange (MOEX) with AI-driven strategy 
 
 ### 2. Environment Setup
 
-Create `.env` file:
+Create `.env` file. **Дефолтных паролей нет** — если переменная не задана,
+`docker compose` упадёт (`${VAR:?...}`), а приложение не стартует с пустыми кредами.
 
 ```bash
+# --- Торговля ---
 ALOR_TOKEN=your_alor_token
 ALOR_REFRESH_TOKEN=your_refresh_token
 ALOR_PORTFOLIO=D12345
-# LLM: по умолчанию RouterAI (агрегатор). Для прямых провайдеров:
+TRADING_MODE=SIMULATION
+
+# --- БД / Redis (пароль обязателен, без дефолта) ---
+DB_PASS=strong-db-password
+
+# --- LLM (по умолчанию RouterAI, агрегатор) ---
 LLM_PROVIDER=ROUTER_AI
 LLM_API_KEY=your_routerai_api_key
 # ROUTER_AI_BASE_URL=https://routerai.ru/api/v1
-# ROUTER_AI_MODEL=auto
 # KIMI_API_KEY=...
 # DEEPSEEK_API_KEY=...
 # QWEN_API_KEY=...
-TRADING_MODE=SIMULATION
-# Security (Basic Auth for API and Actuator)
+
+# --- Аутентификация (JWT). Креды и secret обязательны, без дефолтов ---
 AUTH_USER=admin
-AUTH_PASSWORD=change-me-now
-# Отдельный пользователь аналитики (только просмотр)
+AUTH_PASSWORD=very-strong-admin-password
 ANALYTICS_USER=analytics
-ANALYTICS_PASSWORD=analytics-view-only
+ANALYTICS_PASSWORD=read-only-analytics-password
+JWT_SECRET=$(openssl rand -base64 48)   # min 32 байта, HS256
+# JWT_ACCESS_TTL_MINUTES=15
+# JWT_REFRESH_TTL_DAYS=30
+
+# --- Prometheus scrape-токен (Bearer на /actuator/prometheus) ---
+METRICS_SCRAPE_TOKEN=$(openssl rand -base64 32)
 ```
 
-> **Important**: set a strong `AUTH_PASSWORD` before exposing the bot outside
-> localhost. The API (`/api/v1/**`) and Actuator endpoints are protected with
-> Spring Security Basic Auth; only `/actuator/health` is public (Docker healthcheck).
-> Изменение настроек (POST `/api/v1/settings`) доступно только роли ADMIN.
+> **Important**: креды и `JWT_SECRET` — без дефолтов; приложение откажется стартовать,
+> если `AUTH_USER`/`AUTH_PASSWORD` пустые. На проде секреты берутся из **Yandex Lockbox**
+> (`LOCKBOX_ENABLED=true`, `LOCKBOX_SECRET_ID=...`), см. `docs/08-configuration.md`.
 
 ### 3. Run with Docker Compose
 
@@ -65,11 +77,11 @@ docker-compose up -d
 ```
 
 Services:
-- Dashboard (frontend, nginx): http://localhost:80
-- App API: http://localhost:8080 (requires Basic Auth)
-- Health check: http://localhost:8080/actuator/health
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
+- Dashboard (frontend, nginx, login-флоу): http://localhost:80
+- App API: внутри docker-сети (наружу только через nginx на 80)
+- Health check: http://localhost:8080/actuator/health (внутри сети)
+- Prometheus: http://127.0.0.1:9090 (только localhost)
+- Grafana: http://127.0.0.1:3000 (только localhost, без публичного доступа)
 
 ### 4. Local Development
 
@@ -86,10 +98,18 @@ docker-compose up -d postgres redis
 
 ## API Endpoints
 
-All `/api/v1/**` endpoints require **Basic Auth** (`AUTH_USER` / `AUTH_PASSWORD`):
+Аутентификация — **self-issued JWT**: короткоживущий access-токен (в памяти фронта)
+плюс ротируемый refresh-токен в httpOnly cookie (`Path=/api/v1/auth`).
+Вход: `POST /api/v1/auth/login` (JSON `{username, password}`) → `{accessToken, refreshToken, ...}`.
+Обновление: `POST /api/v1/auth/refresh` (тело или cookie), выход: `POST /api/v1/auth/logout`.
+Все запросы к `/api/v1/**` и `/actuator/**` требуют `Authorization: Bearer <accessToken>`,
+изменяющие POST — только роль ADMIN.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `/api/v1/auth/login` | POST | Вход: проверка кредов → access + refresh (public) |
+| `/api/v1/auth/refresh` | POST | Ротация refresh-токена (public, reuse = отзыв сессии) |
+| `/api/v1/auth/logout` | POST | Отзыв текущего refresh-токена (public) |
 | `/api/v1/settings` | GET/POST | Bot settings (POST — только ADMIN) |
 | `/api/v1/me` | GET | Текущий пользователь и роли |
 | `/api/v1/llm/providers` | GET | Доступные LLM-провайдеры и активный |
@@ -185,10 +205,16 @@ See `application.yml` for all options. Key env vars:
 | `KIMI_BASE_URL` / `KIMI_MODEL` | moonshot.cn / kimi-k3 | Kimi endpoint |
 | `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` | deepseek.com / deepseek-chat | DeepSeek endpoint |
 | `QWEN_BASE_URL` / `QWEN_MODEL` | dashscope / qwen-plus | Qwen endpoint |
-| `AUTH_USER` | admin | Basic Auth username |
-| `AUTH_PASSWORD` | change-me-now | Basic Auth password |
-| `ANALYTICS_USER` | analytics | Аналитик (только просмотр) |
-| `ANALYTICS_PASSWORD` | analytics-view-only | Пароль аналитика |
+| `AUTH_USER` | — (обязателен) | Администратор (роль ADMIN) |
+| `AUTH_PASSWORD` | — (обязателен) | Пароль администратора |
+| `ANALYTICS_USER` / `ANALYTICS_PASSWORD` | — | Аналитик (только просмотр) |
+| `JWT_SECRET` | — (обязателен, ≥32 байта) | HS256-ключ для подписи JWT |
+| `JWT_ACCESS_TTL_MINUTES` | 15 | Время жизни access-токена |
+| `JWT_REFRESH_TTL_DAYS` | 30 | Время жизни refresh-токена |
+| `JWT_COOKIE_SECURE` | false | `Secure` на refresh-cookie (true за HTTPS) |
+| `METRICS_SCRAPE_TOKEN` | — | Bearer-токен Prometheus на `/actuator/prometheus` |
+| `LOCKBOX_ENABLED` | false | Читать секреты из Yandex Lockbox |
+| `LOCKBOX_SECRET_ID` | — | ID секрета Lockbox |
 
 ## Risk Management
 
@@ -225,11 +251,14 @@ Dеплой — job `deploy` в том же `ci.yml`, после merge в `main`
 - `YC_FOLDER_ID`, `YC_REGISTRY_ID`, `YC_SA_JSON` (ключ сервисного аккаунта с правами на YCR)
 - `VM_HOST`, `VM_USER`, `VM_SSH_KEY` (SSH-доступ к VM)
 - `AUTH_USER`, `AUTH_PASSWORD`, `ANALYTICS_USER`, `ANALYTICS_PASSWORD`
+- `JWT_SECRET`, `METRICS_SCRAPE_TOKEN`, `DB_PASS`, `GRAFANA_ADMIN_PASSWORD`
 - `ALOR_TOKEN`, `ALOR_REFRESH_TOKEN`, `LLM_PROVIDER`, `LLM_API_KEY`, `TRADING_MODE`
+- `LOCKBOX_ENABLED`, `LOCKBOX_SECRET_ID`, `LOCKBOX_SA_KEY_JSON` (опционально)
 
 ## Monitoring
 
-Prometheus metrics exposed at `/actuator/prometheus`:
+Prometheus metrics exposed at `/actuator/prometheus` (требуется заголовок
+`Authorization: Bearer $METRICS_SCRAPE_TOKEN`):
 - `strategy.cycle` — strategy cycles
 - `bot.cycle` — bot cycles
 - `bot.position.opened` — opened positions

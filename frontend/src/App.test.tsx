@@ -2,7 +2,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
-const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+const json = (body: unknown, status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body
+});
 
 const SETTINGS = {
   tradingEnabled: true,
@@ -67,10 +71,19 @@ const DRAWDOWN = {
 };
 
 let currentUser = { username: 'tester', roles: ['ROLE_ADMIN'] };
+let userAuthed = true;
 
-const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
-  if (url.includes('/api/v1/me')) return json(currentUser);
+  if (url.includes('/api/v1/me')) return userAuthed ? json(currentUser) : json({}, 401);
+  if (url.includes('/api/v1/auth/login')) {
+    const body = JSON.parse(String(init?.body));
+    if (body.username === 'admin' && body.password === 'secret') {
+      return json({ accessToken: 'jwt-access', refreshToken: 'refresh', expiresIn: 900, username: 'admin', roles: ['ROLE_ADMIN'] });
+    }
+    return json({}, 401);
+  }
+  if (url.includes('/api/v1/auth/refresh')) return json({}, 401);
   if (url.includes('/api/v1/positions')) return json([]);
   if (url.includes('/api/v1/settings')) return json(SETTINGS);
   if (url.includes('/api/v1/llm/providers')) return json(PROVIDERS);
@@ -81,6 +94,7 @@ const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
 
 beforeEach(() => {
   currentUser = { username: 'tester', roles: ['ROLE_ADMIN'] };
+  userAuthed = true;
   vi.stubGlobal('fetch', mockFetch);
 });
 
@@ -122,5 +136,26 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     expect(await screen.findByText(/У вас роль ANALYTICS/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save Settings' })).toBeDisabled();
+  });
+
+  it('shows login page when unauthenticated and logs in with valid credentials', async () => {
+    userAuthed = false;
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByRole('button', { name: /Sign In/ })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Username/), 'admin');
+    await user.type(screen.getByLabelText(/Password/), 'secret');
+    await user.click(screen.getByRole('button', { name: /Sign In/ }));
+    expect(await screen.findByText('admin · ADMIN')).toBeInTheDocument();
+  });
+
+  it('shows error on failed login', async () => {
+    userAuthed = false;
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText(/Username/), 'admin');
+    await user.type(screen.getByLabelText(/Password/), 'wrong');
+    await user.click(screen.getByRole('button', { name: /Sign In/ }));
+    expect(await screen.findByText('Неверные учётные данные')).toBeInTheDocument();
   });
 });

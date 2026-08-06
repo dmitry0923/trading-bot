@@ -35,7 +35,11 @@ git clone git@github.com:dmitry0923/trading-bot.git .
 
 # 4. Проверить здоровье
 curl http://localhost:8080/actuator/health
-curl -u "$AUTH_USER:$AUTH_PASSWORD" http://localhost:8080/api/v1/trading/status
+# доступ к API — через JWT (см. раздел 7): сначала login, потом Bearer
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"'"$AUTH_USER"'","password":"'"$AUTH_PASSWORD"'"}' | jq -r .accessToken)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/trading/status
 ```
 
 ### 10.0.3. GitHub Secrets (обязательные)
@@ -50,8 +54,13 @@ curl -u "$AUTH_USER:$AUTH_PASSWORD" http://localhost:8080/api/v1/trading/status
 | `LLM_PROVIDER` | `ROUTER_AI` (по умолчанию) / `KIMI` / `DEEPSEEK` / `QWEN` |
 | `LLM_API_KEY` | API-ключ активного LLM-провайдера |
 | `TRADING_MODE` | `SIMULATION` (рекоменд.) или `LIVE` |
-| `AUTH_USER` / `AUTH_PASSWORD` | UI/API администратор (роль ADMIN) |
+| `AUTH_USER` / `AUTH_PASSWORD` | UI/API администратор (роль ADMIN); обязательны, без дефолтов |
 | `ANALYTICS_USER` / `ANALYTICS_PASSWORD` | отдельный read-only пользователь аналитики |
+| `JWT_SECRET` | HS256-ключ (≥ 32 байта); обязателен |
+| `METRICS_SCRAPE_TOKEN` | Bearer-токен для Prometheus scrape |
+| `DB_PASS` | пароль БД (обязателен) |
+| `GRAFANA_ADMIN_PASSWORD` | пароль admin Grafana (обязателен) |
+| `LOCKBOX_ENABLED` / `LOCKBOX_SECRET_ID` | (опц.) секреты из Yandex Lockbox |
 
 ### 10.0.4. Pipeline деплоя (`.github/workflows/ci.yml`)
 

@@ -2,9 +2,43 @@
 
 Все REST-endpoints находятся в `ApiController` (`/api/v1`). Корень `@CrossOrigin(origins = ["*"])`. Ответы — JSON.
 
-> **Авторизация**: публичная (без токена) — endpoint'ы предназначены для внутренней сети/локального UI. При выносе наружу необходимо добавить auth (roadmap).
+> **Авторизация**: self-issued JWT (Spring Security resource server). Все `/api/v1/*` требуют `Authorization: Bearer <accessToken>`; роли: `ADMIN` (полный доступ), `ANALYTICS` (только чтение). Публичны только `/actuator/health` и `/api/v1/auth/login`. Endpoint'ы `/actuator/prometheus` закрыты отдельным Bearer-токеном `METRICS_SCRAPE_TOKEN` (см. `ScrapeTokenFilter`).
 
-## 7.1. Сводная таблица
+## 7.1. Auth
+
+Access-токен выдаётся на 15 мин, refresh — на 30 дней (httpOnly cookie). Refresh ротируется при каждом использовании; повторное использование ротированного токена отзывает всю сессию.
+
+| Метод | Path | Назначение |
+|---|---|---|
+| POST | `/api/v1/auth/login` | вход, выдаёт `accessToken` (JSON) + `refreshToken` (httpOnly cookie) |
+| POST | `/api/v1/auth/refresh` | ротация пары по refresh-cookie |
+| POST | `/api/v1/auth/logout` | отзыв refresh-токена |
+
+**POST /api/v1/auth/login**:
+
+```bash
+curl -c cookies.txt -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<AUTH_PASSWORD>"}'
+# → 200 {"accessToken":"<jwt>"}; refresh-токен сохранён в cookies.txt (httpOnly)
+```
+
+**POST /api/v1/auth/refresh**:
+
+```bash
+curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/refresh
+# → 200 {"accessToken":"<new-jwt>"}; refresh-cookie ротирован
+```
+
+**POST /api/v1/auth/logout** — отзывает refresh-токен:
+
+```bash
+curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/logout
+```
+
+Неверные креды → `401 {"error":"invalid_credentials"}`; просроченный/невалидный access → `401` от resource server.
+
+## 7.2. Сводная таблица
 
 | Метод | Path | Назначение | Статус |
 |---|---|---|---|
@@ -355,26 +389,34 @@ Spring Boot DefaultErrorAttributes:
 | `/actuator/prometheus` | метрики в формате Prometheus (Micrometer) |
 | `/actuator/metrics`, `/actuator/info` | также доступны |
 
-Прометей-эндпоинт включён: `management.endpoints.web.exposure.include: health,info,metrics,prometheus`.
+Прометей-эндпоинт включён: `management.endpoints.web.exposure.include: health,info,metrics,prometheus` и защищён Bearer-токеном `METRICS_SCRAPE_TOKEN`.
 
 ## 7.5. Примеры curl
 
 ```bash
+AUTH_URL=http://localhost:8080/api/v1/auth
+
+# Вход → токены (admin или analytics)
+TOKEN=$(curl -s -X POST "$AUTH_URL/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"'"$AUTH_USER"'","password":"'"$AUTH_PASSWORD"'"}' | jq -r .accessToken)
+AUTH="Authorization: Bearer $TOKEN"
+
 # Открытые позиции
-curl http://localhost:8080/api/v1/positions
+curl -H "$AUTH" http://localhost:8080/api/v1/positions
 
 # Статистика за 30 дней
-curl "http://localhost:8080/api/v1/analytics/trade-stats?days=30"
+curl -H "$AUTH" "http://localhost:8080/api/v1/analytics/trade-stats?days=30"
 
 # Ручной цикл стратегий
-curl -X POST http://localhost:8080/api/v1/strategy/trigger
+curl -H "$AUTH" -X POST http://localhost:8080/api/v1/strategy/trigger
 
 # Дневной P&L
-curl http://localhost:8080/api/v1/risk/daily-pnl
+curl -H "$AUTH" http://localhost:8080/api/v1/risk/daily-pnl
 
 # Бэктест SBER за год
-curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
+curl -H "$AUTH" "http://localhost:8080/api/v1/backtest/SBER?days=365"
 
-# Метрики
-curl http://localhost:8080/actuator/prometheus | grep -E "llm_|bot_|strategy_"
+# Метрики (отдельный Bearer-токен Prometheus)
+curl -H "Authorization: Bearer $METRICS_SCRAPE_TOKEN" http://localhost:8080/actuator/prometheus | grep -E "llm_|bot_|strategy_"
 ```

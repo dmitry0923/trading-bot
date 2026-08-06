@@ -63,14 +63,21 @@ cd frontend && npm install && npm run dev
 # 1. Запустить тесты
 ./gradlew test --tests "com.trading.bot.integration.SelfLearningIntegrationTest"
 
-# 2. Проверить метрики
-curl http://localhost:8080/actuator/prometheus | grep adaptive
+# 2. Получить JWT (креды из env, без дефолтов)
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"'"$AUTH_USER"'","password":"'"$AUTH_PASSWORD"'"}' | jq -r .accessToken)
+AUTH="Authorization: Bearer $TOKEN"
 
-# 3. Проверить аналитику
-curl http://localhost:8080/api/v1/analytics/health
+# 3. Проверить метрики (отдельный Bearer-токен Prometheus)
+curl -H "Authorization: Bearer $METRICS_SCRAPE_TOKEN" http://localhost:8080/actuator/prometheus | grep adaptive
 
-# 4. SIMULATION режим минимум 1 неделю
+# 4. Проверить аналитику
+curl -H "$AUTH" http://localhost:8080/api/v1/analytics/health
+
+# 5. SIMULATION режим минимум 1 неделю
 export TRADING_MODE=SIMULATION
+export AUTH_USER=admin AUTH_PASSWORD='<strong>' JWT_SECRET='<32+ random bytes>'
 ./gradlew bootRun
 ```
 

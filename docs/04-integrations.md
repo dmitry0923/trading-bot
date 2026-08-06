@@ -10,6 +10,9 @@
 | POST | `${alor.api-url}/commandapi/warptrans/TRADE/v2/client/orders/actions/limit` | лимитный ордер | `AlorClient.placeLimitOrder` |
 | POST | `${alor.api-url}/commandapi/warptrans/TRADE/v2/client/orders/actions/market` | маркет-ордер | (через `placeMarketOrder`) |
 | GET | `${alor.api-url}/commandapi/warptrans/TRADE/v2/client/orders/{orderId}?portfolio=...` | проверка статуса ордера | `AlorClient.verifyOrder` |
+| GET | `${alor.api-url}/commandapi/warptrans/TRADE/v2/client/orders?portfolio=...&includeOrders=true` | все заявки портфеля (State Reconciliation) | `AlorClient.getOpenOrders` |
+| GET | `${alor.api-url}/commandapi/warptrans/TRADE/v2/client/portfolios/{portfolio}/positions` | позиции портфеля (State Reconciliation) | `AlorClient.getPositions` |
+| GET | `${alor.api-url}/commandapi/warptrans/TRADE/v2/client/portfolios/{portfolio}/trades` | сделки портфеля (State Reconciliation) | `AlorClient.getRecentTrades` |
 | POST | `${alor.api-url}/oauth/token` | обновление access token по refresh token | `AlorClient.getActualToken` |
 
 ### Авторизация (Bearer + refresh token)
@@ -44,13 +47,28 @@
 - Статус маппится: содержит "fill" → FILLED (если filledQty >= quantity) / PARTIALLY_FILLED; "cancel" → CANCELED; "reject" → REJECTED; иначе NEW/UNKNOWN.
 - Цена: `avgFillPrice` → `filledPrice` → `price` (fallback-цепочка).
 
-**Переподключение** (reconnect):
-- до **5 попыток**;
-- backoff = `попытка * 5 c` (5, 10, 15, 20, 25 c);
+**Переподключение** (reconnect, `AlorWebSocketClient`):
+- до **10 попыток**;
+- экспоненциальный backoff: `min(1 << (attempt-1), 60)` с → 1, 2, 4, 8, 16, 32, 60… с;
 - при исчерпании — `alor.ws.disconnected{reason=MAX_ATTEMPTS}` и поток закрывается;
 - метрики: `alor.ws.reconnect`, `alor.ws.error`, `alor.ws.closed`, `alor.ws.execution_received`.
 
-**Потребитель**: `TradingBotService.init()` — коллектит `Flow` и применяет fill к позициям (`applyExecutionReport`).
+**Heartbeat / stale data discard** (`WebSocketManager`):
+- ping каждые `alor.ws-heartbeat-interval-ms` (30 c); успешная отправка фиксируется как активность потока;
+- если данные/ping не проходят дольше `alor.ws-heartbeat-timeout-ms` (45 c) — watchdog `WebSocketManager.watchdog()` (каждые 10 c) помечает поток DISCONNECTED (метрика `alor.ws.stale_connection`) и триггерит State Reconciliation **до** того, как транспорт обнаружит обрыв;
+- каждое сообщение котировки помечается временем приёма **до** буфера очереди; сообщения, задержанные дольше `alor.ws-stale-message-age-ms` (5 c), и сообщения с нарушенным порядком (старее последнего принятого по тикеру) отбрасываются (`alor.ws.quotes.stale_discarded`, `alor.ws.quotes.out_of_order`).
+
+**State Reconciliation при реконнекте** (`StateReconciliationService`):
+- на каждое событие CONNECTED (ORDERS/QUOTES, дедупликация 5 c) выполняется полная сверка через REST-портфель: заявки, позиции, сделки;
+- локальная OPEN-позиция без позиции на бирже и без «рабочих» заявок → «фантомная» (fill потерян при разрыве WS) → помечается CLOSED;
+- расхождение qty (частичное закрытие в окне разрыва) → quantity приводится к биржевому;
+- расхождение направления или неизвестная биржевая позиция → алерт `TradingHaltedEvent(reason=STATE_DESYNC)`;
+- при недоступности REST (`AlorClient.ReconcileResult.Failed`) сверка прерывается **без мутации** локального стейта (fail-safe: отсутствие ответа ≠ отсутствие позиции);
+- метрики: `alor.reconcile.run{closed,adjusted,unknown}`, `alor.reconcile.aborted`, `alor.reconcile.discrepancy{kind,ticker}`.
+
+**Потребители**:
+- `TradingBotService.init()` — коллектит `Flow` и применяет fill к позициям (`applyExecutionReport`), а при DISCONNECTED QUOTES немедленно сбрасывает кэш WS-тиков (`lastWsTickAt`) — fallback-поллинг `pollMarketData` возобновляется без ожидания `monitorIntervalMs`;
+- `FuturesTradingBotService.onExecutionReport()` — применяет WS-fill к фьючерсным позициям (вход/закрытие, partial fills).
 
 ### Idempotency Key
 
@@ -229,7 +247,7 @@ sequenceDiagram
 | Alor REST quotes | 5xx / timeout (10 c) | возвращается fallback-цена (100.0 в SIMULATION), конвейер продолжает | `alor.error` |
 | Alor REST ордер | network | outbox остаётся PENDING, worker переотправляет через 30 c | `outbox.failed` |
 | Alor REST ордер | отказ брокера (reject) | `markFailed`, лог WARN, позиция не открывается | `alor.order.blocked` |
-| Alor WS | обрыв | reconnect до 5 попыток (5–25 c backoff), затем поток закрывается | `alor.ws.disconnected` |
+| Alor WS | обрыв | heartbeat (30 c) + watchdog (45 c), reconnect до 10 попыток (1–60 c backoff); на каждый reconnect — полная State Reconciliation через REST (заявки/позиции/сделки), устаревшие сообщения из очереди отбрасываются | `alor.ws.disconnected`, `alor.ws.stale_connection`, `alor.reconcile.run` |
 | MOEX ISS candles | timeout / 5xx | `emptyList()`, индикаторы не считаются, агенты получают NEUTRAL | `moex.error` |
 | Kimi LLM | network / 5xx | retry (3, exp backoff) → circuit breaker → fallback baseline | `llm.fallback` |
 | Kimi LLM | 429 | rate limiter (20/мин) + retry по `TooManyRequests` | `llm.ratelimited` |
@@ -249,6 +267,10 @@ sequenceDiagram
 | `ALOR_REFRESH_TOKEN` | пусто | автообновление токена через `/oauth/token` |
 | `ALOR_PORTFOLIO` | `D12345` | portfolio в командах и подписках WS |
 | `ALOR_EXCHANGE` | `MOEX` | биржа в `md/v2/Securities` |
+| `ALOR_WS_RECONCILE_ON_RECONNECT` | `true` | полная State Reconciliation (REST-портфель) при каждом реконнекте WS |
+| `ALOR_WS_HEARTBEAT_INTERVAL_MS` | `30000` | период WS heartbeat-ping |
+| `ALOR_WS_HEARTBEAT_TIMEOUT_MS` | `45000` | таймаут «тихого» соединения (watchdog → DISCONNECTED) |
+| `ALOR_WS_STALE_MESSAGE_AGE_MS` | `5000` | максимальный возраст WS-сообщения в очереди (stale discard) |
 | `MOEX_BASE_URL` | `https://iss.moex.com/iss` | исторические свечи |
 | `KIMI_API_KEY` | пусто | `Authorization: Bearer` (пусто → fallback агентов) |
 | `KIMI_BASE_URL` | `https://api.moonshot.cn/v1` | `POST /chat/completions` |
@@ -285,7 +307,8 @@ sequenceDiagram
 |---|---|
 | Нет котировок | лог `DEBUG com.trading.bot.client`, метрика `alor.error` |
 | Ордер застрял PENDING | `SELECT * FROM order_outbox WHERE status='PENDING'` — проверка worker-цикла |
-| WS не доставляет fills | `alor.ws.reconnect`, `alor.ws.disconnected{reason=MAX_ATTEMPTS}` |
+| WS не доставляет fills | `alor.ws.reconnect`, `alor.ws.disconnected{reason=MAX_ATTEMPTS}`, `alor.ws.stale_connection` |
+| Рассинхрон позиций после обрыва WS | `alor.reconcile.run{closed,adjusted,unknown}`, `alor.reconcile.aborted`, `alor.reconcile.discrepancy{kind,ticker}` |
 | LLM отвечает fallback | `llm.fallback`, `llm.circuit_open`, `llm.ratelimited` |
 | Пустые свечи | `moex.error`, проверка `SELECT count(*) FROM candles` |
 | Нет макро-контекста | `macro.error`, fallback-значения из env |
@@ -313,6 +336,8 @@ sequenceDiagram
 - [ ] `KIMI_API_KEY` в env/Secrets (иначе бот не торгует по LLM)
 - [ ] `ALOR_PORTFOLIO` корректен для контура (DEMO/LIVE)
 - [ ] WS-подписка работает: `alor.ws.execution_received` растёт при исполнениях
+- [ ] Проверен reconnect: отключить WS → `alor.ws.reconnect`, после CONNECTED выполняется `alor.reconcile.run`
+- [ ] Проверен heartbeat watchdog: при «тихом» соединении > `ws-heartbeat-timeout-ms` растёт `alor.ws.stale_connection`
 - [ ] Outbox: `outbox.saved` = `outbox.sent` (нет накопления PENDING)
 - [ ] MOEX ISS доступен: свечи пишутся в `candles`
 - [ ] Проверен fallback: остановить Kimi → бот продолжает работать, `llm.fallback.activated` растёт

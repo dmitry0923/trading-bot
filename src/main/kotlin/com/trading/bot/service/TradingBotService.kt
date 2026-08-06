@@ -2,6 +2,9 @@ package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorWebSocketClient
+import com.trading.bot.client.WebSocketManager
+import com.trading.bot.client.WsConnectionStatus
+import com.trading.bot.client.WsStream
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
@@ -53,6 +56,7 @@ class TradingBotService(
     private val tradingConfig: TradingConfig,
     private val alorClient: AlorClient,
     private val alorWsClient: AlorWebSocketClient,
+    private val webSocketManager: WebSocketManager,
     private val orderOutboxService: OrderOutboxService,
     private val redis: RedisCacheService,
     private val risk: RiskManagementService,
@@ -97,6 +101,16 @@ class TradingBotService(
                     } catch (e: Exception) {
                         logger.error(e) { "WS quote processing error for ${tick.ticker}" }
                     }
+                }
+            }
+        }
+        // При обрыве WS-котировок сбрасываем кэш последних WS-тиков: fallback-поллинг
+        // [pollMarketData] возобновляется немедленно (без ожидания monitorIntervalMs),
+        // пока реконнект не восстановит real-time поток.
+        scope.launch {
+            webSocketManager.events.collect { event ->
+                if (event.stream == WsStream.QUOTES && event.status == WsConnectionStatus.DISCONNECTED) {
+                    lastWsTickAt.clear()
                 }
             }
         }

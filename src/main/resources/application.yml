@@ -55,6 +55,10 @@ alor:
   retry-enabled: ${ALOR_RETRY_ENABLED:true}
   rate-limiter-enabled: ${ALOR_RATE_LIMITER_ENABLED:true}
   max-order-retries: ${ALOR_MAX_ORDER_RETRIES:5}
+  ws-reconcile-on-reconnect: ${ALOR_WS_RECONCILE_ON_RECONNECT:true}
+  ws-heartbeat-interval-ms: ${ALOR_WS_HEARTBEAT_INTERVAL_MS:30000}
+  ws-heartbeat-timeout-ms: ${ALOR_WS_HEARTBEAT_TIMEOUT_MS:45000}
+  ws-stale-message-age-ms: ${ALOR_WS_STALE_MESSAGE_AGE_MS:5000}
 
 moex:
   base-url: https://iss.moex.com/iss

@@ -15,6 +15,11 @@ import org.springframework.stereotype.Component
  * @property retryEnabled включать Resilience4j retry (exponential backoff + jitter) для REST-вызовов
  * @property rateLimiterEnabled включать Resilience4j RateLimiter (защита от 429)
  * @property maxOrderRetries максимум повторных доставок ордера через outbox (bounded retry)
+ * @property wsReconcileOnReconnect выполнять полную State Reconciliation (REST-портфель,
+ *   позиции, сделки) при каждом переподключении WebSocket
+ * @property wsHeartbeatIntervalMs период heartbeat-ping, мс
+ * @property wsHeartbeatTimeoutMs таймаут «тихого» соединения (watchdog), мс
+ * @property wsStaleMessageAgeMs максимальный возраст сообщения в очереди обработки, мс
  */
 @Component
 @ConfigurationProperties(prefix = "alor")
@@ -28,4 +33,8 @@ class AlorConfig {
     var retryEnabled: Boolean = true
     var rateLimiterEnabled: Boolean = true
     var maxOrderRetries: Int = 5
+    var wsReconcileOnReconnect: Boolean = true
+    var wsHeartbeatIntervalMs: Long = 30_000
+    var wsHeartbeatTimeoutMs: Long = 45_000
+    var wsStaleMessageAgeMs: Long = 5_000
 }

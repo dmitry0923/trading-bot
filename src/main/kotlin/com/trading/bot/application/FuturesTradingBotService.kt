@@ -6,12 +6,15 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.FuturesRiskEngine
+import com.trading.bot.event.ExecutionReportEvent
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.StrategyGeneratedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
+import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.InstrumentType
+import com.trading.bot.model.OrderStatus
 import com.trading.bot.model.OutboxStatus
 import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
@@ -123,6 +126,22 @@ class FuturesTradingBotService(
     fun onTradingHalted(event: TradingHaltedEvent) {
         logger.error { "TRADING HALTED: ${event.reason}. New entries are blocked, open positions still monitored." }
         meterRegistry.counter("futures.trading.halted", Tags.of("reason", event.reason)).increment()
+    }
+
+    /**
+     * ExecutionReportEvent (WS-поток Alor) → фиксация фактического исполнения
+     * фьючерсных ордеров (вход/закрытие, partial fills). Без этого fill'ы,
+     * потерянные при обрыве WebSocket, бот узнал бы только через REST-реконсилятор.
+     */
+    @EventListener
+    fun onExecutionReport(event: ExecutionReportEvent) {
+        scope.launch {
+            try {
+                applyExecutionReport(event.report)
+            } catch (e: Exception) {
+                logger.error(e) { "Futures execution report handler error for order ${event.report.orderId}" }
+            }
+        }
     }
 
     /**
@@ -321,6 +340,46 @@ class FuturesTradingBotService(
             // 3. Подтягивание trailing (только в прибыль, с учётом вариационной маржи)
             futuresRiskEngine.updateTrailingStop(pos, price)
             positionRepo.save(pos)
+        }
+    }
+
+    /**
+     * Применяет ExecutionReport из WebSocket для фьючерсных позиций:
+     * - pendingEntry + FILLED → фиксируем фактический вход (qty, цена);
+     * - pendingClose → применяем исполнение close-ордера (полное/частичное);
+     * - обычные fill'ы по фьючерсам игнорируются (акции обрабатывает TradingBotService).
+     */
+    private suspend fun applyExecutionReport(report: ExecutionReport) {
+        if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
+        val orderId = report.orderId
+        val pos = positionRepo.findByAlorOrderId(orderId) ?: positionRepo.findByCloseOrderId(orderId) ?: return
+        if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
+        if (pos.instrumentType != InstrumentType.FUTURES) return
+        val fillPrice = report.avgPrice ?: return
+
+        if (pos.pendingEntry) {
+            if (report.status == OrderStatus.FILLED) {
+                pos.alorOrderId = orderId
+                pos.pendingEntry = false
+                pos.entryPrice = fillPrice
+                pos.quantity = report.filledQty.coerceAtLeast(1)
+                positionRepo.save(pos)
+                tradeEventService.recordPositionOpened(pos)
+                eventPublisher.publishPositionOpened(pos)
+                logger.info { "WS futures entry fill applied for ${pos.ticker}: order=$orderId qty=${pos.quantity} @ $fillPrice" }
+            }
+            // PARTIALLY_FILLED вход — оставляем REST-реконсилятору (verifyOrder даёт кумулятивный fill).
+            return
+        }
+
+        if (pos.pendingClose) {
+            val filled = report.filledQty.coerceIn(0, pos.quantity)
+            if (filled <= 0) return
+            if (filled >= pos.quantity) {
+                finalizeClosePosition(pos, fillPrice, pos.closeReason ?: "EXECUTION_FILL")
+            } else {
+                applyPartialClose(pos, filled, fillPrice)
+            }
         }
     }
 

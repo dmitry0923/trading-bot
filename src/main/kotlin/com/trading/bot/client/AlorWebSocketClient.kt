@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.socket.WebSocketSession
 import org.springframework.web.reactive.socket.client.ReactorNettyWebSocketClient
+import reactor.core.Disposable
 import reactor.core.publisher.BufferOverflowStrategy
 import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
@@ -32,12 +33,17 @@ import java.time.Instant
  *
  * @param ticker тикер инструмента
  * @param price последняя цена сделки (Last), либо mid между лучшим Bid/Offer
- * @param receivedAt момент получения тика из WS — для метрики задержки обработки
+ * @param receivedAt момент приёма сообщения из WS (до буферизации) — используется
+ *   для отбрасывания устаревших сообщений из очереди (stale data discard)
+ * @param sequence глобальный монотонный номер сообщения потока
+ * @param exchangeTime биржевое время котировки, если есть в сообщении
  */
 data class QuoteTick(
     val ticker: String,
     val price: BigDecimal,
     val receivedAt: Instant = Instant.now(),
+    val sequence: Long = 0,
+    val exchangeTime: Instant? = null,
 )
 
 /**
@@ -45,9 +51,25 @@ data class QuoteTick(
  *
  * Подписывается на исполнения ордеров (OrdersGetAndSubscribeV2) и на
  * real-time котировки (QuotesSubscribe). Оба потока имеют встроенное
- * переподключение с экспоненциальным backoff (1s, 2s, 4s, ... max 60s),
- * heartbeat (ping каждые 30s, watchdog по pong 45s) и backpressure
- * с семантикой DROP_OLDEST на входящих сообщениях.
+ * переподключение с экспоненциальным backoff (1s, 2s, 4s, ... max 60s)
+ * и backpressure с семантикой DROP_OLDEST на входящих сообщениях.
+ *
+ * Heartbeat-мониторинг (через [WebSocketManager]):
+ * - ping каждые [AlorConfig.wsHeartbeatIntervalMs]; успешная отправка фиксируется
+ *   как активность потока. Ошибка отправки закрывает сессию → переподключение.
+ * - Watchdog менеджера: если данные/ping не проходят дольше
+ *   [AlorConfig.wsHeartbeatTimeoutMs] — поток помечается DISCONNECTED, что
+ *   триггерит полную State Reconciliation (REST-портфель) ещё до того, как
+ *   транспорт обнаружит обрыв.
+ * - При КАЖДОМ переподключении публикуется [WsConnectionEvent] →
+ *   [com.trading.bot.service.StateReconciliationService] сверяет заявки,
+ *   позиции и сделки через REST (никаких торгов на «мёртвых» данных).
+ *
+ * Stale data discard:
+ * - Каждое сообщение котировки помечается временем приёма ДО буфера очереди;
+ *   сообщения, задержанные в очереди дольше [AlorConfig.wsStaleMessageAgeMs],
+ *   и сообщения в неправильном порядке (старее последнего принятого по тикеру)
+ *   отбрасываются ([WebSocketManager.isQuoteStale]).
  *
  * Метрики:
  * - alor.ws.reconnect / alor.ws.quotes.reconnect — переподключения
@@ -55,6 +77,8 @@ data class QuoteTick(
  * - alor.ws.drop / alor.ws.quotes.drop — сброшенные сообщения при переполнении буфера
  * - alor.ws.quote_received / alor.ws.execution_received — входящие сообщения
  * - alor.ws.message.lag — задержка от приёма тика до обработки (Timer)
+ * - alor.ws.*.heartbeat_failed — неудачный heartbeat-ping
+ * - alor.ws.quotes.stale_discarded / alor.ws.quotes.out_of_order — устаревшие котировки
  *
  * @see <a href="https://alor.dev/docs">Alor API документация</a>
  */
@@ -63,16 +87,16 @@ class AlorWebSocketClient(
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
+    private val webSocketManager: WebSocketManager,
 ) {
     private val logger = KotlinLogging.logger {}
     private val wsClient = ReactorNettyWebSocketClient()
     private val maxAttempts = 10
-    private val heartbeatInterval = Duration.ofSeconds(30)
-    private val heartbeatTimeout = Duration.ofSeconds(45)
     private val incomingBufferCapacity = 1000
 
     /**
-     * Поток отчётов об исполнении. Переподключение встроено.
+     * Поток отчётов об исполнении. Переподключение встроено; при реконнекте
+     * публикуется событие в [WebSocketManager] → State Reconciliation.
      */
     fun subscribeToOrders(): Flow<ExecutionReport> =
         callbackFlow {
@@ -103,6 +127,7 @@ class AlorWebSocketClient(
                         val url = URI.create(wsUrl())
                         wsClient
                             .execute(url) { session ->
+                                val heartbeat = startHeartbeat(session, "alor.ws", WsStream.ORDERS)
                                 val subscribeMsg =
                                     session.textMessage(
                                         objectMapper.writeValueAsString(
@@ -116,13 +141,13 @@ class AlorWebSocketClient(
                                             ),
                                         ),
                                     )
-                                startHeartbeat(session, "alor.ws")
                                 session
                                     .send(Mono.just(subscribeMsg))
+                                    .doOnSuccess { webSocketManager.onConnected(WsStream.ORDERS, currentAttempt) }
                                     .thenMany(
                                         session
                                             .receive()
-                                            .timeout(heartbeatTimeout)
+                                            .doOnNext { webSocketManager.onActivity(WsStream.ORDERS) }
                                             .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
                                             .mapNotNull { msg -> parseExecution(msg.payloadAsText) }
                                             .doOnNext { report ->
@@ -131,21 +156,25 @@ class AlorWebSocketClient(
                                                 if (result.isFailure) meterRegistry.counter("alor.ws.drop").increment()
                                             },
                                     ).then()
+                                    .doFinally { heartbeat.dispose() }
                             }.subscribe(
                                 { /* connection closed normally */ },
                                 { err ->
                                     logger.warn(err) { "Alor WS stream error" }
                                     meterRegistry.counter("alor.ws.error").increment()
+                                    webSocketManager.onDisconnected(WsStream.ORDERS, currentAttempt + 1, "STREAM_ERROR")
                                     if (!cancelled) scheduleReconnect(currentAttempt + 1)
                                 },
                                 {
                                     logger.info { "Alor WS connection closed" }
                                     meterRegistry.counter("alor.ws.closed").increment()
+                                    webSocketManager.onDisconnected(WsStream.ORDERS, currentAttempt + 1, "STREAM_CLOSED")
                                     if (!cancelled) scheduleReconnect(currentAttempt + 1)
                                 },
                             )
                     } catch (e: Exception) {
                         logger.warn(e) { "Alor WS connect failed" }
+                        webSocketManager.onDisconnected(WsStream.ORDERS, currentAttempt + 1, "CONNECT_FAILED")
                         if (!cancelled) scheduleReconnect(currentAttempt + 1)
                     }
                 }
@@ -156,7 +185,11 @@ class AlorWebSocketClient(
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /**
-     * Поток real-time котировок для списка символов. Переподключение встроено.
+     * Поток real-time котировок для списка символов. Переподключение встроено;
+     * при реконнекте публикуется событие в [WebSocketManager] → State Reconciliation.
+     *
+     * Устаревшие сообщения (задержка в очереди > [AlorConfig.wsStaleMessageAgeMs]
+     * или нарушенный порядок по тикеру) отбрасываются.
      *
      * @param symbols тикеры для подписки (например ["Si", "SBER"])
      * @return поток [QuoteTick] — последняя цена сделки каждого инструмента
@@ -194,6 +227,7 @@ class AlorWebSocketClient(
                         val url = URI.create(wsUrl())
                         wsClient
                             .execute(url) { session ->
+                                val heartbeat = startHeartbeat(session, "alor.ws.quotes", WsStream.QUOTES)
                                 val subscribeMsg =
                                     session.textMessage(
                                         objectMapper.writeValueAsString(
@@ -210,16 +244,36 @@ class AlorWebSocketClient(
                                             ),
                                         ),
                                     )
-                                startHeartbeat(session, "alor.ws.quotes")
                                 session
                                     .send(Mono.just(subscribeMsg))
+                                    .doOnSuccess { webSocketManager.onConnected(WsStream.QUOTES, currentAttempt) }
                                     .thenMany(
                                         session
                                             .receive()
-                                            .timeout(heartbeatTimeout)
+                                            .doOnNext { webSocketManager.onActivity(WsStream.QUOTES) }
+                                            .map { msg -> msg to Instant.now() }
                                             .onBackpressureBuffer(incomingBufferCapacity, BufferOverflowStrategy.DROP_OLDEST)
-                                            .mapNotNull { msg -> parseQuote(msg.payloadAsText) }
-                                            .doOnNext { tick ->
+                                            .mapNotNull { (msg, receivedAt) ->
+                                                val tick = parseQuote(msg.payloadAsText) ?: return@mapNotNull null
+                                                tick.copy(
+                                                    receivedAt = receivedAt,
+                                                    sequence = webSocketManager.nextSequence(WsStream.QUOTES),
+                                                )
+                                            }.filter { tick ->
+                                                val stale =
+                                                    webSocketManager.isQuoteStale(
+                                                        tick.ticker,
+                                                        tick.receivedAt,
+                                                        tick.sequence,
+                                                        tick.exchangeTime,
+                                                    )
+                                                if (stale) {
+                                                    meterRegistry
+                                                        .counter("alor.ws.quotes.drop", Tags.of("ticker", tick.ticker))
+                                                        .increment()
+                                                }
+                                                !stale
+                                            }.doOnNext { tick ->
                                                 meterRegistry
                                                     .counter(
                                                         "alor.ws.quote_received",
@@ -232,21 +286,25 @@ class AlorWebSocketClient(
                                                 }
                                             },
                                     ).then()
+                                    .doFinally { heartbeat.dispose() }
                             }.subscribe(
                                 { /* connection closed normally */ },
                                 { err ->
                                     logger.warn(err) { "Alor WS quotes stream error" }
                                     meterRegistry.counter("alor.ws.quotes.error").increment()
+                                    webSocketManager.onDisconnected(WsStream.QUOTES, currentAttempt + 1, "STREAM_ERROR")
                                     if (!cancelled) scheduleReconnect(currentAttempt + 1)
                                 },
                                 {
                                     logger.info { "Alor WS quotes connection closed" }
                                     meterRegistry.counter("alor.ws.quotes.closed").increment()
+                                    webSocketManager.onDisconnected(WsStream.QUOTES, currentAttempt + 1, "STREAM_CLOSED")
                                     if (!cancelled) scheduleReconnect(currentAttempt + 1)
                                 },
                             )
                     } catch (e: Exception) {
                         logger.warn(e) { "Alor WS quotes connect failed" }
+                        webSocketManager.onDisconnected(WsStream.QUOTES, currentAttempt + 1, "CONNECT_FAILED")
                         if (!cancelled) scheduleReconnect(currentAttempt + 1)
                     }
                 }
@@ -269,30 +327,41 @@ class AlorWebSocketClient(
     private fun reconnectDelaySeconds(attempt: Int): Long = minOf(1L shl (attempt - 1), 60L)
 
     /**
-     * Heartbeat: ping каждые 30s — сервер отвечает pong'ами, что держит
-     * поток данных живым. Watchdog по liveness реализован через timeout()
-     * на основном потоке данных: любое сообщение (включая pong) сбрасывает
-     * таймер, а 45s тишины роняют поток → переподключение.
+     * Heartbeat: ping каждые [AlorConfig.wsHeartbeatIntervalMs].
+     *
+     * Успешная отправка фиксируется как активность потока в [WebSocketManager]
+     * (liveness без зависимости от наличия входящих данных — важно в тихие
+     * периоды, например на обеденном перерыве биржи). Ошибка отправки говорит
+     * о «мёртвом» соединении → сессия закрывается, поток переподключается.
+     *
+     * Heartbeat привязан к жизненному циклу сессии: [Disposable] освобождается
+     * в `doFinally` при завершении потока (больше нет утечки ping-корутины).
      *
      * @param session активная WebSocket-сессия
      * @param metricPrefix префикс метрик (alor.ws | alor.ws.quotes)
+     * @param stream поток для регистрации активности в менеджере
      */
     private fun startHeartbeat(
         session: WebSocketSession,
         metricPrefix: String,
-    ) {
+        stream: WsStream,
+    ): Disposable =
         Flux
-            .interval(heartbeatInterval)
+            .interval(Duration.ofMillis(alorConfig.wsHeartbeatIntervalMs))
             .onErrorResume { Mono.empty() }
-            .concatMap { session.send(Mono.just(session.pingMessage { it.allocateBuffer(1) })) }
-            .onErrorResume { err ->
-                logger.warn(err) { "$metricPrefix heartbeat ping failed" }
-                Mono.empty()
+            .concatMap {
+                session
+                    .send(Mono.just(session.pingMessage { it.allocateBuffer(1) }))
+                    .doOnSuccess { webSocketManager.onActivity(stream) }
+                    .onErrorResume { err ->
+                        logger.warn(err) { "$metricPrefix heartbeat ping FAILED — closing session to force reconnect" }
+                        meterRegistry.counter("$metricPrefix.heartbeat_failed").increment()
+                        session.close().onErrorResume { Mono.empty() }
+                    }
             }.subscribe(
                 { /* ping sent */ },
                 { err -> logger.warn(err) { "$metricPrefix heartbeat stopped" } },
             )
-    }
 
     /**
      * Разбирает входящее WS-сообщение в ExecutionReport.
@@ -366,10 +435,11 @@ class AlorWebSocketClient(
      *
      * Сообщение Alor в Simple-формате:
      * ```json
-     * {"guid":"q-SBER","quotes":[{"price":280.5,"volume":0,"o":"Last","oi":0}, ...]}
+     * {"guid":"q-SBER","quotes":[{"price":280.5,"volume":0,"o":"Last","time":167...,"oi":0}, ...]}
      * ```
      * Приоритет цены: `o == "Last"` (последняя сделка), иначе mid между Bid/Offer.
-     * Возвращает null для служебных сообщений.
+     * Биржевое время берётся из котировок (при наличии) для отбрасывания
+     * устаревших сообщений. Возвращает null для служебных сообщений.
      */
     fun parseQuote(json: String): QuoteTick? {
         return try {
@@ -389,14 +459,17 @@ class AlorWebSocketClient(
             var last: BigDecimal? = null
             var bid: BigDecimal? = null
             var offer: BigDecimal? = null
+            var exchangeTime: Instant? = null
             for (q in quotes) {
                 when (q.path("o").asString()) {
                     "Last" -> last = q.path("price").asString().toBigDecimalOrNull()
                     "Bid" -> bid = q.path("price").asString().toBigDecimalOrNull()
                     "Offer" -> offer = q.path("price").asString().toBigDecimalOrNull()
                 }
+                if (exchangeTime == null) exchangeTime = parseTime(q.path("time"))
                 if (last != null) break
             }
+            if (exchangeTime == null) exchangeTime = parseTime(j.path("time"))
 
             val price =
                 last ?: if (bid != null && offer != null) {
@@ -405,10 +478,16 @@ class AlorWebSocketClient(
                     bid ?: offer
                 } ?: return null
 
-            QuoteTick(ticker = symbol, price = price)
+            QuoteTick(ticker = symbol, price = price, exchangeTime = exchangeTime)
         } catch (e: Exception) {
             logger.warn(e) { "Failed to parse Alor WS quote: ${json.take(500)}" }
             null
         }
+    }
+
+    private fun parseTime(node: tools.jackson.databind.JsonNode): Instant? {
+        val raw = node.asLong(0)
+        if (raw <= 0) return null
+        return if (raw > 9_999_999_999L) Instant.ofEpochMilli(raw) else Instant.ofEpochSecond(raw)
     }
 }

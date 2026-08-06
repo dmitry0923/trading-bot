@@ -331,6 +331,235 @@ class AlorClient(
     }
 
     /**
+     * Состояние заявки из REST-сверки.
+     */
+    data class ExchangeOrder(
+        val orderId: String,
+        val ticker: String,
+        val side: String?,
+        val status: String,
+        val quantity: Int,
+        val filledQty: Int,
+        val avgPrice: BigDecimal?,
+        val time: Instant? = null,
+    )
+
+    /**
+     * Позиция портфеля из REST-сверки. [qty] — знаковая: > 0 LONG, < 0 SHORT.
+     */
+    data class ExchangePosition(
+        val ticker: String,
+        val qty: Long,
+        val avgPrice: BigDecimal?,
+        val time: Instant? = null,
+    )
+
+    /**
+     * Сделка портфеля из REST-сверки.
+     */
+    data class ExchangeTrade(
+        val id: String,
+        val orderId: String?,
+        val ticker: String,
+        val side: String?,
+        val quantity: Int,
+        val price: BigDecimal,
+        val time: Instant? = null,
+    )
+
+    /**
+     * Результат REST-сверки (State Reconciliation).
+     *
+     * - [Ok]: данные получены (в т.ч. пустой список — биржа действительно «плоская»).
+     * - [Failed]: REST недоступен/ошибка — сверять локальный стейт НЕЛЬЗЯ.
+     *   [com.trading.bot.service.StateReconciliationService] в этом случае НЕ мутирует
+     *   локальные позиции (fail-safe: отсутствие ответа != отсутствие позиции).
+     */
+    sealed interface ReconcileResult<out T> {
+        data class Ok<out T>(
+            val items: List<T>,
+        ) : ReconcileResult<T>
+
+        data object Failed : ReconcileResult<Nothing>
+    }
+
+    /**
+     * Все заявки портфеля (State Reconciliation). [ReconcileResult.Failed] при
+     * ошибке REST — сверка не должна ронять бота и не должна выдавать «пусто»
+     * за отсутствие заявок.
+     */
+    suspend fun getOpenOrders(): ReconcileResult<ExchangeOrder> {
+        if (!isLive) return ReconcileResult.Ok(emptyList())
+        return try {
+            val raw: String =
+                resilient {
+                    webClient
+                        .get()
+                        .uri(
+                            "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
+                                "?portfolio=${alorConfig.portfolio}&includeOrders=true",
+                        ).header("Authorization", "Bearer ${getActualToken()}")
+                        .retrieve()
+                        .bodyToMono(String::class.java)
+                        .timeout(Duration.ofSeconds(10))
+                        .awaitSingle()
+                }
+            val root = objectMapper.readTree(raw)
+            val arr = if (root.isArray) root else root.path("orders")
+            val items =
+                arr.mapNotNull { o ->
+                    val orderId =
+                        o
+                            .path("orderNumber")
+                            .asString()
+                            .ifBlank { o.path("id").asString() }
+                            .ifBlank { return@mapNotNull null }
+                    ExchangeOrder(
+                        orderId = orderId,
+                        ticker = o.path("ticker").asString(""),
+                        side = o.path("side").asString().takeIf { it.isNotBlank() },
+                        status = o.path("status").asString("UNKNOWN"),
+                        quantity = o.path("quantity").asInt(0),
+                        filledQty =
+                            o
+                                .path("filledQty")
+                                .asInt(0)
+                                .let { if (it == 0) o.path("filledQuantity").asInt(0) else it },
+                        avgPrice =
+                            o.path("filledPrice").asString().toBigDecimalOrNull()
+                                ?: o.path("avgFillPrice").asString().toBigDecimalOrNull(),
+                        time = parseAlorTime(o.path("time")),
+                    )
+                }
+            ReconcileResult.Ok(items)
+        } catch (e: Exception) {
+            meterRegistry.counter("alor.reconcile.fetch_error", Tags.of("kind", "orders")).increment()
+            logger.warn(e) { "getOpenOrders failed" }
+            ReconcileResult.Failed
+        }
+    }
+
+    /**
+     * Текущие позиции портфеля (State Reconciliation). [ReconcileResult.Failed] при ошибке.
+     */
+    suspend fun getPositions(): ReconcileResult<ExchangePosition> {
+        if (!isLive) return ReconcileResult.Ok(emptyList())
+        return try {
+            val raw: String =
+                resilient {
+                    webClient
+                        .get()
+                        .uri(
+                            "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/portfolios" +
+                                "/${alorConfig.portfolio}/positions",
+                        ).header("Authorization", "Bearer ${getActualToken()}")
+                        .retrieve()
+                        .bodyToMono(String::class.java)
+                        .timeout(Duration.ofSeconds(10))
+                        .awaitSingle()
+                }
+            val root = objectMapper.readTree(raw)
+            val arr = if (root.isArray) root else root.path("positions")
+            val items =
+                arr.mapNotNull { p ->
+                    val ticker =
+                        p
+                            .path("ticker")
+                            .asString()
+                            .ifBlank { p.path("symbol").asString() }
+                            .ifBlank { return@mapNotNull null }
+                    val qty =
+                        p
+                            .path("qty")
+                            .asLong(0)
+                            .let { if (it == 0L) p.path("quantity").asLong(0) else it }
+                    ExchangePosition(
+                        ticker = ticker,
+                        qty = qty,
+                        avgPrice =
+                            p.path("averagePrice").asString().toBigDecimalOrNull()
+                                ?: p.path("avgPrice").asString().toBigDecimalOrNull()
+                                ?: p.path("avgFillPrice").asString().toBigDecimalOrNull(),
+                        time = parseAlorTime(p.path("time")),
+                    )
+                }
+            ReconcileResult.Ok(items)
+        } catch (e: Exception) {
+            meterRegistry.counter("alor.reconcile.fetch_error", Tags.of("kind", "positions")).increment()
+            logger.warn(e) { "getPositions failed" }
+            ReconcileResult.Failed
+        }
+    }
+
+    /**
+     * Сделки портфеля за текущую сессию (State Reconciliation). [ReconcileResult.Failed] при ошибке.
+     */
+    suspend fun getRecentTrades(): ReconcileResult<ExchangeTrade> {
+        if (!isLive) return ReconcileResult.Ok(emptyList())
+        return try {
+            val raw: String =
+                resilient {
+                    webClient
+                        .get()
+                        .uri(
+                            "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/portfolios" +
+                                "/${alorConfig.portfolio}/trades",
+                        ).header("Authorization", "Bearer ${getActualToken()}")
+                        .retrieve()
+                        .bodyToMono(String::class.java)
+                        .timeout(Duration.ofSeconds(10))
+                        .awaitSingle()
+                }
+            val root = objectMapper.readTree(raw)
+            val arr = if (root.isArray) root else root.path("trades")
+            val items =
+                arr.mapNotNull { t ->
+                    val id =
+                        t
+                            .path("id")
+                            .asString()
+                            .ifBlank { t.path("tradeId").asString() }
+                            .ifBlank { return@mapNotNull null }
+                    val price =
+                        t.path("price").asString().toBigDecimalOrNull()
+                            ?: return@mapNotNull null
+                    ExchangeTrade(
+                        id = id,
+                        orderId =
+                            t
+                                .path("orderId")
+                                .asString()
+                                .ifBlank { t.path("orderNumber").asString() }
+                                .takeIf { it.isNotBlank() },
+                        ticker = t.path("ticker").asString().ifBlank { t.path("symbol").asString() },
+                        side = t.path("side").asString().takeIf { it.isNotBlank() },
+                        quantity =
+                            t
+                                .path("quantity")
+                                .asInt(0)
+                                .let { if (it == 0) t.path("qty").asInt(0) else it },
+                        price = price,
+                        time = parseAlorTime(t.path("time")),
+                    )
+                }
+            ReconcileResult.Ok(items)
+        } catch (e: Exception) {
+            meterRegistry.counter("alor.reconcile.fetch_error", Tags.of("kind", "trades")).increment()
+            logger.warn(e) { "getRecentTrades failed" }
+            ReconcileResult.Failed
+        }
+    }
+
+    /**
+     * Разбирает время Alor из Unix-эпохи (секунды или миллисекунды).
+     */
+    private fun parseAlorTime(node: tools.jackson.databind.JsonNode): Instant? {
+        val raw = node.asLong(0)
+        if (raw <= 0) return null
+        return if (raw > 9_999_999_999L) Instant.ofEpochMilli(raw) else Instant.ofEpochSecond(raw)
+    }
+
+    /**
      * Метрика проскальзывания: |expected - filled| * qty в рублях.
      */
     fun recordSlippage(

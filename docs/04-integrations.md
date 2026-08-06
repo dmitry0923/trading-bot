@@ -92,7 +92,8 @@ stateDiagram-v2
 ```
 
 **Worker** (`processPending`, `@Scheduled(fixedDelay = 10000)`):
-- каждые 10 секунд выбирает `findPendingOlderThan(30)` (PENDING старше 30 c);
+- каждые 10 секунд выбирает `findRetryable(maxOrderRetries)` — PENDING старше 30 c и FAILED c retry_count < maxRetries;
+- перед повторной отправкой (retryCount > 0) выполняется State Reconciliation (`reconcileOrderByIdempotencyKey`): FOUND → фиксируем orderNumber без повторной отправки, UNKNOWN → пропуск цикла (fail-safe), NOT_FOUND → повторная отправка с тем же ключом;
 - переотправляет через `dispatch(outbox)` — тот же код, что и при первичной отправке;
 - повторное создание строки исключено: dispatch работает с существующим id.
 

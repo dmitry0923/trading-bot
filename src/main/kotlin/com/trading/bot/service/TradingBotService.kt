@@ -331,6 +331,11 @@ class TradingBotService(
             meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "CORRELATION")).increment()
             return
         }
+        if (adaptiveRisk.exceedsSectorCorrelationLimit(strat.ticker, open)) {
+            logger.warn { "Sector correlation filter reject ${strat.ticker}: correlated position inside same sector" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "SECTOR_CORRELATION")).increment()
+            return
+        }
 
         val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(strat.ticker)
         val kellyQty =
@@ -347,6 +352,12 @@ class TradingBotService(
         }
 
         val dir = if (strat.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        val candidateNotional = strat.targetPrice.multiply(BigDecimal(qty))
+        if (risk.exceedsPortfolioLimits(candidateNotional, dir, open)) {
+            logger.warn { "Portfolio exposure reject ${strat.ticker}: gross/net limit" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "PORTFOLIO_LIMIT")).increment()
+            return
+        }
         val side = if (strat.action == StrategyAction.BUY) "buy" else "sell"
         val placed = orderOutboxService.placeOrder(strat.ticker, side, qty, strat.targetPrice, "limit")
         if (!placed.success || placed.alorOrderId == null) {

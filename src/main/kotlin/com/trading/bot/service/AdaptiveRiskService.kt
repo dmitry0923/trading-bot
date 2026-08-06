@@ -17,6 +17,7 @@ import kotlin.math.sqrt
  * Адаптивный риск-менеджмент на основе статистики сделок (Kelly).
  *
  * - calculateOptimalPositionSize(): размер позиции по критерию Келли (cap 50%, floor 0)
+ *   + volatility targeting (размер зависит от ATR%) + drawdown degradation
  * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
  * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
  * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
@@ -101,37 +102,124 @@ class AdaptiveRiskService(
     }
 
     /**
+     * Секторный корреляционный фильтр: запрещает вторую позицию в том же секторе,
+     * если корреляция с уже открытой позицией превышает riskConfig.maxSectorCorrelation (0.7 = 70%).
+     *
+     * В отличие от [exceedsCorrelationLimit] (глобальный порог 0.8) этот фильтр учитывает
+     * корреляцию ТОЛЬКО внутри одного сектора — защита от концентрированных коррелированных движений.
+     *
+     * @param candidateTicker тикер входа
+     * @param openPositions открытые позиции
+     * @return true, если вход запрещён по внутрисекторной корреляции
+     */
+    suspend fun exceedsSectorCorrelationLimit(
+        candidateTicker: String,
+        openPositions: List<Position>,
+    ): Boolean {
+        if (candidateTicker == "Si") return false // фьючерсный хедж не фильтруется
+        val candidateSector = riskConfig.sectors[candidateTicker] ?: return false
+        val blocked =
+            openPositions.any { pos ->
+                if (pos.ticker == candidateTicker || pos.ticker == "Si") return@any false
+                val sameSector = riskConfig.sectors[pos.ticker] == candidateSector
+                sameSector && (correlationOf(candidateTicker, pos.ticker) ?: 0.0) > riskConfig.maxSectorCorrelation
+            }
+        if (blocked) {
+            meterRegistry
+                .counter(
+                    "adaptive.sector_correlation.blocked",
+                    Tags.of("ticker", candidateTicker),
+                ).increment()
+        }
+        return blocked
+    }
+
+    /**
      * Оптимальный размер позиции по критерию Келли для тикера.
      *
+     * К порядку расчёта добавляются:
+     * 1. Kelly (quarter/half доля) -> базовый размер от депозита;
+     * 2. Volatility targeting: множитель = volatilityTargetPercent / atrPercent,
+     *    ограниченный [minVolatilitySizeMultiplier, maxVolatilitySizeMultiplier]. Высокая
+     *    волатильность инструмента режет размер, низкая — (умеренно) увеличивает;
+     * 3. Drawdown degradation: при режиме восстановления после просадки размер ещё
+     *    умножается на kellyDrawdownReduction (обычно 0.5).
+     *
      * @param ticker тикер инструмента
+     * @param atr текущее значение ATR (если null — берётся из свечного кэша)
+     * @param currentPrice текущая цена (если null — последнее закрытие из кэша)
      * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
      */
-    suspend fun calculateOptimalPositionSize(ticker: String): BigDecimal {
+    suspend fun calculateOptimalPositionSize(
+        ticker: String,
+        atr: BigDecimal? = null,
+        currentPrice: BigDecimal? = null,
+    ): BigDecimal {
+        val resolvedAtr = atr ?: resolveAtr(ticker)
+        val resolvedPrice = currentPrice ?: resolvePrice(ticker)
+
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
-        if (stats == null || stats.totalTrades < 5) {
-            meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), riskConfig.maxPositionRub.toDouble())
-            return riskConfig.maxPositionRub
-        }
-
-        val w = stats.winRate
-        val avgLossAbs = kotlin.math.abs(stats.avgLoss.toDouble()).coerceAtLeast(0.01)
-        val r = stats.avgWin.toDouble() / avgLossAbs
-        val kelly = (w * r - (1 - w)) / r
-
-        // Классический (Full) Kelly слишком агрессивен: применяем долю
-        // riskConfig.kellyFraction (Half/Quarter-Kelly по умолчанию 0.5) и кап 50%.
-        val safeKelly = (kelly * riskConfig.kellyFraction).coerceAtMost(0.50).coerceAtLeast(0.0)
-        val size =
-            if (safeKelly > 0) {
-                riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly))
+        val base =
+            if (stats == null || stats.totalTrades < 5) {
+                riskConfig.maxPositionRub
             } else {
-                BigDecimal.ZERO
+                val w = stats.winRate
+                val avgLossAbs = kotlin.math.abs(stats.avgLoss.toDouble()).coerceAtLeast(0.01)
+                val r = stats.avgWin.toDouble() / avgLossAbs
+                val kelly = (w * r - (1 - w)) / r
+
+                // Классический (Full) Kelly слишком агрессивен: применяем долю
+                // riskConfig.kellyFraction (Quarter-Kelly по умолчанию 0.25) и кап 50%.
+                val safeKelly = (kelly * riskConfig.kellyFraction).coerceAtMost(0.50).coerceAtLeast(0.0)
+                if (safeKelly > 0) riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly)) else BigDecimal.ZERO
             }
 
-        meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), size.toDouble())
-        logger.info { "Kelly size for $ticker: ${size.toInt()} (kelly=$kelly, safe=$safeKelly)" }
-        return size
+        var size = base
+
+        // Volatility targeting: множитель центральности к целевой волатильности (ATR%).
+        var volMultiplier: Double? = null
+        if (resolvedAtr != null && resolvedAtr > BigDecimal.ZERO && resolvedPrice != null && resolvedPrice > BigDecimal.ZERO) {
+            val atrPercent =
+                resolvedAtr
+                    .multiply(BigDecimal("100"))
+                    .divide(resolvedPrice, 4, RoundingMode.HALF_UP)
+                    .toDouble()
+            volMultiplier =
+                (riskConfig.volatilityTargetPercent / atrPercent)
+                    .coerceIn(riskConfig.minVolatilitySizeMultiplier, riskConfig.maxVolatilitySizeMultiplier)
+            size = size.multiply(BigDecimal(volMultiplier))
+        }
+
+        // Drawdown degradation: при восстановлении после просадки режем размер ещё раз.
+        var drawdownReduced = false
+        if (isInDrawdownRecovery()) {
+            drawdownReduced = true
+            size = size.multiply(BigDecimal(riskConfig.kellyDrawdownReduction))
+        }
+
+        val finalSize = size.coerceAtLeast(BigDecimal.ZERO)
+        meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), finalSize.toDouble())
+        logger.info {
+            "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, drawdownReduced=$drawdownReduced)"
+        }
+        return finalSize
     }
+
+    /**
+     * Текущее ATR тикера из кэша свечей (MINUTE_10), иначе null.
+     *
+     * @param ticker тикер инструмента
+     * @return ATR или null при недостатке данных
+     */
+    private fun resolveAtr(ticker: String): BigDecimal? = candleCache.calculateAtr(ticker, "MINUTE_10", 14)
+
+    /**
+     * Текущая цена тикера (последнее закрытие из кэша MINUTE_10), иначе null.
+     *
+     * @param ticker тикер инструмента
+     * @return последняя цена закрытия или null
+     */
+    private fun resolvePrice(ticker: String): BigDecimal? = candleCache.getRecentCandles(ticker, "MINUTE_10", 1).lastOrNull()?.closePrice
 
     /**
      * Адаптивная цена стоп-лосса: ATR * множитель, зависящий от SL hit rate тикера.

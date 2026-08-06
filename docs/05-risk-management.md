@@ -201,17 +201,36 @@ flowchart LR
 
 ## 5.5. Kelly Criterion (`AdaptiveRiskService.calculateOptimalPositionSize`)
 
-Формула:
+Формула (Quarter-Kelly по умолчанию):
 
 ```
 w = winRate (за 30 дней)
 r = avgWin / |avgLoss| (выигрыш/проигрыш)
 kelly = (w * r - (1 - w)) / r
-safeKelly = clamp(kelly, 0.0, 0.50)   # half-Kelly верхний предел
-size = maxPositionRub * safeKelly
+safeKelly = clamp(kelly, 0.0, 0.50)
+base = maxPositionRub * safeKelly * kellyFraction   # kellyFraction = 0.25 (Quarter)
 ```
 
-- Если сделок < 5 → `size = maxPositionRub` (без статистики не ограничиваем, но и не увеличиваем).
+**Volatility targeting** (размер зависит от ATR инструмента):
+
+```
+atrPercent = ATR * 100 / currentPrice
+volMultiplier = clamp(volatilityTargetPercent / atrPercent, 0.25, 2.0)
+size = base * volMultiplier
+```
+
+| ATR% инструмента | volMultiplier | Пример |
+|---|---|---|
+| 2% (низкая) | 2.0 | ×2 |
+| 4% (целевая) | 1.0 | ×1 |
+| 10% (высокая) | 0.4 | ×0.5 |
+| 20% (очень высокая) | 0.25 (floor) | ×0.25 |
+
+**Drawdown degradation**: при режиме восстановления после просадки (`isInDrawdownRecovery()`)
+итоговый размер ещё умножается на `kellyDrawdownReduction = 0.5`. Итого в просадке
+позиции могут быть в 4 раза меньше, чем при Full-Kelly.
+
+- Если сделок < 5 → `base = maxPositionRub` (без статистики не ограничиваем, но и не увеличиваем; множители волатильности/просадки применяются).
 - Метрика: `adaptive.position_size{ticker}` (gauge).
 
 **Применение в `TradingBotService.openPosition`**:
@@ -220,6 +239,22 @@ size = maxPositionRub * safeKelly
 kellyQty = size / targetPrice (округляется вниз, минимум 1)
 qty = kellyQty, если kellyQty > 0 и kellyQty < strategy.quantity, иначе adjustedQty/strategy.quantity
 ```
+
+### Портфельные лимиты (Gross/Net Exposure, `RiskManagementService.exceedsPortfolioLimits`)
+
+Перед открытием позиции проверяется, что после добавления кандидата:
+
+- **Gross Exposure** (сумма нотионалов всех позиций) ≤ `maxGrossExposurePercent` (150%) депозита;
+- **Net Exposure** (long − short) в пределах ±`maxNetExposurePercent` (100%) депозита.
+
+Превышение → вход запрещён (`bot.risk.reject{reason=PORTFOLIO_LIMIT}`).
+
+### Секторный корреляционный фильтр (`AdaptiveRiskService.exceedsSectorCorrelationLimit`)
+
+Запрещает вторую позицию в том же секторе, если корреляция закрытий с уже открытой
+позицией > `maxSectorCorrelation` (0.7). Сектор определяется из `risk.sectors`
+(например ENERGY: GAZP/LKOH/ROSN/NVTK/TATN). В отличие от глобального
+`exceedsCorrelationLimit` (порог 0.8), этот фильтр срабатывает только внутри сектора.
 
 ### Адаптивные стопы (`calculateAdaptiveSL` / `calculateAdaptiveTP`)
 
@@ -290,16 +325,35 @@ risk.updateTrailingStop(pos, price)          // иначе подтягивае�
 Реализация (`RiskManagementService`):
 
 ```kotlin
-fun shouldCloseBySL(pos, price)  = LONG ? price <= stopLoss : price >= stopLoss
-fun shouldCloseByTP(pos, price)  = LONG ? price >= takeProfit : price <= takeProfit
-fun shouldCloseByTrailing(pos, price) =
-    riskConfig.trailingStopEnabled && pos.trailingStopPrice != null &&
-    (LONG ? price <= trailingStopPrice : price >= trailingStopPrice)
+fun shouldCloseBySL(pos: Position, price: BigDecimal): Boolean =
+    when (pos.direction) {
+        PositionDirection.LONG -> pos.stopLoss != null && price <= pos.stopLoss
+        PositionDirection.SHORT -> pos.stopLoss != null && price >= pos.stopLoss
+    }
 
-fun updateTrailingStop(pos, price) {
+fun shouldCloseByTP(pos: Position, price: BigDecimal): Boolean =
+    when (pos.direction) {
+        PositionDirection.LONG -> pos.takeProfit != null && price >= pos.takeProfit
+        PositionDirection.SHORT -> pos.takeProfit != null && price <= pos.takeProfit
+    }
+
+fun shouldCloseByTrailing(pos: Position, price: BigDecimal): Boolean {
+    if (!riskConfig.trailingStopEnabled || pos.trailingStopPrice == null) return false
+    return when (pos.direction) {
+        PositionDirection.LONG -> price <= pos.trailingStopPrice
+        PositionDirection.SHORT -> price >= pos.trailingStopPrice
+    }
+}
+
+fun updateTrailingStop(pos: Position, price: BigDecimal) {
     if (!riskConfig.trailingStopEnabled) return
-    val newStop = LONG ? price * (1 - 1.5%) : price * (1 + 1.5%)
-    pos.trailingStopPrice = newStop.setScale(2, HALF_UP)
+    val percent = BigDecimal(riskConfig.trailingStopPercent.toString()).divide(BigDecimal("100"))
+    val newStop =
+        when (pos.direction) {
+            PositionDirection.LONG -> price.multiply(BigDecimal.ONE.subtract(percent))
+            PositionDirection.SHORT -> price.multiply(BigDecimal.ONE.add(percent))
+        }
+    pos.trailingStopPrice = newStop.setScale(2, RoundingMode.HALF_UP)
 }
 ```
 
@@ -312,8 +366,21 @@ fun updateTrailingStop(pos, price) {
 ### Вспомогательные калькуляторы
 
 ```kotlin
-fun calcSL(entryPrice, direction): BigDecimal = entry * (1 ± 2%)   // по направлению
-fun calcTP(entryPrice, direction): BigDecimal = entry * (1 ∓ 4%)   // по направлению
+fun calcSL(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
+    val percent = BigDecimal(riskConfig.defaultStopLossPercent.toString()).divide(BigDecimal("100"))
+    return when (direction) {
+        PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(percent))
+        PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.add(percent))
+    }
+}
+
+fun calcTP(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
+    val percent = BigDecimal(riskConfig.defaultTakeProfitPercent.toString()).divide(BigDecimal("100"))
+    return when (direction) {
+        PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(percent))
+        PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.subtract(percent))
+    }
+}
 ```
 
 ## 5.8. Emergency Stop

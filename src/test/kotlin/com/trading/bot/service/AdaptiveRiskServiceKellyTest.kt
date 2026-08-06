@@ -1,18 +1,23 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.TradeStats
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.any
 import java.math.BigDecimal
 
 /**
  * Критерий Келли в AdaptiveRiskService: применение доли Kelly (Half/Quarter),
- * cap 50% и учёт количества сделок.
+ * cap 50%, volatility targeting (ATR%) и drawdown degradation.
  */
 class AdaptiveRiskServiceKellyTest {
     private val riskConfig = RiskConfig()
@@ -53,6 +58,17 @@ class AdaptiveRiskServiceKellyTest {
         }
     }
 
+    private fun stubClosedPositions(list: List<Position>) {
+        runBlocking {
+            Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
+        }
+    }
+
+    @BeforeEach
+    fun stubNoConsecutiveLosses() {
+        stubClosedPositions(emptyList())
+    }
+
     @Test
     fun `half kelly reduces full kelly by exactly half`() =
         runBlocking {
@@ -89,5 +105,61 @@ class AdaptiveRiskServiceKellyTest {
             riskConfig.kellyFraction = 0.5
             val size = service.calculateOptimalPositionSize("SBER")
             assertEquals(riskConfig.maxPositionRub, size)
+        }
+
+    @Test
+    fun `volatility targeting reduces size for high atr`() =
+        runBlocking {
+            // w=0.6, r=2.0 -> kelly=0.4 -> full kelly size = 0.4 * 50000 = 20000
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
+            stubStats(mapOf("SBER" to s))
+            riskConfig.kellyFraction = 1.0
+
+            val lowVol = service.calculateOptimalPositionSize("SBER", atr = BigDecimal("2"), currentPrice = BigDecimal("100"))
+            val highVol = service.calculateOptimalPositionSize("SBER", atr = BigDecimal("10"), currentPrice = BigDecimal("100"))
+            val extremeVol = service.calculateOptimalPositionSize("SBER", atr = BigDecimal("20"), currentPrice = BigDecimal("100"))
+
+            // ATR 2% -> mult=2.0, ATR 10% -> mult=0.4, ATR 20% -> mult=0.25 (floor)
+            assertEquals(40000.0, lowVol.toDouble(), 2.0)
+            assertEquals(8000.0, highVol.toDouble(), 2.0)
+            assertEquals(5000.0, extremeVol.toDouble(), 2.0)
+        }
+
+    @Test
+    fun `drawdown recovery halves position size`() =
+        runBlocking {
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
+            stubStats(mapOf("SBER" to s))
+            riskConfig.kellyFraction = 1.0
+
+            val consecutiveLosses =
+                (1..3).map {
+                    Position(
+                        ticker = "SBER",
+                        direction = com.trading.bot.model.PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        pnl = BigDecimal("-100"),
+                        status = PositionStatus.CLOSED,
+                    )
+                }
+            stubClosedPositions(consecutiveLosses)
+
+            riskConfig.kellyDrawdownReduction = 0.5
+            val size = service.calculateOptimalPositionSize("SBER")
+            // full kelly = 20000 -> drawdown reduction *0.5
+            assertEquals(10000.0, size.toDouble(), 2.0)
+        }
+
+    @Test
+    fun `quarter kelly is default`() =
+        runBlocking {
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
+            stubStats(mapOf("SBER" to s))
+
+            assertEquals(0.25, riskConfig.kellyFraction)
+            val size = service.calculateOptimalPositionSize("SBER")
+            // full kelly 0.4 * 0.25 = 0.1 -> 5000
+            assertTrue(size <= riskConfig.maxPositionRub.multiply(BigDecimal("0.10")).add(BigDecimal.ONE))
         }
 }

@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.DailyRiskSnapshot
 import com.trading.bot.repository.DailyRiskSnapshotRepository
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,7 +21,12 @@ class RiskManagementServiceDailyPnLTest {
     private val repo = Mockito.mock(DailyRiskSnapshotRepository::class.java)
     private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
-    private fun service(maxDailyLoss: BigDecimal) = RiskManagementService(RiskConfig().apply { maxDailyLossRub = maxDailyLoss }, repo)
+    private fun service(maxDailyLoss: BigDecimal): RiskManagementService =
+        RiskManagementService(
+            RiskConfig().apply { maxDailyLossRub = maxDailyLoss },
+            repo,
+            SimpleMeterRegistry(),
+        )
 
     @Test
     fun `daily pnl accumulates closed trades`() {

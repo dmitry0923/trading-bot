@@ -33,9 +33,47 @@ class RiskConfig {
     /**
      * Доля критерия Келли. Полный (Full) Kelly слишком агрессивен на реальных
      * рынках. Золотой стандарт: 0.5 (Half-Kelly) или 0.25 (Quarter-Kelly) от результата.
-     * Значения: 1.0 = Full, 0.5 = Half, 0.25 = Quarter. По умолчанию Half-Kelly.
+     * Значения: 1.0 = Full, 0.5 = Half, 0.25 = Quarter. По умолчанию Quarter-Kelly
+     * (консервативно для LLM-агентов с плохо калиброванной уверенностью).
      */
-    var kellyFraction: Double = 0.5
+    var kellyFraction: Double = 0.25
+
+    /**
+     * Целевая волатильность для volatility targeting, % ATR от цены.
+     * multiplier = volatilityTargetPercent / atrPercent (ATR 2% -> ~2x, ATR 10% -> ~0.5x,
+     * ATR 20% -> ~0.25x). Чем выше фактическая волатильность, тем меньше размер позиции.
+     */
+    var volatilityTargetPercent: Double = 4.0
+
+    /** Нижняя граница множителя размера от волатильности (жёсткий floor при экстремальной ATR). */
+    var minVolatilitySizeMultiplier: Double = 0.25
+
+    /** Верхняя граница множителя размера от волатильности (низкая ATR не раздувает позицию без оглядки). */
+    var maxVolatilitySizeMultiplier: Double = 2.0
+
+    /**
+     * Жёсткий лимит Gross Exposure, % от депозита. Сумма всех открытых позиций
+     * (нотионал long + short) не может превышать этот предел. Защита от коррелированных шоков.
+     */
+    var maxGrossExposurePercent: Double = 150.0
+
+    /**
+     * Жёсткий лимит Net Exposure, % от депозита. Чистый directional риск
+     * (сумма long - сумма short) ограничен в обе стороны. 100 = не более депозита.
+     */
+    var maxNetExposurePercent: Double = 100.0
+
+    /**
+     * Порог корреляции внутри сектора, при котором запрещено открывать вторую позицию
+     * в том же секторе (защита от концентрированных коррелированных движений). 0.7 = 70%.
+     */
+    var maxSectorCorrelation: Double = 0.7
+
+    /**
+     * Коэффициент деградации Kelly при просадке (0..1). Когда бот в drawdown-recovery,
+     * итоговый размер умножается на этот множитель (например 0.5 = позиции ещё в 2 раза меньше).
+     */
+    var kellyDrawdownReduction: Double = 0.5
 
     /** Стоп-лосс по умолчанию в пунктах. 50 пунктов * 10 ₽ = 500 ₽ при 1 контракте. */
     var defaultStopLossPoints: Int = 50

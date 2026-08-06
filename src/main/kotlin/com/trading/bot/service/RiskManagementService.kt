@@ -7,6 +7,7 @@ import com.trading.bot.model.RiskCheckResult
 import com.trading.bot.model.Strategy
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -26,6 +27,7 @@ import java.time.ZoneId
 class RiskManagementService(
     private val riskConfig: RiskConfig,
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val moscowZone = ZoneId.of("Europe/Moscow")
@@ -114,6 +116,67 @@ class RiskManagementService(
      * @return сектор из справочника risk.sectors или "UNKNOWN"
      */
     fun sectorOf(ticker: String): String = riskConfig.sectors[ticker] ?: "UNKNOWN"
+
+    /**
+     * Жёсткие портфельные лимиты на Gross/Net Exposure.
+     *
+     * - Gross: сумма нотионалов ВСЕХ позиций (long + short) после добавления кандидата
+     *   не должна превысить maxGrossExposurePercent от депозита (по умолчанию 150%);
+     * - Net: чистый directional риск (long - short) после добавления кандидата
+     *   не должен выйти за пределы ±maxNetExposurePercent от депозита (по умолчанию 100%).
+     *
+     * @param candidateNotionalRub нотионал кандидата в рублях (qty * entryPrice)
+     * @param candidateDirection направление кандидата
+     * @param openPositions текущие открытые позиции
+     * @return true, если портфель выйдет за лимиты exposure
+     */
+    fun exceedsPortfolioLimits(
+        candidateNotionalRub: BigDecimal,
+        candidateDirection: PositionDirection,
+        openPositions: List<Position>,
+    ): Boolean {
+        if (candidateNotionalRub <= BigDecimal.ZERO) return false
+        val deposit = riskConfig.maxPositionRub
+
+        val grossBefore = openPositions.sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
+        val grossAfter = grossBefore.add(candidateNotionalRub)
+        val grossLimit =
+            deposit
+                .multiply(BigDecimal(riskConfig.maxGrossExposurePercent))
+                .divide(BigDecimal("100"), 2, RoundingMode.HALF_UP)
+        if (grossAfter > grossLimit) {
+            logger.warn {
+                "Gross exposure limit: $grossAfter > $grossLimit (${riskConfig.maxGrossExposurePercent}% of deposit)"
+            }
+            meterRegistry.counter("risk.portfolio.gross_exposure.blocked").increment()
+            return true
+        }
+
+        val longExposure =
+            openPositions
+                .filter { it.direction == PositionDirection.LONG }
+                .sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
+        val shortExposure =
+            openPositions
+                .filter { it.direction == PositionDirection.SHORT }
+                .sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
+        val netAfter =
+            longExposure
+                .subtract(shortExposure)
+                .add(if (candidateDirection == PositionDirection.LONG) candidateNotionalRub else candidateNotionalRub.negate())
+        val netLimit =
+            deposit
+                .multiply(BigDecimal(riskConfig.maxNetExposurePercent))
+                .divide(BigDecimal("100"), 2, RoundingMode.HALF_UP)
+        if (netAfter > netLimit || netAfter < netLimit.negate()) {
+            logger.warn {
+                "Net exposure limit: $netAfter outside ±$netLimit (${riskConfig.maxNetExposurePercent}% of deposit)"
+            }
+            meterRegistry.counter("risk.portfolio.net_exposure.blocked").increment()
+            return true
+        }
+        return false
+    }
 
     /**
      * Проверяет, нужно ли закрыть позицию по стоп-лоссу при текущей цене.

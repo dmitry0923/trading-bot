@@ -251,7 +251,14 @@ risk:
   trailing-stop-enabled: true
   trailing-stop-percent: 1.0
   risk-per-trade-percent: 1.0
-  kelly-fraction: 0.5
+  kelly-fraction: 0.25
+  volatility-target-percent: 4.0
+  min-volatility-size-multiplier: 0.25
+  max-volatility-size-multiplier: 2.0
+  max-gross-exposure-percent: 150.0
+  max-net-exposure-percent: 100.0
+  max-sector-correlation: 0.7
+  kelly-drawdown-reduction: 0.5
   default-stop-loss-points: 50
   default-take-profit-points: 100
   min-liquidation-distance-percent: 25.0

@@ -4,17 +4,20 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.github.resilience4j.kotlin.ratelimiter.decorateSuspendFunction
+import io.github.resilience4j.kotlin.retry.decorateSuspendFunction
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.WebClientResponseException
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.security.MessageDigest
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
@@ -24,9 +27,16 @@ import java.util.concurrent.TimeUnit
  *
  * - Авторизация: Bearer token с автообновлением через refreshToken
  * - WebClient с таймаутом 10s
- * - Retry с экспоненциальным backoff (max 3 попытки) на критичных вызовах
- * - Idempotency Key для каждого ордера (ticker+side+qty+price+timestamp)
- * - Контроль проскальзывания: маркет-ордер запрещён при спреде > 0.5%
+ * - Resilience4j: Retry (exponential backoff + jitter) + RateLimiter
+ *   (инстанс "alor" в application.yml), защита от 429/сетевых сбоев.
+ * - Idempotency Key: уникальный `idempotencyKey` для КАЖДОГО POST-ордера.
+ *   Ключ генерируется ОДИН раз на логический ордер (в [com.trading.bot.service.OrderOutboxService])
+ *   и передаётся в Alor как "id" — Alor дедуплицирует повторные доставки.
+ * - [reconcileOrderByIdempotencyKey]: State Reconciliation перед повторным запросом —
+ *   поиск реального ордера на бирже по idempotency key (защита от double execution).
+ * - Классификация ошибок: 4xx (кроме 429) — определённый отказ (не ретраим);
+ *   сетевые/таймауты/5xx/429 — retryable; после исчерпания попыток исключение
+ *   пробрасывается наверх, чтобы outbox пометил доставку как UNCERTAIN.
  * - Метрики: alor.api.latency, alor.order.placed, alor.order.error, alor.quotes.ok, trade.slippage.rub
  */
 @Component
@@ -35,6 +45,8 @@ class AlorClient(
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
+    private val retryRegistry: RetryRegistry,
+    private val rateLimiterRegistry: RateLimiterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -44,6 +56,27 @@ class AlorClient(
         val filledQuantity: Int,
         val avgPrice: BigDecimal?,
     )
+
+    /**
+     * Результат State Reconciliation (сверки локального стейта с биржей).
+     *
+     * - [Found]: ордер с данным idempotency key реально существует на бирже
+     *   (повторно НЕ отправляем, используем его orderNumber).
+     * - [NotFound]: ордера на бирже нет — безопасно переотправить.
+     * - [Unknown]: биржа недоступна, подтвердить нельзя — НЕ переотправляем
+     *   (fail-safe, защита от двойного исполнения).
+     */
+    sealed interface OrderReconciliation {
+        data class Found(
+            val orderNumber: String,
+            val filledQty: Int,
+            val avgPrice: BigDecimal?,
+        ) : OrderReconciliation
+
+        data object NotFound : OrderReconciliation
+
+        data object Unknown : OrderReconciliation
+    }
 
     private var accessToken: String = ""
     private var tokenExpiresAt: Instant = Instant.EPOCH
@@ -60,10 +93,10 @@ class AlorClient(
                 volume = 1_000_000L,
             )
         }
-        return withRetry(ticker) {
-            val start = System.currentTimeMillis()
-            try {
-                val raw: String =
+        val start = System.currentTimeMillis()
+        return try {
+            val raw: String =
+                resilient {
                     webClient
                         .get()
                         .uri("${alorConfig.apiUrl}/md/v2/Securities/${alorConfig.exchange}/$ticker/quotes")
@@ -72,51 +105,60 @@ class AlorClient(
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
                         .awaitSingle()
-
-                val j = objectMapper.readTree(raw)
-                recordLatency("getQuotes", start)
-                meterRegistry.counter("alor.quotes.ok", Tags.of("ticker", ticker)).increment()
-                MarketSnapshot(
-                    ticker = ticker,
-                    currentPrice = BigDecimal(j.path("lastPrice").asString("0")),
-                    bid = j.path("bid").asString().toBigDecimalOrNull(),
-                    ask = j.path("ask").asString().toBigDecimalOrNull(),
-                    volume = j.path("volume").asLong(0),
-                    timestamp = Instant.now(),
-                )
-            } catch (e: Exception) {
-                logger.warn(e) { "getMarketSnapshot failed for $ticker" }
-                meterRegistry.counter("alor.quotes.error", Tags.of("ticker", ticker)).increment()
-                null
-            }
+                }
+            recordLatency("getQuotes", start)
+            meterRegistry.counter("alor.quotes.ok", Tags.of("ticker", ticker)).increment()
+            val j = objectMapper.readTree(raw)
+            MarketSnapshot(
+                ticker = ticker,
+                currentPrice = BigDecimal(j.path("lastPrice").asString("0")),
+                bid = j.path("bid").asString().toBigDecimalOrNull(),
+                ask = j.path("ask").asString().toBigDecimalOrNull(),
+                volume = j.path("volume").asLong(0),
+                timestamp = Instant.now(),
+            )
+        } catch (e: Exception) {
+            logger.warn(e) { "getMarketSnapshot failed for $ticker" }
+            meterRegistry.counter("alor.quotes.error", Tags.of("ticker", ticker)).increment()
+            null
         }
     }
 
     suspend fun getLastPrice(ticker: String): BigDecimal? = getMarketSnapshot(ticker)?.currentPrice
 
+    /**
+     * Плейс лимитного ордера с обязательным idempotency key.
+     *
+     * @param idempotencyKey уникальный клиентский id ордера (генерируется один раз
+     *   на логический ордер в OrderOutboxService). Все повторные доставки/ретраи
+     *   используют ТОТ ЖЕ ключ → Alor дедуплицирует.
+     * @return orderNumber при успехе; null при определённом отказе биржи (4xx);
+     *   при сетевом сбое/таймауте/5xx после исчерпания ретраев — бросает исключение
+     *   (верхний слой пометит доставку как UNCERTAIN и выполнит State Reconciliation).
+     */
     suspend fun placeLimitOrder(
         ticker: String,
         side: String,
         qty: Int,
         price: BigDecimal,
+        idempotencyKey: String,
     ): String? {
-        if (!isLive) return "sim-order-$ticker-${System.currentTimeMillis()}"
-        return withRetry(ticker) {
-            val start = System.currentTimeMillis()
-            try {
-                val idempotencyKey = idempotencyKey(ticker, side, qty, price)
-                val body =
-                    mapOf(
-                        "portfolio" to alorConfig.portfolio,
-                        "ticker" to ticker,
-                        "exchange" to alorConfig.exchange,
-                        "side" to side,
-                        "type" to "limit",
-                        "quantity" to qty,
-                        "price" to price.toPlainString(),
-                        "id" to idempotencyKey,
-                    )
-                val raw: String =
+        if (!isLive) return "sim-$ticker-$idempotencyKey"
+        val start = System.currentTimeMillis()
+        return try {
+            val body =
+                mapOf(
+                    "portfolio" to alorConfig.portfolio,
+                    "ticker" to ticker,
+                    "exchange" to alorConfig.exchange,
+                    "side" to side,
+                    "type" to "limit",
+                    "quantity" to qty,
+                    "price" to price.toPlainString(),
+                    "id" to idempotencyKey,
+                )
+            val raw: String =
+                resilient {
                     webClient
                         .post()
                         .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/limit")
@@ -127,36 +169,46 @@ class AlorClient(
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
                         .awaitSingle()
-
-                recordLatency("placeLimitOrder", start)
-                val orderNumber =
-                    objectMapper
-                        .readTree(raw)
-                        .path("orderNumber")
-                        .asString()
-                        .ifBlank { null }
-                if (orderNumber != null) {
-                    meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
-                    logger.info { "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$idempotencyKey)" }
                 }
-                orderNumber
-            } catch (e: Exception) {
-                logger.error(e) { "placeLimitOrder failed for $ticker" }
-                meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
-                null
+            recordLatency("placeLimitOrder", start)
+            val orderNumber =
+                objectMapper
+                    .readTree(raw)
+                    .path("orderNumber")
+                    .asString()
+                    .ifBlank { null }
+            if (orderNumber != null) {
+                meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
+                logger.info { "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$idempotencyKey)" }
             }
+            orderNumber
+        } catch (e: WebClientResponseException) {
+            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
+            if (isDefinitiveRejection(e)) {
+                logger.error(e) { "Limit order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
+                null
+            } else {
+                logger.error(e) { "placeLimitOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
+                throw e
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "placeLimitOrder failed for $ticker after retries — delivery UNCERTAIN" }
+            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
+            throw e
         }
     }
 
     /**
-     * Маркет-ордер. Запрещён при спреде > 0.5% (slippage control).
+     * Маркет-ордер (через лимитный по лучшему ask/bid). Запрещён при спреде > 0.5% (slippage control).
+     * Использует тот же [idempotencyKey], что и базовый лимитный ордер.
      */
     suspend fun placeMarketOrder(
         ticker: String,
         side: String,
         qty: Int,
+        idempotencyKey: String,
     ): String? {
-        if (!isLive) return "sim-market-$ticker-${System.currentTimeMillis()}"
+        if (!isLive) return "sim-$ticker-$idempotencyKey"
         val snapshot = getMarketSnapshot(ticker) ?: return null
 
         val spread = spreadPercent(snapshot)
@@ -172,11 +224,71 @@ class AlorClient(
                 "sell" -> snapshot.bid ?: snapshot.currentPrice
                 else -> snapshot.currentPrice
             }
-        val orderId = placeLimitOrder(ticker, side, qty, price)
+        val orderId = placeLimitOrder(ticker, side, qty, price, idempotencyKey)
         if (orderId != null) {
             meterRegistry.counter("alor.order.placed", Tags.of("type", "market", "status", "OK")).increment()
         }
         return orderId
+    }
+
+    /**
+     * State Reconciliation: ищет на бирже реальный ордер по idempotency key
+     * (GET orders по портфелю). Перед ЛЮБЫМ повторным запросом бот обязан
+     * провести эту сверку — см. OrderOutboxService.dispatch.
+     */
+    suspend fun reconcileOrderByIdempotencyKey(
+        idempotencyKey: String,
+        ticker: String,
+        side: String,
+    ): OrderReconciliation {
+        if (!isLive || idempotencyKey.isBlank()) return OrderReconciliation.NotFound
+        return try {
+            val raw: String =
+                resilient {
+                    webClient
+                        .get()
+                        .uri(
+                            "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
+                                "?portfolio=${alorConfig.portfolio}&includeOrders=true",
+                        ).header("Authorization", "Bearer ${getActualToken()}")
+                        .retrieve()
+                        .bodyToMono(String::class.java)
+                        .timeout(Duration.ofSeconds(10))
+                        .awaitSingle()
+                }
+            val root = objectMapper.readTree(raw)
+            val orders = if (root.isArray) root else root.path("orders")
+            for (order in orders) {
+                if (order.path("id").asString() != idempotencyKey) continue
+                val orderTicker = order.path("ticker").asString()
+                val orderSide = order.path("side").asString()
+                if (orderTicker.isNotBlank() && orderTicker != ticker) continue
+                if (orderSide.isNotBlank() && orderSide != side) continue
+                val orderNumber =
+                    order
+                        .path("orderNumber")
+                        .asString()
+                        .ifBlank { order.path("id").asString() }
+                val filledQty =
+                    order
+                        .path("filledQty")
+                        .asInt(0)
+                        .let { if (it == 0) order.path("filledQuantity").asInt(0) else it }
+                val avgPrice =
+                    order.path("filledPrice").asString().toBigDecimalOrNull()
+                        ?: order.path("avgFillPrice").asString().toBigDecimalOrNull()
+                meterRegistry.counter("alor.reconcile", Tags.of("result", "FOUND")).increment()
+                logger.info { "Reconciliation FOUND idem=$idempotencyKey -> order=$orderNumber filled=$filledQty" }
+                return OrderReconciliation.Found(orderNumber, filledQty, avgPrice)
+            }
+            meterRegistry.counter("alor.reconcile", Tags.of("result", "NOT_FOUND")).increment()
+            logger.info { "Reconciliation NOT_FOUND idem=$idempotencyKey (safe to re-send)" }
+            OrderReconciliation.NotFound
+        } catch (e: Exception) {
+            logger.warn(e) { "Reconciliation UNKNOWN for idem=$idempotencyKey (exchange unreachable) — skip re-send" }
+            meterRegistry.counter("alor.reconcile", Tags.of("result", "UNKNOWN")).increment()
+            OrderReconciliation.Unknown
+        }
     }
 
     /**
@@ -187,10 +299,10 @@ class AlorClient(
         expectedPrice: BigDecimal? = null,
     ): OrderExecution? {
         if (!isLive) return null
-        return withRetry(null) {
-            val start = System.currentTimeMillis()
-            try {
-                val raw: String =
+        val start = System.currentTimeMillis()
+        return try {
+            val raw: String =
+                resilient {
                     webClient
                         .get()
                         .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/$orderId?portfolio=${alorConfig.portfolio}")
@@ -199,23 +311,22 @@ class AlorClient(
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
                         .awaitSingle()
-
-                recordLatency("verifyOrder", start)
-                val j = objectMapper.readTree(raw)
-                val execution =
-                    OrderExecution(
-                        status = j.path("status").asString("UNKNOWN"),
-                        filledQuantity = j.path("filledQty").asInt(0),
-                        avgPrice = j.path("filledPrice").asString().toBigDecimalOrNull(),
-                    )
-                if (expectedPrice != null && execution.avgPrice != null) {
-                    recordSlippage(expectedPrice, execution.avgPrice, execution.filledQuantity)
                 }
-                execution
-            } catch (e: Exception) {
-                logger.warn(e) { "verifyOrder failed for $orderId" }
-                null
+            recordLatency("verifyOrder", start)
+            val j = objectMapper.readTree(raw)
+            val execution =
+                OrderExecution(
+                    status = j.path("status").asString("UNKNOWN"),
+                    filledQuantity = j.path("filledQty").asInt(0),
+                    avgPrice = j.path("filledPrice").asString().toBigDecimalOrNull(),
+                )
+            if (expectedPrice != null && execution.avgPrice != null) {
+                recordSlippage(expectedPrice, execution.avgPrice, execution.filledQuantity)
             }
+            execution
+        } catch (e: Exception) {
+            logger.warn(e) { "verifyOrder failed for $orderId" }
+            null
         }
     }
 
@@ -239,33 +350,29 @@ class AlorClient(
         return ask.subtract(bid).divide(ask, 6, RoundingMode.HALF_UP)
     }
 
-    private fun idempotencyKey(
-        ticker: String,
-        side: String,
-        qty: Int,
-        price: BigDecimal,
-    ): String {
-        val raw = "$ticker|$side|$qty|$price|limit|${Instant.now().toEpochMilli()}"
-        val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }.take(32)
-    }
+    /**
+     * Определённый отказ биржи (4xx, кроме 429): ордер не принят — ретраить бессмысленно.
+     * Всё остальное (сеть, таймаут, 5xx, 429) — retryable/UNCERTAIN.
+     */
+    private fun isDefinitiveRejection(t: Throwable): Boolean =
+        t is WebClientResponseException &&
+            t.statusCode.value() in 400..499 &&
+            t.statusCode.value() != 429
 
-    private suspend fun <T> withRetry(
-        ticker: String?,
-        block: suspend () -> T,
-    ): T {
-        var attempt = 0
-        while (true) {
-            try {
-                return block()
-            } catch (e: Exception) {
-                attempt++
-                if (attempt >= 3) throw e
-                val backoff = (1L shl (attempt - 1)) * 1000L
-                logger.warn(e) { "Retrying ($attempt/3) in ${backoff}ms${ticker?.let { " for $it" } ?: ""}" }
-                delay(backoff)
-            }
+    /**
+     * Оборачивает HTTP-вызов в Resilience4j: RateLimiter (внутри, лимит на каждую
+     * попытку) → Retry с exponential backoff + jitter (снаружи). Конфиг — application.yml
+     * (resilience4j.retry.instances.alor / ratelimiter.instances.alor).
+     */
+    private suspend fun <T> resilient(block: suspend () -> T): T {
+        var call: suspend () -> T = block
+        if (alorConfig.rateLimiterEnabled) {
+            call = rateLimiterRegistry.rateLimiter("alor").decorateSuspendFunction { call() }
         }
+        if (alorConfig.retryEnabled) {
+            call = retryRegistry.retry("alor").decorateSuspendFunction { call() }
+        }
+        return call()
     }
 
     private fun recordLatency(

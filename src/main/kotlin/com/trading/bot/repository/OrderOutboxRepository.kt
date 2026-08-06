@@ -23,6 +23,9 @@ class OrderOutboxRepository(
             payloadJson = row.require("payload", String::class.java),
             status = OutboxStatus.valueOf(row.require("status", String::class.java)),
             alorOrderId = row.get("alor_order_id", String::class.java),
+            idempotencyKey = row.get("idempotency_key", String::class.java),
+            retryCount = row.get("retry_count", Int::class.javaObjectType) ?: 0,
+            positionId = row.get("position_id", Long::class.javaObjectType),
             createdAt = row.require("created_at", LocalDateTime::class.java),
             processedAt = row.get("processed_at", LocalDateTime::class.java),
             errorMessage = row.get("error_message", String::class.java),
@@ -32,8 +35,10 @@ class OrderOutboxRepository(
         val id = outbox.id ?: UuidV7.uuid()
         val sql =
             """
-            INSERT INTO order_outbox (id, payload, status, alor_order_id, created_at, processed_at, error_message)
-            VALUES (:id, CAST(:payload AS jsonb), :status, :alorOrderId, :createdAt, :processedAt, :errorMessage)
+            INSERT INTO order_outbox (id, payload, status, alor_order_id, idempotency_key, retry_count,
+                position_id, created_at, processed_at, error_message)
+            VALUES (:id, CAST(:payload AS jsonb), :status, :alorOrderId, :idempotencyKey, :retryCount,
+                :positionId, :createdAt, :processedAt, :errorMessage)
             """.trimIndent()
         databaseClient
             .sql(sql)
@@ -41,6 +46,9 @@ class OrderOutboxRepository(
             .bind("payload", outbox.payloadJson)
             .bind("status", outbox.status.name)
             .bindOrNull("alorOrderId", outbox.alorOrderId)
+            .bindOrNull("idempotencyKey", outbox.idempotencyKey)
+            .bind("retryCount", outbox.retryCount)
+            .bindOrNull("positionId", outbox.positionId)
             .bind("createdAt", outbox.createdAt)
             .bindOrNull("processedAt", outbox.processedAt)
             .bindOrNull("errorMessage", outbox.errorMessage)
@@ -49,21 +57,51 @@ class OrderOutboxRepository(
         return outbox.copy(id = id)
     }
 
-    suspend fun findPendingOlderThan(seconds: Int): List<OrderOutbox> {
+    /**
+     * Строки для (повторной) доставки:
+     * - PENDING старше cutoff (краш между save и dispatch, либо после рестарта);
+     * - FAILED с retry_count < maxRetries и последней попыткой старше cutoff.
+     */
+    suspend fun findRetryable(
+        maxRetries: Int,
+        olderThanSeconds: Int = 30,
+    ): List<OrderOutbox> {
         val sql =
             """
             SELECT * FROM order_outbox
-            WHERE status = 'PENDING' AND created_at < :cutoff
+            WHERE
+                (status = 'PENDING' AND created_at < :cutoff) OR
+                (status = 'FAILED' AND retry_count < :maxRetries AND COALESCE(processed_at, created_at) < :cutoff)
             ORDER BY created_at ASC
             LIMIT 100
             """.trimIndent()
         return databaseClient
             .sql(sql)
-            .bind("cutoff", LocalDateTime.now().minusSeconds(seconds.toLong()))
+            .bind("cutoff", LocalDateTime.now().minusSeconds(olderThanSeconds.toLong()))
+            .bind("maxRetries", maxRetries)
             .map { row, _ -> toOrderOutbox(row) }
             .all()
             .collectList()
             .awaitSingle()
+    }
+
+    /**
+     * Последняя outbox-запись для позиции (для сверки входов/закрытий).
+     */
+    suspend fun findLatestByPositionId(positionId: Long): OrderOutbox? {
+        val sql =
+            """
+            SELECT * FROM order_outbox
+            WHERE payload->>'positionId' = :positionId
+            ORDER BY created_at DESC
+            LIMIT 1
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("positionId", positionId.toString())
+            .map { row, _ -> toOrderOutbox(row) }
+            .one()
+            .awaitSingleOrNull()
     }
 
     suspend fun markSent(
@@ -80,13 +118,18 @@ class OrderOutboxRepository(
             .awaitSingleOrNull()
     }
 
+    /**
+     * Помечает доставку как неудачную и инкрементирует retry_count.
+     * Одна и та же строка может переотправляться (с тем же idempotencyKey),
+     * но не более maxRetries раз — см. [findRetryable].
+     */
     suspend fun markFailed(
         id: UUID,
         error: String,
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'FAILED', processed_at = :now, error_message = :err WHERE id = :id",
+                "UPDATE order_outbox SET status = 'FAILED', processed_at = :now, error_message = :err, retry_count = retry_count + 1 WHERE id = :id",
             ).bind("now", LocalDateTime.now())
             .bind("err", error.take(2000))
             .bind("id", id)

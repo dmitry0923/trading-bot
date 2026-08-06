@@ -42,6 +42,10 @@ class PositionRepository(
             pnl = row.get("pnl", BigDecimal::class.java),
             status = enumValueOf(row.require("status", String::class.java)),
             alorOrderId = row.get("alor_order_id", String::class.java),
+            closeOrderId = row.get("close_order_id", String::class.java),
+            pendingClose = row.get("pending_close", Boolean::class.javaObjectType) ?: false,
+            pendingEntry = row.get("pending_entry", Boolean::class.javaObjectType) ?: false,
+            realizedPnl = row.get("realized_pnl", BigDecimal::class.java) ?: BigDecimal.ZERO,
             closeReason = row.get("close_reason", String::class.java),
             openedAt = row.require("opened_at", LocalDateTime::class.java),
             closedAt = row.get("closed_at", LocalDateTime::class.java),
@@ -83,6 +87,16 @@ class PositionRepository(
         return databaseClient
             .sql(sql)
             .bind("alorOrderId", alorOrderId)
+            .map { row, _ -> toPosition(row) }
+            .one()
+            .awaitSingleOrNull()
+    }
+
+    suspend fun findByCloseOrderId(closeOrderId: String): Position? {
+        val sql = "SELECT * FROM positions WHERE close_order_id = :closeOrderId"
+        return databaseClient
+            .sql(sql)
+            .bind("closeOrderId", closeOrderId)
             .map { row, _ -> toPosition(row) }
             .one()
             .awaitSingleOrNull()
@@ -141,11 +155,11 @@ class PositionRepository(
             INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
                 stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
                 liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
-                alor_order_id, close_reason, opened_at, closed_at)
+                alor_order_id, close_order_id, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
-                :alorOrderId, :closeReason, :openedAt, :closedAt)
+                :alorOrderId, :closeOrderId, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt)
             RETURNING id
             """.trimIndent()
         val id =
@@ -170,6 +184,10 @@ class PositionRepository(
                 .bindOrNull("pnl", position.pnl)
                 .bind("status", position.status.name)
                 .bindOrNull("alorOrderId", position.alorOrderId)
+                .bindOrNull("closeOrderId", position.closeOrderId)
+                .bind("pendingClose", position.pendingClose)
+                .bind("pendingEntry", position.pendingEntry)
+                .bind("realizedPnl", position.realizedPnl)
                 .bindOrNull("closeReason", position.closeReason)
                 .bind("openedAt", position.openedAt)
                 .bindOrNull("closedAt", position.closedAt)
@@ -189,8 +207,9 @@ class PositionRepository(
                 go_per_contract = :goPerContract, margin_used = :marginUsed, liquidation_price = :liquidationPrice,
                 variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
                 trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
-                alor_order_id = :alorOrderId, close_reason = :closeReason, opened_at = :openedAt,
-                closed_at = :closedAt
+                alor_order_id = :alorOrderId, close_order_id = :closeOrderId,
+                pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
+                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt
             WHERE id = :id
             """.trimIndent()
         databaseClient
@@ -214,6 +233,10 @@ class PositionRepository(
             .bindOrNull("pnl", position.pnl)
             .bind("status", position.status.name)
             .bindOrNull("alorOrderId", position.alorOrderId)
+            .bindOrNull("closeOrderId", position.closeOrderId)
+            .bind("pendingClose", position.pendingClose)
+            .bind("pendingEntry", position.pendingEntry)
+            .bind("realizedPnl", position.realizedPnl)
             .bindOrNull("closeReason", position.closeReason)
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)

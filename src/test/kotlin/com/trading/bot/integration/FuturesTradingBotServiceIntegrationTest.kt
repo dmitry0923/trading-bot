@@ -68,8 +68,25 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))
-            Mockito.`when`(alorClient.placeLimitOrder("Si", "buy", 1, BigDecimal("92000"))).thenReturn("ord-limit-1")
-            Mockito.`when`(alorClient.placeMarketOrder("Si", "sell", 1)).thenReturn("ord-market-1")
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-limit-1")
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-market-1")
         }
     }
 
@@ -121,6 +138,15 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             }
 
         // 91986: остаток буфера 1/15 = 6.7% < 10% → CRITICAL → market close
+        runBlocking {
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(
+                        "ord-market-1",
+                        BigDecimal("91986"),
+                    ),
+                ).thenReturn(AlorClient.OrderExecution("FILLED", 1, BigDecimal("91986")))
+        }
         eventPublisher.publishPriceChanged("Si", BigDecimal("91986"))
 
         awaitUntil {
@@ -183,6 +209,11 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "OUTSIDE_HOURS")).count() >= 1.0
         }
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
+    }
+
+    private fun anyBigDecimal(): BigDecimal {
+        Mockito.any(BigDecimal::class.java)
+        return BigDecimal.ZERO
     }
 
     private fun strategy(target: BigDecimal): Strategy =

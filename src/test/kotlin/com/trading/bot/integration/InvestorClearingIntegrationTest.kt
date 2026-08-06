@@ -80,7 +80,22 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("SBER")).thenReturn(BigDecimal("300"))
             Mockito.`when`(alorClient.getLastPrice("GAZP")).thenReturn(BigDecimal("200"))
-            Mockito.`when`(alorClient.placeMarketOrder("SBER", "sell", 10)).thenReturn("ord-close-${System.nanoTime()}")
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-close-${System.nanoTime()}")
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(
+                        Mockito.anyString(),
+                        Mockito.any(BigDecimal::class.java),
+                    ),
+                ).thenAnswer { inv -> AlorClient.OrderExecution("FILLED", 1000, inv.getArgument<BigDecimal>(1)) }
         }
     }
 
@@ -250,7 +265,15 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
     @Test
     fun `force close closes stocks and futures`() {
         runBlocking {
-            Mockito.`when`(alorClient.placeMarketOrder("Si", "sell", 1)).thenReturn("ord-si-${System.nanoTime()}")
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-si-${System.nanoTime()}")
         }
         runBlocking {
             positionRepository.save(

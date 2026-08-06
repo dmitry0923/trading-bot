@@ -52,6 +52,9 @@ alor:
   refresh-token: ${ALOR_REFRESH_TOKEN:}
   portfolio: ${ALOR_PORTFOLIO:D12345}
   exchange: ${ALOR_EXCHANGE:MOEX}
+  retry-enabled: ${ALOR_RETRY_ENABLED:true}
+  rate-limiter-enabled: ${ALOR_RATE_LIMITER_ENABLED:true}
+  max-order-retries: ${ALOR_MAX_ORDER_RETRIES:5}
 
 moex:
   base-url: https://iss.moex.com/iss
@@ -109,6 +112,10 @@ resilience4j:
         limitForPeriod: 60
         limitRefreshPeriod: 60s
         timeoutDuration: 5s
+      alor:
+        limitForPeriod: 10
+        limitRefreshPeriod: 1s
+        timeoutDuration: 3s
   retry:
     instances:
       llm:
@@ -123,6 +130,24 @@ resilience4j:
           - org.springframework.web.reactive.function.client.WebClientResponseException$TooManyRequests
         ignoreExceptions:
           - org.springframework.web.reactive.function.client.WebClientResponseException$BadRequest
+      alor:
+        maxAttempts: 3
+        waitDuration: 500ms
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2.0
+        maxInterval: 8s
+        randomizationFactor: 0.5
+        retryExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$BadRequest
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Unauthorized
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Forbidden
+          - org.springframework.web.reactive.function.client.WebClientResponseException$NotFound
+          - org.springframework.web.reactive.function.client.WebClientResponseException$UnprocessableEntity
 
 trading:
   mode: ${TRADING_MODE:SIMULATION}

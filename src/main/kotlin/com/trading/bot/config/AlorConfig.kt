@@ -12,6 +12,9 @@ import org.springframework.stereotype.Component
  * @property refreshToken refresh-токен для продления доступа
  * @property portfolio номер портфеля
  * @property exchange биржа (по умолчанию MOEX)
+ * @property retryEnabled включать Resilience4j retry (exponential backoff + jitter) для REST-вызовов
+ * @property rateLimiterEnabled включать Resilience4j RateLimiter (защита от 429)
+ * @property maxOrderRetries максимум повторных доставок ордера через outbox (bounded retry)
  */
 @Component
 @ConfigurationProperties(prefix = "alor")
@@ -22,4 +25,7 @@ class AlorConfig {
     var refreshToken: String = ""
     var portfolio: String = "D12345"
     var exchange: String = "MOEX"
+    var retryEnabled: Boolean = true
+    var rateLimiterEnabled: Boolean = true
+    var maxOrderRetries: Int = 5
 }

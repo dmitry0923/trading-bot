@@ -3,6 +3,19 @@ package com.trading.bot.model
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
+/**
+ * Позиция бота.
+ *
+ * Стейт-машина исполнения (защита от double execution / потеря контроля):
+ * - [pendingEntry] — ордер на вход принят биржей или доставка UNCERTAIN:
+ *   позиция создана, но факт исполнения ещё сверяется (см. reconciler).
+ * - [pendingClose] — ордер на закрытие в полёте (доставка через outbox).
+ *   Пока флаг установлен, новый ордер на закрытие НЕ создаётся;
+ *   [closeOrderId] сверяется через verifyOrder, частичное исполнение
+ *   уменьшает [quantity] (дозакрытие остатка следующей итерацией).
+ * - [realizedPnl] — накопленный реализованный P&L по уже закрытым частям
+ *   (partial fills); итоговый [pnl] при полном закрытии = realizedPnl + остаток.
+ */
 data class Position(
     val id: Long? = null,
     var ticker: String,
@@ -24,6 +37,10 @@ data class Position(
     var pnl: BigDecimal? = null,
     var status: PositionStatus = PositionStatus.OPEN,
     var alorOrderId: String? = null,
+    var closeOrderId: String? = null,
+    var pendingClose: Boolean = false,
+    var pendingEntry: Boolean = false,
+    var realizedPnl: BigDecimal = BigDecimal.ZERO,
     var closeReason: String? = null,
     var openedAt: LocalDateTime = LocalDateTime.now(),
     var closedAt: LocalDateTime? = null,

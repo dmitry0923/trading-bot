@@ -14,9 +14,10 @@ import java.math.RoundingMode
  * Правила:
  * 1. riskLevel == CRITICAL → HOLD (детерминированный override)
  * 2. дневной лимит убытка достигнут → HOLD
- * 3. confidence < adaptiveThreshold → HOLD
- * 4. отклонение цены от рыночной > 3% → корректировать targetPrice до рыночной
- * 5. action != HOLD при quantity <= 0 → HOLD
+ * 3. LLM-агент в Shadow/Read-only режиме (серия убытков) → HOLD
+ * 4. confidence < adaptiveThreshold → HOLD
+ * 5. отклонение цены от рыночной > 3% → корректировать targetPrice до рыночной
+ * 6. action != HOLD при quantity <= 0 → HOLD
  */
 @Component
 class Guardrails(
@@ -59,6 +60,7 @@ class Guardrails(
         adaptiveThreshold: Double,
         riskLevel: String = "LOW",
         dailyLossLimitReached: Boolean = false,
+        shadowMode: Boolean = false,
     ): GuardedSignal {
         var current = signal
         val applied = mutableListOf<String>()
@@ -85,6 +87,17 @@ class Guardrails(
                 hold(marketPrice),
                 overridden = true,
                 overrideReason = "DETERMINISTIC: DAILY_LOSS_LIMIT",
+                appliedRules = applied,
+            )
+        }
+
+        if (shadowMode) {
+            recordOverride("SHADOW_MODE")
+            applied += "shadowMode -> HOLD"
+            return GuardedSignal(
+                hold(marketPrice),
+                overridden = true,
+                overrideReason = "DETERMINISTIC: SHADOW_MODE",
                 appliedRules = applied,
             )
         }

@@ -20,6 +20,7 @@ import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.ClearingService
 import com.trading.bot.service.DashboardService
 import com.trading.bot.service.DashboardSseService
+import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.InvestorService
 import com.trading.bot.service.ProfitForecastService
 import com.trading.bot.service.RedisCacheService
@@ -63,6 +64,7 @@ class ApiController(
     private val agentLogRepository: AgentLogRepository,
     private val redisCacheService: RedisCacheService,
     private val riskManagementService: RiskManagementService,
+    private val drawdownProtectionService: DrawdownProtectionService,
     private val strategyService: StrategyService,
     private val tradingBotService: TradingBotService,
     private val settingsService: SettingsService,
@@ -139,6 +141,13 @@ class ApiController(
 
     @GetMapping("/risk/daily-pnl")
     fun getDailyPnl() = mapOf("dailyPnl" to riskManagementService.getDailyPnL())
+
+    /**
+     * Multi-Tier Drawdown Protection: AUM, дневной/скользящие (7д, 30д) лимиты в % от AUM,
+     * серия убытков подряд, Shadow/Read-only режим LLM-агента.
+     */
+    @GetMapping("/risk/drawdown")
+    suspend fun getDrawdownStatus() = drawdownProtectionService.computeStatus()
 
     /**
      * Append-only audit trail позиции (Event Sourcing): события

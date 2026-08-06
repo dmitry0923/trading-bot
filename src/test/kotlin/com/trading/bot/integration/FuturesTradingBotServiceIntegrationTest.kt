@@ -12,6 +12,7 @@ import com.trading.bot.model.Strategy
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DrawdownProtectionService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.runBlocking
@@ -52,6 +53,9 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     lateinit var futuresRiskEngine: FuturesRiskEngine
 
     @Autowired
+    lateinit var drawdownProtection: DrawdownProtectionService
+
+    @Autowired
     lateinit var meterRegistry: MeterRegistry
 
     @MockitoBean
@@ -65,6 +69,8 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         runBlocking { positionRepo.deleteAll() }
         snapshotRepo.deleteAll()
         futuresRiskEngine.resetDailyState()
+        // пересчёт кэша drawdown от пустой БД (сбрасывает stale статус из предыдущего теста)
+        runBlocking { drawdownProtection.computeStatus() }
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))

@@ -13,6 +13,7 @@ import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.Candle
+import com.trading.bot.model.DrawdownStatus
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.RiskContext
@@ -68,6 +69,8 @@ class StrategyService(
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
     private val riskManagement: RiskManagementService,
+    private val drawdownProtection: DrawdownProtectionService,
+    private val volatilityIndexService: VolatilityIndexService,
     private val positionRepo: PositionRepository,
     private val riskConfig: RiskConfig,
     private val redis: RedisCacheService,
@@ -120,6 +123,20 @@ class StrategyService(
         val cycleStart = System.nanoTime()
         try {
             coroutineScope {
+                // Multi-Tier Drawdown Protection + индекс волатильности: пересчёт ОДИН раз за цикл
+                val drawdownStatus =
+                    try {
+                        drawdownProtection.computeStatus()
+                    } catch (e: Exception) {
+                        logger.warn(e) { "Drawdown status compute failed; using neutral state" }
+                        drawdownProtection.cachedOrNeutral()
+                    }
+                try {
+                    volatilityIndexService.refresh()
+                } catch (e: Exception) {
+                    logger.warn(e) { "Volatility index refresh failed" }
+                }
+
                 val feedback =
                     tickers.associateWith { ticker ->
                         async {
@@ -138,7 +155,7 @@ class StrategyService(
                     .map { (ticker, timeframe) ->
                         async {
                             try {
-                                processTicker(ticker, timeframe, cycleId, feedback.getValue(ticker))
+                                processTicker(ticker, timeframe, cycleId, feedback.getValue(ticker), drawdownStatus)
                             } catch (e: Exception) {
                                 logger.error(e) { "Strategy error $ticker/$timeframe" }
                                 meterRegistry.counter("strategy.error", Tags.of("ticker", ticker)).increment()
@@ -183,11 +200,24 @@ class StrategyService(
         timeframe: String,
         cycleId: String,
         feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>,
+        drawdownStatus: DrawdownStatus,
     ) {
         // Локальный adaptive risk — без LLM, проверяем первым
         if (adaptiveRisk.shouldPauseTrading(ticker)) {
             logger.info { "Skipping $ticker — trading paused by adaptive risk" }
             meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker)).increment()
+            return
+        }
+
+        // Hard pause: скользящие лимиты просадки (7/30 дней) и аномальный индекс волатильности
+        if (drawdownStatus.rolling7dBreached || drawdownStatus.rolling30dBreached) {
+            logger.warn { "Skipping $ticker — rolling drawdown limit breached: ${drawdownStatus.reasons}" }
+            meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker, "reason", "ROLLING_DRAWDOWN")).increment()
+            return
+        }
+        if (volatilityIndexService.isVolatilityAnomalous()) {
+            logger.warn { "Skipping $ticker — volatility index pause (RVI)" }
+            meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker, "reason", "VOLATILITY_INDEX")).increment()
             return
         }
 
@@ -220,8 +250,9 @@ class StrategyService(
         val riskContext =
             RiskContext(
                 shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
-                dailyLossLimitReached = riskManagement.isDailyLossLimitReached(),
+                dailyLossLimitReached = riskManagement.isDailyLossLimitReached() || drawdownStatus.dailyLimitBreached,
                 drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
+                shadowMode = drawdownStatus.shadowModeActive,
                 openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
                 maxOpenPositions = riskConfig.maxOpenPositions,
             )

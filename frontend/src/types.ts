@@ -82,6 +82,25 @@ export interface DashboardData {
   timestamp?: string;
 }
 
+export interface DrawdownStatus {
+  aum: number | string;
+  dailyPnlRub: number | string;
+  dailyLimitRub: number | string;
+  dailyLimitBreached: boolean;
+  rolling7dPnlRub: number | string;
+  rolling7dLimitRub: number | string;
+  rolling7dBreached: boolean;
+  rolling30dPnlRub: number | string;
+  rolling30dLimitRub: number | string;
+  rolling30dBreached: boolean;
+  consecutiveLosses: number;
+  maxConsecutiveLosses: number;
+  shadowModeActive: boolean;
+  shadowModeUntil?: string | null;
+  reasons: string[];
+  timestamp?: string;
+}
+
 export interface BacktestResult {
   ticker: string;
   totalReturn: number;
@@ -127,6 +146,14 @@ export interface BotSettings {
   userLeverage: number;
   minLeverage: number;
   maxLeverage: number;
+  maxDailyLossPercent: number;
+  maxRollingLossPercent7d: number;
+  maxRollingLossPercent30d: number;
+  maxConsecutiveLosses: number;
+  shadowModeEnabled: boolean;
+  shadowModeCooldownHours: number;
+  volatilityIndexEnabled: boolean;
+  maxVolatilityIndexPercent: number;
 }
 
 export interface Investor {

@@ -10,6 +10,8 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DrawdownProtectionService
+import com.trading.bot.service.VolatilityIndexService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -43,8 +45,11 @@ class FuturesRiskEngineTest {
         }
     private val positionRepo: PositionRepository = Mockito.mock(PositionRepository::class.java)
     private val dailyRiskRepo: DailyRiskSnapshotRepository = Mockito.mock(DailyRiskSnapshotRepository::class.java)
+    private val drawdownProtection: DrawdownProtectionService = Mockito.mock(DrawdownProtectionService::class.java)
+    private val volatilityIndexService: VolatilityIndexService = Mockito.mock(VolatilityIndexService::class.java)
 
     private fun engine(openGuard: Boolean = true): FuturesRiskEngine {
+        Mockito.`when`(drawdownProtection.effectiveDailyLossLimitRub()).thenReturn(BigDecimal("5000"))
         val guardConfig =
             RiskConfig().apply {
                 if (openGuard) {
@@ -63,6 +68,8 @@ class FuturesRiskEngineTest {
             tradingHoursGuard = TradingHoursGuard(guardConfig),
             instrumentsConfig = instrumentsConfig,
             dailyRiskSnapshotRepo = dailyRiskRepo,
+            drawdownProtection = drawdownProtection,
+            volatilityIndexService = volatilityIndexService,
             meterRegistry = SimpleMeterRegistry(),
         )
     }

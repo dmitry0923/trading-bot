@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component
  *
  * При закрытии позиции:
  *   1. Обновляет дневной P&L в FuturesRiskEngine (dailyPnL = sum(closed P&L за день)).
- *   2. Если dailyPnL <= -5 000 ₽ (10% депозита) → публикует TradingHaltedEvent.
+ *   2. Если dailyPnL <= -max(AUM * pct%, рублёвый floor) → публикует TradingHaltedEvent.
  *
  * Слушатели:
  *   - FuturesTradingBotService перестаёт открывать новые позиции (isDailyLossLimitReached).

@@ -1,5 +1,6 @@
 import React from 'react';
 import { subscribeSse, get } from '../api';
+import DrawdownWidget from '../components/DrawdownWidget';
 import type { DashboardData, Position } from '../types';
 
 function Card({ title, value, color }: { title: string; value: React.ReactNode; color?: string }) {
@@ -77,6 +78,8 @@ export default function DashboardPage() {
         <Card title="Strategies Today" value={data.strategiesToday} />
         <Card title="Open Positions" value={data.openPositionsCount} />
       </div>
+
+      <DrawdownWidget />
 
       {data.pausedTickers && data.pausedTickers.length > 0 && (
         <div style={{ padding: 12, border: '1px solid #ffb74d', background: '#fff8e1', borderRadius: 8, marginBottom: 16 }}>

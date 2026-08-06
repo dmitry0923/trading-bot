@@ -96,4 +96,44 @@ class RiskConfig {
     /** Торговые часы, МСК. Вне окна — вход запрещён. */
     var tradingHoursStart: String = "10:00"
     var tradingHoursEnd: String = "18:30"
+
+    // ===== Multi-Tier Drawdown Protection (% от AUM) =====
+
+    /**
+     * Дневной лимит убытка, % от AUM. Эффективный лимит в рублях:
+     * max(AUM * maxDailyLossPercent / 100, maxDailyLossRub) — масштабируется при
+     * росте/падении капитала, рублёвое значение остаётся абсолютным «полом».
+     * 10.0 = нельзя терять более 10% капитала за день. <= 0 → только рублёвый лимит.
+     */
+    var maxDailyLossPercent: Double = 10.0
+
+    /** Скользящий лимит убытка за 7 дней, % от AUM (защита от «смерти от тысячи порезов»). */
+    var maxRollingLossPercent7d: Double = 15.0
+
+    /** Скользящий лимит убытка за 30 дней, % от AUM. */
+    var maxRollingLossPercent30d: Double = 25.0
+
+    /**
+     * Лимит серии убыточных сделок подряд. При достижении LLM-агент переводится
+     * в режим Shadow/Read-only (новые входы заблокированы) до появления прибыльной
+     * сделки, но не менее [shadowModeCooldownHours].
+     */
+    var maxConsecutiveLosses: Int = 3
+
+    /** Включён ли Shadow/Read-only режим для LLM-агента при серии убытков. */
+    var shadowModeEnabled: Boolean = true
+
+    /** Минимальная длительность Shadow/Read-only режима, часы. */
+    var shadowModeCooldownHours: Long = 24
+
+    // ===== Volatility index filter (MOEX RVI) =====
+
+    /** Включён ли фильтр по индексу волатильности MOEX (RVI). */
+    var volatilityIndexEnabled: Boolean = true
+
+    /** Тикер индекса волатильности на MOEX ISS. */
+    var volatilityIndexTicker: String = "RVI"
+
+    /** Уровень индекса волатильности (%), выше которого торговля ставится на паузу. */
+    var maxVolatilityIndexPercent: Double = 50.0
 }

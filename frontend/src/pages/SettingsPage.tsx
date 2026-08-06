@@ -76,7 +76,9 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
     />
   );
 
-  const bool = (key: 'tradingEnabled' | 'riskEnabled' | 'trailingStopEnabled' | 'leverageEnabled' | 'forceCloseEnabled') => (
+  const bool = (
+    key: 'tradingEnabled' | 'riskEnabled' | 'trailingStopEnabled' | 'leverageEnabled' | 'forceCloseEnabled' | 'shadowModeEnabled' | 'volatilityIndexEnabled'
+  ) => (
     <input type="checkbox" checked={form[key]} disabled={!canEdit} onChange={e => update(key, e.target.checked)} />
   );
 
@@ -161,6 +163,44 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
           <label style={row}>
             Trading Hours End (МСК)
             <input type="time" value={form.tradingHoursEnd} disabled={!canEdit} onChange={e => update('tradingHoursEnd', e.target.value)} />
+          </label>
+        </Section>
+
+        <Section title="Multi-Tier Drawdown Protection (% от AUM)">
+          <label style={row}>
+            Max Daily Loss (% AUM)
+            {num('maxDailyLossPercent', '0.1')}
+          </label>
+          <label style={row}>
+            Max Rolling Loss 7d (% AUM)
+            {num('maxRollingLossPercent7d', '0.1')}
+          </label>
+          <label style={row}>
+            Max Rolling Loss 30d (% AUM)
+            {num('maxRollingLossPercent30d', '0.1')}
+          </label>
+          <label style={row}>
+            Max Consecutive Losses
+            {num('maxConsecutiveLosses')}
+          </label>
+          <label style={row}>
+            Shadow Mode Enabled
+            {bool('shadowModeEnabled')}
+          </label>
+          <label style={row}>
+            Shadow Mode Cooldown (h)
+            {num('shadowModeCooldownHours')}
+          </label>
+        </Section>
+
+        <Section title="Volatility Index Filter (MOEX RVI)">
+          <label style={row}>
+            Enabled
+            {bool('volatilityIndexEnabled')}
+          </label>
+          <label style={row}>
+            Max Volatility Index (%)
+            {num('maxVolatilityIndexPercent', '1')}
           </label>
         </Section>
 

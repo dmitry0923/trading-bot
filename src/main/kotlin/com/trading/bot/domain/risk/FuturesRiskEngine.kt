@@ -10,6 +10,8 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DrawdownProtectionService
+import com.trading.bot.service.VolatilityIndexService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -24,16 +26,19 @@ import java.time.ZoneId
 /**
  * Риск-движок для фьючерсов (Si). Risk-first: любое действие сначала проходит через него.
  *
- * Депозит 50 000 ₽. Дневной лимит убытка 10% = 5 000 ₽ (risk.max-daily-loss-rub).
- * Максимум 1 открытая позиция. Плечо 2x (LeverageConfig).
+ * Депозит 50 000 ₽. Дневной лимит убытка = max(AUM * 10%, рублёвый floor)
+ * (risk.max-daily-loss-percent / risk.max-daily-loss-rub). Максимум 1 открытая позиция.
+ * Плечо 2x (LeverageConfig).
  *
  * Порядок проверок перед входом (все обязательны):
  *   1. Сброс daily-состояния при смене дня (с восстановлением из daily_risk_snapshot).
  *   2. Trading hours (10:00–18:30 МСК) → OUTSIDE_HOURS.
  *   3. Daily loss limit → DAILY_LIMIT.
- *   4. Уже есть открытая позиция (max 1) → MAX_POSITIONS.
- *   5. Расчёт размера позиции через FuturesPositionSizer → quantity == 0 → запрет.
- *   6. marginRequired <= portfolioMoney * maxMarginUsagePercent (30%) → INSUFFICIENT_MARGIN.
+ *   4. Multi-Tier Drawdown Protection (7d/30d rolling, Shadow/Read-only) → DRAWDOWN_PROTECTION.
+ *   5. Аномальный индекс волатильности MOEX (RVI) → VOLATILITY_INDEX.
+ *   6. Уже есть открытая позиция (max 1) → MAX_POSITIONS.
+ *   7. Расчёт размера позиции через FuturesPositionSizer → quantity == 0 → запрет.
+ *   8. marginRequired <= portfolioMoney * maxMarginUsagePercent (30%) → INSUFFICIENT_MARGIN.
  *
  * Guardrails во время удержания:
  *   - checkLiquidationDistance: остаточный буфер маржи < 25% → WARNING, < 10% → CRITICAL.
@@ -48,6 +53,8 @@ class FuturesRiskEngine(
     private val tradingHoursGuard: TradingHoursGuard,
     private val instrumentsConfig: InstrumentsConfig,
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
+    private val drawdownProtection: DrawdownProtectionService,
+    private val volatilityIndexService: VolatilityIndexService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -89,6 +96,8 @@ class FuturesRiskEngine(
         if (!leverageConfig.enabled) return reject("LEVERAGE_DISABLED")
         if (!tradingHoursGuard.isTradingAllowed()) return reject("OUTSIDE_HOURS")
         if (dailyLossLimitReached) return reject("DAILY_LIMIT")
+        if (drawdownProtection.isEntryBlocked()) return reject("DRAWDOWN_PROTECTION")
+        if (volatilityIndexService.isVolatilityAnomalous()) return reject("VOLATILITY_INDEX")
 
         val open = positionRepo.findByStatus(PositionStatus.OPEN)
         if (open.size >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
@@ -173,8 +182,8 @@ class FuturesRiskEngine(
     // ===================== Daily P&L =====================
 
     /**
-     * Обновляет дневной P&L (закрытая сделка). При dailyPnL <= -5000 → dailyLossLimitReached = true.
-     * Состояние персистится в daily_risk_snapshot.
+     * Обновляет дневной P&L (закрытая сделка). При dailyPnL <= -max(AUM*pct%, рублёвый floor)
+     * → dailyLossLimitReached = true. Состояние персистится в daily_risk_snapshot.
      */
     fun updateDailyPnL(pnl: BigDecimal) {
         resetDailyStateIfNewDay()
@@ -182,9 +191,10 @@ class FuturesRiskEngine(
         if (dailyPnL < maxDrawdownToday) {
             maxDrawdownToday = dailyPnL
         }
-        if (dailyPnL <= riskConfig.maxDailyLossRub.negate()) {
+        val dailyLimit = drawdownProtection.effectiveDailyLossLimitRub()
+        if (dailyPnL <= dailyLimit.negate()) {
             dailyLossLimitReached = true
-            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -${riskConfig.maxDailyLossRub}" }
+            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
         }
         persistDailyState()
         meterRegistry.gauge("risk.daily.pnl", dailyPnL.toDouble())
@@ -194,7 +204,7 @@ class FuturesRiskEngine(
     /**
      * Достигнут ли дневной лимит убытка.
      *
-     * @return true, если dailyPnL <= -maxDailyLossRub
+     * @return true, если dailyPnL <= -max(AUM*pct%, рублёвый floor)
      */
     fun isDailyLossLimitReached(): Boolean {
         resetDailyStateIfNewDay()

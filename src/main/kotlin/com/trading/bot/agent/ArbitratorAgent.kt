@@ -23,7 +23,8 @@ import java.math.BigDecimal
  * Арбитр (Agent-5) — финальное решение о сделке.
  *
  * - Детерминированные overrides ДО LLM: CRITICAL challenge, пауза риск-менеджера,
- *   дневной лимит убытка, HOLD стратега, низкая уверенность draft
+ *   дневной лимит убытка, Shadow/Read-only режим (серия убытков), HOLD стратега,
+ *   низкая уверенность draft
  * - Вызов LLM с контекстом памяти о последних сделках (memoryBlock)
  * - Пост-обработка через Guardrails (адаптивный порог, риск-уровень, лимит убытка)
  * - Кэширует результат по сигналу + риску (SemanticCache)
@@ -110,6 +111,21 @@ class ArbitratorAgent(
                 meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "DAILY_LOSS_LIMIT")).increment()
                 return@coroutineScope logAndReturn(
                     hold(snapshot.currentPrice, "Daily loss limit reached", "DETERMINISTIC: DAILY_LOSS_LIMIT"),
+                    snapshot.ticker,
+                    cycleId,
+                    start,
+                    "{}",
+                )
+            }
+
+            if (riskContext.shadowMode) {
+                meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "SHADOW_MODE")).increment()
+                return@coroutineScope logAndReturn(
+                    hold(
+                        snapshot.currentPrice,
+                        "LLM agent in SHADOW/READ-ONLY mode (consecutive losses); decision logged, not executed",
+                        "DETERMINISTIC: SHADOW_MODE",
+                    ),
                     snapshot.ticker,
                     cycleId,
                     start,
@@ -215,6 +231,7 @@ class ArbitratorAgent(
                     adaptiveThreshold = adaptiveConfidence,
                     riskLevel = challenge.riskLevel,
                     dailyLossLimitReached = riskContext.dailyLossLimitReached,
+                    shadowMode = riskContext.shadowMode,
                 )
 
             val finalDec =

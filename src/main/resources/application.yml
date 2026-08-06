@@ -295,6 +295,17 @@ risk:
   max-contracts-per-position: 1
   trading-hours-start: "10:00"
   trading-hours-end: "18:30"
+  # Multi-Tier Drawdown Protection (% от AUM)
+  max-daily-loss-percent: 10.0
+  max-rolling-loss-7d-percent: 15.0
+  max-rolling-loss-30d-percent: 25.0
+  max-consecutive-losses: 3
+  shadow-mode-enabled: true
+  shadow-mode-cooldown-hours: 24
+  # Volatility index filter (MOEX RVI)
+  volatility-index-enabled: true
+  volatility-index-ticker: "RVI"
+  max-volatility-index-percent: 50.0
   sectors:
     Si: FX
     SBER: FINANCE

@@ -90,5 +90,14 @@ class SettingsService(
         leverageConfig.userLeverage = BigDecimal(s.userLeverage)
         leverageConfig.minLeverage = BigDecimal(s.minLeverage)
         leverageConfig.maxLeverage = BigDecimal(s.maxLeverage)
+
+        riskConfig.maxDailyLossPercent = s.maxDailyLossPercent
+        riskConfig.maxRollingLossPercent7d = s.maxRollingLossPercent7d
+        riskConfig.maxRollingLossPercent30d = s.maxRollingLossPercent30d
+        riskConfig.maxConsecutiveLosses = s.maxConsecutiveLosses
+        riskConfig.shadowModeEnabled = s.shadowModeEnabled
+        riskConfig.shadowModeCooldownHours = s.shadowModeCooldownHours
+        riskConfig.volatilityIndexEnabled = s.volatilityIndexEnabled
+        riskConfig.maxVolatilityIndexPercent = s.maxVolatilityIndexPercent
     }
 }

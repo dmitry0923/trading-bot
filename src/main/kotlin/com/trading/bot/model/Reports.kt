@@ -69,6 +69,14 @@ data class BotSettings(
     val userLeverage: Double = 2.0,
     val minLeverage: Double = 1.0,
     val maxLeverage: Double = 3.0,
+    val maxDailyLossPercent: Double = 10.0,
+    val maxRollingLossPercent7d: Double = 15.0,
+    val maxRollingLossPercent30d: Double = 25.0,
+    val maxConsecutiveLosses: Int = 3,
+    val shadowModeEnabled: Boolean = true,
+    val shadowModeCooldownHours: Long = 24,
+    val volatilityIndexEnabled: Boolean = true,
+    val maxVolatilityIndexPercent: Double = 50.0,
 ) {
     fun llmProvider(): com.trading.bot.config.LlmProvider? =
         runCatching {

@@ -27,6 +27,7 @@ import java.time.ZoneId
 class RiskManagementService(
     private val riskConfig: RiskConfig,
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
+    private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -39,7 +40,7 @@ class RiskManagementService(
     /**
      * Проверяет, достигнут ли дневной лимит убытка.
      *
-     * @return true, если дневной P&L <= -maxDailyLossRub
+     * @return true, если дневной P&L <= -effectiveDailyLossLimitRub (max(AUM*pct%, рублёвый floor))
      */
     fun isDailyLossLimitReached(): Boolean {
         resetDailyStateIfNewDay()
@@ -57,8 +58,11 @@ class RiskManagementService(
         strategy: Strategy,
         openPositions: List<Position>,
     ): RiskCheckResult {
+        if (riskConfig.enabled && drawdownProtection.isEntryBlocked()) {
+            return RiskCheckResult(false, "Drawdown protection blocked entry: ${drawdownProtection.entryBlockReason()}", 0)
+        }
         if (riskConfig.enabled && isDailyLossLimitReached()) {
-            return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${riskConfig.maxDailyLossRub})", 0)
+            return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${drawdownProtection.effectiveDailyLossLimitRub()})", 0)
         }
         if (riskConfig.enabled && openPositions.size >= riskConfig.maxOpenPositions) {
             return RiskCheckResult(false, "Max open positions reached (${riskConfig.maxOpenPositions})", 0)
@@ -293,9 +297,10 @@ class RiskManagementService(
         resetDailyStateIfNewDay()
         dailyPnL = dailyPnL.add(pnl)
         if (dailyPnL < maxDrawdownToday) maxDrawdownToday = dailyPnL
-        if (dailyPnL <= riskConfig.maxDailyLossRub.negate()) {
+        val dailyLimit = drawdownProtection.effectiveDailyLossLimitRub()
+        if (dailyPnL <= dailyLimit.negate()) {
             dailyLossLimitReached = true
-            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -${riskConfig.maxDailyLossRub}" }
+            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
         }
         persistDailyState()
     }

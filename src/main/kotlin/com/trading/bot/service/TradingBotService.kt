@@ -61,6 +61,8 @@ class TradingBotService(
     private val redis: RedisCacheService,
     private val risk: RiskManagementService,
     private val adaptiveRisk: AdaptiveRiskService,
+    private val drawdownProtection: DrawdownProtectionService,
+    private val volatilityIndexService: VolatilityIndexService,
     private val positionRepo: PositionRepository,
     private val orderOutboxRepo: OrderOutboxRepository,
     private val alorConfig: AlorConfig,
@@ -159,6 +161,14 @@ class TradingBotService(
             try {
                 if (risk.isDailyLossLimitReached()) {
                     logger.warn { "Daily loss limit reached, skip entry ${strat.ticker}" }
+                    return@launch
+                }
+                if (drawdownProtection.isEntryBlocked()) {
+                    logger.warn { "Drawdown protection, skip entry ${strat.ticker}: ${drawdownProtection.entryBlockReason()}" }
+                    return@launch
+                }
+                if (volatilityIndexService.isVolatilityAnomalous()) {
+                    logger.warn { "Volatility index pause, skip entry ${strat.ticker}" }
                     return@launch
                 }
                 val open = positionRepo.findByStatus(PositionStatus.OPEN)

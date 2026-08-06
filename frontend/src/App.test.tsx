@@ -34,11 +34,37 @@ const SETTINGS = {
   llmApiKey: '',
   timeframes: ['MINUTE_10', 'HOUR_1'],
   forceCloseEnabled: true,
-  forceCloseTime: '23:50'
+  forceCloseTime: '23:50',
+  maxDailyLossPercent: 10,
+  maxRollingLossPercent7d: 15,
+  maxRollingLossPercent30d: 25,
+  maxConsecutiveLosses: 3,
+  shadowModeEnabled: true,
+  shadowModeCooldownHours: 24,
+  volatilityIndexEnabled: true,
+  maxVolatilityIndexPercent: 50
 };
 
 const PROVIDERS = { providers: ['ROUTER_AI'], active: 'ROUTER_AI', model: '', default: 'ROUTER_AI' };
 const STATUS = { tradingEnabled: true, tradingMode: 'SIMULATION', forceCloseEnabled: true, forceCloseTime: '23:50', openPositions: 2 };
+const DRAWDOWN = {
+  aum: 50000,
+  dailyPnlRub: -1200,
+  dailyLimitRub: 5000,
+  dailyLimitBreached: false,
+  rolling7dPnlRub: -3000,
+  rolling7dLimitRub: 7500,
+  rolling7dBreached: false,
+  rolling30dPnlRub: -4000,
+  rolling30dLimitRub: 12500,
+  rolling30dBreached: false,
+  consecutiveLosses: 1,
+  maxConsecutiveLosses: 3,
+  shadowModeActive: false,
+  shadowModeUntil: null,
+  reasons: [],
+  timestamp: '2026-01-01T00:00:00Z'
+};
 
 let currentUser = { username: 'tester', roles: ['ROLE_ADMIN'] };
 
@@ -49,6 +75,7 @@ const mockFetch = vi.fn(async (input: RequestInfo | URL) => {
   if (url.includes('/api/v1/settings')) return json(SETTINGS);
   if (url.includes('/api/v1/llm/providers')) return json(PROVIDERS);
   if (url.includes('/api/v1/trading/status')) return json(STATUS);
+  if (url.includes('/api/v1/risk/drawdown')) return json(DRAWDOWN);
   return json({});
 });
 

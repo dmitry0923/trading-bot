@@ -19,14 +19,18 @@ import java.time.ZoneId
  */
 class RiskManagementServiceDailyPnLTest {
     private val repo = Mockito.mock(DailyRiskSnapshotRepository::class.java)
+    private val drawdownProtection = Mockito.mock(DrawdownProtectionService::class.java)
     private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
-    private fun service(maxDailyLoss: BigDecimal): RiskManagementService =
-        RiskManagementService(
+    private fun service(maxDailyLoss: BigDecimal): RiskManagementService {
+        Mockito.`when`(drawdownProtection.effectiveDailyLossLimitRub()).thenReturn(maxDailyLoss)
+        return RiskManagementService(
             RiskConfig().apply { maxDailyLossRub = maxDailyLoss },
             repo,
+            drawdownProtection,
             SimpleMeterRegistry(),
         )
+    }
 
     @Test
     fun `daily pnl accumulates closed trades`() {

@@ -121,6 +121,20 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /**
+     * Все закрытые позиции (включая фьючерсы) в порядке закрытия — источник данных
+     * для Multi-Tier Drawdown Protection (AUM, дневной/скользящие лимиты, серия убытков).
+     */
+    suspend fun findClosed(): List<Position> {
+        val sql = "SELECT * FROM positions WHERE status != 'OPEN' ORDER BY closed_at DESC"
+        return databaseClient
+            .sql(sql)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     suspend fun findClosedByTickerSince(
         ticker: String,
         since: LocalDateTime,

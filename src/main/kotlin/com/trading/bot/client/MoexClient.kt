@@ -150,6 +150,48 @@ class MoexClient(
         ticker: String,
     ): List<Candle> = parseCandlesAll(raw, ticker).takeLast(500)
 
+    /**
+     * Текущее значение индекса волатильности MOEX (по умолчанию RVI) из ISS.
+     *
+     * Используется фильтром волатильности [com.trading.bot.service.VolatilityIndexService]:
+     * при аномальном скачке индекса торговля ставится на паузу. Значение — последняя
+     * зафиксированная цена индекса (пунктов волатильности, для RVI — процентная волатильность).
+     *
+     * @param ticker тикер индекса волатильности (по умолчанию "RVI")
+     * @return последнее значение индекса или null при недоступности/ошибке парсинга
+     */
+    suspend fun getVolatilityIndex(ticker: String = "RVI"): BigDecimal? =
+        try {
+            val url = "$baseUrl/engines/stock/markets/index/securities/$ticker.json?iss.meta=off&iss.only=marketdata"
+            val raw: String =
+                webClient
+                    .get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
+            parseLastPrice(raw)
+        } catch (e: Exception) {
+            logger.warn(e) { "MOEX volatility index request failed for $ticker" }
+            null
+        }
+
+    /**
+     * Извлекает последнюю цену (столбец LAST) из блока marketdata ответа ISS.
+     */
+    private fun parseLastPrice(raw: String): BigDecimal? {
+        val marketdata = objectMapper.readTree(raw).path("marketdata")
+        val columns = marketdata.path("columns").map { it.asString() }
+        val lastIdx = columns.indexOf("LAST")
+        if (lastIdx < 0) return null
+        val firstRow = marketdata.path("data").path(0) ?: return null
+        if (!firstRow.isArray || firstRow.isEmpty) return null
+        val value = firstRow.get(lastIdx)
+        if (value == null || value.isNull || value.asString().isBlank()) return null
+        return value.asString().toBigDecimalOrNull()
+    }
+
     private fun parseCandlesAll(
         raw: String,
         ticker: String,

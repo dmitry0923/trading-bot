@@ -16,8 +16,10 @@ import kotlin.math.sqrt
 /**
  * Адаптивный риск-менеджмент на основе статистики сделок (Kelly).
  *
- * - calculateOptimalPositionSize(): размер позиции по критерию Келли (cap 50%, floor 0)
- *   + volatility targeting (размер зависит от ATR%) + drawdown degradation
+ * - calculateOptimalPositionSize(): размер позиции по критерию Келли с робастной
+ *   статистикой (Wilson lower bound win rate, минимум сделок, консервативный fallback),
+ *   volatility targeting по ДНЕВНОЙ волатильности (realized-vol / ATR%) и непрерывной
+ *   деградацией по глубине просадки от пика AUM
  * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
  * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
  * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
@@ -30,6 +32,7 @@ class AdaptiveRiskService(
     private val tradeAnalysisService: TradeAnalysisService,
     private val positionRepo: PositionRepository,
     private val candleCache: CandleCacheService,
+    private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -137,16 +140,22 @@ class AdaptiveRiskService(
     /**
      * Оптимальный размер позиции по критерию Келли для тикера.
      *
-     * К порядку расчёта добавляются:
-     * 1. Kelly (quarter/half доля) -> базовый размер от депозита;
-     * 2. Volatility targeting: множитель = volatilityTargetPercent / atrPercent,
-     *    ограниченный [minVolatilitySizeMultiplier, maxVolatilitySizeMultiplier]. Высокая
-     *    волатильность инструмента режет размер, низкая — (умеренно) увеличивает;
-     * 3. Drawdown degradation: при режиме восстановления после просадки размер ещё
-     *    умножается на kellyDrawdownReduction (обычно 0.5).
+     * Порядок расчёта:
+     * 1. Kelly (fraction = Quarter/Half) -> базовый размер от депозита.
+     *    Статистика робастная: win rate заменяется Wilson lower bound (шринкейдж
+     *    при малой выборке), минимум сделок [RiskConfig.kellyMinTrades], при
+     *    недостатке данных — консервативная доля [RiskConfig.kellyNoDataFraction]
+     *    вместо 100% депозита. Кап — [RiskConfig.kellyMaxPositionFraction] (50%).
+     * 2. Volatility targeting (ДНЕВНОЙ горизонт): множитель =
+     *    volatilityTargetPercent / dailyVolPercent, где dailyVolPercent — realized
+     *    volatility (stddev лог-доходностей по DAY_1) либо дневной эквивалент
+     *    ATR (10-мин ATR% * sqrt(свечей в дне)). Высокая волатильность режет
+     *    размер, низкая — (в пределах clamp) увеличивает. Без данных — нейтрально.
+     * 3. Drawdown degradation: непрерывный множитель по глубине просадки от пика
+     *    AUM (drawdownScaleTiers) плюс fallback-множитель при серии убытков подряд.
      *
      * @param ticker тикер инструмента
-     * @param atr текущее значение ATR (если null — берётся из свечного кэша)
+     * @param atr дневной ATR (если null — берётся/масштабируется из кэша свечей)
      * @param currentPrice текущая цена (если null — последнее закрытие из кэша)
      * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
      */
@@ -155,55 +164,154 @@ class AdaptiveRiskService(
         atr: BigDecimal? = null,
         currentPrice: BigDecimal? = null,
     ): BigDecimal {
-        val resolvedAtr = atr ?: resolveAtr(ticker)
-        val resolvedPrice = currentPrice ?: resolvePrice(ticker)
-
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
         val base =
-            if (stats == null || stats.totalTrades < 5) {
-                riskConfig.maxPositionRub
+            if (stats == null || stats.totalTrades < riskConfig.kellyMinTrades) {
+                riskConfig.maxPositionRub.multiply(BigDecimal(riskConfig.kellyNoDataFraction.toString()))
             } else {
-                val w = stats.winRate
+                val w = wilsonLowerBound(stats.winRate, stats.totalTrades, riskConfig.kellyWilsonZ)
                 val avgLossAbs = kotlin.math.abs(stats.avgLoss.toDouble()).coerceAtLeast(0.01)
                 val r = stats.avgWin.toDouble() / avgLossAbs
                 val kelly = (w * r - (1 - w)) / r
 
-                // Классический (Full) Kelly слишком агрессивен: применяем долю
-                // riskConfig.kellyFraction (Quarter-Kelly по умолчанию 0.25) и кап 50%.
-                val safeKelly = (kelly * riskConfig.kellyFraction).coerceAtMost(0.50).coerceAtLeast(0.0)
+                // Дробный (Quarter/Half) Kelly с жёстким капом от депозита.
+                val safeKelly =
+                    (kelly * riskConfig.kellyFraction)
+                        .coerceIn(0.0, riskConfig.kellyMaxPositionFraction)
                 if (safeKelly > 0) riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly)) else BigDecimal.ZERO
             }
 
         var size = base
 
-        // Volatility targeting: множитель центральности к целевой волатильности (ATR%).
-        var volMultiplier: Double? = null
-        if (resolvedAtr != null && resolvedAtr > BigDecimal.ZERO && resolvedPrice != null && resolvedPrice > BigDecimal.ZERO) {
-            val atrPercent =
-                resolvedAtr
-                    .multiply(BigDecimal("100"))
-                    .divide(resolvedPrice, 4, RoundingMode.HALF_UP)
-                    .toDouble()
-            volMultiplier =
-                (riskConfig.volatilityTargetPercent / atrPercent)
-                    .coerceIn(riskConfig.minVolatilitySizeMultiplier, riskConfig.maxVolatilitySizeMultiplier)
+        // Volatility targeting: размер обратно пропорционален дневной волатильности.
+        val resolvedAtr = atr ?: resolveAtr(ticker)
+        val resolvedPrice = currentPrice ?: resolvePrice(ticker)
+        val volMultiplier = resolveVolatilityMultiplier(ticker, resolvedAtr, resolvedPrice)
+        if (volMultiplier != null) {
             size = size.multiply(BigDecimal(volMultiplier))
         }
 
-        // Drawdown degradation: при восстановлении после просадки режем размер ещё раз.
-        var drawdownReduced = false
-        if (isInDrawdownRecovery()) {
-            drawdownReduced = true
-            size = size.multiply(BigDecimal(riskConfig.kellyDrawdownReduction))
-        }
+        // Drawdown degradation: непрерывный множитель по глубине просадки + серия убытков.
+        val drawdownFactor = drawdownScaleMultiplier().coerceAtMost(recoveryReductionFactor())
+        size = size.multiply(BigDecimal(drawdownFactor))
 
         val finalSize = size.coerceAtLeast(BigDecimal.ZERO)
         meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), finalSize.toDouble())
         logger.info {
-            "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, drawdownReduced=$drawdownReduced)"
+            "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, drawdownFactor=$drawdownFactor)"
         }
         return finalSize
     }
+
+    /**
+     * Wilson lower bound для win rate — консервативный шринкейдж при малой выборке.
+     *
+     * p_lower = (p + z²/2n - z*sqrt((p(1-p) + z²/4n)/n)) / (1 + z²/n)
+     *
+     * Защита от «галлюцинирующего» Kelly: win rate из 5-15 сделок завышен,
+     * нижняя граница интервала приближает его к 50% при n -> мал.
+     *
+     * @param p сырой win rate (0..1)
+     * @param n количество сделок
+     * @param z z-score (1.0 = ~84% односторонний интервал)
+     * @return нижняя граница Wilson-интервала (0..1)
+     */
+    private fun wilsonLowerBound(
+        p: Double,
+        n: Int,
+        z: Double,
+    ): Double {
+        if (n <= 0) return 0.0
+        val pNorm = p.coerceIn(0.0, 1.0)
+        val z2 = z * z
+        val center = pNorm + z2 / (2 * n)
+        val margin = z * sqrt((pNorm * (1 - pNorm) + z2 / (4 * n)) / n)
+        return (center - margin) / (1 + z2 / n)
+    }
+
+    /**
+     * Множитель volatility targeting по дневной волатильности.
+     *
+     * 1. Явные atr/price (например из теста или дневного ATR): множитель =
+     *    target / atrPercent, где atrPercent = atr/price*100.
+     * 2. Иначе дневная realized volatility (DAY_1 свечи).
+     * 3. Fallback: внутридневная волатильность, масштабированная к дневной
+     *    sqrt(свечей в сессии).
+     * 4. Нет данных -> null (нейтрально, позиция не раздувается).
+     *
+     * @return множитель или null, если волатильность неизвестна
+     */
+    private fun resolveVolatilityMultiplier(
+        ticker: String,
+        atr: BigDecimal?,
+        currentPrice: BigDecimal?,
+    ): Double? {
+        if (atr != null && atr > BigDecimal.ZERO && currentPrice != null && currentPrice > BigDecimal.ZERO) {
+            val atrPercent =
+                atr
+                    .multiply(BigDecimal("100"))
+                    .divide(currentPrice, 4, RoundingMode.HALF_UP)
+                    .toDouble()
+            return (riskConfig.volatilityTargetPercent / atrPercent)
+                .coerceIn(riskConfig.minVolatilitySizeMultiplier, riskConfig.maxVolatilitySizeMultiplier)
+        }
+
+        val dailyVolPercent = resolveDailyVolPercent(ticker)
+        if (dailyVolPercent != null && dailyVolPercent > 0.0) {
+            return (riskConfig.volatilityTargetPercent / dailyVolPercent)
+                .coerceIn(riskConfig.minVolatilitySizeMultiplier, riskConfig.maxVolatilitySizeMultiplier)
+        }
+        return null
+    }
+
+    /**
+     * Дневная волатильность в % (realized vol по DAY_1 свечам).
+     *
+     * Fallback при отсутствии дневных свечей: внутридневная волатильность
+     * (ATR% или realized vol с MINUTE_10), масштабированная к дневному горизонту
+     * sqrt(свечей в сессии). null — если данных нет вовсе.
+     */
+    private fun resolveDailyVolPercent(ticker: String): Double? {
+        candleCache.calculateRealizedVolatility(ticker, "DAY_1", riskConfig.volatilityLookbackDays)?.let { return it }
+
+        val n = riskConfig.volatilityFallbackCandlesPerDay.coerceAtLeast(1)
+        val atr = resolveAtr(ticker)
+        val price = resolvePrice(ticker)
+        if (atr != null && price != null && atr > BigDecimal.ZERO && price > BigDecimal.ZERO) {
+            val atrPercent =
+                atr
+                    .multiply(BigDecimal("100"))
+                    .divide(price, 4, RoundingMode.HALF_UP)
+                    .toDouble()
+            return atrPercent * sqrt(n.toDouble())
+        }
+        val intradayVol = candleCache.calculateRealizedVolatility(ticker, "MINUTE_10", riskConfig.volatilityLookbackDays)
+        if (intradayVol != null) {
+            return intradayVol * sqrt(n.toDouble())
+        }
+        return null
+    }
+
+    /**
+     * Множитель Kelly по глубине просадки от пика AUM (непрерывная деградация).
+     *
+     * Берётся ближайший не превышающий просадку tier из [RiskConfig.drawdownScaleTiers]:
+     * просадка 0% -> 1.0, 3% -> 0.75, 6% -> 0.5, 10% -> 0.25, 15% -> 0.0.
+     */
+    private fun drawdownScaleMultiplier(): Double {
+        val drawdownPercent = drawdownProtection.cachedOrNeutral().drawdownPercent
+        var factor = 1.0
+        for ((tier, scale) in riskConfig.drawdownScaleTiers) {
+            if (drawdownPercent >= tier) factor = scale
+        }
+        return factor.coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * Fallback-множитель при drawdown-recovery: серия убыточных сделок подряд
+     * режет размер на [RiskConfig.kellyDrawdownReduction].
+     */
+    private suspend fun recoveryReductionFactor(): Double = if (isInDrawdownRecovery()) riskConfig.kellyDrawdownReduction else 1.0
 
     /**
      * Текущее ATR тикера из кэша свечей (MINUTE_10), иначе null.

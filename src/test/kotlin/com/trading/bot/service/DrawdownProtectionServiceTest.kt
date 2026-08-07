@@ -184,4 +184,41 @@ class DrawdownProtectionServiceTest {
         assertFalse(s.isEntryBlocked())
         assertEquals(0, BigDecimal("5000").compareTo(status.dailyLimitRub))
     }
+
+    @Test
+    fun `drawdown percent is measured from peak aum`() =
+        runBlocking {
+            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+                listOf(
+                    closedPosition(BigDecimal("10000"), LocalDateTime.now().minusDays(2)),
+                    closedPosition(BigDecimal("-25000"), LocalDateTime.now().minusDays(1)),
+                ),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            // equity: 50000 -> 60000 (peak) -> 35000; dd = (60000-35000)/60000 = 41.67%
+            assertEquals(0, BigDecimal("60000").compareTo(status.peakAum))
+            assertEquals(0, BigDecimal("35000").compareTo(status.aum))
+            assertEquals(41.67, status.drawdownPercent, 0.01)
+        }
+
+    @Test
+    fun `drawdown percent is zero when equity at all time high`() =
+        runBlocking {
+            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+                listOf(
+                    closedPosition(BigDecimal("5000"), LocalDateTime.now().minusDays(2)),
+                    closedPosition(BigDecimal("2000"), LocalDateTime.now().minusDays(1)),
+                ),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("57000").compareTo(status.peakAum))
+            assertEquals(0, BigDecimal("57000").compareTo(status.aum))
+            assertEquals(0.0, status.drawdownPercent, 1e-9)
+        }
 }

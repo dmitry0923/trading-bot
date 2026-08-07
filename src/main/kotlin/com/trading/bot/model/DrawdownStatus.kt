@@ -18,6 +18,10 @@ import java.time.Instant
 data class DrawdownStatus(
     /** Текущий капитал (AUM) в рублях: стартовый депозит + реализованный P&L закрытых сделок. */
     val aum: BigDecimal,
+    /** Пиковый капитал (AUM) в рублях за всю историю закрытых сделок. */
+    val peakAum: BigDecimal,
+    /** Текущая просадка от пика, % от peakAum (0..100). 0 = на пике. */
+    val drawdownPercent: Double,
     val dailyPnlRub: BigDecimal,
     val dailyLimitRub: BigDecimal,
     val dailyLimitBreached: Boolean,

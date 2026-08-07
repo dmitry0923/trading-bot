@@ -130,4 +130,41 @@ class CandleCacheService(
         val sum = candles.sumOf { it.closePrice }
         return sum.divide(BigDecimal(period), 4, RoundingMode.HALF_UP)
     }
+
+    /**
+     * Realized volatility по лог-доходностям цен закрытия, в % за период свечи.
+     *
+     * Для [lookback] последних свечей считаются лог-доходности
+     * r(i) = ln(close(i) / close(i-1)), stddev по ним и переводится в %:
+     *   volPercent = stddev(r) * 100.
+     *
+     * Горизонт задаётся таймфреймом: DAY_1 → дневная волатильность,
+     * MINUTE_10 → волатильность за 10 минут (для дневного эквивалента
+     * масштабируется sqrt(свечей в сессии)).
+     *
+     * @param ticker тикер инструмента
+     * @param timeframe таймфрейм свечей
+     * @param lookback глубина расчёта (минимум 3 свечи для stddev)
+     * @return волатильность в % за период или null, если данных недостаточно
+     */
+    fun calculateRealizedVolatility(
+        ticker: String,
+        timeframe: String,
+        lookback: Int,
+    ): Double? {
+        if (lookback < 3) return null
+        val candles = getRecentCandles(ticker, timeframe, lookback + 1)
+        if (candles.size < lookback + 1) return null
+        val returns = ArrayList<Double>(lookback)
+        for (i in 1 until candles.size) {
+            val prev = candles[i - 1].closePrice
+            val curr = candles[i].closePrice
+            if (prev <= BigDecimal.ZERO || curr <= BigDecimal.ZERO) continue
+            returns.add(kotlin.math.ln(curr.divide(prev, 8, RoundingMode.HALF_UP).toDouble()))
+        }
+        if (returns.size < 2) return null
+        val mean = returns.average()
+        val variance = returns.sumOf { (it - mean) * (it - mean) } / (returns.size - 1)
+        return kotlin.math.sqrt(variance) * 100.0
+    }
 }

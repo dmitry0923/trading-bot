@@ -39,11 +39,53 @@ class RiskConfig {
     var kellyFraction: Double = 0.25
 
     /**
-     * Целевая волатильность для volatility targeting, % ATR от цены.
-     * multiplier = volatilityTargetPercent / atrPercent (ATR 2% -> ~2x, ATR 10% -> ~0.5x,
-     * ATR 20% -> ~0.25x). Чем выше фактическая волатильность, тем меньше размер позиции.
+     * Z-score для Wilson lower bound win rate (шринкейдж статистики).
+     * win rate с малой выборки заменяется на нижнюю границу Wilson-интервала:
+     *   w = (p + z²/2n - z*sqrt((p(1-p) + z²/4n)/n)) / (1 + z²/n)
+     * z = 1.0 даёт ~84% односторонний (консервативный) win rate. Защита от
+     * переоценки Kelly на «галлюцинирующей» статистике из 5-15 сделок.
+     */
+    var kellyWilsonZ: Double = 1.0
+
+    /**
+     * Минимальное количество закрытых сделок для использования критерия Келли.
+     * При выборке меньше порога Kelly статистически бессмысленен (high variance),
+     * поэтому используется консервативная доля [kellyNoDataFraction].
+     */
+    var kellyMinTrades: Int = 15
+
+    /**
+     * Доля от maxPositionRub при отсутствии/недостатке статистики для Kelly.
+     * 0.15 = 15% от 50k = 7 500 ₽. Консервативный fallback вместо 100% депозита.
+     */
+    var kellyNoDataFraction: Double = 0.15
+
+    /**
+     * Жёсткий кап доли Kelly от maxPositionRub (0..1). 0.50 = Half-Kelly cap.
+     * Даже при идеальной статистике позиция не превысит 50% депозита на тикер.
+     */
+    var kellyMaxPositionFraction: Double = 0.50
+
+    /**
+     * Целевая волатильность для volatility targeting, % в ДЕНЬ (дневной горизонт).
+     * multiplier = volatilityTargetPercent / dailyVolPercent, где dailyVolPercent —
+     * realized volatility (stddev лог-доходностей по DAY_1 свечам) либо дневной
+     * эквивалент ATR (10-мин ATR% * sqrt(свечей в дне)). dailyVol 2% -> ~2x,
+     * 8% -> ~0.5x, 16% -> ~0.25x. Чем выше фактическая волатильность, тем меньше размер.
      */
     var volatilityTargetPercent: Double = 4.0
+
+    /**
+     * Глубина (в свечах DAY_1) для расчёта realized volatility. 20 торговых дней.
+     */
+    var volatilityLookbackDays: Int = 20
+
+    /**
+     * Количество 10-минутных свечей в торговой сессии для масштабирования
+     * внутридневной волатильности к дневной: dailyVol ≈ intradayVol * sqrt(N).
+     * Используется только как fallback при отсутствии дневных свечей.
+     */
+    var volatilityFallbackCandlesPerDay: Int = 57
 
     /** Нижняя граница множителя размера от волатильности (жёсткий floor при экстремальной ATR). */
     var minVolatilitySizeMultiplier: Double = 0.25
@@ -70,10 +112,27 @@ class RiskConfig {
     var maxSectorCorrelation: Double = 0.7
 
     /**
-     * Коэффициент деградации Kelly при просадке (0..1). Когда бот в drawdown-recovery,
-     * итоговый размер умножается на этот множитель (например 0.5 = позиции ещё в 2 раза меньше).
+     * Коэффициент деградации Kelly при просадке (0..1). Когда бот в drawdown-recovery
+     * (>=3 убыточных сделок подряд), итоговый размер умножается на этот множитель
+     * (например 0.5 = позиции ещё в 2 раза меньше). Fallback для непрерывной
+     * деградации по глубине просадки [drawdownScaleTiers].
      */
     var kellyDrawdownReduction: Double = 0.5
+
+    /**
+     * Непрерывная деградация дробного Kelly по ГЛУБИНЕ просадки (от пика AUM).
+     * Ключ — просадка в % от пика (0.0..100.0), значение — множитель размера (0..1).
+     * Берётся ближайший не превышающий просадку tier (floor). Пример:
+     *   0% -> 1.0, 3% -> 0.75, 6% -> 0.5, 10% -> 0.25, 15% -> 0.0 (стоп-вход).
+     */
+    var drawdownScaleTiers: Map<Double, Double> =
+        sortedMapOf(
+            0.0 to 1.0,
+            3.0 to 0.75,
+            6.0 to 0.5,
+            10.0 to 0.25,
+            15.0 to 0.0,
+        )
 
     /** Стоп-лосс по умолчанию в пунктах. 50 пунктов * 10 ₽ = 500 ₽ при 1 контракте. */
     var defaultStopLossPoints: Int = 50

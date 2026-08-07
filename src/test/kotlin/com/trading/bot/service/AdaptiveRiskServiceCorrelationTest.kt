@@ -26,9 +26,11 @@ class AdaptiveRiskServiceCorrelationTest {
     private val tradeAnalysis = Mockito.mock(TradeAnalysisService::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
+    private val drawdownProtection = Mockito.mock(DrawdownProtectionService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
-    private val service = AdaptiveRiskService(riskConfig, tradeAnalysis, positionRepo, candleCache, meterRegistry)
+    private val service =
+        AdaptiveRiskService(riskConfig, tradeAnalysis, positionRepo, candleCache, drawdownProtection, meterRegistry)
 
     private fun closes(values: List<Double>): List<Candle> {
         var t = LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)
@@ -144,6 +146,7 @@ class AdaptiveRiskServiceCorrelationTest {
             )
 
         assertFalse(service.exceedsCorrelationLimit("A", listOf(openPosition)))
-        assertTrue(abs(service.correlationOf("A", "B") ?: 0.0 - 0.0) < 1e-9 || service.correlationOf("A", "B") == null)
+        val corr = service.correlationOf("A", "B")
+        assertTrue(corr == null || abs(corr) < 1e-9)
     }
 }

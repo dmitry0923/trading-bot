@@ -307,13 +307,27 @@ risk:
   trailing-stop-percent: 1.0
   risk-per-trade-percent: 1.0
   kelly-fraction: 0.25
+  kelly-wilson-z: 1.0
+  kelly-min-trades: 15
+  kelly-no-data-fraction: 0.15
+  kelly-max-position-fraction: 0.50
+  # Целевая волатильность в %/день (дневной горизонт, DAY_1 свечи)
   volatility-target-percent: 4.0
+  volatility-lookback-days: 20
+  volatility-fallback-candles-per-day: 57
   min-volatility-size-multiplier: 0.25
   max-volatility-size-multiplier: 2.0
   max-gross-exposure-percent: 150.0
   max-net-exposure-percent: 100.0
   max-sector-correlation: 0.7
   kelly-drawdown-reduction: 0.5
+  # Непрерывная деградация Kelly по глубине просадки (% от пика AUM -> множитель)
+  drawdown-scale-tiers:
+    "0.0": 1.0
+    "3.0": 0.75
+    "6.0": 0.5
+    "10.0": 0.25
+    "15.0": 0.0
   default-stop-loss-points: 50
   default-take-profit-points: 100
   min-liquidation-distance-percent: 25.0

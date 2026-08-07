@@ -97,6 +97,42 @@ class CandleCacheServiceTest {
     }
 
     @Test
+    fun `realized volatility is zero for constant closes`() {
+        val candles =
+            (0..9).map { i ->
+                candle("100", "100", "100", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0).plusMinutes(10L * i))
+            }
+        mockCandles(candles)
+
+        val vol = service.calculateRealizedVolatility("SBER", "MINUTE_10", lookback = 9)
+
+        assertEquals(0.0, vol!!, 1e-9)
+    }
+
+    @Test
+    fun `realized volatility is positive for alternating returns`() {
+        // 41 закрытий: 20 пар 100/110 -> 40 возвратов ±ln(1.1), mean = 0.
+        // stddev = ln(1.1) * sqrt(40/39) ~ 9.65%
+        val closes = (0 until 41).map { if (it % 2 == 0) "100" else "110" }
+        val candles =
+            closes.mapIndexed { i, c ->
+                candle(c, c, c, LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0).plusMinutes(10L * i))
+            }
+        mockCandles(candles)
+
+        val vol = service.calculateRealizedVolatility("SBER", "MINUTE_10", lookback = 40)
+
+        assertEquals(9.65, vol!!, 0.05)
+    }
+
+    @Test
+    fun `realized volatility returns null when not enough candles`() {
+        mockCandles(listOf(candle("10", "9", "9.5", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0))))
+
+        assertNull(service.calculateRealizedVolatility("SBER", "MINUTE_10", lookback = 20))
+    }
+
+    @Test
     fun `addCandle writes json member with epoch score and trims to limit`() {
         Mockito.`when`(redisTemplate.opsForZSet()).thenReturn(zset)
         val c = candle("10", "9", "9.5", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0))

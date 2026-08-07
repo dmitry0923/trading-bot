@@ -65,6 +65,7 @@ class DrawdownProtectionService(
         val now = LocalDateTime.now()
         val closed = positionRepo.findClosed()
         val aum = currentAum(closed)
+        val (peakAum, drawdownPercent) = peakAumAndDrawdown(closed)
 
         val todayStart = now.toLocalDate().atStartOfDay()
         val dailyPnl = sumPnl(closed.filter { isClosedOnOrAfter(it, todayStart) })
@@ -94,6 +95,8 @@ class DrawdownProtectionService(
         val status =
             DrawdownStatus(
                 aum = aum,
+                peakAum = peakAum,
+                drawdownPercent = drawdownPercent,
                 dailyPnlRub = dailyPnl,
                 dailyLimitRub = dailyLimit,
                 dailyLimitBreached = dailyBreached,
@@ -113,7 +116,8 @@ class DrawdownProtectionService(
         cachedStatus = status
         recordMetrics(status)
         logger.info {
-            "Drawdown status: aum=$aum daily=${percentOf(status.dailyPnlRub, aum)}% " +
+            "Drawdown status: aum=$aum peak=$peakAum dd=$drawdownPercent% " +
+                "daily=${percentOf(status.dailyPnlRub, aum)}% " +
                 "7d=${percentOf(status.rolling7dPnlRub, aum)}% 30d=${percentOf(status.rolling30dPnlRub, aum)}% " +
                 "losses=$consecutive shadow=$shadowActive reasons=$reasons"
         }
@@ -130,6 +134,8 @@ class DrawdownProtectionService(
         val aum = riskConfig.maxPositionRub
         return DrawdownStatus(
             aum = aum,
+            peakAum = aum,
+            drawdownPercent = 0.0,
             dailyPnlRub = BigDecimal.ZERO,
             dailyLimitRub = effectiveDailyLossLimitRub(aum),
             dailyLimitBreached = false,
@@ -190,6 +196,35 @@ class DrawdownProtectionService(
     private fun currentAum(closed: List<Position>): BigDecimal {
         val realized = sumPnl(closed)
         return riskConfig.maxPositionRub.add(realized).coerceAtLeast(BigDecimal.ZERO)
+    }
+
+    /**
+     * Пиковый AUM и текущая просадка от пика в %.
+     *
+     * Строится running equity: стартовый депозит + накопленный реализованный P&L
+     * в хронологическом порядке закрытий. Просадка = (peak - current) / peak * 100.
+     *
+     * @return пара (peakAum, drawdownPercent), drawdownPercent в [0..100]
+     */
+    private fun peakAumAndDrawdown(closed: List<Position>): Pair<BigDecimal, Double> {
+        val start = riskConfig.maxPositionRub
+        var running = start
+        var peak = start
+        for (pos in closed.filter { it.pnl != null }.sortedBy { it.closedAt ?: LocalDateTime.MIN }) {
+            running = running.add(pos.pnl!!)
+            if (running > peak) peak = running
+        }
+        val drawdownPercent =
+            if (peak > BigDecimal.ZERO) {
+                peak
+                    .subtract(running)
+                    .multiply(BigDecimal("100"))
+                    .divide(peak, 4, RoundingMode.HALF_UP)
+                    .toDouble()
+            } else {
+                0.0
+            }
+        return peak to drawdownPercent
     }
 
     private fun sumPnl(positions: List<Position>): BigDecimal = positions.sumOf { it.pnl ?: BigDecimal.ZERO }
@@ -259,6 +294,8 @@ class DrawdownProtectionService(
 
     private fun recordMetrics(status: DrawdownStatus) {
         meterRegistry.gauge("drawdown.aum", status.aum.toDouble())
+        meterRegistry.gauge("drawdown.peak_aum", status.peakAum.toDouble())
+        meterRegistry.gauge("drawdown.percent", status.drawdownPercent)
         meterRegistry.gauge("drawdown.daily.pnl", Tags.of("unit", "rub"), status.dailyPnlRub.toDouble())
         meterRegistry.gauge("drawdown.daily.percent", percentOf(status.dailyPnlRub, status.aum))
         meterRegistry.gauge("drawdown.rolling7d.percent", percentOf(status.rolling7dPnlRub, status.aum))

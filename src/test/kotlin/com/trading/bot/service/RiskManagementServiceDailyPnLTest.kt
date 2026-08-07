@@ -1,8 +1,8 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.DailyRiskSnapshot
-import com.trading.bot.repository.DailyRiskSnapshotRepository
+import com.trading.bot.model.Strategy
+import com.trading.bot.model.StrategyAction
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -10,88 +10,75 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
-import java.time.LocalDate
-import java.time.ZoneId
+import java.time.LocalDateTime
 
 /**
- * Персистентный дневной P&L: накопление по сделкам, срабатывание лимита
- * и восстановление снапшота после рестарта.
+ * Дневной P&L и дневной лимит убытка живут в едином источнике
+ * [DrawdownProtectionService]. RiskManagementService — только делегат без
+ * локального состояния и без записи в daily_risk_snapshot.
  */
 class RiskManagementServiceDailyPnLTest {
-    private val repo = Mockito.mock(DailyRiskSnapshotRepository::class.java)
     private val drawdownProtection = Mockito.mock(DrawdownProtectionService::class.java)
-    private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
-    private fun service(maxDailyLoss: BigDecimal): RiskManagementService {
-        Mockito.`when`(drawdownProtection.effectiveDailyLossLimitRub()).thenReturn(maxDailyLoss)
-        return RiskManagementService(
-            RiskConfig().apply { maxDailyLossRub = maxDailyLoss },
-            repo,
+    private fun service(): RiskManagementService =
+        RiskManagementService(
+            RiskConfig(),
             drawdownProtection,
             SimpleMeterRegistry(),
         )
-    }
 
     @Test
-    fun `daily pnl accumulates closed trades`() {
-        val s = service(BigDecimal("5000"))
+    fun `updateDailyPnl delegates to drawdown protection`() {
+        val s = service()
 
         s.updateDailyPnL(BigDecimal("1000"))
         s.updateDailyPnL(BigDecimal("-400"))
 
-        assertEquals(0, BigDecimal("600").compareTo(s.getDailyPnL()))
-        Mockito.verify(repo).upsert(moscowToday, BigDecimal("1000"), false, BigDecimal.ZERO)
-        Mockito.verify(repo).upsert(moscowToday, BigDecimal("600"), false, BigDecimal.ZERO)
+        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("1000"))
+        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-400"))
     }
 
     @Test
-    fun `loss limit reached blocks further trading`() {
-        val s = service(BigDecimal("5000"))
+    fun `getDailyPnl reads from drawdown protection`() {
+        Mockito.`when`(drawdownProtection.getDailyPnl()).thenReturn(BigDecimal("600"))
+
+        assertEquals(0, BigDecimal("600").compareTo(service().getDailyPnL()))
+    }
+
+    @Test
+    fun `isDailyLossLimitReached reads from drawdown protection`() {
+        val s = service()
+
+        Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(false)
         assertFalse(s.isDailyLossLimitReached())
 
-        s.updateDailyPnL(BigDecimal("-5001"))
-
+        Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
         assertTrue(s.isDailyLossLimitReached())
     }
 
     @Test
-    fun `small losses do not trigger the limit`() {
-        val s = service(BigDecimal("5000"))
+    fun `validateNewStrategy blocks entry when daily loss limit reached`() {
+        val s = service()
+        Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
+        Mockito.`when`(drawdownProtection.getDailyPnl()).thenReturn(BigDecimal("-5000"))
+        Mockito.`when`(drawdownProtection.effectiveDailyLossLimitRub()).thenReturn(BigDecimal("5000"))
 
-        s.updateDailyPnL(BigDecimal("-3000"))
+        val result =
+            s.validateNewStrategy(
+                Strategy(
+                    ticker = "SBER",
+                    action = StrategyAction.BUY,
+                    targetPrice = BigDecimal("100"),
+                    quantity = 1,
+                    confidence = 0.9,
+                    reasoning = "test",
+                    cycleId = "c",
+                    validUntil = LocalDateTime.now().plusMinutes(5),
+                ),
+                openPositions = emptyList(),
+            )
 
-        assertFalse(s.isDailyLossLimitReached())
-    }
-
-    @Test
-    fun `restores daily state from snapshot after restart`() {
-        Mockito.`when`(repo.findByDate(moscowToday)).thenReturn(
-            DailyRiskSnapshot(
-                id = 1,
-                tradeDate = moscowToday,
-                dailyPnl = BigDecimal("-3000"),
-                limitReached = false,
-                maxDrawdownToday = BigDecimal("-3000"),
-            ),
-        )
-        val s = service(BigDecimal("5000"))
-
-        assertEquals(0, BigDecimal("-3000").compareTo(s.getDailyPnL()))
-    }
-
-    @Test
-    fun `restores limit reached flag from snapshot`() {
-        Mockito.`when`(repo.findByDate(moscowToday)).thenReturn(
-            DailyRiskSnapshot(
-                id = 1,
-                tradeDate = moscowToday,
-                dailyPnl = BigDecimal("-6000"),
-                limitReached = true,
-                maxDrawdownToday = BigDecimal("-6000"),
-            ),
-        )
-        val s = service(BigDecimal("5000"))
-
-        assertTrue(s.isDailyLossLimitReached())
+        assertFalse(result.allowed)
+        assertTrue(result.reason.contains("Daily loss limit reached"))
     }
 }

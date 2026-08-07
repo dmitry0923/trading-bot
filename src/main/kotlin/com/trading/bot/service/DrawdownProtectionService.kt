@@ -1,9 +1,14 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.model.DrawdownStatus
+import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -18,7 +23,9 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Multi-Tier Drawdown Protection — защита от медленных просадок на длительной дистанции.
@@ -26,8 +33,9 @@ import java.time.LocalDateTime
  * Все лимиты — в **% от AUM** (в отличие от жёсткого `risk.max-daily-loss-rub`, который
  * не масштабируется при росте/падении капитала):
  *
- *  1. **Дневной лимит** — суммарный реализованный P&L закрытых сегодня сделок
- *     не может опуститься ниже `-maxDailyLossPercent%` AUM;
+ *  1. **Дневной лимит** — P&L за сегодня (реализованный по закрытым сделкам +
+ *     нереализованный mark-to-market по открытым позициям) не может опуститься ниже
+ *     `-maxDailyLossPercent%` AUM;
  *  2. **Скользящий лимит 7 дней** — защита от серии мелких убыточных сделок,
  *     которые не пробивают дневной лимит, но накапливают просадку за неделю;
  *  3. **Скользящий лимит 30 дней** — «смерть от тысячи порезов» на горизонте месяца;
@@ -37,23 +45,40 @@ import java.time.LocalDateTime
  *     снимается только после прибыльной сделки (сброс серии).
  *
  * AUM = стартовый депозит (`risk.max-position-rub`) + реализованный P&L всех закрытых
- * сделок (акции + фьючерсы). Кэшируется в памяти и обновляется на каждое закрытие
+ * сделок + **нереализованный P&L открытых позиций** (фьючерсы — по вариационной марже,
+ * акции — по текущей цене). Кэшируется в памяти и обновляется на каждое закрытие
  * позиции и каждый стратегический цикл — горячие проверки входа читают кэш без БД.
+ *
+ * Единый источник истины дневного P&L: синхронный аккумулятор [updateDailyPnl] кормится
+ * путями закрытия акций (RiskManagementService) и фьючерсов (DailyLossCircuitBreaker),
+ * персистится в daily_risk_snapshot и реконсилится полным пересчётом из БД в [computeStatus].
  */
 @Service
 class DrawdownProtectionService(
     private val riskConfig: RiskConfig,
     private val positionRepo: PositionRepository,
+    private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
+    private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val moscowZone = ZoneId.of("Europe/Moscow")
 
     @Volatile
     private var cachedStatus: DrawdownStatus? = null
 
     @Volatile
     private var shadowModeUntil: Instant? = null
+
+    // Синхронный дневной аккумулятор — единственная точка учёта дневного P&L.
+    @Volatile
+    private var todayPnl: BigDecimal = BigDecimal.ZERO
+
+    @Volatile
+    private var todayDailyLossReached: Boolean = false
+
+    private var lastTradingDate: LocalDate = LocalDate.MIN
 
     /**
      * Полный пересчёт Multi-Tier статуса из фактических сделок в БД.
@@ -62,13 +87,23 @@ class DrawdownProtectionService(
      * @return текущий [DrawdownStatus]
      */
     suspend fun computeStatus(): DrawdownStatus {
+        resetDailyStateIfNewDay()
         val now = LocalDateTime.now()
         val closed = positionRepo.findClosed()
-        val aum = currentAum(closed)
+        val open = positionRepo.findByStatus(PositionStatus.OPEN)
+        val aum = currentAum(closed, open)
         val (peakAum, drawdownPercent) = peakAumAndDrawdown(closed)
 
         val todayStart = now.toLocalDate().atStartOfDay()
-        val dailyPnl = sumPnl(closed.filter { isClosedOnOrAfter(it, todayStart) })
+        val realizedToday = sumPnl(closed.filter { isClosedOnOrAfter(it, todayStart) })
+        val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
+        val dailyPnl = realizedToday.add(dailyUnrealized)
+
+        // Реконсиляция синхронного аккумулятора с фактами из БД (перезапись, не сложение).
+        todayPnl = dailyPnl
+        todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+        persistDailyState()
+
         val rolling7d = sumPnl(closed.filter { isClosedOnOrAfter(it, now.minusDays(7)) })
         val rolling30d = sumPnl(closed.filter { isClosedOnOrAfter(it, now.minusDays(30)) })
 
@@ -76,7 +111,7 @@ class DrawdownProtectionService(
         val rolling7dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent7d)
         val rolling30dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent30d)
 
-        val dailyBreached = dailyPnl <= dailyLimit.negate()
+        val dailyBreached = todayDailyLossReached
         val rolling7dBreached = rolling7d <= rolling7dLimit.negate()
         val rolling30dBreached = rolling30d <= rolling30dLimit.negate()
 
@@ -127,7 +162,7 @@ class DrawdownProtectionService(
     /**
      * Текущий статус из кэша (без БД) для горячих проверок входа.
      * Если кэш ещё не заполнен (старт до первого цикла) — считает консервативно-нейтрально
-     * от стартового депозита.
+     * от стартового депозита и синхронного дневного аккумулятора.
      */
     fun cachedOrNeutral(): DrawdownStatus {
         cachedStatus?.let { return it }
@@ -136,9 +171,9 @@ class DrawdownProtectionService(
             aum = aum,
             peakAum = aum,
             drawdownPercent = 0.0,
-            dailyPnlRub = BigDecimal.ZERO,
+            dailyPnlRub = todayPnl,
             dailyLimitRub = effectiveDailyLossLimitRub(aum),
-            dailyLimitBreached = false,
+            dailyLimitBreached = todayDailyLossReached,
             rolling7dPnlRub = BigDecimal.ZERO,
             rolling7dLimitRub = percentOfAum(aum, riskConfig.maxRollingLossPercent7d),
             rolling7dBreached = false,
@@ -153,6 +188,41 @@ class DrawdownProtectionService(
             timestamp = Instant.now(),
         )
     }
+
+    /**
+     * Синхронный учёт P&L закрытой сделки. Единственный аккумулятор дневного P&L:
+     * вызывается из RiskManagementService (акции) и DailyLossCircuitBreaker (фьючерсы).
+     * Персистит состояние в daily_risk_snapshot (восстановление после рестарта).
+     */
+    fun updateDailyPnl(pnl: BigDecimal) {
+        resetDailyStateIfNewDay()
+        todayPnl = todayPnl.add(pnl)
+        val aum = cachedStatus?.aum ?: riskConfig.maxPositionRub
+        val dailyLimit = effectiveDailyLossLimitRub(aum)
+        if (todayPnl <= dailyLimit.negate()) {
+            todayDailyLossReached = true
+            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$todayPnl <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
+        }
+        persistDailyState()
+        meterRegistry.gauge("risk.daily.pnl", todayPnl.toDouble())
+        meterRegistry.gauge("risk.daily.limit.reached", if (todayDailyLossReached) 1.0 else 0.0)
+        // Синхронное обновление кэша — входы блокируются немедленно, без ожидания цикла.
+        cachedStatus?.let { s ->
+            val updated = s.copy(dailyPnlRub = todayPnl, dailyLimitBreached = todayDailyLossReached)
+            cachedStatus = updated
+            recordMetrics(updated)
+        }
+    }
+
+    /**
+     * Достигнут ли дневной лимит убытка (кэш, без БД).
+     */
+    fun isDailyLossLimitReached(): Boolean = cachedOrNeutral().dailyLimitBreached
+
+    /**
+     * Текущий дневной P&L (кэш, без БД).
+     */
+    fun getDailyPnl(): BigDecimal = cachedOrNeutral().dailyPnlRub
 
     /**
      * Заблокированы ли новые входы (кэш). Покрывает все tier-лимиты и Shadow/Read-only.
@@ -175,8 +245,10 @@ class DrawdownProtectionService(
     /**
      * Эффективный дневной лимит убытка в рублях (кэш AUM, без БД).
      *
-     * При росте капитала доминирует процентная компонента (лимит масштабируется),
-     * при падении — рублёвый «пол» [RiskConfig.maxDailyLossRub] не даёт лимиту схлопнуться до нуля.
+     * При включённом процентном лимите (`maxDailyLossPercent > 0`) используется ТОЛЬКО
+     * `% от AUM` — лимит масштабируется при росте и падении капитала без рублёвого
+     * ослабления. Рублёвое значение [RiskConfig.maxDailyLossRub] — только fallback,
+     * если процентный лимит отключён (<= 0).
      */
     fun effectiveDailyLossLimitRub(): BigDecimal {
         val aum = cachedStatus?.aum ?: riskConfig.maxPositionRub
@@ -193,9 +265,46 @@ class DrawdownProtectionService(
             .takeWhile { it.pnl!! < BigDecimal.ZERO }
             .count()
 
-    private fun currentAum(closed: List<Position>): BigDecimal {
+    private fun currentAum(
+        closed: List<Position>,
+        open: List<Position>,
+    ): BigDecimal {
         val realized = sumPnl(closed)
-        return riskConfig.maxPositionRub.add(realized).coerceAtLeast(BigDecimal.ZERO)
+        val unrealized = unrealizedPnl(open)
+        return riskConfig
+            .maxPositionRub
+            .add(realized)
+            .add(unrealized)
+            .coerceAtLeast(BigDecimal.ZERO)
+    }
+
+    /**
+     * Нереализованный P&L открытых позиций.
+     * - Фьючерсы: вариационная маржа (обновляется на каждый тик); fallback — расчёт
+     *   по [Position.currentPrice] с pointValue инструмента.
+     * - Акции: (currentPrice - entryPrice) * qty с учётом направления.
+     * Без актуальной цены вклад позиции = 0.
+     */
+    private fun unrealizedPnl(open: List<Position>): BigDecimal = open.sumOf { unrealizedPnl(it) }
+
+    private fun unrealizedPnl(pos: Position): BigDecimal {
+        if (pos.status != PositionStatus.OPEN) return BigDecimal.ZERO
+        if (pos.instrumentType == InstrumentType.FUTURES) {
+            if (pos.variationMargin.compareTo(BigDecimal.ZERO) != 0) return pos.variationMargin
+        }
+        val current = pos.currentPrice ?: return BigDecimal.ZERO
+        if (current <= BigDecimal.ZERO) return BigDecimal.ZERO
+        val qty = BigDecimal(pos.quantity)
+        val raw =
+            when (pos.direction) {
+                PositionDirection.LONG -> current.subtract(pos.entryPrice).multiply(qty)
+                PositionDirection.SHORT -> pos.entryPrice.subtract(current).multiply(qty)
+            }
+        return if (pos.instrumentType == InstrumentType.FUTURES) {
+            raw.multiply(instrumentsConfig.pointValue(pos.ticker))
+        } else {
+            raw
+        }
     }
 
     /**
@@ -203,6 +312,7 @@ class DrawdownProtectionService(
      *
      * Строится running equity: стартовый депозит + накопленный реализованный P&L
      * в хронологическом порядке закрытий. Просадка = (peak - current) / peak * 100.
+     * (Нереализованный P&L в пике не учитывается — только реализованные закрытия.)
      *
      * @return пара (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
@@ -256,15 +366,16 @@ class DrawdownProtectionService(
             .toDouble()
     }
 
-    private fun effectiveDailyLossLimitRub(aum: BigDecimal): BigDecimal {
-        val percentBased =
-            if (riskConfig.maxDailyLossPercent > 0) {
-                percentOfAum(aum, riskConfig.maxDailyLossPercent)
-            } else {
-                BigDecimal.ZERO
-            }
-        return percentBased.max(riskConfig.maxDailyLossRub)
-    }
+    /**
+     * Дневной лимит убытка в рублях: чистый % от AUM.
+     * Рублёвое значение используется только при отключённом процентном лимите (<= 0).
+     */
+    private fun effectiveDailyLossLimitRub(aum: BigDecimal): BigDecimal =
+        if (riskConfig.maxDailyLossPercent > 0) {
+            percentOfAum(aum, riskConfig.maxDailyLossPercent)
+        } else {
+            riskConfig.maxDailyLossRub
+        }
 
     /**
      * Обновляет Shadow/Read-only состояние по серии убытков:
@@ -292,6 +403,38 @@ class DrawdownProtectionService(
         return until
     }
 
+    /**
+     * Сброс/восстановление дневного состояния аккумулятора при смене календарного дня (МСК).
+     * При рестарте в течение дня восстанавливает значения из daily_risk_snapshot.
+     */
+    private fun resetDailyStateIfNewDay() {
+        val today = LocalDate.now(moscowZone)
+        if (lastTradingDate == today) return
+        lastTradingDate = today
+        loadDailyState(today)
+    }
+
+    private fun loadDailyState(today: LocalDate) {
+        val snapshot =
+            try {
+                dailyRiskSnapshotRepo.findByDate(today)
+            } catch (e: Exception) {
+                logger.warn(e) { "Daily risk snapshot load failed" }
+                null
+            }
+        todayPnl = snapshot?.dailyPnl ?: BigDecimal.ZERO
+        todayDailyLossReached = snapshot?.limitReached ?: false
+        logger.info { "Daily risk state for $today: dailyPnL=$todayPnl limitReached=$todayDailyLossReached" }
+    }
+
+    private fun persistDailyState() {
+        try {
+            dailyRiskSnapshotRepo.upsert(lastTradingDate, todayPnl, todayDailyLossReached, todayPnl.coerceAtMost(BigDecimal.ZERO))
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to persist daily risk snapshot" }
+        }
+    }
+
     private fun recordMetrics(status: DrawdownStatus) {
         meterRegistry.gauge("drawdown.aum", status.aum.toDouble())
         meterRegistry.gauge("drawdown.peak_aum", status.peakAum.toDouble())
@@ -308,6 +451,7 @@ class DrawdownProtectionService(
     /**
      * При закрытии позиции пересчитываем статус в фоне: AUM, лимиты и серия убытков
      * должны обновиться немедленно (без ожидания следующего стратегического цикла).
+     * Полный пересчёт из БД реконсилит синхронный дневной аккумулятор (перезапись).
      */
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {

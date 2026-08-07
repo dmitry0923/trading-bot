@@ -1,9 +1,9 @@
 package com.trading.bot.application
 
-import com.trading.bot.domain.risk.FuturesRiskEngine
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
+import com.trading.bot.service.DrawdownProtectionService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.context.event.EventListener
@@ -13,8 +13,9 @@ import org.springframework.stereotype.Component
  * Circuit breaker по дневному лимиту убытка.
  *
  * При закрытии позиции:
- *   1. Обновляет дневной P&L в FuturesRiskEngine (dailyPnL = sum(closed P&L за день)).
- *   2. Если dailyPnL <= -max(AUM * pct%, рублёвый floor) → публикует TradingHaltedEvent.
+ *   1. Обновляет дневной P&L в едином источнике [DrawdownProtectionService]
+ *      (синхронный аккумулятор, персистится в daily_risk_snapshot).
+ *   2. Если dailyPnL <= -maxDailyLossPercent% AUM → публикует TradingHaltedEvent.
  *
  * Слушатели:
  *   - FuturesTradingBotService перестаёт открывать новые позиции (isDailyLossLimitReached).
@@ -25,7 +26,7 @@ import org.springframework.stereotype.Component
  */
 @Component
 class DailyLossCircuitBreaker(
-    private val futuresRiskEngine: FuturesRiskEngine,
+    private val drawdownProtection: DrawdownProtectionService,
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
 ) {
@@ -39,10 +40,10 @@ class DailyLossCircuitBreaker(
      */
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
-        futuresRiskEngine.updateDailyPnL(event.pnl)
-        if (futuresRiskEngine.isDailyLossLimitReached()) {
+        drawdownProtection.updateDailyPnl(event.pnl)
+        if (drawdownProtection.isDailyLossLimitReached()) {
             logger.error {
-                "Daily loss limit reached (dailyPnL=${futuresRiskEngine.getDailyPnL()} ₽). " +
+                "Daily loss limit reached (dailyPnL=${drawdownProtection.getDailyPnl()} ₽). " +
                     "Trading halted. No new entries until next day."
             }
             eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT"))

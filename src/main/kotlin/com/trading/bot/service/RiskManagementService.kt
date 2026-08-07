@@ -5,14 +5,11 @@ import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.RiskCheckResult
 import com.trading.bot.model.Strategy
-import com.trading.bot.repository.DailyRiskSnapshotRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * Сервис классического риск-менеджмента.
@@ -21,31 +18,25 @@ import java.time.ZoneId
  * - Проверка волатильности (ATR%) перед входом
  * - Расчёт SL/TP по проценту от цены входа, трейлинг-стоп
  * - Контроль выхода по SL/TP/trailing для открытых позиций
- * - Учёт дневного P&L, персистится в daily_risk_snapshot (восстановление после рестарта)
+ *
+ * Дневной P&L и все Multi-Tier лимиты просадки (7д/30д, Shadow/Read-only) — единый
+ * источник [DrawdownProtectionService]. Здесь — только делегирование без дублирования
+ * состояния и без записи в daily_risk_snapshot.
  */
 @Service
 class RiskManagementService(
     private val riskConfig: RiskConfig,
-    private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
     private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
-    private val moscowZone = ZoneId.of("Europe/Moscow")
-    private var dailyPnL: BigDecimal = BigDecimal.ZERO
-    private var maxDrawdownToday: BigDecimal = BigDecimal.ZERO
-    private var dailyLossLimitReached: Boolean = false
-    private var lastTradingDate: LocalDate = LocalDate.MIN
 
     /**
      * Проверяет, достигнут ли дневной лимит убытка.
      *
-     * @return true, если дневной P&L <= -effectiveDailyLossLimitRub (max(AUM*pct%, рублёвый floor))
+     * @return true, если дневной P&L <= -maxDailyLossPercent% AUM (единый источник)
      */
-    fun isDailyLossLimitReached(): Boolean {
-        resetDailyStateIfNewDay()
-        return dailyLossLimitReached
-    }
+    fun isDailyLossLimitReached(): Boolean = drawdownProtection.isDailyLossLimitReached()
 
     /**
      * Валидирует новую стратегию перед открытием позиции.
@@ -62,7 +53,9 @@ class RiskManagementService(
             return RiskCheckResult(false, "Drawdown protection blocked entry: ${drawdownProtection.entryBlockReason()}", 0)
         }
         if (riskConfig.enabled && isDailyLossLimitReached()) {
-            return RiskCheckResult(false, "Daily loss limit reached ($dailyPnL <= -${drawdownProtection.effectiveDailyLossLimitRub()})", 0)
+            val message =
+                "Daily loss limit reached (${getDailyPnL()} <= -${drawdownProtection.effectiveDailyLossLimitRub()})"
+            return RiskCheckResult(false, message, 0)
         }
         if (riskConfig.enabled && openPositions.size >= riskConfig.maxOpenPositions) {
             return RiskCheckResult(false, "Max open positions reached (${riskConfig.maxOpenPositions})", 0)
@@ -289,62 +282,18 @@ class RiskManagementService(
     }
 
     /**
-     * Добавляет P&L закрытой сделки к дневному итогу и персистит состояние.
+     * Учёт P&L закрытой сделки в дневном итоге (делегирование в единый источник).
      *
      * @param pnl прибыль/убыток сделки
      */
     fun updateDailyPnL(pnl: BigDecimal) {
-        resetDailyStateIfNewDay()
-        dailyPnL = dailyPnL.add(pnl)
-        if (dailyPnL < maxDrawdownToday) maxDrawdownToday = dailyPnL
-        val dailyLimit = drawdownProtection.effectiveDailyLossLimitRub()
-        if (dailyPnL <= dailyLimit.negate()) {
-            dailyLossLimitReached = true
-            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$dailyPnL <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
-        }
-        persistDailyState()
+        drawdownProtection.updateDailyPnl(pnl)
     }
 
     /**
-     * Текущий дневной P&L (восстановленный из снапшота при смене дня/рестарте).
+     * Текущий дневной P&L (единый источник [DrawdownProtectionService]).
      *
      * @return накопленный дневной P&L
      */
-    fun getDailyPnL(): BigDecimal {
-        resetDailyStateIfNewDay()
-        return dailyPnL
-    }
-
-    /**
-     * Смена календарного дня (МСК) → сброс дневного состояния.
-     * При рестарте в течение дня восстанавливает значения из БД.
-     */
-    private fun resetDailyStateIfNewDay() {
-        val today = LocalDate.now(moscowZone)
-        if (lastTradingDate == today) return
-        lastTradingDate = today
-        loadDailyState(today)
-    }
-
-    private fun loadDailyState(today: LocalDate) {
-        val snapshot =
-            try {
-                dailyRiskSnapshotRepo.findByDate(today)
-            } catch (e: Exception) {
-                logger.warn(e) { "Daily risk snapshot load failed" }
-                null
-            }
-        dailyPnL = snapshot?.dailyPnl ?: BigDecimal.ZERO
-        dailyLossLimitReached = snapshot?.limitReached ?: false
-        maxDrawdownToday = snapshot?.maxDrawdownToday ?: BigDecimal.ZERO
-        logger.info { "Daily risk state for $today: dailyPnL=$dailyPnL limitReached=$dailyLossLimitReached" }
-    }
-
-    private fun persistDailyState() {
-        try {
-            dailyRiskSnapshotRepo.upsert(lastTradingDate, dailyPnL, dailyLossLimitReached, maxDrawdownToday)
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to persist daily risk snapshot" }
-        }
-    }
+    fun getDailyPnL(): BigDecimal = drawdownProtection.getDailyPnl()
 }

@@ -8,7 +8,6 @@ import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
-import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.VolatilityIndexService
@@ -44,12 +43,10 @@ class FuturesRiskEngineTest {
                 )
         }
     private val positionRepo: PositionRepository = Mockito.mock(PositionRepository::class.java)
-    private val dailyRiskRepo: DailyRiskSnapshotRepository = Mockito.mock(DailyRiskSnapshotRepository::class.java)
     private val drawdownProtection: DrawdownProtectionService = Mockito.mock(DrawdownProtectionService::class.java)
     private val volatilityIndexService: VolatilityIndexService = Mockito.mock(VolatilityIndexService::class.java)
 
     private fun engine(openGuard: Boolean = true): FuturesRiskEngine {
-        Mockito.`when`(drawdownProtection.effectiveDailyLossLimitRub()).thenReturn(BigDecimal("5000"))
         val guardConfig =
             RiskConfig().apply {
                 if (openGuard) {
@@ -67,7 +64,6 @@ class FuturesRiskEngineTest {
             positionRepo = positionRepo,
             tradingHoursGuard = TradingHoursGuard(guardConfig),
             instrumentsConfig = instrumentsConfig,
-            dailyRiskSnapshotRepo = dailyRiskRepo,
             drawdownProtection = drawdownProtection,
             volatilityIndexService = volatilityIndexService,
             meterRegistry = SimpleMeterRegistry(),
@@ -102,10 +98,7 @@ class FuturesRiskEngineTest {
     fun `entry blocked after daily loss limit reached`() =
         runBlocking {
             val e = engine()
-            e.updateDailyPnL(BigDecimal("-3000"))
-            e.updateDailyPnL(BigDecimal("-2000")) // суммарно -5000 = 10% депозита
-
-            assertTrue(e.isDailyLossLimitReached())
+            Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
 
             val result =
                 e.validateEntry(
@@ -119,6 +112,19 @@ class FuturesRiskEngineTest {
             assertFalse(result.allowed)
             assertEquals("DAILY_LIMIT", result.reason)
         }
+
+    @Test
+    fun `daily pnl methods delegate to drawdown protection`() {
+        val e = engine()
+        Mockito.`when`(drawdownProtection.getDailyPnl()).thenReturn(BigDecimal("-5000"))
+
+        e.updateDailyPnL(BigDecimal("-3000"))
+        e.updateDailyPnL(BigDecimal("-2000"))
+
+        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-3000"))
+        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-2000"))
+        assertEquals(0, BigDecimal("-5000").compareTo(e.getDailyPnL()))
+    }
 
     @Test
     fun `entry blocked outside trading hours`() =

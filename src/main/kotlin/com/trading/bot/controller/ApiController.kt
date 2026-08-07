@@ -6,6 +6,9 @@ import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.BlindSpotEntity
 import com.trading.bot.model.BotSettings
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.RagAnalysis
+import com.trading.bot.model.RagAnalyzeRequest
+import com.trading.bot.model.RagTraceRequest
 import com.trading.bot.model.StrategyAdjustment
 import com.trading.bot.model.TimePattern
 import com.trading.bot.model.TradeEvent
@@ -22,7 +25,9 @@ import com.trading.bot.service.DashboardService
 import com.trading.bot.service.DashboardSseService
 import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.InvestorService
+import com.trading.bot.service.PaperTradingService
 import com.trading.bot.service.ProfitForecastService
+import com.trading.bot.service.RagErrorAnalyzer
 import com.trading.bot.service.RedisCacheService
 import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.SettingsService
@@ -81,6 +86,8 @@ class ApiController(
     private val clearingService: ClearingService,
     private val profitForecastService: ProfitForecastService,
     private val tradingControlService: TradingControlService,
+    private val paperTradingService: PaperTradingService,
+    private val ragErrorAnalyzer: RagErrorAnalyzer,
     private val meterRegistry: MeterRegistry,
 ) {
     @GetMapping("/settings")
@@ -92,6 +99,70 @@ class ApiController(
     ): BotSettings {
         settingsService.updateSettings(settings)
         return settings
+    }
+
+    /**
+     * Статус Shadow Mode / Decision-level A/B эксперимента.
+     */
+    @GetMapping("/experiment/status")
+    fun experimentStatus(): Map<String, Any?> = paperTradingService.status()
+
+    /**
+     * Включить/выключить эксперимент через BotSettings.
+     */
+    @PostMapping("/experiment/enable")
+    fun experimentEnable(
+        @RequestParam enabled: Boolean,
+    ): BotSettings {
+        val current = settingsService.getSettings()
+        val updated = current.copy(experimentEnabled = enabled)
+        settingsService.updateSettings(updated)
+        return updated
+    }
+
+    /**
+     * Последние решения эксперимента (обе руки).
+     */
+    @GetMapping("/experiment/decisions")
+    suspend fun experimentDecisions(
+        @RequestParam(defaultValue = "50") limit: Int,
+    ): List<com.trading.bot.model.ExperimentDecision> = paperTradingService.recentDecisions(limit)
+
+    /**
+     * Статус RAG-корпуса и анализатора.
+     */
+    @GetMapping("/rag/status")
+    suspend fun ragStatus(): Map<String, Any?> = ragErrorAnalyzer.status()
+
+    /**
+     * Переиндексация RAG-корпуса из S3/MinIO.
+     */
+    @PostMapping("/rag/refresh")
+    suspend fun ragRefresh(): Map<String, Any> {
+        val size = ragErrorAnalyzer.refresh()
+        return mapOf("indexed" to size, "status" to ragErrorAnalyzer.status())
+    }
+
+    /**
+     * RAG-анализ ошибки: извлекает похожие трейсы и строит разбор первопричины.
+     */
+    @PostMapping("/rag/analyze")
+    suspend fun ragAnalyze(
+        @RequestBody request: RagAnalyzeRequest,
+    ): RagAnalysis {
+        require(request.query.isNotBlank()) { "query must not be blank" }
+        return ragErrorAnalyzer.analyze(request.query, request.ticker, request.k)
+    }
+
+    /**
+     * RAG-анализ конкретного трейса по storage_key.
+     */
+    @PostMapping("/rag/analyze-trace")
+    suspend fun ragAnalyzeTrace(
+        @RequestBody request: RagTraceRequest,
+    ): RagAnalysis {
+        require(request.storageKey.isNotBlank()) { "storageKey must not be blank" }
+        return ragErrorAnalyzer.analyzeTrace(request.storageKey, request.k)
     }
 
     /**

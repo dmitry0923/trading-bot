@@ -49,6 +49,7 @@ class PositionRepository(
             closeReason = row.get("close_reason", String::class.java),
             openedAt = row.require("opened_at", LocalDateTime::class.java),
             closedAt = row.get("closed_at", LocalDateTime::class.java),
+            cycleId = row.get("cycle_id", String::class.java),
         )
 
     suspend fun findByStatus(status: PositionStatus): List<Position> {
@@ -169,11 +170,11 @@ class PositionRepository(
             INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
                 stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
                 liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
-                alor_order_id, close_order_id, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at)
+                alor_order_id, close_order_id, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
-                :alorOrderId, :closeOrderId, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt)
+                :alorOrderId, :closeOrderId, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId)
             RETURNING id
             """.trimIndent()
         val id =
@@ -205,6 +206,7 @@ class PositionRepository(
                 .bindOrNull("closeReason", position.closeReason)
                 .bind("openedAt", position.openedAt)
                 .bindOrNull("closedAt", position.closedAt)
+                .bindOrNull("cycleId", position.cycleId)
                 .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
                 .one()
                 .awaitSingle()
@@ -223,7 +225,7 @@ class PositionRepository(
                 trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
                 alor_order_id = :alorOrderId, close_order_id = :closeOrderId,
                 pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
-                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt
+                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId
             WHERE id = :id
             """.trimIndent()
         databaseClient
@@ -254,6 +256,7 @@ class PositionRepository(
             .bindOrNull("closeReason", position.closeReason)
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
+            .bindOrNull("cycleId", position.cycleId)
             .bind("id", position.id!!)
             .then()
             .awaitSingleOrNull()

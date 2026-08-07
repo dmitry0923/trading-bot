@@ -15,6 +15,7 @@
 - **Volatility guard** (раздел 5.4): ATR% > `risk.max-volatility-percent` → HOLD.
 - **Backtest framework** (раздел 11): `BacktestEngine`, `SimulatedExecution`, `BacktestMetrics`, endpoint `GET /api/v1/backtest/{ticker}`, 6 unit-тестов.
 - **TimescaleDB для candles** (раздел 6.4): гипертаблица (чанки по time, retention 90 дней) + батч-запись свечей `CandleRepository.saveAll` вместо построчного `exists`+`save`.
+- **Наблюдаемость LLM-агента** (раздел 13.18): JSON-логирование + trace_id, трейс-хранилище S3/MinIO, Shadow Mode / decision-level A/B + Grafana, **RAG-анализ ошибок** по трейсам (`/api/v1/rag/*`).
 
 ## 13.2. Дорожная карта по версиям
 
@@ -322,3 +323,71 @@ flowchart LR
 
 > Критерий «100% покрытие» применяется к критичным торговым путям (client, risk, execution, settings);
 > для генерации отчётов и инфраструктуры допускается исключение через `@Generated`/фильтры Kover.
+
+## 13.18. Наблюдаемость LLM-агента (3 фазы) — реализовано
+
+План наблюдаемости LLM-агента выполнен полностью (compile + tests + ktlint зелёные).
+
+### Phase 1 — Structured JSON logging + trace_id ✅
+
+- `logback-spring.xml`: JSON в stdout (LogstashEncoder), профиль `!json-logs-off`.
+  MDC-поля: `trace_id`, `cycle_id`, `ticker`, `agent`, `application=mmvb-trading-bot-v2`.
+- `TraceContext` (`infrastructure/tracing`): MDC-контекст корутин (`mdcContext`/`withMdc`).
+- `StrategyService.run()`: `trace_id = cycle_id = UuidV7`, дочерние корутины наследуют MDC.
+- `ResilientLlmClient.complete()`: `withMdc(AGENT=...)` вокруг каждого LLM-вызова.
+- `Position.cycleId` + миграция `013-position-cycle-id.sql` (индекс); `PositionOpened/ClosedEvent.cycleId`.
+
+### Phase 2 — Трейс-хранилище S3/MinIO ✅
+
+- `TraceStorage` / `S3TraceStorage` (`infrastructure/tracing`): lazy MinioClient,
+  auto-create бакета, ключ `<traceId>/<agent>/<createdAt>-<uuid>.json`, best-effort.
+- `ResilientLlmClient`: `ResolvedEndpoint.provider`, `persistTrace()` во `withMdc`;
+  `LlmResponse.storageKey` кэшируется через SemanticCache.
+- `agent_logs.storage_key` (миграция `014`), все 6 агентов сохраняют `storageKey`.
+- Конфиг `trace-storage.*` (env `MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET`),
+  MinIO-сервис в `docker-compose.yml`.
+
+### Phase 3 — Shadow Mode / Decision-level A/B ✅
+
+- `ExperimentConfig` (`experiment.*`): `enabled`, `experimentId`, `variantPromptVersion`,
+  `shadowExecution`, `rolloutPercent` (+ `inRollout(cycleId)`).
+- `PaperTradingService`: на каждый цикл пишет две записи в `experiment_decisions`:
+  - **CONTROL** — решение текущего пайплайна (исполняется, кроме полного shadow);
+  - **VARIANT** — `is_paper=true`: либо повторный вызов Арбитра с промптом
+    `variantPromptVersion` (реальное A/B, `bypassCache=true`), либо тень контроля
+    (`shadow-copy`, без LLM).
+- При `PositionClosedEvent` фиксируется исход обеих рук: CONTROL — фактический P&L,
+  VARIANT — гипотетический (HOLD→0, противоположное направление→−P&L, то же→P&L×qty_ratio).
+- `ArbitratorAgent.adjudicate(bypassCache=false)` — для A/B-вызова кэш обходится.
+- Метрики `experiment.*` (logged/executed/shadowed/llm/outcome), API
+  `GET /experiment/status`, `POST /experiment/enable`, `GET /experiment/decisions`.
+- Управление через `BotSettings` (`experimentEnabled`, `experimentRolloutPercent`,
+  `variantPromptVersion`) — миграция не требуется (JSON-блоб `bot_settings`), таблица
+  `experiment_decisions` — миграция `015-experiment-decisions.sql`.
+
+Следующий шаг: сравнение исходов рук уже визуализируется в Grafana — dashboard
+«Trading Bot - A/B Experiment» (провижининг `grafana/provisioning/`, см. 09.2).
+Промоушн вариантной руки — только после накопления статистики и решения по KPI.
+
+### Phase 4 — RAG-анализ ошибок ✅
+
+Анализ первопричины ошибок LLM-агентов по трейсам из S3/MinIO (см. раздел 9.5):
+
+- `RagConfig` (`rag.*`, env `RAG_ENABLED` и др.): `enabled=false` по умолчанию,
+  `corpusLimit=500`, `refreshIntervalMs=600000`, `maxResults=5`,
+  `similarityThreshold=0.02`, `llmEnabled=true`.
+- `TraceEmbedder` — локальный TF-IDF (токенизация EN+RU, стоп-слова, idf,
+  косинус) — без внешнего vector DB и без затрат embedding API.
+- `TraceCorpusIndex` — in-memory корпус с `@Volatile` снимком, параллельное
+  чтение (Semaphore 8) на `Dispatchers.IO`; `search(query)` / `searchSimilar(trace)`.
+- `TraceStorage.list()/read()` — чтение ключей по lastModified и объектов.
+- `RagErrorAnalyzer` — переиндексация на `ApplicationReadyEvent` и по расписанию;
+  `analyze(query,ticker,k)`, `analyzeTrace(storageKey,k)`, `status()`; LLM-разбор
+  (prompt `rag-analyzer`, `temperature=0.2`) с rule-based fallback; метрики
+  `rag.*`; API `GET /api/v1/rag/status`, `POST /api/v1/rag/refresh`,
+  `POST /api/v1/rag/analyze`, `POST /api/v1/rag/analyze-trace`.
+- Best-effort: сбой хранилища/LLM не влияет на торговлю.
+
+Дальнейшие шаги (вне текущей задачи): асинхронный разбор каждого fallback-трейса,
+`ticker`-фильтрация корпуса, пагинация корпуса при > 500 трейсов, алерт
+`RagIndexEmpty` при пустом корпусе в течение N часов.

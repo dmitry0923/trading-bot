@@ -413,6 +413,7 @@ class TradingBotService(
                         takeProfit = strat.takeProfit ?: risk.calcTP(strat.targetPrice, dir),
                         trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
                         pendingEntry = true,
+                        cycleId = strat.cycleId,
                     )
                 positionRepo.save(pos)
                 meterRegistry.counter("bot.entry.uncertain", Tags.of("ticker", strat.ticker)).increment()
@@ -441,6 +442,7 @@ class TradingBotService(
                 takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
                 trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
                 alorOrderId = orderId,
+                cycleId = strat.cycleId,
             )
         positionRepo.save(pos)
         tradeEventService.recordPositionOpened(pos)

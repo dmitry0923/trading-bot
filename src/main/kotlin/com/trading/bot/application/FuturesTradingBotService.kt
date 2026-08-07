@@ -98,7 +98,7 @@ class FuturesTradingBotService(
         }
         scope.launch {
             try {
-                openFuturesPosition(strat.ticker, strat.targetPrice, strat.action)
+                openFuturesPosition(strat.ticker, strat.targetPrice, strat.action, strat.cycleId)
             } catch (e: Exception) {
                 logger.error(e) { "Futures entry handler error ${strat.ticker}" }
                 meterRegistry.counter("futures.entry.error", Tags.of("ticker", strat.ticker)).increment()
@@ -172,6 +172,7 @@ class FuturesTradingBotService(
         ticker: String,
         targetPrice: BigDecimal,
         action: StrategyAction,
+        cycleId: String?,
     ) {
         if (futuresRiskEngine.isDailyLossLimitReached()) {
             logger.warn { "Daily loss limit reached — entry blocked $ticker" }
@@ -223,6 +224,7 @@ class FuturesTradingBotService(
                         variationMargin = BigDecimal.ZERO,
                         stopLossPoints = riskConfig.defaultStopLossPoints,
                         pendingEntry = true,
+                        cycleId = cycleId,
                     )
                 positionRepo.save(pos)
                 meterRegistry.counter("futures.entry.uncertain", Tags.of("ticker", ticker)).increment()
@@ -257,6 +259,7 @@ class FuturesTradingBotService(
                 variationMargin = BigDecimal.ZERO,
                 stopLossPoints = riskConfig.defaultStopLossPoints,
                 alorOrderId = placed.alorOrderId,
+                cycleId = cycleId,
             )
         positionRepo.save(pos)
         tradeEventService.recordPositionOpened(pos)

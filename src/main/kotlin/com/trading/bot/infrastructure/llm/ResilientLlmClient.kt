@@ -1,6 +1,11 @@
 package com.trading.bot.infrastructure.llm
 
 import com.trading.bot.config.LlmConfig
+import com.trading.bot.config.LlmProvider
+import com.trading.bot.config.TraceStorageConfig
+import com.trading.bot.infrastructure.tracing.LlmTrace
+import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.infrastructure.tracing.TraceStorage
 import com.trading.bot.service.SettingsService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
@@ -45,6 +50,8 @@ class ResilientLlmClient(
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val retryRegistry: RetryRegistry,
     private val settingsService: SettingsService,
+    private val traceStorage: TraceStorage,
+    private val traceStorageConfig: TraceStorageConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -67,6 +74,7 @@ class ResilientLlmClient(
             ).build()
 
     private data class ResolvedEndpoint(
+        val provider: LlmProvider,
         val baseUrl: String,
         val model: String,
         val apiKey: String,
@@ -97,26 +105,36 @@ class ResilientLlmClient(
             return LlmResponse.fallback("NO_API_KEY")
         }
 
-        if (fingerprint != null) {
-            semanticCache.get(agent, ticker, fingerprint)?.let { return it }
-        }
-
-        val system = prompt.renderSystem(variables)
-        val user = prompt.renderUser(variables)
-
-        val response =
-            try {
-                llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
-            } catch (e: Exception) {
-                logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
-                meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
-                LlmResponse.fallback("CALL_ERROR")
+        // Весь вызов выполняется в MDC-контексте с agent: trace_id наследуется
+        // от родительской корутины цикла (см. TraceContext / StrategyService),
+        // поэтому каждый JSON-лог и трейс привязаны к конкретному агенту и циклу.
+        return TraceContext.withMdc(mapOf(TraceContext.AGENT to agent)) {
+            if (fingerprint != null) {
+                semanticCache.get(agent, ticker, fingerprint)?.let { return@withMdc it }
             }
 
-        if (fingerprint != null && !response.isFallback) {
-            semanticCache.put(agent, ticker, fingerprint, response)
+            val system = prompt.renderSystem(variables)
+            val user = prompt.renderUser(variables)
+
+            val response =
+                try {
+                    llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
+                } catch (e: Exception) {
+                    logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
+                    meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
+                    LlmResponse.fallback("CALL_ERROR")
+                }
+
+            // Полный трейс (промпты + ответ) в S3/MinIO; storage_key попадает
+            // в ответ, semantic cache и agent_logs — без хранения сырых промптов в БД.
+            val finalResponse =
+                response.copy(storageKey = persistTrace(agent, ticker, fingerprint, system, user, response, endpoint))
+
+            if (fingerprint != null && !finalResponse.isFallback) {
+                semanticCache.put(agent, ticker, fingerprint, finalResponse)
+            }
+            finalResponse
         }
-        return response
     }
 
     /**
@@ -130,7 +148,41 @@ class ResilientLlmClient(
         val baseUrl = settings.llmBaseUrl.takeIf { it.isNotBlank() } ?: defaultBaseUrl
         val model = settings.llmModel.takeIf { it.isNotBlank() } ?: defaultModel
         val apiKey = settings.llmApiKey.takeIf { it.isNotBlank() } ?: llmConfig.apiKey
-        return ResolvedEndpoint(baseUrl = baseUrl, model = model, apiKey = apiKey)
+        return ResolvedEndpoint(provider = provider, baseUrl = baseUrl, model = model, apiKey = apiKey)
+    }
+
+    /**
+     * Сохраняет полный трейс LLM-вызова в S3/MinIO (best-effort, см. [TraceStorage]).
+     *
+     * @return storage_key объекта в хранилище, либо null если хранение отключено/не удалось
+     */
+    private suspend fun persistTrace(
+        agent: String,
+        ticker: String,
+        fingerprint: String?,
+        system: String,
+        user: String,
+        response: LlmResponse,
+        endpoint: ResolvedEndpoint,
+    ): String? {
+        if (!traceStorageConfig.enabled) return null
+        val trace =
+            LlmTrace(
+                traceId = TraceContext.traceId(),
+                ticker = ticker,
+                agent = agent,
+                provider = endpoint.provider.name,
+                model = response.model.ifBlank { endpoint.model },
+                fingerprint = fingerprint,
+                systemPrompt = system,
+                userPrompt = user,
+                responseContent = response.content,
+                tokensUsed = response.tokensUsed,
+                latencyMs = response.latencyMs,
+                isFallback = response.isFallback,
+                fromCache = response.fromCache,
+            )
+        return traceStorage.save(trace)
     }
 
     /**

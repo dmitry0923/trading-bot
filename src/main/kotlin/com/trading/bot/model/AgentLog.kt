@@ -15,5 +15,6 @@ data class AgentLog(
     val tokensUsed: Int? = null,
     val isCached: Boolean = false,
     val overrideReason: String? = null,
+    val storageKey: String? = null,
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

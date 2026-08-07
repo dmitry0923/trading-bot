@@ -44,4 +44,5 @@ data class Position(
     var closeReason: String? = null,
     var openedAt: LocalDateTime = LocalDateTime.now(),
     var closedAt: LocalDateTime? = null,
+    var cycleId: String? = null,
 )

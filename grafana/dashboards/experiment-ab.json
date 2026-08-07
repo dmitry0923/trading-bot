@@ -1,0 +1,388 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "title": "A/B Outcomes (CONTROL vs VARIANT)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
+          "unit": "currencyRUB",
+          "min": 0
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "VARIANT" }, "properties": [ { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } } ] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "experiment_outcome_pnl_profit_total{arm=\"CONTROL\"} - experiment_outcome_pnl_loss_total{arm=\"CONTROL\"}",
+          "legendFormat": "CONTROL (net)"
+        },
+        {
+          "refId": "B",
+          "expr": "experiment_outcome_pnl_profit_total{arm=\"VARIANT\"} - experiment_outcome_pnl_loss_total{arm=\"VARIANT\"}",
+          "legendFormat": "VARIANT (net)"
+        }
+      ],
+      "title": "Net P&L by arm (cumulative)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "showPoints": "never" },
+          "unit": "currencyRUB"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "VARIANT" }, "properties": [ { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } } ] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(experiment_outcome_pnl_profit_total{arm=\"CONTROL\"}[$__rate_interval])) - sum(increase(experiment_outcome_pnl_loss_total{arm=\"CONTROL\"}[$__rate_interval]))",
+          "legendFormat": "CONTROL"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(experiment_outcome_pnl_profit_total{arm=\"VARIANT\"}[$__rate_interval])) - sum(increase(experiment_outcome_pnl_loss_total{arm=\"VARIANT\"}[$__rate_interval]))",
+          "legendFormat": "VARIANT"
+        }
+      ],
+      "title": "Net P&L delta per interval",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "currencyRUB"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 9 },
+      "id": 3,
+      "options": {
+        "orientation": "auto",
+        "showValue": "auto",
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(experiment_outcome_pnl_profit_total[$__range])) by (arm)",
+          "legendFormat": "{{arm}} profit"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(experiment_outcome_pnl_loss_total[$__range])) by (arm)",
+          "legendFormat": "{{arm}} loss"
+        }
+      ],
+      "title": "Profit vs Loss by arm (range)",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 9 },
+      "id": 4,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(experiment_outcome_win_total{arm=\"CONTROL\"}[$__rate_interval])) / clamp_min(sum(increase(experiment_outcome_marked_total{arm=\"CONTROL\"}[$__rate_interval])), 1)",
+          "legendFormat": "CONTROL"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(experiment_outcome_win_total{arm=\"VARIANT\"}[$__rate_interval])) / clamp_min(sum(increase(experiment_outcome_marked_total{arm=\"VARIANT\"}[$__rate_interval])), 1)",
+          "legendFormat": "VARIANT"
+        }
+      ],
+      "title": "Win rate by arm (closed outcomes)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 9 },
+      "id": 5,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(experiment_variant_llm_total{mode=\"LLM\"}[$__range]))",
+          "legendFormat": "LLM (real A/B)"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(experiment_variant_llm_total{mode=\"COPY\"}[$__range]))",
+          "legendFormat": "shadow-copy"
+        }
+      ],
+      "title": "Variant arm: LLM vs copy (range)",
+      "type": "piechart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 70, "lineWidth": 1, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "id": 6,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(experiment_decision_logged_total[$__rate_interval])) by (arm, action)"
+        }
+      ],
+      "title": "Decisions rate by arm / action",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 17 },
+      "id": 7,
+      "options": {
+        "orientation": "auto",
+        "showValue": "auto",
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(experiment_decision_logged_total{arm=\"CONTROL\"}[$__range])) by (action)",
+          "legendFormat": "CONTROL {{action}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(experiment_decision_logged_total{arm=\"VARIANT\"}[$__range])) by (action)",
+          "legendFormat": "VARIANT {{action}}"
+        }
+      ],
+      "title": "Action distribution by arm (range)",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 17 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right" },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(experiment_control_executed_total[$__range]))",
+          "legendFormat": "executed"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(increase(experiment_control_shadowed_total[$__range]))",
+          "legendFormat": "shadowed"
+        }
+      ],
+      "title": "Control arm execution (range)",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "id": 101,
+      "title": "Experiment status",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 26 },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(increase(experiment_decision_logged_total[$__range]))", "legendFormat": "decisions" }
+      ],
+      "title": "Decisions (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 26 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }
+      },
+      "targets": [
+        { "refId": "A", "expr": "sum(increase(experiment_outcome_marked_total[$__range]))", "legendFormat": "outcomes" }
+      ],
+      "title": "Outcomes marked (range)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "currencyRUB"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 26 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "experiment_outcome_pnl_profit_total{arm=\"CONTROL\"} - experiment_outcome_pnl_loss_total{arm=\"CONTROL\"}",
+          "legendFormat": "CONTROL"
+        }
+      ],
+      "title": "CONTROL net P&L",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "currencyRUB"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 26 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "experiment_outcome_pnl_profit_total{arm=\"VARIANT\"} - experiment_outcome_pnl_loss_total{arm=\"VARIANT\"}",
+          "legendFormat": "VARIANT"
+        }
+      ],
+      "title": "VARIANT net P&L",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["trading-bot", "llm", "a/b"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Trading Bot - A/B Experiment",
+  "uid": "experiment-ab",
+  "version": 1,
+  "weekStart": ""
+}

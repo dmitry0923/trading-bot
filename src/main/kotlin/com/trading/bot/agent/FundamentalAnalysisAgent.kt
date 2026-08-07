@@ -109,6 +109,7 @@ class FundamentalAnalysisAgent(
                 latencyMs = System.currentTimeMillis() - start,
                 tokensUsed = resp.tokensUsed,
                 isCached = resp.fromCache,
+                storageKey = resp.storageKey,
             ),
         )
         meterRegistry.counter("agent.fundamental.decision", Tags.of("action", report.conclusion)).increment()

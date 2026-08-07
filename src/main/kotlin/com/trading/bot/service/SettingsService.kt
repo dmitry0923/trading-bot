@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.ExperimentConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.BotSettings
@@ -25,6 +26,7 @@ class SettingsService(
     private val settingsRepository: SettingsRepository,
     private val riskConfig: RiskConfig,
     private val leverageConfig: LeverageConfig,
+    private val experimentConfig: ExperimentConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -99,5 +101,11 @@ class SettingsService(
         riskConfig.shadowModeCooldownHours = s.shadowModeCooldownHours
         riskConfig.volatilityIndexEnabled = s.volatilityIndexEnabled
         riskConfig.maxVolatilityIndexPercent = s.maxVolatilityIndexPercent
+
+        // Shadow Mode / Decision-level A/B эксперимент
+        experimentConfig.enabled = s.experimentEnabled
+        experimentConfig.experimentId = s.experimentId.ifBlank { "default" }
+        experimentConfig.variantPromptVersion = s.variantPromptVersion.ifBlank { null }
+        experimentConfig.rolloutPercent = s.experimentRolloutPercent.coerceIn(0, 100)
     }
 }

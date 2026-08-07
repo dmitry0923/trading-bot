@@ -77,6 +77,12 @@ data class BotSettings(
     val shadowModeCooldownHours: Long = 24,
     val volatilityIndexEnabled: Boolean = true,
     val maxVolatilityIndexPercent: Double = 50.0,
+    // Shadow Mode / Decision-level A/B эксперимент (Phases 3). Вкл/выкл и параметры
+    // эксперимента поверх experiment.* конфигурации.
+    val experimentEnabled: Boolean = false,
+    val experimentId: String = "default",
+    val experimentRolloutPercent: Int = 100,
+    val variantPromptVersion: String = "",
 ) {
     fun llmProvider(): com.trading.bot.config.LlmProvider? =
         runCatching {

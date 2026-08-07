@@ -65,6 +65,61 @@
 | `llm.fallback.activated` | Counter | `agent, reason` | fallback (NO_API_KEY, CALL_ERROR) |
 | `llm.cache.hit` / `llm.cache.miss` / `llm.cache.error` | Counter | `agent` | семантический кэш |
 
+#### Эксперимент (Shadow Mode / A/B)
+
+| Метрика | Тип | Labels | Описание |
+|---|---|---|---|
+| `experiment.decision.logged` | Counter | `arm, action` | записанные решения (CONTROL/VARIANT × BUY/SELL/HOLD) |
+| `experiment.control.executed` / `experiment.control.shadowed` | Counter | — | контрольная рука исполнена / только записана (shadow) |
+| `experiment.variant.llm` | Counter | `mode` (LLM/COPY) | вариантный арбитр вызвал LLM или тень контроля |
+| `experiment.outcome.marked` | Counter | `arm` | зафиксирован P&L при закрытии позиции |
+| `experiment.outcome.pnl_profit` / `experiment.outcome.pnl_loss` | Counter | `arm` | накопленные прибыль/убыток по руке (P&L разбит на два счётчика, т.к. может быть отрицательным) |
+| `experiment.outcome.win` | Counter | `arm` | число закрытий с pnl > 0 по руке |
+
+PromQL:
+
+```promql
+# Расхождение решений CONTROL vs VARIANT
+sum(rate(experiment_decision_logged_total{arm="CONTROL"}[1h])) by (action)
+  / sum(rate(experiment_decision_logged_total{arm="VARIANT"}[1h])) by (action)
+
+# Доля реальных LLM-вызовов вариантной руки
+rate(experiment_variant_llm_total{mode="LLM"}[1h]) / rate(experiment_variant_llm_total[1h])
+
+# Win rate по руке (закрытые исходы)
+sum(increase(experiment_outcome_win_total{arm="CONTROL"}[1h]))
+  / clamp_min(sum(increase(experiment_outcome_marked_total{arm="CONTROL"}[1h])), 1)
+
+# Чистый P&L по руке
+experiment_outcome_pnl_profit_total{arm="CONTROL"} - experiment_outcome_pnl_loss_total{arm="CONTROL"}
+```
+
+#### RAG (анализ ошибок по трейсам)
+
+| Метрика | Тип | Labels | Описание |
+|---|---|---|---|
+| `rag.refresh` | Counter | `status` (ok/error) | успешные/упавшие переиндексации корпуса |
+| `rag.index_size` | Gauge | — | размер корпуса (проиндексировано трейсов) |
+| `rag.search` | Counter | — | выполненный поиск по корпусу |
+| `rag.latency` | Timer | — | латентность `analyze()`/`analyzeTrace()` |
+| `rag.llm.error` | Counter | — | LLM-разбор недоступен, fallback на rule-based |
+
+PromQL:
+
+```promql
+# Ошибки переиндексации корпуса (запросов нет — корпус пуст)
+increase(rag_refresh_total{status="error"}[1h])
+
+# Размер корпуса
+rag_index_size
+
+# Доля LLM-отчётов среди всех поисков (при отсутствии ошибок ≈ 1)
+1 - increase(rag_llm_error_total[1h]) / increase(rag_search_total[1h])
+
+# p95 латентность RAG-анализа
+histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
+```
+
 #### Alor
 
 | Метрика | Тип | Labels | Описание |
@@ -157,6 +212,27 @@ increase(trade_slippage_rub_total[24h])
 | **Risk** | daily PnL vs лимит, open positions vs max, paused tickers, deterministic overrides по причинам |
 | **Infrastructure** | JVM heap, CPU/RAM пода, PostgreSQL connections, Redis hits |
 
+### A/B Experiment (`grafana/dashboards/experiment-ab.json`)
+
+Dashboard «Trading Bot - A/B Experiment» (uid `experiment-ab`) автоматически
+провижинится через `grafana/provisioning/` (datasource Prometheus + file provider,
+папка «Trading Bot»). Панели:
+
+| Панель | Запрос (суть) |
+|---|---|
+| Net P&L by arm (cumulative) | `experiment_outcome_pnl_profit_total{arm} - experiment_outcome_pnl_loss_total{arm}` |
+| Net P&L delta per interval | `sum(increase(pnl_profit)) - sum(increase(pnl_loss))` по руке |
+| Profit vs Loss by arm | bar, `sum(increase(...[$__range])) by (arm)` |
+| Win rate by arm | `increase(outcome_win) / clamp_min(increase(outcome_marked), 1)` |
+| Variant arm: LLM vs copy | pie, `experiment_variant_llm_total{mode=LLM\|COPY}` |
+| Decisions rate by arm/action | stacked bar, `sum(rate(decision_logged)) by (arm, action)` |
+| Action distribution by arm | bar, по `$__range` |
+| Control arm execution | pie, executed vs shadowed |
+| Experiment status | stat: decisions, outcomes marked, net P&L CONTROL/VARIANT |
+
+Локальный запуск: `docker compose up -d grafana` → http://127.0.0.1:3000
+(admin / `$GRAFANA_ADMIN_PASSWORD`), dashboard уже в папке «Trading Bot».
+
 ### Ключевые панели Risk-dashboard
 
 - **Daily PnL** — gauge `bot_pnl` суммарно + линия лимита −50 000.
@@ -197,13 +273,22 @@ increase(trade_slippage_rub_total[24h])
 
 ### Структура
 
-Spring Boot по умолчанию пишет в консоль (лог-формат для Docker/k8s — stdout). Целевой формат — JSON через logback appender (roadmap):
+Spring Boot пишет в консоль (stdout, формат для Docker/k8s) в JSON через
+`logstash-logback-encoder` (LogbackEncoder). JSON отключается профилем
+`!json-logs-off`. Каждая запись содержит MDC-поля:
 
 ```json
-{"ts":"2026-08-03T10:00:03.123Z","level":"INFO","logger":"com.trading.bot.agent.ArbitratorAgent",
+{"@timestamp":"2026-08-03T10:00:03.123Z","level":"INFO","logger":"com.trading.bot.agent.ArbitratorAgent",
  "message":"Agent 5 FINAL: BUY @ 280.5 conf=0.68 override=null",
- "cycleId":"8f1c-...","ticker":"SBER"}
+ "trace_id":"01J0...","cycle_id":"01J0...","ticker":"SBER","agent":"ArbitratorAgent",
+ "application":"mmvb-trading-bot-v2"}
 ```
+
+- `trace_id` = `cycle_id` — единый UUID (UuidV7), создаётся в `StrategyService.run()`
+  и пробрасывается через MDC-контекст корутин во все агенты и LLM-вызовы.
+- `ticker` — в циклах тикера; `agent` — в LLM-клиенте (`ResilientLlmClient.complete()`).
+- MDC восстанавливается после запуска цикла (`TraceContext`), дочерние корутины
+  наследуют контекст через `TraceContext.mdcContext()`.
 
 ### Уровни
 
@@ -218,9 +303,23 @@ Spring Boot по умолчанию пишет в консоль (лог-фор�
 
 ### Correlation ID
 
-- `cycleId` (UUID) создаётся в `StrategyService.run()` на каждый цикл стратегий и пробрасывается через все агенты в `AgentLog.cycleId`.
+- `trace_id`/`cycle_id` (UuidV7) создаётся в `StrategyService.run()` на каждый цикл стратегий и пробрасывается через все агенты в `AgentLog.cycleId`.
 - Для META-агента `cycleId="META"`.
-- Трассировка сделки: `cycleId` → стратегия (`strategies.cycle_id`) → позиция (по тикеру) → `positions` P&L.
+- Трассировка сделки: `cycleId` → стратегия (`strategies.cycle_id`) → позиция (`positions.cycle_id`) → `positions` P&L → закрытие (`PositionClosedEvent.cycleId`).
+
+### Трейс-хранилище (S3/MinIO, Phase 2)
+
+Полные промпт/ответы LLM-вызовов сохраняются в объектное хранилище
+(`trace-storage.*`, MinIO по умолчанию) ключом
+`<trace_id>/<agent>/<createdAt>-<uuid>.json`, ссылка — в `agent_logs.storage_key`.
+Включается env `TRACE_STORAGE_ENABLED=true` + `MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET` (бакет `llm-traces`).
+
+### Эксперимент (Shadow Mode / Decision-level A/B, Phase 3)
+
+Ledger решений — таблица `experiment_decisions` (руки CONTROL/VARIANT на каждый
+цикл, см. раздел roadmap 13.18). Включение — через BotSettings
+(`experimentEnabled`, `experimentId`, `experimentRolloutPercent`, `variantPromptVersion`)
+или env `EXPERIMENT_ENABLED`/`EXPERIMENT_VARIANT_PROMPT_VERSION`.
 
 ### Диагностика по логам
 
@@ -289,6 +388,34 @@ PromQL:
 # Какие тикеры прошли критерии приёма
 bt_pass_total{result="PASS"}
 ```
+
+### RAG-анализ ошибок (Phase 4)
+
+Анализ первопричины ошибок LLM-агентов по сохранённым трейсам (S3/MinIO, Phase 2):
+
+- **Корпус** — `TraceCorpusIndex` индексирует последние трейсы локальным TF-IDF
+  (`TraceEmbedder`, без внешнего vector DB): токенизация EN+RU, стоп-слова,
+  idf-веса, косинусная близость. Переиндексация — на `ApplicationReadyEvent`
+  и по расписанию `rag.refresh-interval-ms` (метрика `rag.refresh`).
+- **Запрос** — по тексту ошибки/симптома или по конкретному трейсу извлекаются
+  топ-K похожих (`rag.max-results`, порог `rag.similarity-threshold`).
+- **Разбор** — если `rag.llm-enabled=true`, LLM (`rag-analyzer` prompt) строит
+  `root_cause/evidence/recommendations/confidence` на извлечённых трейсах как
+  контексте (retrieval-augmented, `temperature=0.2`); при недоступности LLM —
+  rule-based сводка (агент/fallback/cache/ошибки/латентность). Пайплайн
+  best-effort — сбой хранилища/LLM не влияет на торговлю.
+
+API:
+
+| Endpoint | Описание |
+|---|---|
+| `GET /api/v1/rag/status` | включён ли RAG, размер корпуса, `lastRefresh`, LLM |
+| `POST /api/v1/rag/refresh` | принудительная переиндексация корпуса |
+| `POST /api/v1/rag/analyze` | `{"query": "...", "ticker": "...", "k": n}` — анализ ошибки |
+| `POST /api/v1/rag/analyze-trace` | `{"storageKey": "...", "k": n}` — анализ конкретного трейса |
+
+Включение — env `RAG_ENABLED=true` (+ `RAG_LLM_ENABLED` для LLM-разбора, по умолчанию
+`true`). При выключенном RAG `analyze()` возвращает `mode="DISABLED"` без поиска.
 
 ## 9.6. Мониторинг P&L и рисков
 

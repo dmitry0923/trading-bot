@@ -12,6 +12,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
+import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.Candle
 import com.trading.bot.model.DrawdownStatus
 import com.trading.bot.model.PositionDirection
@@ -79,6 +80,7 @@ class StrategyService(
     private val candleRepo: CandleRepository,
     private val eventPublisher: TradingEventPublisher,
     private val settingsService: SettingsService,
+    private val paperTradingService: PaperTradingService,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
 ) {
@@ -96,7 +98,14 @@ class StrategyService(
                 .uuidString()
         logger.info { "=== STRATEGY CYCLE $cycleId ===" }
         meterRegistry.counter("strategy.cycle").increment()
-        scope.launch { executeCycle(cycleId) }
+        // trace_id = cycleId: единый идентификатор для всего цикла (JSON-логи,
+        // agent_logs, позиции, события). MDC-контекст копируется в coroutine,
+        // поэтому дочерние корутины (включая LLM-вызовы) наследуют trace_id.
+        TraceContext.put(TraceContext.TRACE_ID, cycleId)
+        TraceContext.put(TraceContext.CYCLE_ID, cycleId)
+        scope.launch(TraceContext.mdcContext()) { executeCycle(cycleId) }
+        TraceContext.put(TraceContext.TRACE_ID, null)
+        TraceContext.put(TraceContext.CYCLE_ID, null)
     }
 
     /**
@@ -139,7 +148,7 @@ class StrategyService(
 
                 val feedback =
                     tickers.associateWith { ticker ->
-                        async {
+                        async(TraceContext.mdcContext(mapOf(TraceContext.TICKER to ticker))) {
                             try {
                                 feedbackAgent.generateFeedback(ticker)
                             } catch (e: Exception) {
@@ -153,7 +162,7 @@ class StrategyService(
                 tickers
                     .flatMap { ticker -> timeframes.map { timeframe -> ticker to timeframe } }
                     .map { (ticker, timeframe) ->
-                        async {
+                        async(TraceContext.mdcContext(mapOf(TraceContext.TICKER to ticker))) {
                             try {
                                 processTicker(ticker, timeframe, cycleId, feedback.getValue(ticker), drawdownStatus)
                             } catch (e: Exception) {
@@ -307,7 +316,33 @@ class StrategyService(
 
         strategyRepo.save(strategy)
         BlockingDb.io { redis.saveStrategy(strategy) }
-        eventPublisher.publishStrategyGenerated(strategy)
+
+        val experimentEnabled = paperTradingService.isExperimentEnabled()
+        val inExperiment = experimentEnabled && paperTradingService.inExperiment(cycleId)
+        val shadowExecution = inExperiment && paperTradingService.isShadowExecution()
+        if (inExperiment) {
+            paperTradingService.recordControlDecision(cycleId, ticker, timeframe, strategy, strategy.rawJson, executed = !shadowExecution)
+            paperTradingService.produceVariantDecision(
+                cycleId = cycleId,
+                ticker = ticker,
+                timeframe = timeframe,
+                draft = draft,
+                challenge = challenge,
+                tech = tech,
+                fund = fund,
+                snapshot = snapshot,
+                control = strategy,
+                contextPrompt = fb?.contextPrompt,
+                adaptiveConfidence = adaptiveConf,
+                riskContext = riskContext,
+            )
+        }
+
+        if (shadowExecution) {
+            logger.info { "SHADOW: $ticker/$timeframe decision=${effectiveFinal.action} recorded but NOT executed" }
+        } else {
+            eventPublisher.publishStrategyGenerated(strategy)
+        }
         meterRegistry
             .counter(
                 "strategy.saved",

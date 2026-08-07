@@ -41,6 +41,7 @@ class TradingEventPublisher(
                 quantity = position.quantity,
                 direction = position.direction,
                 entryPrice = position.entryPrice,
+                cycleId = position.cycleId,
             ),
         )
     }
@@ -50,8 +51,9 @@ class TradingEventPublisher(
             PositionClosedEvent(
                 positionId = position.id ?: -1L,
                 ticker = position.ticker,
-                pnl = position.pnl ?: java.math.BigDecimal.ZERO,
+                pnl = position.pnl ?: BigDecimal.ZERO,
                 reason = position.closeReason ?: "CLOSED",
+                cycleId = position.cycleId,
             ),
         )
     }

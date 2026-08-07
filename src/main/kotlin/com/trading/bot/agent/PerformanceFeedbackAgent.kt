@@ -110,6 +110,7 @@ class PerformanceFeedbackAgent(
                 )
 
             val prompt = promptRegistry.getTemplate("performance-feedback", version)
+            var feedbackStorageKey: String? = null
             val feedback =
                 try {
                     val resp =
@@ -120,6 +121,7 @@ class PerformanceFeedbackAgent(
                             variables = variables,
                             temperature = 0.1,
                         )
+                    feedbackStorageKey = resp.storageKey
                     if (resp.isFallback) {
                         logger.warn { "LLM error for $ticker feedback, using rule-based" }
                         ruleBasedFeedback(ticker, stats)
@@ -145,6 +147,7 @@ class PerformanceFeedbackAgent(
                         "confAdj=${feedback.confidenceAdjustment}, " +
                             "slAdj=${feedback.slAdjustmentPercent}, tpAdj=${feedback.tpAdjustmentPercent}",
                     rawOutput = feedback.rawJson,
+                    storageKey = feedbackStorageKey,
                 ),
             )
             feedback

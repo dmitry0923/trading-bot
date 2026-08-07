@@ -23,3 +23,9 @@ databaseChangeLog:
       file: db/changelog/changes/011-refresh-tokens.sql
   - include:
       file: db/changelog/changes/012-timescale-candles.sql
+  - include:
+      file: db/changelog/changes/013-position-cycle-id.sql
+  - include:
+      file: db/changelog/changes/014-agent-log-storage-key.sql
+  - include:
+      file: db/changelog/changes/015-experiment-decisions.sql

@@ -126,6 +126,7 @@ class StrategyAgent(
                 start,
                 resp.content,
                 isCached = resp.fromCache,
+                storageKey = resp.storageKey,
             )
         }
 
@@ -164,6 +165,7 @@ class StrategyAgent(
                     resp.content,
                     isCached = resp.fromCache,
                     tokensUsed = resp.tokensUsed,
+                    storageKey = resp.storageKey,
                 )
             }
 
@@ -210,6 +212,7 @@ class StrategyAgent(
             isCached = resp.fromCache,
             tokensUsed = resp.tokensUsed,
             overrideReason = guarded.overrideReason,
+            storageKey = resp.storageKey,
         )
     }
 
@@ -227,6 +230,7 @@ class StrategyAgent(
         isCached: Boolean = false,
         tokensUsed: Int = 0,
         overrideReason: String? = null,
+        storageKey: String? = null,
     ): Draft {
         agentLogRepository.save(
             AgentLog(
@@ -241,6 +245,7 @@ class StrategyAgent(
                 tokensUsed = tokensUsed,
                 isCached = isCached,
                 overrideReason = overrideReason,
+                storageKey = storageKey,
             ),
         )
         meterRegistry.counter("agent.strategy.decision", Tags.of("action", draft.action.name)).increment()

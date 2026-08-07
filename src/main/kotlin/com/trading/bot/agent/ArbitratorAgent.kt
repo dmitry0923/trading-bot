@@ -66,6 +66,9 @@ class ArbitratorAgent(
      * @param contextPrompt контекст памяти о последних результатах сделок (может быть null)
      * @param adaptiveConfidence адаптивный порог уверенности
      * @param riskContext текущий риск-контекст (пауза, дневной лимит убытка)
+     * @param bypassCache обходит semantic cache (нужно для A/B: вариантный арбитр
+     *                     с другим версией промпта не должен получать кэшированный ответ
+     *                     контрольной руки — иначе эксперимент бессмыслен)
      * @param version версия LLM-шаблона промпта
      * @return финальное решение (Final)
      */
@@ -80,6 +83,7 @@ class ArbitratorAgent(
         adaptiveConfidence: Double = 0.60,
         riskContext: RiskContext = RiskContext(),
         version: String = PromptRegistry.DEFAULT_VERSION,
+        bypassCache: Boolean = false,
     ): Final =
         coroutineScope {
             val start = System.currentTimeMillis()
@@ -179,15 +183,21 @@ class ArbitratorAgent(
                 )
 
             // Арбитр решает один и тот же кейс одинаково — кэшируем по сигналу + риску
+            // (кроме A/B-вызова: bypassCache=true, чтобы вариантная рука не получила
+            // кэшированный ответ контрольной).
             val fingerprint =
-                semanticCache.genericFingerprint(
-                    draft.action.name,
-                    challenge.riskLevel,
-                    tech.conclusion,
-                    tech.trend,
-                    String.format("%.1f", tech.rsi),
-                    String.format("%.2f", adaptiveConfidence),
-                )
+                if (bypassCache) {
+                    null
+                } else {
+                    semanticCache.genericFingerprint(
+                        draft.action.name,
+                        challenge.riskLevel,
+                        tech.conclusion,
+                        tech.trend,
+                        String.format("%.1f", tech.rsi),
+                        String.format("%.2f", adaptiveConfidence),
+                    )
+                }
 
             val prompt = promptRegistry.getTemplate("arbitrator", version)
             val resp =
@@ -251,7 +261,7 @@ class ArbitratorAgent(
                     dec
                 }
 
-            logAndReturn(finalDec, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache)
+            logAndReturn(finalDec, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache, resp.storageKey)
         }
 
     private fun parseFinal(
@@ -290,6 +300,7 @@ class ArbitratorAgent(
         raw: String,
         tokensUsed: Int = 0,
         isCached: Boolean = false,
+        storageKey: String? = null,
     ): Final {
         agentLogRepository.save(
             AgentLog(
@@ -304,6 +315,7 @@ class ArbitratorAgent(
                 tokensUsed = tokensUsed,
                 isCached = isCached,
                 overrideReason = dec.overrideReason,
+                storageKey = storageKey,
             ),
         )
         meterRegistry.counter("agent.arbitrator.decision", Tags.of("action", dec.action.name)).increment()

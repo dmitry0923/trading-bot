@@ -16,10 +16,10 @@ abstract class AbstractTestContainerTest {
         @Container
         val postgres =
             PostgreSQLContainer(
-                DockerImageName.parse("timescale/timescaledb:2.17.2-pg15")
+                DockerImageName
+                    .parse("timescale/timescaledb:2.17.2-pg15")
                     .asCompatibleSubstituteFor("postgres"),
-            )
-                .withDatabaseName("trading_bot")
+            ).withDatabaseName("trading_bot")
                 .withUsername("test")
                 .withPassword("test")
 

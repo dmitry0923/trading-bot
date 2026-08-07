@@ -134,7 +134,7 @@ class ContrarianAgent(
                 }
             }
 
-        return logAndReturn(report, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache)
+        return logAndReturn(report, snapshot.ticker, cycleId, start, resp.content, resp.tokensUsed, resp.fromCache, resp.storageKey)
     }
 
     private suspend fun logAndReturn(
@@ -145,6 +145,7 @@ class ContrarianAgent(
         raw: String,
         tokensUsed: Int = 0,
         isCached: Boolean = false,
+        storageKey: String? = null,
     ): ChallengeReport {
         agentLogRepository.save(
             AgentLog(
@@ -158,6 +159,7 @@ class ContrarianAgent(
                 latencyMs = System.currentTimeMillis() - startMs,
                 tokensUsed = tokensUsed,
                 isCached = isCached,
+                storageKey = storageKey,
             ),
         )
         meterRegistry.counter("agent.contrarian.decision", Tags.of("riskLevel", report.riskLevel)).increment()

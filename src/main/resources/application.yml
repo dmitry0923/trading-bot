@@ -94,6 +94,32 @@ llm:
   queue-capacity: 64
   queue-concurrency: 2
 
+trace-storage:
+  enabled: ${TRACE_STORAGE_ENABLED:false}
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:}
+  secret-key: ${MINIO_SECRET_KEY:}
+  bucket: ${MINIO_BUCKET:llm-traces}
+  region: us-east-1
+
+# Shadow Mode / Decision-level A/B (Phases 3). По умолчанию выключен —
+# включается через BotSettings (UI/POST /api/v1/settings), см. SettingsService.
+experiment:
+  enabled: ${EXPERIMENT_ENABLED:false}
+  experiment-id: ${EXPERIMENT_ID:default}
+  variant-prompt-version: ${EXPERIMENT_VARIANT_PROMPT_VERSION:}
+  shadow-execution: ${EXPERIMENT_SHADOW_EXECUTION:false}
+  rollout-percent: ${EXPERIMENT_ROLLOUT_PERCENT:100}
+
+# RAG-анализ ошибок LLM-агентов по трейсам из S3/MinIO (требует trace-storage.enabled=true).
+rag:
+  enabled: ${RAG_ENABLED:false}
+  corpus-limit: ${RAG_CORPUS_LIMIT:500}
+  refresh-interval-ms: ${RAG_REFRESH_INTERVAL_MS:600000}
+  max-results: ${RAG_MAX_RESULTS:5}
+  similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.02}
+  llm-enabled: ${RAG_LLM_ENABLED:true}
+
 resilience4j:
   circuitbreaker:
     instances:

@@ -132,7 +132,15 @@ class TechnicalAnalysisAgent(
 
         if (resp.isFallback) {
             logger.info { "LLM unavailable for $ticker, using deterministic technical analysis" }
-            return logAndReturn(baseline, ticker, cycleId, start, resp.content, isCached = resp.fromCache)
+            return logAndReturn(
+                baseline,
+                ticker,
+                cycleId,
+                start,
+                resp.content,
+                isCached = resp.fromCache,
+                storageKey = resp.storageKey,
+            )
         }
 
         return try {
@@ -146,10 +154,28 @@ class TechnicalAnalysisAgent(
                     confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
                     reasoning = j.path("reasoning").asString(baseline.reasoning),
                 )
-            logAndReturn(enhanced, ticker, cycleId, start, resp.content, isCached = resp.fromCache, tokensUsed = resp.tokensUsed)
+            logAndReturn(
+                enhanced,
+                ticker,
+                cycleId,
+                start,
+                resp.content,
+                isCached = resp.fromCache,
+                tokensUsed = resp.tokensUsed,
+                storageKey = resp.storageKey,
+            )
         } catch (e: Exception) {
             logger.warn(e) { "Technical LLM parse error for $ticker" }
-            logAndReturn(baseline, ticker, cycleId, start, resp.content, isCached = resp.fromCache, tokensUsed = resp.tokensUsed)
+            logAndReturn(
+                baseline,
+                ticker,
+                cycleId,
+                start,
+                resp.content,
+                isCached = resp.fromCache,
+                tokensUsed = resp.tokensUsed,
+                storageKey = resp.storageKey,
+            )
         }
     }
 
@@ -178,6 +204,7 @@ class TechnicalAnalysisAgent(
         raw: String,
         isCached: Boolean,
         tokensUsed: Int = 0,
+        storageKey: String? = null,
     ): TechnicalReport {
         agentLogRepository.save(
             AgentLog(
@@ -191,6 +218,7 @@ class TechnicalAnalysisAgent(
                 latencyMs = System.currentTimeMillis() - startMs,
                 tokensUsed = tokensUsed,
                 isCached = isCached,
+                storageKey = storageKey,
             ),
         )
         meterRegistry.counter("agent.technical.decision", Tags.of("action", report.conclusion)).increment()

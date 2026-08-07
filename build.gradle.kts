@@ -47,7 +47,10 @@ dependencies {
     implementation("io.projectreactor.kotlin:reactor-kotlin-extensions")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-slf4j")
     implementation(libs.kotlinLogging)
+    implementation(libs.logstashLogbackEncoder)
+    implementation(libs.minio)
 
     implementation(libs.resilience4jSpringBoot4)
     implementation(libs.resilience4jKotlin)

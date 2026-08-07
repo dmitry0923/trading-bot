@@ -5,7 +5,6 @@ import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.AgentLog
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
@@ -29,16 +28,9 @@ class AgentLogRepository(
             tokensUsed = row.get("tokens_used", Int::class.javaObjectType)?.takeIf { it != 0 },
             isCached = row.require("is_cached", Boolean::class.javaObjectType),
             overrideReason = row.get("override_reason", String::class.java),
+            storageKey = row.get("storage_key", String::class.java),
             createdAt = row.require("created_at", LocalDateTime::class.java),
         )
-
-    suspend fun findTop100ByOrderByCreatedAtDesc(): List<AgentLog> =
-        databaseClient
-            .sql("SELECT * FROM agent_logs ORDER BY created_at DESC LIMIT 100")
-            .map { row, _ -> toAgentLog(row) }
-            .all()
-            .collectList()
-            .awaitSingle()
 
     suspend fun findFiltered(
         ticker: String?,
@@ -70,9 +62,9 @@ class AgentLogRepository(
         val sql =
             """
             INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output,
-                                    latency_ms, tokens_used, is_cached, override_reason, created_at)
+                                    latency_ms, tokens_used, is_cached, override_reason, storage_key, created_at)
             VALUES (:cycleId, :agentName, :ticker, :action, :confidence, :reasoning, :rawOutput,
-                    :latencyMs, :tokensUsed, :isCached, :overrideReason, :createdAt)
+                    :latencyMs, :tokensUsed, :isCached, :overrideReason, :storageKey, :createdAt)
             RETURNING id
             """.trimIndent()
         val id =
@@ -89,14 +81,11 @@ class AgentLogRepository(
                 .bindOrNull("tokensUsed", log.tokensUsed)
                 .bind("isCached", log.isCached)
                 .bindOrNull("overrideReason", log.overrideReason)
+                .bindOrNull("storageKey", log.storageKey)
                 .bind("createdAt", log.createdAt)
                 .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
                 .one()
                 .awaitSingle()
         return log.copy(id = id)
-    }
-
-    suspend fun deleteAll() {
-        databaseClient.sql("DELETE FROM agent_logs").then().awaitSingleOrNull()
     }
 }

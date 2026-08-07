@@ -16,12 +16,17 @@ data class LlmResponse(
     val isFallback: Boolean = false,
     val fromCache: Boolean = false,
     val storageKey: String? = null,
+    val errorMessage: String? = null,
 ) {
     companion object {
-        fun fallback(reason: String): LlmResponse =
+        fun fallback(
+            reason: String,
+            message: String? = null,
+        ): LlmResponse =
             LlmResponse(
                 content = """{"conclusion":"NEUTRAL","confidence":0.0,"reasoning":"LLM unavailable: $reason"}""",
                 isFallback = true,
+                errorMessage = message ?: reason,
                 latencyMs = 0,
             )
     }

@@ -9,6 +9,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
+import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.AgentLog
 import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.InstrumentType
@@ -105,6 +106,7 @@ class TradingBotService(
             scope.launch {
                 alorWsClient.subscribeToQuotes(tradingConfig.tickers).collect { tick ->
                     try {
+                        TraceContext.put(TraceContext.TICKER, tick.ticker)
                         lastWsTickAt[tick.ticker] = Instant.now()
                         meterRegistry
                             .timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
@@ -145,6 +147,7 @@ class TradingBotService(
                     lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
                 }.forEach { ticker ->
                     try {
+                        TraceContext.put(TraceContext.TICKER, ticker)
                         val price = alorClient.getLastPrice(ticker) ?: return@forEach
                         marketDataGate.recordRestPollSuccess(ticker)
                         eventPublisher.publishPriceChanged(ticker, price)
@@ -173,7 +176,15 @@ class TradingBotService(
             meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
             return
         }
-        scope.launch {
+        scope.launch(
+            TraceContext.mdcContext(
+                mapOf(
+                    TraceContext.TRACE_ID to strat.cycleId,
+                    TraceContext.CYCLE_ID to strat.cycleId,
+                    TraceContext.TICKER to strat.ticker,
+                ),
+            ),
+        ) {
             try {
                 if (risk.isDailyLossLimitReached()) {
                     logger.warn { "Daily loss limit reached, skip entry ${strat.ticker}" }
@@ -205,7 +216,15 @@ class TradingBotService(
      */
     @EventListener
     fun onEntrySignal(event: com.trading.bot.event.EntrySignalEvent) {
-        scope.launch {
+        scope.launch(
+            TraceContext.mdcContext(
+                mapOf(
+                    TraceContext.TRACE_ID to event.strategy.cycleId,
+                    TraceContext.CYCLE_ID to event.strategy.cycleId,
+                    TraceContext.TICKER to event.strategy.ticker,
+                ),
+            ),
+        ) {
             try {
                 openPosition(event.strategy)
             } catch (e: Exception) {
@@ -220,7 +239,7 @@ class TradingBotService(
      */
     @EventListener
     fun onPriceChanged(event: com.trading.bot.event.PriceChangedEvent) {
-        scope.launch {
+        scope.launch(TraceContext.mdcContext(mapOf(TraceContext.TICKER to event.ticker))) {
             val handlerStart = System.nanoTime()
             try {
                 val open =
@@ -228,6 +247,10 @@ class TradingBotService(
                         .findByStatus(PositionStatus.OPEN)
                         .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
                 open.forEach { pos ->
+                    // trace_id = cycleId открытия позиции: закрытия/мониторинг наследуют
+                    // идентификатор цикла, породившего вход (см. StrategyService).
+                    TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
+                    TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
                     // Позиции, ожидающие подтверждения входа/закрытия, обрабатывает реконсилятор
                     // (SL/TP на них не срабатывают — исключаем двойные ордера).
                     if (pos.pendingEntry || pos.pendingClose) return@forEach

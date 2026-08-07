@@ -26,4 +26,10 @@ class TraceStorageConfig {
     var secretKey: String = ""
     var bucket: String = "llm-traces"
     var region: String = "us-east-1"
+
+    /** Ёмкость буфера асинхронной записи трейсов; при переполнении — синхронный fallback. */
+    var asyncBufferSize: Int = 1024
+
+    /** Срок жизни трейсов в днях (S3 lifecycle expiration); 0 — не настраивать retention. */
+    var retentionDays: Int = 0
 }

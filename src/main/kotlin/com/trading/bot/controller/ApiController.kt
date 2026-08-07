@@ -32,11 +32,13 @@ import com.trading.bot.service.RedisCacheService
 import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.SettingsService
 import com.trading.bot.service.StrategyService
+import com.trading.bot.service.TraceQueryService
 import com.trading.bot.service.TradeAnalysisService
 import com.trading.bot.service.TradingBotService
 import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import org.springframework.http.HttpStatus
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -45,6 +47,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -88,6 +91,7 @@ class ApiController(
     private val tradingControlService: TradingControlService,
     private val paperTradingService: PaperTradingService,
     private val ragErrorAnalyzer: RagErrorAnalyzer,
+    private val traceQueryService: TraceQueryService,
     private val meterRegistry: MeterRegistry,
 ) {
     @GetMapping("/settings")
@@ -163,6 +167,38 @@ class ApiController(
     ): RagAnalysis {
         require(request.storageKey.isNotBlank()) { "storageKey must not be blank" }
         return ragErrorAnalyzer.analyzeTrace(request.storageKey, request.k)
+    }
+
+    /**
+     * Дешёвый доступ к LLM-трейсам для расследования инцидентов (без LLM-разбора):
+     * - `key` — конкретный трейс по storage_key (agent_logs.storage_key);
+     * - `cycleId` — все трейсы агентов конкретного цикла;
+     * - без параметров — последние трейсы по бакету.
+     */
+    @GetMapping("/traces")
+    suspend fun getTraces(
+        @RequestParam(required = false) key: String?,
+        @RequestParam(required = false) cycleId: String?,
+        @RequestParam(defaultValue = "20") limit: Int,
+    ): Map<String, Any> {
+        meterRegistry.counter("api.traces").increment()
+        return when {
+            !key.isNullOrBlank() -> {
+                val trace = traceQueryService.getByStorageKey(key)
+                if (trace == null) {
+                    throw ResponseStatusException(HttpStatus.NOT_FOUND, "trace not found: $key")
+                }
+                mapOf("trace" to trace)
+            }
+
+            !cycleId.isNullOrBlank() -> {
+                mapOf("traces" to traceQueryService.listByCycleId(cycleId, limit))
+            }
+
+            else -> {
+                mapOf("traces" to traceQueryService.listRecent(limit))
+            }
+        }
     }
 
     /**

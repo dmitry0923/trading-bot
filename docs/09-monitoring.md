@@ -306,13 +306,28 @@ Spring Boot пишет в консоль (stdout, формат для Docker/k8s
 - `trace_id`/`cycle_id` (UuidV7) создаётся в `StrategyService.run()` на каждый цикл стратегий и пробрасывается через все агенты в `AgentLog.cycleId`.
 - Для META-агента `cycleId="META"`.
 - Трассировка сделки: `cycleId` → стратегия (`strategies.cycle_id`) → позиция (`positions.cycle_id`) → `positions` P&L → закрытие (`PositionClosedEvent.cycleId`).
+- Исполнение ордеров (`TradingBotService`): `trace_id` наследуется из `strategy.cycleId`
+  в event-хендлерах (`onStrategyGenerated`/`onEntrySignal`), при мониторинге позиций —
+  из `position.cycleId`, поэтому JSON-логи входа/закрытия/реконсиляции привязаны к циклу.
 
 ### Трейс-хранилище (S3/MinIO, Phase 2)
 
 Полные промпт/ответы LLM-вызовов сохраняются в объектное хранилище
 (`trace-storage.*`, MinIO по умолчанию) ключом
 `<trace_id>/<agent>/<createdAt>-<uuid>.json`, ссылка — в `agent_logs.storage_key`.
-Включается env `TRACE_STORAGE_ENABLED=true` + `MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET` (бакет `llm-traces`).
+Включается env `TRACE_STORAGE_ENABLED=true` + `MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY/BUCKET`
+(бакет `llm-traces`). В `docker-compose.yml` включено по умолчанию (`TRACE_STORAGE_ENABLED:-true`).
+
+Запись асинхронная: `AsyncTraceStorage` возвращает ключ сразу (очередь с буфером
+`trace-storage.async-buffer-size`, при переполнении — синхронный fallback), метрики
+`trace.write.async{queued|written|failed|sync_fallback}`, `trace.buffer.size`.
+Retention: `trace-storage.retention-days` (0 — выкл.) настраивает S3 lifecycle
+expiration на бакет один раз при первом обращении.
+
+Чтение трейсов для расследования инцидентов (без RAG/LLM):
+`GET /api/v1/traces?key=<storage_key>` — один трейс,
+`GET /api/v1/traces?cycleId=<cycle>` — все вызовы агентов цикла,
+`GET /api/v1/traces?limit=N` — последние по бакету.
 
 ### Эксперимент (Shadow Mode / Decision-level A/B, Phase 3)
 

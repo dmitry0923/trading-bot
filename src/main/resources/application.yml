@@ -104,6 +104,8 @@ trace-storage:
   secret-key: ${MINIO_SECRET_KEY:}
   bucket: ${MINIO_BUCKET:llm-traces}
   region: us-east-1
+  async-buffer-size: ${TRACE_ASYNC_BUFFER_SIZE:1024}
+  retention-days: ${TRACE_RETENTION_DAYS:0}
 
 # Shadow Mode / Decision-level A/B (Phases 3). По умолчанию выключен —
 # включается через BotSettings (UI/POST /api/v1/settings), см. SettingsService.

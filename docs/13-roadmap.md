@@ -391,3 +391,19 @@ flowchart LR
 Дальнейшие шаги (вне текущей задачи): асинхронный разбор каждого fallback-трейса,
 `ticker`-фильтрация корпуса, пагинация корпуса при > 500 трейсов, алерт
 `RagIndexEmpty` при пустом корпусе в течение N часов.
+
+### Закрытие пробелов наблюдаемости (v2.2)
+
+Остаточные пробелы, обнаруженные при аудите постановки задачи, закрыты:
+
+| Пробел | Решение |
+|---|---|
+| `LlmTrace.errorMessage` не заполнялся | `LlmResponse.errorMessage` + передача причины/текста исключения в `persistTrace()` (fallback-трейсы теперь несут причину NO_API_KEY/CALL_ERROR + message) |
+| Синхронный `putObject` на hot-path LLM-вызова | `AsyncTraceStorage` (`@Primary`): ограниченный FIFO-буфер, ключ возвращается сразу, фоновый консюмер пишет; при переполнении — синхронный fallback; метрики `trace.write.async`, `trace.buffer.size` |
+| `trace_id` не доходил до исполнения ордеров | `TradingBotService` event-хендлеры ставят MDC из `strategy.cycleId`/`position.cycleId` (`onStrategyGenerated`, `onEntrySignal`, `onPriceChanged`, `pollMarketData`, WS-котировки) |
+| Нет дешёвого доступа к трейсам | `TraceQueryService` + `GET /api/v1/traces` (по `key`/`cycleId`/recent) — без RAG/LLM |
+| Хранение выключено по умолчанию, нет retention | `TRACE_STORAGE_ENABLED:-true` в `docker-compose.yml`; `trace-storage.retention-days` → S3 lifecycle expiration (idempotent) |
+
+Новые конфиги (`trace-storage.*`): `async-buffer-size` (env `TRACE_ASYNC_BUFFER_SIZE`),
+`retention-days` (env `TRACE_RETENTION_DAYS`). API: `GET /api/v1/traces`.
+Тесты: `AsyncTraceStorageTest`, `TraceObjectKeyTest`, `TraceQueryServiceTest`, `LlmResponseTest`.

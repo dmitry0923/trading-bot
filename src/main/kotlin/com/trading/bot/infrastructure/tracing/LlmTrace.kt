@@ -1,6 +1,18 @@
 package com.trading.bot.infrastructure.tracing
 
 import java.time.Instant
+import java.util.UUID
+
+/**
+ * Детерминированный ключ объекта трейса в объектном хранилище:
+ * `<traceId>/<agent>/<createdAt>-<uuid>.json`. Используется и при записи,
+ * и при асинхронной постановке в очередь ([AsyncTraceStorage]), и в RAG-индексе.
+ */
+internal fun traceObjectKey(trace: LlmTrace): String {
+    val traceDir = trace.traceId?.takeIf { it.isNotBlank() } ?: "no-trace"
+    val uid = UUID.randomUUID()
+    return "$traceDir/${trace.agent}/${trace.createdAt}-$uid.json"
+}
 
 /**
  * Полный трейс одного LLM-вызова — сериализуется в JSON и сохраняется

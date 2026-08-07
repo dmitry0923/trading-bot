@@ -122,7 +122,7 @@ class ResilientLlmClient(
                 } catch (e: Exception) {
                     logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
                     meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
-                    LlmResponse.fallback("CALL_ERROR")
+                    LlmResponse.fallback("CALL_ERROR", e.message)
                 }
 
             // Полный трейс (промпты + ответ) в S3/MinIO; storage_key попадает
@@ -181,6 +181,7 @@ class ResilientLlmClient(
                 latencyMs = response.latencyMs,
                 isFallback = response.isFallback,
                 fromCache = response.fromCache,
+                errorMessage = response.errorMessage,
             )
         return traceStorage.save(trace)
     }

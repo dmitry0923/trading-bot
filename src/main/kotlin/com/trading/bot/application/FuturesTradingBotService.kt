@@ -12,6 +12,7 @@ import com.trading.bot.event.StrategyGeneratedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
+import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.OrderStatus
@@ -113,7 +114,15 @@ class FuturesTradingBotService(
             meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
             return
         }
-        scope.launch {
+        scope.launch(
+            TraceContext.mdcContext(
+                mapOf(
+                    TraceContext.TRACE_ID to strat.cycleId,
+                    TraceContext.CYCLE_ID to strat.cycleId,
+                    TraceContext.TICKER to strat.ticker,
+                ),
+            ),
+        ) {
             try {
                 openFuturesPosition(strat.ticker, strat.targetPrice, strat.action, strat.cycleId)
             } catch (e: Exception) {
@@ -129,7 +138,7 @@ class FuturesTradingBotService(
     @EventListener
     fun onPriceChanged(event: PriceChangedEvent) {
         if (event.ticker != "Si") return
-        scope.launch {
+        scope.launch(TraceContext.mdcContext(mapOf(TraceContext.TICKER to event.ticker))) {
             try {
                 monitorOpenPositions(event.ticker, event.price)
             } catch (e: Exception) {
@@ -352,6 +361,8 @@ class FuturesTradingBotService(
         val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.ticker == ticker }
         for (pos in open) {
             if (pos.instrumentType != InstrumentType.FUTURES) continue
+            TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
+            TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
 
             // Позиция ожидает подтверждения входа — SL/TP/закрытие не трогаем,
             // ждём State Reconciliation.
@@ -427,6 +438,8 @@ class FuturesTradingBotService(
         val pos = positionRepo.findByAlorOrderId(orderId) ?: positionRepo.findByCloseOrderId(orderId) ?: return
         if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
         if (pos.instrumentType != InstrumentType.FUTURES) return
+        TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
+        TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
         val fillPrice = report.avgPrice ?: return
 
         if (pos.pendingEntry) {
@@ -669,6 +682,8 @@ class FuturesTradingBotService(
                 val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
                 for (pos in open) {
                     try {
+                        TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
+                        TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
                         when {
                             pos.pendingEntry -> {
                                 resolveEntryViaOutbox(pos)

@@ -12,10 +12,12 @@
 | Сервис | YC-продукт | Комментарий |
 |---|---|---|
 | Compute VM | Yandex Compute (Ubuntu 22.04, 2 vCPU / 4 GB, 30 GB) | бот + docker compose |
-| PostgreSQL | Yandex Managed PostgreSQL (15, daily backup) | основной боевой БД |
+| PostgreSQL | Yandex Managed PostgreSQL (15, daily backup) | основной боевой БД; свечи — гипертаблица TimescaleDB (см. ниже) |
 | Redis | Yandex Managed Redis (7, AOF) | semantic cache, стратегии |
 | Registry | Yandex Container Registry | образы `trading-bot-app`, `trading-bot-frontend` |
 | Мониторинг | Prometheus + Grafana в docker compose на той же VM | `:9090`, `:3000` |
+
+**TimescaleDB на Managed PG**: расширение `timescaledb` (v2.9.0 для PG 15) включается **через консоль/CLI/Terraform, а не через SQL**: добавить расширение в БД и `shared_preload_libraries = timescaledb` (приведёт к перезапуску мастера). До включения миграция `012-timescale-candles.sql` безопасно пропускается (логирует предупреждение) — `candles` остаётся обычной таблицей, батч-запись всё равно работает. После включения перезапустить приложение, чтобы `candles` стала гипертаблицей.
 
 ### 10.0.2. Шаги первоначального поднятия
 
@@ -311,7 +313,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15-alpine
+        image: timescale/timescaledb:2.17.2-pg15
         env:
           POSTGRES_DB: trading_bot
           POSTGRES_USER: trader

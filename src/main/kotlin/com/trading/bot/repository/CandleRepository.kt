@@ -4,7 +4,6 @@ import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.Candle
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
-import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
@@ -16,7 +15,6 @@ class CandleRepository(
 ) {
     private fun toCandle(row: Row): Candle =
         Candle(
-            id = row.get("id", Long::class.javaObjectType),
             ticker = row.require("ticker", String::class.java),
             timeframe = row.require("timeframe", String::class.java),
             openPrice = row.require("open_price", BigDecimal::class.java),
@@ -51,42 +49,52 @@ class CandleRepository(
             .awaitSingle()
     }
 
-    suspend fun existsByTickerAndTimeframeAndTime(
-        ticker: String,
-        timeframe: String,
-        time: LocalDateTime,
-    ): Boolean {
-        val sql = "SELECT COUNT(*) AS c FROM candles WHERE ticker = :ticker AND timeframe = :timeframe AND time = :time"
-        val count =
-            databaseClient
-                .sql(sql)
-                .bind("ticker", ticker)
-                .bind("timeframe", timeframe)
-                .bind("time", time)
-                .map { row, _ -> row.get("c", Long::class.javaObjectType)!! }
-                .one()
-                .awaitSingle()
-        return count > 0
+    /**
+     * Массовая идемпотентная запись свечей одним multi-row INSERT
+     * (ON CONFLICT DO NOTHING вместо паттерна exists + save на каждую строку).
+     *
+     * Батчи по [BATCH_SIZE] строк: 8 параметров на строку, чтобы не упереться
+     * в лимит PostgreSQL на число параметров (65535).
+     *
+     * @return количество реально вставленных строк (конфликты не считаются)
+     */
+    suspend fun saveAll(candles: List<Candle>): Int {
+        if (candles.isEmpty()) return 0
+        var inserted = 0
+        candles.chunked(BATCH_SIZE).forEach { batch ->
+            val bindings = mutableListOf<Pair<String, Any>>()
+            val values =
+                batch.indices.joinToString(",") { i ->
+                    val candle = batch[i]
+                    bindings += "ticker_$i" to candle.ticker
+                    bindings += "timeframe_$i" to candle.timeframe
+                    bindings += "open_$i" to candle.openPrice
+                    bindings += "high_$i" to candle.highPrice
+                    bindings += "low_$i" to candle.lowPrice
+                    bindings += "close_$i" to candle.closePrice
+                    bindings += "volume_$i" to candle.volume
+                    bindings += "time_$i" to candle.time
+                    "(:ticker_$i, :timeframe_$i, :open_$i, :high_$i, :low_$i, :close_$i, :volume_$i, :time_$i)"
+                }
+            val sql =
+                """
+                INSERT INTO candles (ticker, timeframe, open_price, high_price, low_price, close_price, volume, time)
+                VALUES $values
+                ON CONFLICT (ticker, timeframe, time) DO NOTHING
+                """.trimIndent()
+            var spec = databaseClient.sql(sql)
+            bindings.forEach { (name, value) -> spec = spec.bind(name, value) }
+            inserted +=
+                spec
+                    .fetch()
+                    .rowsUpdated()
+                    .awaitSingle()
+                    .toInt()
+        }
+        return inserted
     }
 
-    suspend fun save(candle: Candle) {
-        val sql =
-            """
-            INSERT INTO candles (ticker, timeframe, open_price, high_price, low_price, close_price, volume, time)
-            VALUES (:ticker, :timeframe, :openPrice, :highPrice, :lowPrice, :closePrice, :volume, :time)
-            ON CONFLICT (ticker, timeframe, time) DO NOTHING
-            """.trimIndent()
-        databaseClient
-            .sql(sql)
-            .bind("ticker", candle.ticker)
-            .bind("timeframe", candle.timeframe)
-            .bind("openPrice", candle.openPrice)
-            .bind("highPrice", candle.highPrice)
-            .bind("lowPrice", candle.lowPrice)
-            .bind("closePrice", candle.closePrice)
-            .bind("volume", candle.volume)
-            .bind("time", candle.time)
-            .then()
-            .awaitSingleOrNull()
+    private companion object {
+        const val BATCH_SIZE = 500
     }
 }

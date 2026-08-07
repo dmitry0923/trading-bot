@@ -90,7 +90,7 @@ MONITOR_INTERVAL_MS=600000
 ```yaml
 services:
   postgres:
-    image: postgres:15-alpine
+    image: timescale/timescaledb:2.17.2-pg15
     environment:
       POSTGRES_DB: trading_bot
       POSTGRES_USER: trader

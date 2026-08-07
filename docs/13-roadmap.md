@@ -9,11 +9,12 @@
 - MOEX ISS данные, индикаторы (MA, RSI, ATR, MACD, Bollinger, EMA), Kelly criterion, адаптивные SL/TP.
 - Стратегии `conservative`/`default`/`aggressive`, self-learning (PerformanceFeedbackAgent).
 - 7 таблиц, Liquibase, REST API, Prometheus-метрики, alertmanager-конфиг.
-- Docker compose (PostgreSQL 15 + Redis 7).
+- Docker compose (TimescaleDB/PostgreSQL 15 + Redis 7).
 - **Event-driven слой** (раздел 2.3): `PriceChangedEvent`, `StrategyGeneratedEvent`, `EntrySignalEvent`, `ExecutionReportEvent` + `TradingEventPublisher` + `@EventListener`.
 - **Sector concentration** (раздел 5.3): `risk.max-sector-exposure`, справочник `risk.sectors`.
 - **Volatility guard** (раздел 5.4): ATR% > `risk.max-volatility-percent` → HOLD.
 - **Backtest framework** (раздел 11): `BacktestEngine`, `SimulatedExecution`, `BacktestMetrics`, endpoint `GET /api/v1/backtest/{ticker}`, 6 unit-тестов.
+- **TimescaleDB для candles** (раздел 6.4): гипертаблица (чанки по time, retention 90 дней) + батч-запись свечей `CandleRepository.saveAll` вместо построчного `exists`+`save`.
 
 ## 13.2. Дорожная карта по версиям
 
@@ -44,7 +45,8 @@ gantt
 |---|---|---|
 | Emergency stop endpoint | `POST /api/v1/bot/emergency-stop` — закрывает все позиции + запрещает открытие | 🔜 |
 | Persist daily PnL | перенос `dailyPnl` из памяти в БД + `/api/v1/risk/daily-pnl-history` (раздел 6.6) | 🔜 |
-| Партиционирование `candles`/`positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | 🔜 |
+| Партиционирование `candles` | TimescaleDB hypertable: чанки по time (1 неделя) + retention 90 дней (раздел 6.4) | ✅ v2.2 |
+| Партиционирование `positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | 🔜 |
 | Точный контроль SL/TP в лимитных заявках | добавлять SL/TP заявки при открытии позиции | 🔜 |
 | Distributed lock | возможность запуска нескольких инстансов без гонок (раздел 2.6) | 🔜 |
 | Multi-account | поддержка нескольких Alor-портфелей с общим конвейером и персональными лимитами | 🔜 |
@@ -109,7 +111,7 @@ gantt
 | P0 | Emergency stop | безопасность: ручная остановка в любой момент |
 | P0 | Persist daily PnL | лимит убытка не должен теряться при рестарте |
 | P1 | LLM в бэктесте | соответствие живому конвейеру, достоверность критериев приёма |
-| P1 | Партиционирование candles | рост таблицы ~42 000 строк/мес |
+| P1 | Партиционирование candles | ✅ TimescaleDB hypertable + retention 90 дней (раздел 6.4) |
 | P2 | Distributed lock | мульти-реплика (после стабилизации singleton) |
 | P2 | Multi-account | бизнес-расширение |
 | P3 | RabbitMQ outbox | при росте нагрузки |
@@ -283,7 +285,7 @@ flowchart LR
 | Версия | KPI успеха |
 |---|---|
 | v2.1 (текущая) | 39 тестов зелёных; событийный слой без потерь (`event.handled ≈ event.published`); бэктест-endpoint работает |
-| v2.2 | emergency stop < 1 c на реакцию; daily PnL переживает рестарт (тест); партиционирование candles — выборка за год < 200 мс |
+| v2.2 | emergency stop < 1 c на реакцию; daily PnL переживает рестарт (тест); candles — гипертаблица TimescaleDB, выборка за год < 200 мс, retention удаляет чанки > 90 дней |
 | v2.3 | LLM-бэктест ≥ 5 тикеров PASS; WebSocket-only 1 неделя SIMULATION без ошибок |
 | v2.4 | ML-модель > LLM-baseline на out-of-sample по profit factor |
 | v2.5 | 0 ложных арбитражных входов за месяц SIMULATION |

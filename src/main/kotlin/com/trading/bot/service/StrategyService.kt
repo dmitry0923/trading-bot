@@ -336,11 +336,7 @@ class StrategyService(
 
         // 3. MOEX — последний источник, с write-through в кэш
         val moex = moexClient.getCandles(ticker, from)
-        moex.forEach { candle ->
-            if (!candleRepo.existsByTickerAndTimeframeAndTime(candle.ticker, candle.timeframe, candle.time)) {
-                candleRepo.save(candle)
-            }
-        }
+        candleRepo.saveAll(moex)
         candleCache.addCandles(moex)
         return moex.sortedBy { it.time }
     }

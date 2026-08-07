@@ -7,6 +7,7 @@ import org.testcontainers.containers.GenericContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
+import org.testcontainers.utility.DockerImageName
 
 @SpringBootTest
 @Testcontainers
@@ -14,7 +15,10 @@ abstract class AbstractTestContainerTest {
     companion object {
         @Container
         val postgres =
-            PostgreSQLContainer("postgres:15-alpine")
+            PostgreSQLContainer(
+                DockerImageName.parse("timescale/timescaledb:2.17.2-pg15")
+                    .asCompatibleSubstituteFor("postgres"),
+            )
                 .withDatabaseName("trading_bot")
                 .withUsername("test")
                 .withPassword("test")

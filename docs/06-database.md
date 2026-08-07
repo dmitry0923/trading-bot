@@ -48,7 +48,6 @@ erDiagram
         timestamp created_at
     }
     candles {
-        bigserial id PK
         varchar ticker
         varchar timeframe
         numeric open_price
@@ -56,7 +55,7 @@ erDiagram
         numeric low_price
         numeric close_price
         bigint volume
-        timestamp time
+        timestamp time "partition key (TimescaleDB)"
     }
     agent_logs {
         bigserial id PK
@@ -152,18 +151,21 @@ erDiagram
 
 ### candles
 
+TimescaleDB-гипертаблица (см. миграцию `012-timescale-candles.sql`): `create_hypertable('candles', 'time')`, чанки по 1 неделе. На обычном PostgreSQL (без расширения timescaledb) конвертация безопасно пропускается — таблица остаётся обычной (миграция атомарна и не ломает старт приложения).
+
 | Колонка | Тип | NOT NULL | Описание |
 |---|---|---|---|
-| id | BIGSERIAL | PK | |
 | ticker | VARCHAR(20) | ✓ | |
 | timeframe | VARCHAR(20) | ✓ | MINUTE_10 |
 | open_price / high_price / low_price / close_price | NUMERIC(19,6) | ✓ | OHLC |
 | volume | BIGINT | ✓ | |
-| time | TIMESTAMP | ✓ | начало свечи |
+| time | TIMESTAMP | ✓ | начало свечи (partition key) |
 
-UNIQUE `(ticker, timeframe, time)` — защита от дублей. Индекс `idx_candles_ticker_time(ticker, timeframe, time)`.
+UNIQUE `(ticker, timeframe, time)` — защита от дублей (partition key `time` входит в уникальность, поэтому индекс допустим для гипертаблицы). Индекс `idx_candles_ticker_time(ticker, timeframe, time DESC)`.
 
-> **Целевое**: партиционирование по `time` (диапазоны), раздел 6.4.
+> **Реализовано**: партиционирование по `time` через TimescaleDB-чанки + автоматическое удаление чанков старше 90 дней (`add_retention_policy`) — размер таблицы ограничен, VACUUM-нагрузка на историю отсутствует (раздел 6.4).
+>
+> **Примечание**: compression TimescaleDB не используется — он несовместим с UNIQUE-индексами, а UNIQUE нужен для идемпотентной записи `ON CONFLICT DO NOTHING`. При текущем объёме (~50K строк/мес) компрессия не требуется.
 
 ### agent_logs
 
@@ -248,19 +250,7 @@ CREATE TABLE IF NOT EXISTS positions (
 CREATE INDEX IF NOT EXISTS idx_positions_ticker ON positions(ticker);
 ```
 
-**Пример будущего changeset с партициями** (проект):
-
-```sql
---liquibase formatted sql
---changeset dmitry:004
-
-CREATE TABLE candles_part (
-    LIKE candles INCLUDING ALL
-) PARTITION BY RANGE (time);
-
-CREATE TABLE candles_2026_q3 PARTITION OF candles_part
-    FOR VALUES FROM ('2026-07-01') TO ('2026-10-01');
-```
+**Пример changeset с TimescaleDB-конвертацией candles** (`012-timescale-candles.sql`): миграция атомарна — при недоступности расширения (обычный PG / Managed PG без включённого timescaledb) блокируются только DDL в DO-блоке с предупреждением, приложение стартует без изменений схемы.
 
 ## 6.4. Оптимизация запросов
 
@@ -272,13 +262,21 @@ CREATE TABLE candles_2026_q3 PARTITION OF candles_part
 | `positions WHERE alor_order_id=?` | applyExecutionReport | `alor_order_id` (рекомендуется добавить индекс) |
 | `positions WHERE status != 'OPEN' AND closed_at >= ?` | TradeAnalysisService | `idx_positions_closed_at` |
 | `positions ... AND ticker=? AND closed_at >= ?` | timePatternAnalysis | составной `(ticker, closed_at)` — рекомендация |
-| `candles WHERE ticker=? AND timeframe=? AND time BETWEEN ?` | loadCandles | `idx_candles_ticker_time` |
+| `candles WHERE ticker=? AND timeframe=? AND time BETWEEN ?` | loadCandles | `idx_candles_ticker_time` (гипертаблица, pruned by chunk) |
 | `agent_logs WHERE cycle_id=?` | трассировка | `idx_agent_logs_cycle` |
 | `order_outbox WHERE status='PENDING' AND created_at < ?` | outbox worker | `idx_outbox_status_created` |
 
-**Партиционирование `candles`**: таблица растёт быстрее всех (10 тикеров × 144 свечи/день = ~1 400 строк/день, ~42 000/мес). Партиционирование по `time` (квартальные секции) ускоряет выборки по периоду и упрощает архивацию.
+**Партиционирование `candles` (TimescaleDB)**: таблица растёт быстрее всех (10 тикеров × 144 свечи/день = ~1 400 строк/день, ~42 000/мес). Гипертаблица решает проблему роста и разрастания B-Tree-индексов:
 
-**Архивация старых данных**: удаление/перенос данных старше 90 дней. Для `agent_logs` — `raw_output` старых циклов можно удалять (аггрегаты остаются в `positions`). Запланировано как @Scheduled job (раздел 13).
+- чанки по `time` (1 неделя) — запись идёт только в горячий чанк, выборки по периоду pruning по чанкам;
+- `add_retention_policy('candles', INTERVAL '90 days')` автоматически удаляет чанки старше 90 дней — размер таблицы ограничен, VACUUM-нагрузка на историю отсутствует;
+- свечи перезагружаемы с MOEX ISS, поэтому retention безопасен.
+
+**Включение на Yandex Managed PostgreSQL**: расширение управляется НЕ через SQL, а через консоль/CLI/Terraform (`--extensions timescaledb` + shared_preload_libraries `timescaledb`, перезапуск мастера). До включения миграция `012` пропускается с предупреждением, `candles` остаётся обычной таблицей (батч-запись через `saveAll` всё равно убирает деградацию). После включения нужно перезапустить приложение (или выполнить конвертацию вручную).
+
+**Архивация старых данных**: для `agent_logs` — `raw_output` старых циклов можно удалять (аггрегаты остаются в `positions`). Запланировано как @Scheduled job (раздел 13).
+
+**Массовая запись свечей**: репозиторий пишет свечи батчами (`CandleRepository.saveAll`, multi-row `INSERT ... ON CONFLICT DO NOTHING`, батчи по 500 строк) вместо паттерна `exists`+`save` на каждую строку — это убирает деградацию записи независимо от СУБД.
 
 **Прочие рекомендации**:
 - добавить индекс на `positions.alor_order_id` (есть частый lookup по WS-fill);
@@ -339,9 +337,9 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
 | Открытие позиции | INSERT positions | идемпотентность по сигналу (одна позиция на тикер) |
 | Применение fill | UPDATE по `alor_order_id` | повторный fill не создаёт дубль |
 | Закрытие | UPDATE status/close_price | `closed_at`, `close_reason`, `pnl` в одном UPDATE |
-| Партиционирование candles | без | roadmap (раздел 6.4) |
+| Партиционирование candles | TimescaleDB hypertable | миграция `012`, атомарный DO-блок; retention 90 дней |
 
-Важное следствие: **PostgreSQL — единый источник правды**. Redis хранит только кэшируемые артефакты (стратегии с TTL, semantic cache, feedback), и потеря Redis не разрушает бизнес-данные.
+Важное следствие: **PostgreSQL — единый источник правды**. Redis хранит только кэшируемые артефакты (стратегии с TTL, semantic cache, feedback), и потеря Redis не разрушает бизнес-данные. `candles` — гипертаблица TimescaleDB, но доступ к ней через те же R2DBC/Liquibase, что и к обычным таблицам.
 
 ## 6.8. Резервное копирование
 
@@ -357,7 +355,9 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
 
 | Метрика | Источник | Предел |
 |---|---|---|
-| Размер таблиц | `pg_total_relation_size` | candles — следить за ростом |
+| Размер таблиц | `pg_total_relation_size` | candles — следить за ростом (retention 90 дней ограничивает) |
+| Число чанков candles | `chunks_detailed_size('candles')` / `timescaledb_information.chunks` | рост числа чанков ≈ 52/год, проверять равномерность |
+| Сработавший retention | журнал TimescaleDB background jobs (`timescaledb_information.jobs`) | удаление чанков должно идти регулярно |
 | Медленные запросы | pg_stat_statements | > 100 мс |
 | Заблокированные транзакции | pg_stat_activity | > 30 c |
 | Bloat | pgstat | регулярная autovacuum |

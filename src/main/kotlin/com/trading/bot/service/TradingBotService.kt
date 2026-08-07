@@ -75,6 +75,7 @@ class TradingBotService(
     private val tradeEventService: TradeEventService,
     private val eventPublisher: TradingEventPublisher,
     private val tradingGate: com.trading.bot.application.TradingGate,
+    private val marketDataGate: com.trading.bot.application.MarketDataGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -145,6 +146,7 @@ class TradingBotService(
                 }.forEach { ticker ->
                     try {
                         val price = alorClient.getLastPrice(ticker) ?: return@forEach
+                        marketDataGate.recordRestPollSuccess(ticker)
                         eventPublisher.publishPriceChanged(ticker, price)
                     } catch (e: Exception) {
                         logger.error(e) { "Price poll error $ticker" }
@@ -164,6 +166,11 @@ class TradingBotService(
         if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
             logger.info { "Trading disabled (single flag) — entry skipped ${strat.ticker}" }
+            return
+        }
+        if (!marketDataGate.isPriceDataFresh(strat.ticker)) {
+            logger.warn { "STALE market data — entry blocked ${strat.ticker}" }
+            meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
             return
         }
         scope.launch {
@@ -372,6 +379,11 @@ class TradingBotService(
     }
 
     private suspend fun doOpenPosition(strat: Strategy) {
+        if (!marketDataGate.isPriceDataFresh(strat.ticker)) {
+            logger.warn { "STALE market data — entry blocked ${strat.ticker} (defense in depth)" }
+            meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
+            return
+        }
         val open = positionRepo.findByStatus(PositionStatus.OPEN)
         val check = risk.validateNewStrategy(strat, open)
         if (!check.allowed) {

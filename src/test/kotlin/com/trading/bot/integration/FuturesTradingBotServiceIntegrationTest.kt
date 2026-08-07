@@ -1,5 +1,6 @@
 package com.trading.bot.integration
 
+import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.client.AlorClient
 import com.trading.bot.domain.risk.FuturesRiskEngine
@@ -64,6 +65,9 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @MockitoBean
     lateinit var tradingHoursGuard: TradingHoursGuard
 
+    @MockitoBean
+    lateinit var marketDataGate: MarketDataGate
+
     @BeforeEach
     fun setup() {
         runBlocking { positionRepo.deleteAll() }
@@ -72,6 +76,8 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         // пересчёт кэша drawdown от пустой БД (сбрасывает stale статус из предыдущего теста)
         runBlocking { drawdownProtection.computeStatus() }
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
+        // Данные всегда «свежие»: эти тесты проверяют риск-движок, а не MarketDataGate.
+        Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))
             Mockito

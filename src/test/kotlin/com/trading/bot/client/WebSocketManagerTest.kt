@@ -4,8 +4,11 @@ import com.trading.bot.config.AlorConfig
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
@@ -55,6 +58,30 @@ class WebSocketManagerTest {
         manager.onConnected(WsStream.QUOTES, 1)
 
         assertFalse(manager.isQuoteStale("SBER", Instant.now(), 3, now.minusSeconds(1)))
+    }
+
+    @Test
+    fun `lastQuoteReceivedAt tracks accepted quotes only`() {
+        assertNull(manager.lastQuoteReceivedAt("SBER"))
+
+        val oldReceivedAt = Instant.now().minus(6, ChronoUnit.SECONDS)
+        assertTrue(manager.isQuoteStale("SBER", oldReceivedAt, 1, Instant.now()))
+        assertNull(manager.lastQuoteReceivedAt("SBER"))
+
+        assertFalse(manager.isQuoteStale("SBER", Instant.now(), 2, Instant.now()))
+        val last = manager.lastQuoteReceivedAt("SBER")
+        assertNotNull(last)
+        assertTrue(Duration.between(last, Instant.now()).toMillis() < 1_000)
+    }
+
+    @Test
+    fun `onConnected resets lastQuoteReceivedAt`() {
+        assertFalse(manager.isQuoteStale("SBER", Instant.now(), 1, Instant.now()))
+        assertNotNull(manager.lastQuoteReceivedAt("SBER"))
+
+        manager.onConnected(WsStream.QUOTES, 1)
+
+        assertNull(manager.lastQuoteReceivedAt("SBER"))
     }
 
     @Test

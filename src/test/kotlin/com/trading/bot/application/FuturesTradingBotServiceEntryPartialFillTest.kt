@@ -63,6 +63,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val eventPublisher = Mockito.mock(TradingEventPublisher::class.java)
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
+    private val marketDataGate = Mockito.mock(MarketDataGate::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private val service =
@@ -83,6 +84,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             eventPublisher,
             tradeEventService,
             tradingGate,
+            marketDataGate,
             meterRegistry,
         )
 
@@ -140,15 +142,12 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             createdAt = createdAt,
         )
 
-    private fun entryPosition(
-        quantity: Int,
-        pendingEntry: Boolean,
-    ): Position =
+    private fun entryPosition(): Position =
         Position(
             id = 1L,
             ticker = "Si",
             direction = PositionDirection.LONG,
-            quantity = quantity,
+            quantity = 2,
             entryPrice = BigDecimal("92000"),
             currentPrice = BigDecimal("92000"),
             stopLoss = BigDecimal("91500"),
@@ -156,15 +155,16 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             instrumentType = InstrumentType.FUTURES,
             status = PositionStatus.OPEN,
             alorOrderId = "ord-entry-1",
-            pendingEntry = pendingEntry,
+            pendingEntry = true,
         )
 
-    private fun stubEntryAllowed(quantity: Int) {
+    private fun stubEntryAllowed() {
         Mockito
             .`when`(futuresRiskEngine.isDailyLossLimitReached())
             .thenReturn(false)
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+        Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
         runBlocking {
             Mockito
                 .`when`(alorClient.getLastPrice(Mockito.anyString()))
@@ -187,7 +187,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                 ).thenReturn(
                     FuturesRiskEngine.EntryValidationResult(
                         allowed = true,
-                        quantity = quantity,
+                        quantity = 3,
                         marginRequired = BigDecimal("1000"),
                         stopLossPrice = BigDecimal("91500"),
                         takeProfitPrice = BigDecimal("93000"),
@@ -259,7 +259,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
     @Test
     fun `partial entry fill creates pendingEntry position with actual qty`() {
-        stubEntryAllowed(quantity = 3)
+        stubEntryAllowed()
         runBlocking {
             Mockito
                 .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java)))
@@ -280,8 +280,28 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     }
 
     @Test
+    fun `stale market data blocks futures entry`() {
+        Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
+        Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+        Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(false)
+
+        service.onStrategyGenerated(StrategyGeneratedEvent(strategy()))
+
+        assertTrue(savedPositions.isEmpty())
+        runBlocking {
+            Mockito.verify(futuresRiskEngine, Mockito.never()).validateEntry(
+                Mockito.anyString(),
+                anyBigDecimal(),
+                anyDirection(),
+                anyBigDecimal(),
+                anyBigDecimal(),
+            )
+        }
+    }
+
+    @Test
     fun `pending entry resolved to full fill`() {
-        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val pos = entryPosition()
         stubEntryResolution(
             pos,
             outbox("ord-entry-1", "idem-1", qty = 3),
@@ -302,7 +322,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
     @Test
     fun `partial entry with stale remainder cancels order and finalizes`() {
-        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val pos = entryPosition()
         val staleOutbox = outbox("ord-entry-1", "idem-1", qty = 3, createdAt = LocalDateTime.now().minusSeconds(40))
         stubEntryResolution(
             pos,
@@ -327,7 +347,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
     @Test
     fun `partial entry before cancel threshold stays pending without cancel`() {
-        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val pos = entryPosition()
         val freshOutbox = outbox("ord-entry-1", "idem-1", qty = 3, createdAt = LocalDateTime.now().minusSeconds(5))
         stubEntryResolution(
             pos,
@@ -347,7 +367,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
     @Test
     fun `cancel rejection keeps entry pending for next cycle`() {
-        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val pos = entryPosition()
         val staleOutbox = outbox("ord-entry-1", "idem-1", qty = 3, createdAt = LocalDateTime.now().minusSeconds(40))
         stubEntryResolution(
             pos,

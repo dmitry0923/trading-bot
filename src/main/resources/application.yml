@@ -205,6 +205,8 @@ trading:
     - HOUR_1
     - DAY_1
   ws-quotes-enabled: ${WS_QUOTES_ENABLED:true}
+  market-data-max-age-ms: ${MARKET_DATA_MAX_AGE_MS:15000}
+  candle-stale-buffer-ms: ${CANDLE_STALE_BUFFER_MS:120000}
 
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}

@@ -61,7 +61,7 @@ data class WsConnectionEvent(
  * - Централизованный трекинг состояния каждого потока (ORDERS / QUOTES)
  *   и публикацию [WsConnectionEvent] — на них завязана процедура полной
  *   State Reconciliation при реконнектах.
- * - Liveness-мониторинг: [lastActivity] обновляется на КАЖДОЕ входящее сообщение
+ * - Liveness-мониторинг: [lastActivityAt] обновляется на КАЖДОЕ входящее сообщение
  *   и на каждый успешный heartbeat-ping. Watchdog ([watchdog]) периодически
  *   проверяет простой соединения: если данные/пинги не проходят дольше
  *   [AlorConfig.wsHeartbeatTimeoutMs] — поток помечается DISCONNECTED
@@ -96,6 +96,14 @@ class WebSocketManager(
     private val lastQuoteTimeByTicker = ConcurrentHashMap<String, AtomicLong>()
     private val lastQuoteSeqByTicker = ConcurrentHashMap<String, AtomicLong>()
 
+    /**
+     * Wall-clock время приёма последнего ПРИНЯТОГО тика по тикеру. В отличие от
+     * [lastQuoteTimeByTicker] (биржевое время) используется для определения
+     * «мёртвого» потока: даже в тихие периоды (обеденный перерыв) приём
+     * сообщений останавливается, и возраст последнего тика это честно показывает.
+     */
+    private val lastQuoteReceivedAtByTicker = ConcurrentHashMap<String, AtomicLong>()
+
     init {
         for (stream in WsStream.entries) {
             statuses[stream] = AtomicReference(WsConnectionStatus.DISCONNECTED)
@@ -123,6 +131,7 @@ class WebSocketManager(
         lastActivityAt[stream]!!.set(Instant.now().toEpochMilli())
         lastQuoteTimeByTicker.clear()
         lastQuoteSeqByTicker.clear()
+        lastQuoteReceivedAtByTicker.clear()
         meterRegistry.counter("alor.ws.connected", Tags.of("stream", stream.name)).increment()
         if (was != WsConnectionStatus.CONNECTED) {
             logger.info { "WS ${stream.name}: connected (attempt=$reconnectAttempt, reason=$reason)" }
@@ -199,6 +208,7 @@ class WebSocketManager(
                 return true
             }
             lastQuoteTimeByTicker.computeIfAbsent(key) { AtomicLong(exchangeTime.toEpochMilli()) }.set(exchangeTime.toEpochMilli())
+            markQuoteReceived(key)
             return false
         }
 
@@ -209,7 +219,22 @@ class WebSocketManager(
             return true
         }
         lastQuoteSeqByTicker.computeIfAbsent(key) { AtomicLong(sequence) }.set(sequence)
+        markQuoteReceived(key)
         return false
+    }
+
+    /**
+     * Возвращает wall-clock время последнего принятого тика по тикеру.
+     * null — тиков по тикеру не было с момента (пере)подключения.
+     */
+    fun lastQuoteReceivedAt(ticker: String): Instant? {
+        val ms = lastQuoteReceivedAtByTicker[ticker.uppercase()]?.get() ?: return null
+        if (ms <= 0) return null
+        return Instant.ofEpochMilli(ms)
+    }
+
+    private fun markQuoteReceived(key: String) {
+        lastQuoteReceivedAtByTicker.computeIfAbsent(key) { AtomicLong() }.set(System.currentTimeMillis())
     }
 
     /**

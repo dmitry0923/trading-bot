@@ -15,6 +15,12 @@ import org.springframework.stereotype.Component
  * @property timeframe основной таймфрейм свечей (обратная совместимость)
  * @property timeframes список таймфреймов для мульти-таймфрейм анализа
  * @property wsQuotesEnabled признак того, что real-time котировки идут через WebSocket
+ * @property marketDataMaxAgeMs максимальный возраст последнего тика (WS или REST-fallback)
+ *   для разрешения НОВЫХ входов в позиции; при устаревших данных входы блокируются
+ *   (защита от торговли на «мёртвых» данных после обрыва WebSocket)
+ * @property candleStaleBufferMs дополнительный буфер к свежести последней свечи в
+ *   стратегическом цикле (поверх 2×длительности таймфрейма); при устаревших свечах
+ *   тикер пропускается
  */
 @Component
 @ConfigurationProperties(prefix = "trading")
@@ -28,4 +34,6 @@ class TradingConfig {
     var timeframe: String = "MINUTE_10"
     var timeframes: List<String> = listOf("MINUTE_10")
     var wsQuotesEnabled: Boolean = true
+    var marketDataMaxAgeMs: Long = 15_000
+    var candleStaleBufferMs: Long = 120_000
 }

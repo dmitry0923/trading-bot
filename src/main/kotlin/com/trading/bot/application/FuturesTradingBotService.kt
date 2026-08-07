@@ -86,6 +86,7 @@ class FuturesTradingBotService(
     private val eventPublisher: TradingEventPublisher,
     private val tradeEventService: TradeEventService,
     private val tradingGate: TradingGate,
+    private val marketDataGate: MarketDataGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -105,6 +106,11 @@ class FuturesTradingBotService(
         if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
             logger.info { "Trading disabled (single flag) — futures entry skipped ${strat.ticker}" }
+            return
+        }
+        if (!marketDataGate.isPriceDataFresh(strat.ticker)) {
+            logger.warn { "STALE market data — futures entry blocked ${strat.ticker}" }
+            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
             return
         }
         scope.launch {
@@ -197,6 +203,11 @@ class FuturesTradingBotService(
         action: StrategyAction,
         cycleId: String?,
     ) {
+        if (!marketDataGate.isPriceDataFresh(ticker)) {
+            logger.warn { "STALE market data — futures entry blocked $ticker (defense in depth)" }
+            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", ticker, "reason", "STALE_DATA")).increment()
+            return
+        }
         if (futuresRiskEngine.isDailyLossLimitReached()) {
             logger.warn { "Daily loss limit reached — entry blocked $ticker" }
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).increment()

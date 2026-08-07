@@ -59,6 +59,7 @@ class FuturesTradingBotServicePartialCloseTest {
     private val eventPublisher = Mockito.mock(TradingEventPublisher::class.java)
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
+    private val marketDataGate = Mockito.mock(MarketDataGate::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private val service =
@@ -79,6 +80,7 @@ class FuturesTradingBotServicePartialCloseTest {
             eventPublisher,
             tradeEventService,
             tradingGate,
+            marketDataGate,
             meterRegistry,
         )
 

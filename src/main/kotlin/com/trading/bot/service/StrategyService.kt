@@ -38,7 +38,10 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Оркестратор стратегического цикла (мульти-тикер, параллельный).
@@ -237,12 +240,26 @@ class StrategyService(
                 Triple(candlesDeferred.await(), snapshotDeferred.await(), feedbackDeferred.await())
             }
 
+        // Защита от анализа на «мёртвых» свечах: если последняя свеча старше
+        // 2×длительности таймфрейма + буфер — тикер пропускается (данные устарели).
+        if (!isCandlesFresh(candles, timeframe)) {
+            logger.warn {
+                "Skipping $ticker/$timeframe — stale candles (last=${candles.lastOrNull()?.time})"
+            }
+            meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker, "reason", "STALE_CANDLES")).increment()
+            return
+        }
+        if (snapshot == null || snapshot.currentPrice <= BigDecimal.ZERO) {
+            logger.warn { "Skipping $ticker/$timeframe — no valid market snapshot" }
+            meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker, "reason", "STALE_SNAPSHOT")).increment()
+            return
+        }
+
         if (fb?.shouldPauseTrading == true) {
             logger.warn { "PAUSE recommended for $ticker by Meta-Agent" }
             meterRegistry.counter("strategy.pause", Tags.of("ticker", ticker)).increment()
             return
         }
-        if (snapshot == null) return
 
         // Независимые агенты Tech + Fund — параллельно (экономит ~1 LLM-вызов за такт)
         val (tech, fund) =
@@ -357,14 +374,16 @@ class StrategyService(
         ticker: String,
         timeframe: String,
     ): List<Candle> {
-        // 1. Redis-кэш (Sorted Set) — дешёвое чтение последних свечей
+        // 1. Redis-кэш (Sorted Set) — дешёвое чтение последних свечей.
+        //    Только если последняя свеча свежая — иначе данные устарели и
+        //    кэш бесполезен (перекрывает обеденный перерыв/зависший кэш).
         val cached = candleCache.getRecentCandles(ticker, timeframe, 200)
-        if (cached.size >= 50) return cached.sortedBy { it.time }
+        if (cached.size >= 50 && isCandlesFresh(cached, timeframe)) return cached.sortedBy { it.time }
 
         // 2. PostgreSQL — долгосрочное хранение (R2DBC, без Dispatchers.IO)
         val from = LocalDateTime.now().minusDays(7)
         val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
-        if (db.size >= 50) {
+        if (db.size >= 50 && isCandlesFresh(db, timeframe)) {
             candleCache.addCandles(db)
             return db.sortedBy { it.time }
         }
@@ -374,5 +393,38 @@ class StrategyService(
         candleRepo.saveAll(moex)
         candleCache.addCandles(moex)
         return moex.sortedBy { it.time }
+    }
+
+    /**
+     * Свежи ли свечи для анализа: последняя свеча не старше
+     * 2×длительности таймфрейма + [TradingConfig.candleStaleBufferMs].
+     * Время свечей — МСК (как возвращает MOEX ISS).
+     */
+    private fun isCandlesFresh(
+        candles: List<Candle>,
+        timeframe: String,
+    ): Boolean {
+        val last = candles.lastOrNull() ?: return false
+        val maxAgeMs = timeframeDurationMs(timeframe) * 2 + tradingConfig.candleStaleBufferMs
+        val ageMs = Duration.between(last.time.atZone(MOSCOW_ZONE).toInstant(), Instant.now()).toMillis()
+        return ageMs <= maxAgeMs
+    }
+
+    private fun timeframeDurationMs(timeframe: String): Long =
+        when (timeframe.uppercase()) {
+            "MINUTE_1", "M1" -> 60_000L
+            "MINUTE_5", "M5" -> 300_000L
+            "MINUTE_10", "M10" -> 600_000L
+            "MINUTE_15", "M15" -> 900_000L
+            "MINUTE_30", "M30" -> 1_800_000L
+            "HOUR_1", "H1" -> 3_600_000L
+            "HOUR_2", "H2" -> 7_200_000L
+            "HOUR_4", "H4" -> 14_400_000L
+            "DAY_1", "D1" -> 86_400_000L
+            else -> 600_000L
+        }
+
+    private companion object {
+        private val MOSCOW_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
     }
 }

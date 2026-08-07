@@ -59,6 +59,9 @@ alor:
   ws-heartbeat-interval-ms: ${ALOR_WS_HEARTBEAT_INTERVAL_MS:30000}
   ws-heartbeat-timeout-ms: ${ALOR_WS_HEARTBEAT_TIMEOUT_MS:45000}
   ws-stale-message-age-ms: ${ALOR_WS_STALE_MESSAGE_AGE_MS:5000}
+  entry-partial-fill-cancel-after-ms: ${ALOR_ENTRY_PARTIAL_FILL_CANCEL_AFTER_MS:30000}
+  outbox-backoff-base-seconds: ${ALOR_OUTBOX_BACKOFF_BASE_SECONDS:10}
+  outbox-backoff-max-seconds: ${ALOR_OUTBOX_BACKOFF_MAX_SECONDS:120}
 
 moex:
   base-url: https://iss.moex.com/iss

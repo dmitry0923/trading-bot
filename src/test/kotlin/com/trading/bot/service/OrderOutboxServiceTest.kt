@@ -4,7 +4,11 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.model.OrderOutbox
 import com.trading.bot.model.OutboxStatus
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.OrderOutboxRepository
+import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -30,11 +34,12 @@ import java.util.UUID
  */
 class OrderOutboxServiceTest {
     private val outboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
+    private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val alorClient = Mockito.mock(AlorClient::class.java)
     private val alorConfig = AlorConfig().apply { maxOrderRetries = 3 }
     private val objectMapper = jacksonObjectMapper()
     private val meterRegistry = SimpleMeterRegistry()
-    private val service = OrderOutboxService(outboxRepo, alorClient, alorConfig, objectMapper, meterRegistry)
+    private val service = OrderOutboxService(outboxRepo, positionRepo, alorClient, alorConfig, objectMapper, meterRegistry)
 
     private fun anyUuid(): UUID {
         Mockito.any(UUID::class.java)
@@ -77,13 +82,15 @@ class OrderOutboxServiceTest {
         type: String,
         price: String?,
         positionId: Long? = null,
+        qty: Int = 1,
+        side: String = "sell",
     ): OrderOutbox {
         val payload =
             objectMapper.writeValueAsString(
                 mapOf(
                     "ticker" to "Si",
-                    "side" to "sell",
-                    "qty" to 1,
+                    "side" to side,
+                    "qty" to qty,
                     "price" to price,
                     "type" to type,
                     "idempotencyKey" to key,
@@ -97,7 +104,49 @@ class OrderOutboxServiceTest {
             status = OutboxStatus.FAILED,
             idempotencyKey = key,
             retryCount = retryCount,
+            positionId = positionId,
         )
+    }
+
+    private suspend fun stubRetryable(rows: List<OrderOutbox>) {
+        Mockito
+            .`when`(
+                outboxRepo.findRetryable(
+                    Mockito.anyInt(),
+                    Mockito.anyInt(),
+                    Mockito.anyInt(),
+                    Mockito.anyInt(),
+                    Mockito.anyInt(),
+                ),
+            ).thenReturn(rows)
+    }
+
+    private fun openPosition(
+        ticker: String,
+        quantity: Int,
+        pendingClose: Boolean = false,
+    ): Position =
+        Position(
+            id = 1L,
+            ticker = ticker,
+            direction = PositionDirection.LONG,
+            quantity = quantity,
+            entryPrice = BigDecimal("100"),
+            status = PositionStatus.OPEN,
+            pendingClose = pendingClose,
+        )
+
+    private suspend fun stubCloseReconcilePositions(exchangeQty: Long) {
+        Mockito
+            .`when`(positionRepo.findById(1L))
+            .thenReturn(openPosition("Si", 10, pendingClose = true))
+        Mockito
+            .`when`(alorClient.getPositions())
+            .thenReturn(
+                AlorClient.ReconcileResult.Ok(
+                    listOf(AlorClient.ExchangePosition(ticker = "Si", qty = exchangeQty, avgPrice = BigDecimal("100"))),
+                ),
+            )
     }
 
     private suspend fun stubReconcile(result: AlorClient.OrderReconciliation) {
@@ -228,9 +277,7 @@ class OrderOutboxServiceTest {
         val outbox = outboxRow(retryCount = 1, key = "idem-1", type = "limit", price = "92000")
         val sentOrders = mutableListOf<String>()
         runBlocking {
-            Mockito
-                .`when`(outboxRepo.findRetryable(Mockito.anyInt(), Mockito.anyInt()))
-                .thenReturn(listOf(outbox))
+            stubRetryable(listOf(outbox))
             stubReconcile(AlorClient.OrderReconciliation.Found("ord-9", 1, BigDecimal("92000")))
             stubMarkSentRecording(sentOrders)
 
@@ -262,9 +309,7 @@ class OrderOutboxServiceTest {
     fun `reconcile UNKNOWN skips re-send and is uncertain`() {
         val outbox = outboxRow(retryCount = 1, key = "idem-1", type = "limit", price = "92000")
         runBlocking {
-            Mockito
-                .`when`(outboxRepo.findRetryable(Mockito.anyInt(), Mockito.anyInt()))
-                .thenReturn(listOf(outbox))
+            stubRetryable(listOf(outbox))
             stubReconcile(AlorClient.OrderReconciliation.Unknown)
 
             service.processPending()
@@ -294,9 +339,7 @@ class OrderOutboxServiceTest {
         val usedKeys = mutableListOf<String>()
         val sentOrders = mutableListOf<String>()
         runBlocking {
-            Mockito
-                .`when`(outboxRepo.findRetryable(Mockito.anyInt(), Mockito.anyInt()))
-                .thenReturn(listOf(outbox))
+            stubRetryable(listOf(outbox))
             stubReconcile(AlorClient.OrderReconciliation.NotFound)
             Mockito
                 .`when`(
@@ -338,15 +381,113 @@ class OrderOutboxServiceTest {
     @Test
     fun `process pending respects maxOrderRetries bound`() {
         runBlocking {
-            Mockito
-                .`when`(outboxRepo.findRetryable(Mockito.anyInt(), Mockito.anyInt()))
-                .thenReturn(emptyList())
+            stubRetryable(emptyList())
 
             service.processPending()
 
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
-                .findRetryable(eq(3), Mockito.anyInt())
+                .findRetryable(eq(3), Mockito.anyInt(), eq(10), eq(120), Mockito.anyInt())
+        }
+    }
+
+    @Test
+    fun `reconcile NOT_FOUND but close confirmed by position delta does not re-send`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-c1", type = "market", price = null, positionId = 1L, qty = 6)
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            stubCloseReconcilePositions(exchangeQty = 4L)
+            stubMarkSentRecording(sentOrders)
+
+            service.processPending()
+
+            Mockito
+                .verify(alorClient, Mockito.timeout(3000))
+                .getPositions()
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .markSent(anyUuid(), Mockito.anyString())
+        }
+        // Сентится fallback orderNumber = idempotency key, а не реальный ордер.
+        assertEquals(listOf("idem-c1"), sentOrders)
+    }
+
+    @Test
+    fun `reconcile NOT_FOUND with partially reduced position skips re-send as uncertain`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-c2", type = "market", price = null, positionId = 1L, qty = 6)
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            stubCloseReconcilePositions(exchangeQty = 7L)
+
+            service.processPending()
+
+            Mockito
+                .verify(alorClient, Mockito.timeout(3000))
+                .getPositions()
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `reconcile NOT_FOUND with unchanged position re-sends close order`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-c3", type = "market", price = null, positionId = 1L, qty = 6)
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            stubCloseReconcilePositions(exchangeQty = 10L)
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-c3")
+            stubMarkSentRecording(sentOrders)
+
+            service.processPending()
+
+            Mockito
+                .verify(alorClient, Mockito.timeout(3000))
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .markSent(anyUuid(), Mockito.anyString())
+        }
+        assertEquals(listOf("ord-c3"), sentOrders)
+    }
+
+    @Test
+    fun `reconcile NOT_FOUND with failed positions REST skips re-send as uncertain`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-c4", type = "market", price = null, positionId = 1L, qty = 6)
+        runBlocking {
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(openPosition("Si", 10, pendingClose = true))
+            Mockito
+                .`when`(alorClient.getPositions())
+                .thenReturn(AlorClient.ReconcileResult.Failed)
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+
+            service.processPending()
+
+            Mockito
+                .verify(alorClient, Mockito.timeout(3000))
+                .getPositions()
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }
 }

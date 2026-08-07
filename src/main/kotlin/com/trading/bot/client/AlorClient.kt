@@ -232,6 +232,61 @@ class AlorClient(
     }
 
     /**
+     * Отмена заявки с обязательным idempotency key (POST /orders/actions/cancel).
+     *
+     * Используется для остатка лимитного входа после частичного исполнения
+     * (см. resolveEntryViaOutbox): лимитка снимается, позиция фиксируется на
+     * фактическом объёме — биржа не «до-исполнит» остаток без ведома бота.
+     *
+     * @return true при успешной отмене; false при определённом отказе биржи (4xx);
+     *   при сетевом сбое/таймауте/5xx после исчерпания ретраев — бросает исключение
+     *   (верхний слой пометит операцию UNCERTAIN и повторит на следующем цикле).
+     */
+    suspend fun cancelOrder(
+        orderId: String,
+        idempotencyKey: String,
+    ): Boolean {
+        if (!isLive) return true
+        return try {
+            val body =
+                mapOf(
+                    "portfolio" to alorConfig.portfolio,
+                    "exchange" to alorConfig.exchange,
+                    "orderId" to orderId,
+                    "id" to idempotencyKey,
+                )
+            resilient {
+                webClient
+                    .post()
+                    .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/cancel")
+                    .header("Authorization", "Bearer ${getActualToken()}")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(objectMapper.writeValueAsString(body))
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
+            }
+            meterRegistry.counter("alor.order.cancelled", Tags.of("type", "limit")).increment()
+            logger.info { "Order cancelled $orderId (idem=$idempotencyKey)" }
+            true
+        } catch (e: WebClientResponseException) {
+            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
+            if (isDefinitiveRejection(e)) {
+                logger.warn(e) { "Order cancel REJECTED $orderId (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
+                false
+            } else {
+                logger.error(e) { "Order cancel failed for $orderId after retries (${e.statusCode.value()}) — UNCERTAIN" }
+                throw e
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Order cancel failed for $orderId after retries — UNCERTAIN" }
+            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
+            throw e
+        }
+    }
+
+    /**
      * State Reconciliation: ищет на бирже реальный ордер по idempotency key
      * (GET orders по портфелю). Перед ЛЮБЫМ повторным запросом бот обязан
      * провести эту сверку — см. OrderOutboxService.dispatch.

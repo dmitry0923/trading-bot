@@ -4,7 +4,10 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.model.OrderOutbox
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.repository.OrderOutboxRepository
+import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -17,6 +20,8 @@ import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
+import kotlin.math.abs
+import kotlin.random.Random
 
 /**
  * Outbox-паттерн для гарантированной доставки ордеров в Alor.
@@ -33,10 +38,15 @@ import java.util.UUID
  *   FOUND  → фиксируем реальный orderNumber, повторно НЕ отправляем;
  *   UNKNOWN → биржа недоступна, подтвердить нельзя → пропускаем цикл
  *             (fail-safe: не отправляем повторно);
- *   NOT_FOUND → ордера на бирже нет → безопасно переотправляем.
+ *   NOT_FOUND → дополнительная сверка close-ордеров по qty позиции
+ *               ([closeReconcileByPositionDelta]): позиция на бирже уменьшена/закрыта →
+ *               close исполнился (закрывает окно eventual consistency квери-API заявок,
+ *               когда исполнившийся маркет-ордер уже вышел из списка открытых); иначе —
+ *               безопасно переотправляем.
  *
- * Bounded retry:
- * - Worker переотправляет PENDING старше 30 сек и FAILED c retryCount < maxOrderRetries.
+ * Bounded retry с экспоненциальным backoff + jitter:
+ * - Worker переотправляет PENDING старше 30 сек и FAILED c retryCount < maxOrderRetries,
+ *   между попытками выдерживая LEAST(2^retryCount * base, max) секунд (+ jitter).
  *   [PlaceOrderResult.uncertain] сигнализирует, что запрос мог дойти до биржи
  *   (сетевой сбой/таймаут) — верхний слой не должен создавать дублирующий ордер.
  *
@@ -47,6 +57,7 @@ import java.util.UUID
 @Service
 class OrderOutboxService(
     private val outboxRepo: OrderOutboxRepository,
+    private val positionRepo: PositionRepository,
     private val alorClient: AlorClient,
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
@@ -144,8 +155,36 @@ class OrderOutboxService(
                 }
 
                 is AlorClient.OrderReconciliation.NotFound -> {
-                    // Ордера на бирже нет — безопасно переотправить с тем же ключом.
-                    logger.info { "Outbox ${outbox.id} reconciled NOT_FOUND — safe to re-send (attempt ${outbox.retryCount + 1})" }
+                    when (closeReconcileByPositionDelta(outbox, ticker, side, qty)) {
+                        CloseReconcile.CONFIRMED -> {
+                            // Close-ордер подтверждён по изменению qty позиции на бирже
+                            // (квери-API заявок мог отстать / ордер уже исполнился и вышел из open orders).
+                            // Повторно НЕ отправляем — это закрывает окно double execution.
+                            val fallbackOrder = outbox.idempotencyKey ?: id.toString()
+                            outboxRepo.markSent(id, fallbackOrder)
+                            meterRegistry.counter("outbox.close_confirmed_by_position", Tags.of("type", type)).increment()
+                            logger.info {
+                                "Outbox ${outbox.id} close CONFIRMED by position delta — " +
+                                    "no re-send, no double execution (orderNumber-fallback=$fallbackOrder)"
+                            }
+                            return PlaceOrderResult(id, fallbackOrder, success = true)
+                        }
+
+                        CloseReconcile.REDUCED_UNCONFIRMED -> {
+                            // Позиция уже уменьшена/бирже недоступна — ордер исполнился или в полёте.
+                            // НЕ переотправляем (fail-safe против double execution), ждём следующего цикла.
+                            logger.warn {
+                                "Outbox ${outbox.id} close: position reduced/unknown — skip re-send this cycle"
+                            }
+                            meterRegistry.counter("outbox.close_reduced_unconfirmed", Tags.of("type", type)).increment()
+                            return PlaceOrderResult(id, null, success = false, uncertain = true)
+                        }
+
+                        CloseReconcile.NOT_EXECUTED -> {
+                            // Ордера на бирже нет, позиция не изменилась — безопасно переотправить с тем же ключом.
+                            logger.info { "Outbox ${outbox.id} reconciled NOT_FOUND — safe to re-send (attempt ${outbox.retryCount + 1})" }
+                        }
+                    }
                 }
             }
         }
@@ -177,6 +216,79 @@ class OrderOutboxService(
     }
 
     /**
+     * Результат сверки close-ордера по изменению qty позиции на бирже.
+     */
+    private enum class CloseReconcile {
+        /** Позиция закрыта/уменьшена на ожидаемый объём — close исполнился, НЕ переотправляем. */
+        CONFIRMED,
+
+        /** Позиция частично уменьшена или REST недоступен — подтвердить нельзя, НЕ переотправляем. */
+        REDUCED_UNCONFIRMED,
+
+        /** Позиция не изменилась — close не исполнился, безопасно переотправить. */
+        NOT_EXECUTED,
+    }
+
+    /**
+     * Вторичная State Reconciliation для close-ордеров по qty позиции (Gap: eventual
+     * consistency квери-API заявок). Когда GET /client/orders даёт NOT_FOUND, а close-ордер
+     * уже исполнился (маркет-ордер ушёл из списка открытых заявок), позиция на бирже
+     * уменьшается/закрывается — по этому сигналу ордер считается исполненным.
+     *
+     * Применяется только к close-заявкам ([Position.pendingClose]); entry NOT_FOUND
+     * обрабатывается прежним образом (ре-сенд с тем же idempotency key).
+     */
+    private suspend fun closeReconcileByPositionDelta(
+        outbox: OrderOutbox,
+        ticker: String,
+        side: String,
+        qty: Int,
+    ): CloseReconcile {
+        val positionId = outbox.positionId ?: return CloseReconcile.NOT_EXECUTED
+        val pos =
+            try {
+                positionRepo.findById(positionId)
+            } catch (e: Exception) {
+                logger.warn(e) { "Outbox ${outbox.id}: cannot load position $positionId for close reconcile" }
+                return CloseReconcile.NOT_EXECUTED
+            }
+        if (!pos.pendingClose) return CloseReconcile.NOT_EXECUTED
+
+        val signed =
+            if (pos.direction == PositionDirection.LONG) {
+                pos.quantity.toLong()
+            } else {
+                -pos.quantity.toLong()
+            }
+        val delta = if (side == "sell") -qty.toLong() else qty.toLong()
+        val expectedSigned = signed + delta
+
+        return when (val result = alorClient.getPositions()) {
+            is AlorClient.ReconcileResult.Failed -> {
+                // Биржа недоступна — подтвердить нельзя → fail-safe (не переотправляем).
+                logger.warn { "Outbox ${outbox.id}: positions REST failed during close reconcile — skip re-send" }
+                CloseReconcile.REDUCED_UNCONFIRMED
+            }
+
+            is AlorClient.ReconcileResult.Ok -> {
+                val exchangeQty =
+                    result.items
+                        .firstOrNull { it.ticker.equals(ticker, ignoreCase = true) }
+                        ?.qty
+                        ?: 0L
+                val expectedMet =
+                    (expectedSigned >= 0 && exchangeQty <= expectedSigned) ||
+                        (expectedSigned < 0 && exchangeQty >= expectedSigned)
+                when {
+                    exchangeQty == 0L || expectedMet -> CloseReconcile.CONFIRMED
+                    abs(exchangeQty) < abs(signed) -> CloseReconcile.REDUCED_UNCONFIRMED
+                    else -> CloseReconcile.NOT_EXECUTED
+                }
+            }
+        }
+    }
+
+    /**
      * Worker: переотправляет PENDING старше 30 сек и FAILED с retryCount < maxOrderRetries.
      * Каждая повторная отправка предваряется State Reconciliation (см. [dispatch]).
      */
@@ -184,7 +296,15 @@ class OrderOutboxService(
     fun processPending() {
         scope.launch {
             try {
-                val pending = outboxRepo.findRetryable(maxRetries = alorConfig.maxOrderRetries)
+                // Экспоненциальный backoff + jitter между повторными доставками:
+                // каждая следующая попытка откладывается дольше (LEAST(2^retry * base, max) + jitter).
+                val pending =
+                    outboxRepo.findRetryable(
+                        maxRetries = alorConfig.maxOrderRetries,
+                        backoffBaseSeconds = alorConfig.outboxBackoffBaseSeconds,
+                        backoffMaxSeconds = alorConfig.outboxBackoffMaxSeconds,
+                        jitterSeconds = Random.nextInt(0, 6),
+                    )
                 if (pending.isNotEmpty()) {
                     logger.info { "Outbox worker: ${pending.size} order(s) to (re)dispatch" }
                     pending.forEach { outbox ->

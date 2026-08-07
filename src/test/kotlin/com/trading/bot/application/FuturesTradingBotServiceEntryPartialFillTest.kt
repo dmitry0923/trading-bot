@@ -1,0 +1,371 @@
+package com.trading.bot.application
+
+import com.trading.bot.client.AlorClient
+import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.config.LeverageConfig
+import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.FuturesRiskEngine
+import com.trading.bot.event.PriceChangedEvent
+import com.trading.bot.event.StrategyGeneratedEvent
+import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.infrastructure.alor.AlorFuturesClient
+import com.trading.bot.model.InstrumentType
+import com.trading.bot.model.OrderOutbox
+import com.trading.bot.model.OutboxStatus
+import com.trading.bot.model.Position
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.Strategy
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.repository.OrderOutboxRepository
+import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.OrderOutboxService
+import com.trading.bot.service.RiskManagementService
+import com.trading.bot.service.TradeEventService
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.mockito.Mockito
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
+import tools.jackson.module.kotlin.jacksonObjectMapper
+import java.math.BigDecimal
+import java.time.LocalDateTime
+import java.util.UUID
+
+/**
+ * Unit-тесты частичного исполнения входа (Gap A): остаток лимитки, «висящий» на бирже.
+ *
+ * - PARTIAL fill входа → позиция создаётся в pendingEntry с фактическим qty,
+ *   событие PositionOpened НЕ публикуется до подтверждения;
+ * - кумулятивный fill добивает до полного объёма → вход фиксируется на фактическом qty;
+ * - остаток, не заполненный в течение entryPartialFillCancelAfterMs → cancelOrder +
+ *   финализация входа на фактическом объёме (защита от скрытого роста позиции);
+ * - до истечения порога отмена НЕ производится.
+ */
+class FuturesTradingBotServiceEntryPartialFillTest {
+    private val futuresRiskEngine = Mockito.mock(FuturesRiskEngine::class.java)
+    private val tradingHoursGuard = Mockito.mock(TradingHoursGuard::class.java)
+    private val alorClient = Mockito.mock(AlorClient::class.java)
+    private val alorFuturesClient = Mockito.mock(AlorFuturesClient::class.java)
+    private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
+    private val positionRepo = Mockito.mock(PositionRepository::class.java)
+    private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
+    private val riskManagement = Mockito.mock(RiskManagementService::class.java)
+    private val instrumentsConfig = Mockito.mock(InstrumentsConfig::class.java)
+    private val leverageConfig = Mockito.mock(LeverageConfig::class.java)
+    private val riskConfig = Mockito.mock(RiskConfig::class.java)
+    private val alorConfig = AlorConfig().apply { entryPartialFillCancelAfterMs = 30_000L }
+    private val objectMapper = jacksonObjectMapper()
+    private val eventPublisher = Mockito.mock(TradingEventPublisher::class.java)
+    private val tradeEventService = Mockito.mock(TradeEventService::class.java)
+    private val tradingGate = Mockito.mock(TradingGate::class.java)
+    private val meterRegistry = SimpleMeterRegistry()
+
+    private val service =
+        FuturesTradingBotService(
+            futuresRiskEngine,
+            tradingHoursGuard,
+            alorClient,
+            alorFuturesClient,
+            orderOutboxService,
+            positionRepo,
+            orderOutboxRepo,
+            riskManagement,
+            instrumentsConfig,
+            leverageConfig,
+            riskConfig,
+            alorConfig,
+            objectMapper,
+            eventPublisher,
+            tradeEventService,
+            tradingGate,
+            meterRegistry,
+        )
+
+    private val savedPositions = mutableListOf<Position>()
+
+    private fun anyPosition(): Position {
+        Mockito.any(Position::class.java)
+        return Position(ticker = "Si", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal.ZERO)
+    }
+
+    private fun anyBigDecimal(): BigDecimal {
+        Mockito.any(BigDecimal::class.java)
+        return BigDecimal.ZERO
+    }
+
+    private fun anyDirection(): PositionDirection {
+        Mockito.any(PositionDirection::class.java)
+        return PositionDirection.LONG
+    }
+
+    private fun strategy(): Strategy =
+        Strategy(
+            ticker = "Si",
+            action = StrategyAction.BUY,
+            targetPrice = BigDecimal("92000"),
+            quantity = 3,
+            confidence = 0.8,
+            reasoning = "test",
+            cycleId = "cycle-1",
+            validUntil = LocalDateTime.now().plusMinutes(5),
+        )
+
+    private fun outbox(
+        alorOrderId: String,
+        key: String,
+        qty: Int,
+        createdAt: LocalDateTime = LocalDateTime.now(),
+    ): OrderOutbox =
+        OrderOutbox(
+            id = UUID.randomUUID(),
+            payloadJson =
+                objectMapper.writeValueAsString(
+                    mapOf(
+                        "ticker" to "Si",
+                        "side" to "buy",
+                        "qty" to qty,
+                        "price" to "92000",
+                        "type" to "limit",
+                        "idempotencyKey" to key,
+                    ),
+                ),
+            status = OutboxStatus.SENT,
+            alorOrderId = alorOrderId,
+            idempotencyKey = key,
+            createdAt = createdAt,
+        )
+
+    private fun entryPosition(
+        quantity: Int,
+        pendingEntry: Boolean,
+    ): Position =
+        Position(
+            id = 1L,
+            ticker = "Si",
+            direction = PositionDirection.LONG,
+            quantity = quantity,
+            entryPrice = BigDecimal("92000"),
+            currentPrice = BigDecimal("92000"),
+            stopLoss = BigDecimal("91500"),
+            takeProfit = BigDecimal("93000"),
+            instrumentType = InstrumentType.FUTURES,
+            status = PositionStatus.OPEN,
+            alorOrderId = "ord-entry-1",
+            pendingEntry = pendingEntry,
+        )
+
+    private fun stubEntryAllowed(quantity: Int) {
+        Mockito
+            .`when`(futuresRiskEngine.isDailyLossLimitReached())
+            .thenReturn(false)
+        Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
+        Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+        runBlocking {
+            Mockito
+                .`when`(alorClient.getLastPrice(Mockito.anyString()))
+                .thenReturn(BigDecimal("92000"))
+            Mockito
+                .`when`(alorFuturesClient.getFuturesGO(Mockito.anyString()))
+                .thenReturn(BigDecimal("1000"))
+            Mockito
+                .`when`(alorFuturesClient.getPortfolioMoney())
+                .thenReturn(BigDecimal("100000"))
+            Mockito
+                .`when`(
+                    futuresRiskEngine.validateEntry(
+                        Mockito.anyString(),
+                        anyBigDecimal(),
+                        anyDirection(),
+                        anyBigDecimal(),
+                        anyBigDecimal(),
+                    ),
+                ).thenReturn(
+                    FuturesRiskEngine.EntryValidationResult(
+                        allowed = true,
+                        quantity = quantity,
+                        marginRequired = BigDecimal("1000"),
+                        stopLossPrice = BigDecimal("91500"),
+                        takeProfitPrice = BigDecimal("93000"),
+                        liquidationPrice = BigDecimal("70000"),
+                        reason = null,
+                    ),
+                )
+            Mockito
+                .`when`(
+                    orderOutboxService.placeOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.nullable(BigDecimal::class.java),
+                        Mockito.anyString(),
+                        Mockito.nullable(Long::class.java),
+                        Mockito.nullable(String::class.java),
+                    ),
+                ).thenReturn(
+                    OrderOutboxService.PlaceOrderResult(
+                        outboxId = UUID.randomUUID(),
+                        alorOrderId = "ord-entry-1",
+                        success = true,
+                    ),
+                )
+            Mockito
+                .`when`(positionRepo.save(anyPosition()))
+                .thenAnswer { inv ->
+                    val p = inv.getArgument<Position>(0)
+                    savedPositions += p
+                    p
+                }
+        }
+    }
+
+    private fun stubEntryResolution(
+        pos: Position,
+        outboxRow: OrderOutbox,
+        execution: AlorClient.OrderExecution,
+    ) {
+        runBlocking {
+            Mockito
+                .`when`(positionRepo.findByStatus(PositionStatus.OPEN))
+                .thenReturn(listOf(pos))
+            Mockito
+                .`when`(orderOutboxRepo.findLatestByPositionId(1L))
+                .thenReturn(outboxRow)
+            Mockito
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java)))
+                .thenReturn(execution)
+            Mockito
+                .`when`(positionRepo.save(anyPosition()))
+                .thenAnswer { inv -> inv.getArgument<Position>(0) }
+        }
+    }
+
+    private fun awaitUntil(
+        timeoutMs: Long = 4000,
+        condition: () -> Boolean,
+    ) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition()) {
+            if (System.currentTimeMillis() > deadline) {
+                throw AssertionError("condition not met within ${timeoutMs}ms")
+            }
+            Thread.sleep(10)
+        }
+    }
+
+    @Test
+    fun `partial entry fill creates pendingEntry position with actual qty`() {
+        stubEntryAllowed(quantity = 3)
+        runBlocking {
+            Mockito
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java)))
+                .thenReturn(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")))
+        }
+
+        service.onStrategyGenerated(StrategyGeneratedEvent(strategy()))
+        awaitUntil { savedPositions.any { it.pendingEntry } }
+
+        val partial = savedPositions.first { it.pendingEntry }
+        assertEquals(2, partial.quantity)
+        assertEquals("ord-entry-1", partial.alorOrderId)
+        assertEquals(InstrumentType.FUTURES, partial.instrumentType)
+        runBlocking {
+            verify(eventPublisher, Mockito.never()).publishPositionOpened(anyPosition())
+            verify(tradeEventService, Mockito.never()).recordPositionOpened(anyPosition())
+        }
+    }
+
+    @Test
+    fun `pending entry resolved to full fill`() {
+        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        stubEntryResolution(
+            pos,
+            outbox("ord-entry-1", "idem-1", qty = 3),
+            AlorClient.OrderExecution(status = "FILLED", filledQuantity = 3, avgPrice = BigDecimal("92100")),
+        )
+
+        service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("92000")))
+        awaitUntil { !pos.pendingEntry }
+
+        assertEquals(3, pos.quantity)
+        assertEquals("ord-entry-1", pos.alorOrderId)
+        assertEquals(0, BigDecimal("92100").compareTo(pos.entryPrice))
+        runBlocking {
+            verify(eventPublisher, Mockito.timeout(3000)).publishPositionOpened(anyPosition())
+            verify(tradeEventService, Mockito.timeout(3000)).recordPositionOpened(anyPosition())
+        }
+    }
+
+    @Test
+    fun `partial entry with stale remainder cancels order and finalizes`() {
+        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val staleOutbox = outbox("ord-entry-1", "idem-1", qty = 3, createdAt = LocalDateTime.now().minusSeconds(40))
+        stubEntryResolution(
+            pos,
+            staleOutbox,
+            AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")),
+        )
+        runBlocking {
+            Mockito
+                .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1"))
+                .thenReturn(true)
+        }
+
+        service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("92000")))
+        awaitUntil { !pos.pendingEntry }
+
+        assertEquals(2, pos.quantity)
+        runBlocking {
+            verify(alorClient, Mockito.timeout(3000)).cancelOrder(eq("ord-entry-1"), eq("idem-1"))
+            verify(eventPublisher, Mockito.timeout(3000)).publishPositionOpened(anyPosition())
+        }
+    }
+
+    @Test
+    fun `partial entry before cancel threshold stays pending without cancel`() {
+        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val freshOutbox = outbox("ord-entry-1", "idem-1", qty = 3, createdAt = LocalDateTime.now().minusSeconds(5))
+        stubEntryResolution(
+            pos,
+            freshOutbox,
+            AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")),
+        )
+
+        service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("92000")))
+        awaitUntil { pos.quantity == 2 && pos.pendingEntry }
+
+        assertTrue(pos.pendingEntry)
+        runBlocking {
+            Mockito.verify(alorClient, Mockito.never()).cancelOrder(Mockito.anyString(), Mockito.anyString())
+            Mockito.verify(eventPublisher, Mockito.never()).publishPositionOpened(anyPosition())
+        }
+    }
+
+    @Test
+    fun `cancel rejection keeps entry pending for next cycle`() {
+        val pos = entryPosition(quantity = 2, pendingEntry = true)
+        val staleOutbox = outbox("ord-entry-1", "idem-1", qty = 3, createdAt = LocalDateTime.now().minusSeconds(40))
+        stubEntryResolution(
+            pos,
+            staleOutbox,
+            AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")),
+        )
+        runBlocking {
+            Mockito
+                .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1"))
+                .thenReturn(false)
+        }
+
+        service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("92000")))
+        awaitUntil { pos.quantity == 2 }
+
+        assertTrue(pos.pendingEntry)
+        runBlocking {
+            Mockito.verify(eventPublisher, Mockito.never()).publishPositionOpened(anyPosition())
+        }
+    }
+}

@@ -37,4 +37,7 @@ class AlorConfig {
     var wsHeartbeatIntervalMs: Long = 30_000
     var wsHeartbeatTimeoutMs: Long = 45_000
     var wsStaleMessageAgeMs: Long = 5_000
+    var entryPartialFillCancelAfterMs: Long = 30_000
+    var outboxBackoffBaseSeconds: Int = 10
+    var outboxBackoffMaxSeconds: Int = 120
 }

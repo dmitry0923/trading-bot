@@ -1,6 +1,7 @@
 package com.trading.bot.integration
 
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.annotation.DirtiesContext
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.containers.GenericContainer
@@ -11,6 +12,7 @@ import org.testcontainers.utility.DockerImageName
 
 @SpringBootTest
 @Testcontainers
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 abstract class AbstractTestContainerTest {
     companion object {
         @Container
@@ -32,11 +34,16 @@ abstract class AbstractTestContainerTest {
         @JvmStatic
         @Suppress("unused") // Вызывается рефлексивно Spring TestContext через @DynamicPropertySource
         fun registerProperties(registry: DynamicPropertyRegistry) {
-            registry.add("spring.datasource.url", postgres::getJdbcUrl)
+            // Windows/Docker: localhost может резолвиться в IPv6 (::1), который Docker
+            // порт-маппинг не обслуживает → "Permission denied: getsockopt". Явный
+            // 127.0.0.1 делает соединения детерминированными (IPv4).
+            val dbHost = "127.0.0.1"
+
+            registry.add("spring.datasource.url") { "jdbc:postgresql://$dbHost:${postgres.firstMappedPort}/${postgres.databaseName}" }
             registry.add("spring.datasource.username", postgres::getUsername)
             registry.add("spring.datasource.password", postgres::getPassword)
 
-            registry.add("spring.r2dbc.url") { "r2dbc:postgresql://${postgres.host}:${postgres.firstMappedPort}/${postgres.databaseName}" }
+            registry.add("spring.r2dbc.url") { "r2dbc:postgresql://$dbHost:${postgres.firstMappedPort}/${postgres.databaseName}" }
             registry.add("spring.r2dbc.username", postgres::getUsername)
             registry.add("spring.r2dbc.password", postgres::getPassword)
 

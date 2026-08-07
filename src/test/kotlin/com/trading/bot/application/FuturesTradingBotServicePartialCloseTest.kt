@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
 
@@ -54,6 +55,7 @@ class FuturesTradingBotServicePartialCloseTest {
     private val leverageConfig = Mockito.mock(LeverageConfig::class.java)
     private val riskConfig = Mockito.mock(RiskConfig::class.java)
     private val alorConfig = Mockito.mock(AlorConfig::class.java)
+    private val objectMapper = jacksonObjectMapper()
     private val eventPublisher = Mockito.mock(TradingEventPublisher::class.java)
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
@@ -73,6 +75,7 @@ class FuturesTradingBotServicePartialCloseTest {
             leverageConfig,
             riskConfig,
             alorConfig,
+            objectMapper,
             eventPublisher,
             tradeEventService,
             tradingGate,

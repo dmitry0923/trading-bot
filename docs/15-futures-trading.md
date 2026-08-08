@@ -72,7 +72,7 @@
 
 `src/main/kotlin/com/trading/bot/domain/risk/`. Пакет `domain.risk` — чистый доменный риск.
 
-### 15.3.1. Сайзинг (`FuturesPositionSizer.calculateSiContracts`)
+### 15.3.1. Сайзинг (`FuturesPositionSizer.calculateContracts`)
 
 | # | Шаг | Формула | Si (50k, GO 15k, стоп 50) |
 |---|---|---|---|
@@ -105,8 +105,7 @@
 | 5 | Лимит позиций | открытых ≥ 1 | `MAX_POSITIONS` |
 | 6 | Инструмент | не найден или не FUTURES | `UNSUPPORTED_INSTRUMENT` |
 | 7 | Входные данные | price/money/GO ≤ 0 | `INVALID_INPUT` |
-| 8 | Сайзинг | `quantity == 0` | `ZERO_RISK_SIZE` и др. |
-| 9 | Маржа | `marginRequired > portfolio × 30%` | `INSUFFICIENT_MARGIN` |
+| 8 | Сайзинг | `quantity == 0` (включая лимит маржи `portfolio × maxMarginUsagePercent`) | `ZERO_RISK_SIZE` / `INSUFFICIENT_MARGIN` |
 
 Каждый отказ инкрементирует `risk.entry.rejected{reason}`.
 

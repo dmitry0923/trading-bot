@@ -39,7 +39,8 @@ class FuturesPositionSizerTest {
     @Test
     fun `qty is 1 for 50k deposit stop 50 points go 15000`() {
         val result =
-            sizer.calculateSiContracts(
+            sizer.calculateContracts(
+                ticker = "Si",
                 portfolioMoney = BigDecimal("50000"),
                 stopLossPoints = 50,
                 currentGo = BigDecimal("15000"),
@@ -54,7 +55,8 @@ class FuturesPositionSizerTest {
     @Test
     fun `qty never exceeds max contracts per position`() {
         val result =
-            sizer.calculateSiContracts(
+            sizer.calculateContracts(
+                ticker = "Si",
                 portfolioMoney = BigDecimal("200000"),
                 stopLossPoints = 10,
                 currentGo = BigDecimal("15000"),
@@ -67,7 +69,8 @@ class FuturesPositionSizerTest {
     fun `zero qty when risk per trade too low`() {
         // стоп 1000 пунктов = 10 000 ₽ > риск 500 ₽ → 0 контрактов
         val result =
-            sizer.calculateSiContracts(
+            sizer.calculateContracts(
+                ticker = "Si",
                 portfolioMoney = BigDecimal("50000"),
                 stopLossPoints = 1000,
                 currentGo = BigDecimal("15000"),
@@ -84,7 +87,8 @@ class FuturesPositionSizerTest {
         val tightSizer = FuturesPositionSizer(leverageConfig, tightMarginConfig, instrumentsConfig)
 
         val result =
-            tightSizer.calculateSiContracts(
+            tightSizer.calculateContracts(
+                ticker = "Si",
                 portfolioMoney = BigDecimal("50000"),
                 stopLossPoints = 50,
                 currentGo = BigDecimal("15000"),
@@ -97,7 +101,8 @@ class FuturesPositionSizerTest {
     @Test
     fun `liquidation price for long entry`() {
         val result =
-            sizer.calculateSiContracts(
+            sizer.calculateContracts(
+                ticker = "Si",
                 portfolioMoney = BigDecimal("50000"),
                 stopLossPoints = 50,
                 currentGo = BigDecimal("15000"),
@@ -113,7 +118,8 @@ class FuturesPositionSizerTest {
     @Test
     fun `liquidation price for short entry`() {
         val result =
-            sizer.calculateSiContracts(
+            sizer.calculateContracts(
+                ticker = "Si",
                 portfolioMoney = BigDecimal("50000"),
                 stopLossPoints = 50,
                 currentGo = BigDecimal("15000"),

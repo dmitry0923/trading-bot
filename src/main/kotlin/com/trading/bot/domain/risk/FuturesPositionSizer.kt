@@ -9,10 +9,11 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 
 /**
- * Расчёт размера позиции для фьючерса Si (доллар/рубль).
+ * Расчёт размера позиции для фьючерса (например Si — доллар/рубль).
  *
  * Входные параметры:
- *   portfolioMoney = депозит (50 000 ₽)
+ *   ticker          = инструмент из InstrumentsConfig (например "Si")
+ *   portfolioMoney  = депозит (50 000 ₽)
  *   stopLossPoints  = стоп в пунктах (default 50)
  *   currentGo       = текущее гарантийное обеспечение (default 15 000 ₽)
  *   effectiveLeverage = clamp(userLeverage, min, max) = 2.0
@@ -43,16 +44,18 @@ class FuturesPositionSizer(
     /**
      * Базовый расчёт без цены входа (liquidationPrice = null).
      */
-    fun calculateSiContracts(
+    fun calculateContracts(
+        ticker: String,
         portfolioMoney: BigDecimal,
         stopLossPoints: Int,
         currentGo: BigDecimal,
-    ): PositionSizeResult = calculateSiContracts(portfolioMoney, stopLossPoints, currentGo, null, null)
+    ): PositionSizeResult = calculateContracts(ticker, portfolioMoney, stopLossPoints, currentGo, null, null)
 
     /**
      * Полный расчёт с ценой входа и направлением — вычисляет liquidationPrice.
      */
-    fun calculateSiContracts(
+    fun calculateContracts(
+        ticker: String,
         portfolioMoney: BigDecimal,
         stopLossPoints: Int,
         currentGo: BigDecimal,
@@ -66,7 +69,7 @@ class FuturesPositionSizer(
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_GO")
         }
         val instrument =
-            instrumentsConfig.find("Si")
+            instrumentsConfig.find(ticker)
                 ?: return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INSTRUMENT_NOT_FOUND")
         if (stopLossPoints <= 0) {
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_STOP_LOSS_POINTS")

@@ -143,6 +143,10 @@ class RiskConfig {
     /** Если расстояние до ликвидации < X% от буфера маржи — срочное закрытие. */
     var minLiquidationDistancePercent: Double = 25.0
 
+    /** Порог КРИТИЧЕСКОЙ близости к ликвидации, % от остаточного буфера маржи.
+     * < X% → немедленный market close (должен быть строго меньше minLiquidationDistancePercent). */
+    var criticalLiquidationDistancePercent: Double = 10.0
+
     /** Порог задействования маржи, % от депозита. > 30% → запрет входа. */
     var maxMarginUsagePercent: Double = 30.0
 

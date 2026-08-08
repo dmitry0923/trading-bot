@@ -28,11 +28,12 @@ import java.math.RoundingMode
  *   3. Multi-Tier Drawdown Protection (7d/30d rolling, Shadow/Read-only) → DRAWDOWN_PROTECTION.
  *   4. Аномальный индекс волатильности MOEX (RVI) → VOLATILITY_INDEX.
  *   5. Уже есть открытая позиция (max 1) → MAX_POSITIONS.
- *   6. Расчёт размера позиции через FuturesPositionSizer → quantity == 0 → запрет.
- *   7. marginRequired <= portfolioMoney * maxMarginUsagePercent (30%) → INSUFFICIENT_MARGIN.
+ *   6. Расчёт размера позиции через FuturesPositionSizer (включая лимит маржи
+ *      maxMarginUsagePercent) → quantity == 0 → запрет (INSUFFICIENT_MARGIN и др.).
  *
  * Guardrails во время удержания:
- *   - checkLiquidationDistance: остаточный буфер маржи < 25% → WARNING, < 10% → CRITICAL.
+ *   - checkLiquidationDistance: остаточный буфер маржи
+ *     < minLiquidationDistancePercent → WARNING, < criticalLiquidationDistancePercent → CRITICAL.
  *   - updateTrailingStop: только в прибыль, с учётом вариационной маржи.
  */
 @Service
@@ -48,9 +49,6 @@ class FuturesRiskEngine(
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
-
-    /** Доля остаточного буфера маржи для CRITICAL-ликвидации (10%). */
-    private val criticalLiquidationPercent = 10.0
 
     // ===================== Вход =====================
 
@@ -82,15 +80,8 @@ class FuturesRiskEngine(
         }
 
         val stopLossPoints = riskConfig.defaultStopLossPoints
-        val size = positionSizer.calculateSiContracts(portfolioMoney, stopLossPoints, currentGo, entryPrice, direction)
+        val size = positionSizer.calculateContracts(ticker, portfolioMoney, stopLossPoints, currentGo, entryPrice, direction)
         if (size.quantity == 0) return reject(size.reason ?: "ZERO_RISK_SIZE")
-
-        // 6. Маржинальная проверка: marginRequired <= депозит * 30%
-        val marginBudget =
-            portfolioMoney
-                .multiply(BigDecimal(riskConfig.maxMarginUsagePercent.toString()))
-                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
-        if (size.marginRequired > marginBudget) return reject("INSUFFICIENT_MARGIN")
 
         // SL/TP в ценах: entry ± пункты * priceStep
         val priceStep = instrument.priceStep
@@ -196,8 +187,8 @@ class FuturesRiskEngine(
      *   distanceToLiquidation % = remainingBuffer / totalBuffer * 100
      *
      * На входе distance = 100%. По мере убытка буфер тает:
-     *   < 25% (minLiquidationDistancePercent) → WARNING
-     *   < 10%                                   → CRITICAL (немедленное закрытие)
+     *   < minLiquidationDistancePercent → WARNING
+     *   < criticalLiquidationDistancePercent → CRITICAL (немедленное закрытие)
      *
      * Для Si: buffer = 15 ₽, на стопе (0.5 ₽) остаётся 96.7% → SAFE; guardrail — страховка при пробое стопа.
      */
@@ -217,7 +208,7 @@ class FuturesRiskEngine(
 
         val status =
             when {
-                distancePercent < criticalLiquidationPercent -> LiquidationStatus.CRITICAL
+                distancePercent < riskConfig.criticalLiquidationDistancePercent -> LiquidationStatus.CRITICAL
                 distancePercent < riskConfig.minLiquidationDistancePercent -> LiquidationStatus.WARNING
                 else -> LiquidationStatus.SAFE
             }

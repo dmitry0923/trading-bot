@@ -14,10 +14,8 @@ import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
-import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
@@ -30,31 +28,29 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
-import java.math.BigDecimal
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Исполнительный сервис для фьючерсов (Si).
+ * Координатор торговли фьючерсами (Si).
  *
- * - Открытие: только через FuturesRiskEngine.validateEntry() (risk-first).
- * - Позиция сохраняется с futures-полями (leverage, goPerContract, marginUsed,
- *   liquidationPrice, variationMargin, stopLossPoints).
- * - Мониторинг: каждый тик PriceChangedEvent → checkLiquidationDistance().
- *   LIQUIDATION_CRITICAL → немедленный market close.
+ * - Открытие: делегируется [FuturesEntryCoordinator] (risk-first через
+ *   FuturesRiskEngine.validateEntry(), позиция с futures-полями: leverage,
+ *   goPerContract, marginUsed, liquidationPrice, variationMargin, stopLossPoints).
+ * - Мониторинг: каждый тик PriceChangedEvent → [FuturesPositionMonitor]
+ *   (checkLiquidationDistance, LIQUIDATION_CRITICAL → market close, SL/TP/trailing).
  * - Daily loss limit: перед каждой сделкой проверяется isDailyLossLimitReached().
  * - P&L фьючерса (₽): (close - entry) * qty * pointValue, pointValue = priceStepCost / priceStep.
  * - При закрытии публикуется PositionClosedEvent → DailyLossCircuitBreaker обновляет дневной P&L.
+ * - Защита от double execution / потеря контроля над позицией — в общем ядре
+ *   [OrderExecutionEngine]: idempotency key на ордер, стейт-машина pendingEntry/pendingClose,
+ *   State Reconciliation через outbox + verifyOrder, partial fills с дозакрытием остатка.
  *
- * Защита от double execution / потеря контроля над позицией вынесена в общее ядро
- * [OrderExecutionEngine] (см. TradingBotService): idempotency key на ордер, стейт-машина
- * pendingEntry/pendingClose, State Reconciliation через outbox + verifyOrder,
- * partial fills с дозакрытием остатка.
+ * Роли: [FuturesEntryCoordinator] — вход, [FuturesPositionMonitor] — мониторинг,
+ * [OrderExecutionEngine] — исполнение/реконсиляция. Здесь — оркестрация событий,
+ * force close и периодическая реконсиляция.
  */
 @Service
 class FuturesTradingBotService(
@@ -98,9 +94,30 @@ class FuturesTradingBotService(
             onPositionClosed = { eventPublisher.publishPositionClosed(it) },
         )
 
-    /** Per-ticker mutex входа: сериализует openFuturesPosition по тикеру (защита от
-     *  гонки двух сигналов на один тикер → двойного ордера). */
-    private val entryLocks = ConcurrentHashMap<String, Mutex>()
+    /** Оркестратор входа (per-ticker mutex, risk-first проверки, размещение ордера). */
+    private val entryCoordinator =
+        FuturesEntryCoordinator(
+            futuresRiskEngine = futuresRiskEngine,
+            tradingHoursGuard = tradingHoursGuard,
+            alorClient = alorClient,
+            alorFuturesClient = alorFuturesClient,
+            marketDataGate = marketDataGate,
+            leverageConfig = leverageConfig,
+            riskConfig = riskConfig,
+            engine = engine,
+            meterRegistry = meterRegistry,
+        )
+
+    /** Мониторинг открытых позиций на каждом тике. */
+    private val positionMonitor =
+        FuturesPositionMonitor(
+            futuresRiskEngine = futuresRiskEngine,
+            riskManagement = riskManagement,
+            riskConfig = riskConfig,
+            positionRepo = positionRepo,
+            engine = engine,
+            meterRegistry = meterRegistry,
+        )
 
     /**
      * Сигнал стратегии для Si → вход. Только Si (фьючерс) обрабатывается здесь.
@@ -129,7 +146,7 @@ class FuturesTradingBotService(
             ),
         ) {
             try {
-                openFuturesPosition(strat.ticker, strat.targetPrice, strat.action, strat.cycleId)
+                entryCoordinator.openPosition(strat.ticker, strat.targetPrice, strat.action, strat.cycleId)
             } catch (e: Exception) {
                 logger.error(e) { "Futures entry handler error ${strat.ticker}" }
                 meterRegistry.counter("futures.entry.error", Tags.of("ticker", strat.ticker)).increment()
@@ -145,7 +162,7 @@ class FuturesTradingBotService(
         if (event.ticker != "Si") return
         scope.launch(TraceContext.mdcContext(mapOf(TraceContext.TICKER to event.ticker))) {
             try {
-                monitorOpenPositions(event.ticker, event.price)
+                positionMonitor.monitor(event.ticker, event.price)
             } catch (e: Exception) {
                 logger.error(e) { "Futures monitor handler error ${event.ticker}" }
                 meterRegistry.counter("futures.monitor.error", Tags.of("ticker", event.ticker)).increment()
@@ -198,151 +215,6 @@ class FuturesTradingBotService(
         }
         logger.info { "Force close (futures): ${open.size} positions, reason=$reason" }
         return open.size
-    }
-
-    private suspend fun openFuturesPosition(
-        ticker: String,
-        targetPrice: BigDecimal,
-        action: StrategyAction,
-        cycleId: String?,
-    ) {
-        val lock = entryLocks.computeIfAbsent(ticker) { Mutex() }
-        lock.withLock {
-            doOpenFuturesPosition(ticker, targetPrice, action, cycleId)
-        }
-    }
-
-    private suspend fun doOpenFuturesPosition(
-        ticker: String,
-        targetPrice: BigDecimal,
-        action: StrategyAction,
-        cycleId: String?,
-    ) {
-        if (!marketDataGate.isPriceDataFresh(ticker)) {
-            logger.warn { "STALE market data — futures entry blocked $ticker (defense in depth)" }
-            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", ticker, "reason", "STALE_DATA")).increment()
-            return
-        }
-        if (futuresRiskEngine.isDailyLossLimitReached()) {
-            logger.warn { "Daily loss limit reached — entry blocked $ticker" }
-            meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).increment()
-            return
-        }
-        if (!tradingHoursGuard.isTradingAllowed()) {
-            logger.info { "Outside trading hours — entry skipped $ticker" }
-            meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "OUTSIDE_HOURS")).increment()
-            return
-        }
-
-        val direction = if (action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-        val entryPrice = alorClient.getLastPrice(ticker) ?: targetPrice
-        val currentGo = alorFuturesClient.getFuturesGO(ticker)
-        val portfolioMoney = alorFuturesClient.getPortfolioMoney()
-
-        val validation = futuresRiskEngine.validateEntry(ticker, entryPrice, direction, portfolioMoney, currentGo)
-        if (!validation.allowed) {
-            logger.warn { "Risk engine rejected $ticker: ${validation.reason}" }
-            return
-        }
-
-        val opened =
-            engine.placeEntryOrder(ticker, direction, validation.quantity, entryPrice) { orderId, pending, fillPrice, qty ->
-                Position(
-                    ticker = ticker,
-                    direction = direction,
-                    quantity = qty,
-                    entryPrice = fillPrice,
-                    currentPrice = fillPrice,
-                    stopLoss = validation.stopLossPrice,
-                    takeProfit = validation.takeProfitPrice,
-                    trailingStopPrice = validation.stopLossPrice,
-                    instrumentType = InstrumentType.FUTURES,
-                    leverage = leverageConfig.effective(),
-                    goPerContract = currentGo,
-                    marginUsed = validation.marginRequired,
-                    liquidationPrice = validation.liquidationPrice,
-                    variationMargin = BigDecimal.ZERO,
-                    stopLossPoints = riskConfig.defaultStopLossPoints,
-                    alorOrderId = orderId,
-                    pendingEntry = pending,
-                    cycleId = cycleId,
-                )
-            }
-        if (opened != null) {
-            logger.info {
-                "Opened futures $ticker $direction qty=${opened.quantity} @ ${opened.entryPrice} " +
-                    "sl=${validation.stopLossPrice} tp=${validation.takeProfitPrice} " +
-                    "margin=${validation.marginRequired} liq=${validation.liquidationPrice}"
-            }
-        }
-    }
-
-    private suspend fun monitorOpenPositions(
-        ticker: String,
-        price: BigDecimal,
-    ) {
-        val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.ticker == ticker }
-        for (pos in open) {
-            if (pos.instrumentType != InstrumentType.FUTURES) continue
-            TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-            TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
-
-            // Позиция ожидает подтверждения входа — SL/TP/закрытие не трогаем,
-            // ждём State Reconciliation.
-            if (pos.pendingEntry) {
-                engine.resolveEntryViaOutbox(pos)
-                continue
-            }
-
-            // Закрытие уже в полёте — новый ордер НЕ создаём (защита от double execution).
-            if (pos.pendingClose) {
-                engine.reconcilePosition(pos)
-                continue
-            }
-
-            pos.currentPrice = price
-
-            // 1. Guardrail ликвидации — самый приоритетный
-            when (futuresRiskEngine.checkLiquidationDistance(pos, price)) {
-                FuturesRiskEngine.LiquidationStatus.CRITICAL -> {
-                    logger.error { "LIQUIDATION_CRITICAL ${pos.ticker} @ $price — immediate market close" }
-                    engine.closePosition(pos, price, "LIQUIDATION_CRITICAL")
-                    continue
-                }
-
-                FuturesRiskEngine.LiquidationStatus.WARNING -> {
-                    logger.warn {
-                        "LIQUIDATION_WARNING ${pos.ticker} @ $price — " +
-                            "distance < ${riskConfig.minLiquidationDistancePercent}%"
-                    }
-                    meterRegistry
-                        .counter(
-                            "futures.liquidation.warning",
-                            Tags.of("ticker", pos.ticker),
-                        ).increment()
-                }
-
-                FuturesRiskEngine.LiquidationStatus.SAFE -> {}
-            }
-
-            // 2. SL / TP / trailing
-            if (riskManagement.shouldCloseBySL(pos, price)) {
-                engine.closePosition(pos, price, "STOP_LOSS")
-                continue
-            }
-            if (riskManagement.shouldCloseByTP(pos, price)) {
-                engine.closePosition(pos, price, "TAKE_PROFIT")
-                continue
-            }
-            if (riskManagement.shouldCloseByTrailing(pos, price)) {
-                engine.closePosition(pos, price, "TRAILING_STOP")
-                continue
-            }
-
-            // 3. Подтягивание trailing (только в прибыль, с учётом вариационной маржи)
-            futuresRiskEngine.updateTrailingStop(pos, price)
-            positionRepo.save(pos)
-        }
     }
 
     /**

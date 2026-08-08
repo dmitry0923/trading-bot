@@ -1,10 +1,10 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.DrawdownStatus
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionStatus
-import com.trading.bot.model.TradeStats
+import com.trading.bot.model.dto.DrawdownStatus
+import com.trading.bot.model.dto.TradeStats
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking

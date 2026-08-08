@@ -2,7 +2,7 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
-import com.trading.bot.model.MarketSnapshot
+import com.trading.bot.model.dto.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.kotlin.ratelimiter.decorateSuspendFunction
 import io.github.resilience4j.kotlin.retry.decorateSuspendFunction

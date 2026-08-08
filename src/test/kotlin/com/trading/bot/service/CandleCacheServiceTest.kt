@@ -1,6 +1,6 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.Candle
+import com.trading.bot.model.entity.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test

@@ -1,4 +1,4 @@
-package com.trading.bot.model
+package com.trading.bot.model.dto
 
 import java.math.BigDecimal
 

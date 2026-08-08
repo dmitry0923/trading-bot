@@ -1,8 +1,8 @@
 package com.trading.bot.event
 
-import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.PositionDirection
-import com.trading.bot.model.Strategy
+import com.trading.bot.model.dto.ExecutionReport
+import com.trading.bot.model.entity.Strategy
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDateTime

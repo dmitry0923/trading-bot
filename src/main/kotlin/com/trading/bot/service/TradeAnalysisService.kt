@@ -1,10 +1,10 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.BlindSpot
-import com.trading.bot.model.BlindSpotEntity
-import com.trading.bot.model.Position
-import com.trading.bot.model.TimePattern
-import com.trading.bot.model.TradeStats
+import com.trading.bot.model.dto.BlindSpot
+import com.trading.bot.model.dto.TimePattern
+import com.trading.bot.model.dto.TradeStats
+import com.trading.bot.model.entity.BlindSpotEntity
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging

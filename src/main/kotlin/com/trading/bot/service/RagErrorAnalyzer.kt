@@ -7,8 +7,8 @@ import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.rag.ScoredTrace
 import com.trading.bot.infrastructure.rag.TraceCorpusIndex
 import com.trading.bot.infrastructure.tracing.TraceStorage
-import com.trading.bot.model.RagAnalysis
-import com.trading.bot.model.RagRetrievedTrace
+import com.trading.bot.model.dto.RagAnalysis
+import com.trading.bot.model.dto.RagRetrievedTrace
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags

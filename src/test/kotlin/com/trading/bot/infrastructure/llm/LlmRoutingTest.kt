@@ -2,7 +2,7 @@ package com.trading.bot.infrastructure.llm
 
 import com.trading.bot.config.LlmConfig
 import com.trading.bot.config.LlmProvider
-import com.trading.bot.model.BotSettings
+import com.trading.bot.model.entity.BotSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test

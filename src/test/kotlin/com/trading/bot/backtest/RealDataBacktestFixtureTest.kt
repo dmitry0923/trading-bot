@@ -1,6 +1,6 @@
 package com.trading.bot.backtest
 
-import com.trading.bot.model.Candle
+import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.CandleRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue

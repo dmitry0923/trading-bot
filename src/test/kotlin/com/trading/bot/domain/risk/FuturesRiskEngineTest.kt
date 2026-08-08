@@ -1,16 +1,13 @@
 package com.trading.bot.domain.risk
 
-import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
-import com.trading.bot.service.DrawdownProtectionService
-import com.trading.bot.service.VolatilityIndexService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -43,32 +40,21 @@ class FuturesRiskEngineTest {
                 )
         }
     private val positionRepo: PositionRepository = Mockito.mock(PositionRepository::class.java)
-    private val drawdownProtection: DrawdownProtectionService = Mockito.mock(DrawdownProtectionService::class.java)
-    private val volatilityIndexService: VolatilityIndexService = Mockito.mock(VolatilityIndexService::class.java)
+    private val dailyRiskGuard: DailyRiskGuard = Mockito.mock(DailyRiskGuard::class.java)
+    private val volatilityFilter: VolatilityFilter = Mockito.mock(VolatilityFilter::class.java)
 
-    private fun engine(openGuard: Boolean = true): FuturesRiskEngine {
-        val guardConfig =
-            RiskConfig().apply {
-                if (openGuard) {
-                    tradingHoursStart = "00:00"
-                    tradingHoursEnd = "23:59"
-                } else {
-                    tradingHoursStart = "19:00"
-                    tradingHoursEnd = "18:00"
-                }
-            }
-        return FuturesRiskEngine(
+    private fun engine(openGuard: Boolean = true): FuturesRiskEngine =
+        FuturesRiskEngine(
             riskConfig = riskConfig,
             leverageConfig = leverageConfig,
             positionSizer = FuturesPositionSizer(leverageConfig, riskConfig, instrumentsConfig),
             positionRepo = positionRepo,
-            tradingHoursGuard = TradingHoursGuard(guardConfig),
+            tradingCalendar = TradingCalendar { openGuard },
             instrumentsConfig = instrumentsConfig,
-            drawdownProtection = drawdownProtection,
-            volatilityIndexService = volatilityIndexService,
+            dailyRiskGuard = dailyRiskGuard,
+            volatilityFilter = volatilityFilter,
             meterRegistry = SimpleMeterRegistry(),
         )
-    }
 
     @Test
     fun `entry allowed within all limits`() =
@@ -98,7 +84,7 @@ class FuturesRiskEngineTest {
     fun `entry blocked after daily loss limit reached`() =
         runBlocking {
             val e = engine()
-            Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
+            Mockito.`when`(dailyRiskGuard.isDailyLossLimitReached()).thenReturn(true)
 
             val result =
                 e.validateEntry(
@@ -116,13 +102,13 @@ class FuturesRiskEngineTest {
     @Test
     fun `daily pnl methods delegate to drawdown protection`() {
         val e = engine()
-        Mockito.`when`(drawdownProtection.getDailyPnl()).thenReturn(BigDecimal("-5000"))
+        Mockito.`when`(dailyRiskGuard.getDailyPnl()).thenReturn(BigDecimal("-5000"))
 
         e.updateDailyPnL(BigDecimal("-3000"))
         e.updateDailyPnL(BigDecimal("-2000"))
 
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-3000"))
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-2000"))
+        Mockito.verify(dailyRiskGuard).updateDailyPnl(BigDecimal("-3000"))
+        Mockito.verify(dailyRiskGuard).updateDailyPnl(BigDecimal("-2000"))
         assertEquals(0, BigDecimal("-5000").compareTo(e.getDailyPnL()))
     }
 

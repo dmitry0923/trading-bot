@@ -3,9 +3,9 @@ package com.trading.bot.service
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.infrastructure.UuidV7
-import com.trading.bot.model.OrderOutbox
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.entity.OrderOutbox
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging

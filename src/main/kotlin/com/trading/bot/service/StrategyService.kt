@@ -13,13 +13,13 @@ import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
-import com.trading.bot.model.Candle
-import com.trading.bot.model.DrawdownStatus
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
-import com.trading.bot.model.RiskContext
-import com.trading.bot.model.Strategy
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.dto.DrawdownStatus
+import com.trading.bot.model.dto.RiskContext
+import com.trading.bot.model.entity.Candle
+import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyRepository

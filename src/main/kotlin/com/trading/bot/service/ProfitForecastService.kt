@@ -1,6 +1,6 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.ProfitForecast
+import com.trading.bot.model.dto.ProfitForecast
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service

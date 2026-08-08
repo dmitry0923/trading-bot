@@ -2,8 +2,8 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.infrastructure.UuidV7
-import com.trading.bot.model.ExecutionReport
-import com.trading.bot.model.OrderStatus
+import com.trading.bot.model.dto.ExecutionReport
+import com.trading.bot.model.dto.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags

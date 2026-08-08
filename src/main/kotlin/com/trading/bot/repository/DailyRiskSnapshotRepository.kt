@@ -1,7 +1,7 @@
 package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.DailyRiskSnapshot
+import com.trading.bot.model.entity.DailyRiskSnapshot
 import io.r2dbc.spi.Row
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository

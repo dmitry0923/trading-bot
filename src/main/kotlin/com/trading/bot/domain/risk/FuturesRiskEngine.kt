@@ -1,16 +1,13 @@
 package com.trading.bot.domain.risk
 
-import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
-import com.trading.bot.service.DrawdownProtectionService
-import com.trading.bot.service.VolatilityIndexService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -27,7 +24,7 @@ import java.math.RoundingMode
  *
  * Порядок проверок перед входом (все обязательны):
  *   1. Trading hours (10:00–18:30 МСК) → OUTSIDE_HOURS.
- *   2. Daily loss limit (единый источник — DrawdownProtectionService) → DAILY_LIMIT.
+ *   2. Daily loss limit (единый источник — [DailyRiskGuard]) → DAILY_LIMIT.
  *   3. Multi-Tier Drawdown Protection (7d/30d rolling, Shadow/Read-only) → DRAWDOWN_PROTECTION.
  *   4. Аномальный индекс волатильности MOEX (RVI) → VOLATILITY_INDEX.
  *   5. Уже есть открытая позиция (max 1) → MAX_POSITIONS.
@@ -44,10 +41,10 @@ class FuturesRiskEngine(
     private val leverageConfig: LeverageConfig,
     private val positionSizer: FuturesPositionSizer,
     private val positionRepo: PositionRepository,
-    private val tradingHoursGuard: TradingHoursGuard,
+    private val tradingCalendar: TradingCalendar,
     private val instrumentsConfig: InstrumentsConfig,
-    private val drawdownProtection: DrawdownProtectionService,
-    private val volatilityIndexService: VolatilityIndexService,
+    private val dailyRiskGuard: DailyRiskGuard,
+    private val volatilityFilter: VolatilityFilter,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -70,10 +67,10 @@ class FuturesRiskEngine(
     ): EntryValidationResult {
         if (!riskConfig.enabled) return reject("RISK_DISABLED")
         if (!leverageConfig.enabled) return reject("LEVERAGE_DISABLED")
-        if (!tradingHoursGuard.isTradingAllowed()) return reject("OUTSIDE_HOURS")
-        if (drawdownProtection.isDailyLossLimitReached()) return reject("DAILY_LIMIT")
-        if (drawdownProtection.isEntryBlocked()) return reject("DRAWDOWN_PROTECTION")
-        if (volatilityIndexService.isVolatilityAnomalous()) return reject("VOLATILITY_INDEX")
+        if (!tradingCalendar.isTradingAllowed()) return reject("OUTSIDE_HOURS")
+        if (dailyRiskGuard.isDailyLossLimitReached()) return reject("DAILY_LIMIT")
+        if (dailyRiskGuard.isEntryBlocked()) return reject("DRAWDOWN_PROTECTION")
+        if (volatilityFilter.isVolatilityAnomalous()) return reject("VOLATILITY_INDEX")
 
         val open = positionRepo.findByStatus(PositionStatus.OPEN)
         if (open.size >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
@@ -159,13 +156,13 @@ class FuturesRiskEngine(
 
     /**
      * Учёт P&L закрытой фьючерсной сделки в дневном итоге.
-     * Делегирование в единый источник [DrawdownProtectionService] — без локального
+     * Делегирование в единый источник [DailyRiskGuard] — без локального
      * состояния и без записи в daily_risk_snapshot.
      */
     fun updateDailyPnL(pnl: BigDecimal) {
-        drawdownProtection.updateDailyPnl(pnl)
-        meterRegistry.gauge("risk.daily.pnl", drawdownProtection.getDailyPnl().toDouble())
-        meterRegistry.gauge("risk.daily.limit.reached", if (drawdownProtection.isDailyLossLimitReached()) 1.0 else 0.0)
+        dailyRiskGuard.updateDailyPnl(pnl)
+        meterRegistry.gauge("risk.daily.pnl", dailyRiskGuard.getDailyPnl().toDouble())
+        meterRegistry.gauge("risk.daily.limit.reached", if (dailyRiskGuard.isDailyLossLimitReached()) 1.0 else 0.0)
     }
 
     /**
@@ -173,19 +170,19 @@ class FuturesRiskEngine(
      *
      * @return true, если dailyPnL <= -maxDailyLossPercent% AUM (единый источник)
      */
-    fun isDailyLossLimitReached(): Boolean = drawdownProtection.isDailyLossLimitReached()
+    fun isDailyLossLimitReached(): Boolean = dailyRiskGuard.isDailyLossLimitReached()
 
     /**
-     * Текущий дневной P&L (единый источник [DrawdownProtectionService]).
+     * Текущий дневной P&L (единый источник [DailyRiskGuard]).
      */
-    fun getDailyPnL(): BigDecimal = drawdownProtection.getDailyPnl()
+    fun getDailyPnL(): BigDecimal = dailyRiskGuard.getDailyPnl()
 
     /**
      * Сброс дневного риск-состояния. Нет локального состояния — аккумулятор
-     * живёт в [DrawdownProtectionService]. Метод сохранён для обратной совместимости.
+     * живёт в [DailyRiskGuard]. Метод сохранён для обратной совместимости.
      */
     fun resetDailyState() {
-        drawdownProtection.cachedOrNeutral()
+        dailyRiskGuard.cachedOrNeutral()
     }
 
     // ===================== Ликвидация =====================

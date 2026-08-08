@@ -1,6 +1,7 @@
 package com.trading.bot.application
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.TradingCalendar
 import org.springframework.stereotype.Component
 import java.time.LocalTime
 import java.time.ZoneId
@@ -14,7 +15,7 @@ import java.time.ZoneId
 @Component
 class TradingHoursGuard(
     private val riskConfig: RiskConfig,
-) {
+) : TradingCalendar {
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 
     /**
@@ -22,7 +23,7 @@ class TradingHoursGuard(
      *
      * @return true внутри торгового окна (полуоткрытый интервал)
      */
-    fun isTradingAllowed(): Boolean = isTradingAllowed(LocalTime.now(moscowZone))
+    override fun isTradingAllowed(): Boolean = isTradingAllowed(LocalTime.now(moscowZone))
 
     /**
      * Разрешена ли торговля в указанное время.

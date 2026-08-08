@@ -1,7 +1,7 @@
 package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.BotSettings
+import com.trading.bot.model.entity.BotSettings
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository

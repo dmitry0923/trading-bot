@@ -2,7 +2,7 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.BlindSpotEntity
+import com.trading.bot.model.entity.BlindSpotEntity
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull

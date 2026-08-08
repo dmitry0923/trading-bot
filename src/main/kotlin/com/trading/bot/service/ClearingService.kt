@@ -1,7 +1,7 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.ClearingQuote
-import com.trading.bot.model.InvestorTransactionType
+import com.trading.bot.model.dto.ClearingQuote
+import com.trading.bot.model.entity.InvestorTransactionType
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -126,7 +126,7 @@ class ClearingService(
                 )
             investorRepo.saveAccount(updated)
             investorRepo.saveTransaction(
-                com.trading.bot.model.InvestorTransaction(
+                com.trading.bot.model.entity.InvestorTransaction(
                     investorId = investorId,
                     accountId = account.id,
                     type = InvestorTransactionType.CLEARING.name,

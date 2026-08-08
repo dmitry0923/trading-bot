@@ -1,8 +1,8 @@
 package com.trading.bot.integration
 
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository

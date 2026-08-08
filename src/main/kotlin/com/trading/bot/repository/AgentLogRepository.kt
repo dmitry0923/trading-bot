@@ -2,7 +2,7 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.AgentLog
+import com.trading.bot.model.entity.AgentLog
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.r2dbc.core.DatabaseClient

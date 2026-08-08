@@ -1,6 +1,6 @@
 package com.trading.bot.client
 
-import com.trading.bot.model.Candle
+import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.stereotype.Component

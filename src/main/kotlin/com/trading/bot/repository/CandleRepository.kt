@@ -1,7 +1,7 @@
 package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.Candle
+import com.trading.bot.model.entity.Candle
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.r2dbc.core.DatabaseClient

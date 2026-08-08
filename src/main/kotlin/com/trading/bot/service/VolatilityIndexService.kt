@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.VolatilityFilter
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +28,7 @@ class VolatilityIndexService(
     private val riskConfig: RiskConfig,
     private val moexClient: MoexClient,
     private val meterRegistry: MeterRegistry,
-) {
+) : VolatilityFilter {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val cacheTtl: Duration = Duration.ofMinutes(15)
@@ -58,7 +59,7 @@ class VolatilityIndexService(
      * Аномален ли текущий уровень индекса волатильности (торговля на паузе).
      * Если индекс недоступен — фильтр не блокирует (fail-open).
      */
-    fun isVolatilityAnomalous(): Boolean {
+    override fun isVolatilityAnomalous(): Boolean {
         if (!riskConfig.volatilityIndexEnabled) return false
         val value = lastValue ?: return false
         val anomalous = value.toDouble() > riskConfig.maxVolatilityIndexPercent

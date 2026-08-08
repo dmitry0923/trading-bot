@@ -2,12 +2,13 @@ package com.trading.bot.service
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.DailyRiskGuard
 import com.trading.bot.event.PositionClosedEvent
-import com.trading.bot.model.DrawdownStatus
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.dto.DrawdownStatus
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -60,7 +61,7 @@ class DrawdownProtectionService(
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
-) {
+) : DailyRiskGuard {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val moscowZone = ZoneId.of("Europe/Moscow")
@@ -164,7 +165,7 @@ class DrawdownProtectionService(
      * Если кэш ещё не заполнен (старт до первого цикла) — считает консервативно-нейтрально
      * от стартового депозита и синхронного дневного аккумулятора.
      */
-    fun cachedOrNeutral(): DrawdownStatus {
+    override fun cachedOrNeutral(): DrawdownStatus {
         cachedStatus?.let { return it }
         val aum = riskConfig.maxPositionRub
         return DrawdownStatus(
@@ -194,7 +195,7 @@ class DrawdownProtectionService(
      * вызывается из RiskManagementService (акции) и DailyLossCircuitBreaker (фьючерсы).
      * Персистит состояние в daily_risk_snapshot (восстановление после рестарта).
      */
-    fun updateDailyPnl(pnl: BigDecimal) {
+    override fun updateDailyPnl(pnl: BigDecimal) {
         resetDailyStateIfNewDay()
         todayPnl = todayPnl.add(pnl)
         val aum = cachedStatus?.aum ?: riskConfig.maxPositionRub
@@ -217,17 +218,17 @@ class DrawdownProtectionService(
     /**
      * Достигнут ли дневной лимит убытка (кэш, без БД).
      */
-    fun isDailyLossLimitReached(): Boolean = cachedOrNeutral().dailyLimitBreached
+    override fun isDailyLossLimitReached(): Boolean = cachedOrNeutral().dailyLimitBreached
 
     /**
      * Текущий дневной P&L (кэш, без БД).
      */
-    fun getDailyPnl(): BigDecimal = cachedOrNeutral().dailyPnlRub
+    override fun getDailyPnl(): BigDecimal = cachedOrNeutral().dailyPnlRub
 
     /**
      * Заблокированы ли новые входы (кэш). Покрывает все tier-лимиты и Shadow/Read-only.
      */
-    fun isEntryBlocked(): Boolean = cachedOrNeutral().blocking()
+    override fun isEntryBlocked(): Boolean = cachedOrNeutral().blocking()
 
     /**
      * Причина блокировки входа (для логов/отказов). Пустая строка — вход разрешён.

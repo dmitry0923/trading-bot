@@ -3,8 +3,8 @@ package com.trading.bot.agent
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
-import com.trading.bot.model.AgentLog
-import com.trading.bot.model.FundamentalReport
+import com.trading.bot.model.dto.FundamentalReport
+import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.MacroContextService
 import io.github.oshai.kotlinlogging.KotlinLogging

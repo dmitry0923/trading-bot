@@ -1,7 +1,7 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.FeedbackCacheEntry
-import com.trading.bot.model.Strategy
+import com.trading.bot.model.dto.FeedbackCacheEntry
+import com.trading.bot.model.entity.Strategy
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service

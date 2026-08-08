@@ -1,4 +1,4 @@
-package com.trading.bot.model
+package com.trading.bot.model.dto
 
 /**
  * Риск-контекст на момент принятия решения агентом.

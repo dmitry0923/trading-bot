@@ -3,8 +3,8 @@ package com.trading.bot.repository
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.OrderOutbox
-import com.trading.bot.model.OutboxStatus
+import com.trading.bot.model.entity.OrderOutbox
+import com.trading.bot.model.entity.OutboxStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle

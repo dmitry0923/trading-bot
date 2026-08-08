@@ -3,7 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.config.ExperimentConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.BotSettings
+import com.trading.bot.model.entity.BotSettings
 import com.trading.bot.repository.SettingsRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking

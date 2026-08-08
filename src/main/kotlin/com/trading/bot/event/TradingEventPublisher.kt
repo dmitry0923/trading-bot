@@ -1,7 +1,7 @@
 package com.trading.bot.event
 
-import com.trading.bot.model.ExecutionReport
-import com.trading.bot.model.Strategy
+import com.trading.bot.model.dto.ExecutionReport
+import com.trading.bot.model.entity.Strategy
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -33,7 +33,7 @@ class TradingEventPublisher(
         publisher.publishEvent(ExecutionReportEvent(report))
     }
 
-    fun publishPositionOpened(position: com.trading.bot.model.Position) {
+    fun publishPositionOpened(position: com.trading.bot.model.entity.Position) {
         publisher.publishEvent(
             PositionOpenedEvent(
                 positionId = position.id ?: -1L,
@@ -46,7 +46,7 @@ class TradingEventPublisher(
         )
     }
 
-    fun publishPositionClosed(position: com.trading.bot.model.Position) {
+    fun publishPositionClosed(position: com.trading.bot.model.entity.Position) {
         publisher.publishEvent(
             PositionClosedEvent(
                 positionId = position.id ?: -1L,

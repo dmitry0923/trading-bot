@@ -1,5 +1,9 @@
 package com.trading.bot.service
 
+import com.trading.bot.application.MarketDataGate
+import com.trading.bot.application.OrderExecutionEngine
+import com.trading.bot.application.PnlCalculator
+import com.trading.bot.application.TradingGate
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorWebSocketClient
 import com.trading.bot.client.WebSocketManager
@@ -10,16 +14,15 @@ import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
-import com.trading.bot.model.AgentLog
-import com.trading.bot.model.ExecutionReport
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.OrderStatus
-import com.trading.bot.model.OutboxStatus
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
-import com.trading.bot.model.Strategy
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.dto.ExecutionReport
+import com.trading.bot.model.dto.OrderStatus
+import com.trading.bot.model.entity.AgentLog
+import com.trading.bot.model.entity.Position
+import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
@@ -42,7 +45,6 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 
 /**
  * Исполнительный сервис торгового бота (акции/валюты).
@@ -51,7 +53,8 @@ import kotlin.math.abs
  *   [pollMarketData] остаётся деградированным fallback (SIMULATION / нет WS).
  * - Все критичные операции (вход/выход/исполнение) — через доменные события.
  *
- * Защита от double execution / потеря контроля над позицией (аналогично
+ * Защита от double execution / потеря контроля над позицией вынесена в общее ядро
+ * [com.trading.bot.application.OrderExecutionEngine] (используется также
  * FuturesTradingBotService): idempotency key на ордер, стейт-машина
  * pendingEntry/pendingClose, State Reconciliation через outbox + verifyOrder,
  * partial fills с дозакрытием остатка.
@@ -75,12 +78,32 @@ class TradingBotService(
     private val agentLogRepo: AgentLogRepository,
     private val tradeEventService: TradeEventService,
     private val eventPublisher: TradingEventPublisher,
-    private val tradingGate: com.trading.bot.application.TradingGate,
-    private val marketDataGate: com.trading.bot.application.MarketDataGate,
+    private val tradingGate: TradingGate,
+    private val marketDataGate: MarketDataGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Общее ядро исполнения ордеров (стейт-машина, outbox-реконсиляция, partial fills). */
+    private val engine =
+        OrderExecutionEngine(
+            alorClient = alorClient,
+            orderOutboxService = orderOutboxService,
+            orderOutboxRepo = orderOutboxRepo,
+            positionRepo = positionRepo,
+            alorConfig = alorConfig,
+            objectMapper = objectMapper,
+            tradeEventService = tradeEventService,
+            meterRegistry = meterRegistry,
+            pnlCalculator = PnlCalculator.plain(),
+            instrumentFilter = { it.instrumentType != InstrumentType.FUTURES },
+            metricPrefix = "bot",
+            onPositionClosed = { pos ->
+                risk.updateDailyPnL(pos.pnl ?: BigDecimal.ZERO)
+                meterRegistry.gauge("bot.pnl", Tags.of("ticker", pos.ticker), pos.pnl?.toDouble() ?: 0.0)
+            },
+        )
 
     /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */
     private val lastWsTickAt = ConcurrentHashMap<String, Instant>()
@@ -265,15 +288,15 @@ class TradingBotService(
                     updatePositionPnlGauge(pos.ticker, pnl.toDouble())
 
                     if (risk.shouldCloseBySL(pos, price)) {
-                        closePosition(pos, price, "STOP_LOSS")
+                        engine.closePosition(pos, price, "STOP_LOSS")
                         return@forEach
                     }
                     if (risk.shouldCloseByTP(pos, price)) {
-                        closePosition(pos, price, "TAKE_PROFIT")
+                        engine.closePosition(pos, price, "TAKE_PROFIT")
                         return@forEach
                     }
                     if (risk.shouldCloseByTrailing(pos, price)) {
-                        closePosition(pos, price, "TRAILING_STOP")
+                        engine.closePosition(pos, price, "TRAILING_STOP")
                         return@forEach
                     }
 
@@ -283,7 +306,7 @@ class TradingBotService(
                     var tpUpdated = false
                     BlockingDb.io { redis.getStrategy(pos.ticker) }?.let { strat ->
                         if (strat.action == StrategyAction.CLOSE) {
-                            closePosition(pos, price, "STRATEGY_CLOSE")
+                            engine.closePosition(pos, price, "STRATEGY_CLOSE")
                             return@forEach
                         }
                         strat.stopLoss?.let { newSL ->
@@ -345,17 +368,51 @@ class TradingBotService(
     }
 
     /**
-     * ExecutionReportEvent → фиксация фактического исполнения (closePrice, P&L, slippage).
+     * ExecutionReportEvent → фиксация фактического исполнения (вход/закрытие — в ядре,
+     * обычные fill'ы акций — здесь).
      */
     @EventListener
     fun onExecutionReport(event: com.trading.bot.event.ExecutionReportEvent) {
         scope.launch {
             try {
-                applyExecutionReport(event.report)
+                if (!engine.handleExecutionReport(event.report)) {
+                    handleRegularStockFill(event.report)
+                }
             } catch (e: Exception) {
                 logger.error(e) { "Execution report handler error for order ${event.report.orderId}" }
             }
         }
+    }
+
+    /**
+     * Обычный (не pendingEntry/pendingClose) WS fill по акции: фиксирует фактическую
+     * цену исполнения и P&L, при полном исполнении закрывает позицию.
+     */
+    private suspend fun handleRegularStockFill(report: ExecutionReport) {
+        if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
+        val orderId = report.orderId
+        val pos = positionRepo.findByAlorOrderId(orderId) ?: positionRepo.findByCloseOrderId(orderId) ?: return
+        if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
+        if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
+        val fillPrice = report.avgPrice ?: return
+
+        pos.closePrice = fillPrice
+        val pnl =
+            when (pos.direction) {
+                PositionDirection.LONG -> fillPrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
+                PositionDirection.SHORT -> pos.entryPrice.subtract(fillPrice).multiply(BigDecimal(pos.quantity))
+            }
+        pos.pnl = pnl
+        pos.status = if (report.status == OrderStatus.PARTIALLY_FILLED) PositionStatus.OPEN else PositionStatus.CLOSED
+        pos.closedAt = if (report.status == OrderStatus.PARTIALLY_FILLED) null else LocalDateTime.now()
+        pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
+        positionRepo.save(pos)
+        if (pos.status == PositionStatus.CLOSED) {
+            tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
+        }
+        alorClient.recordSlippage(pos.entryPrice, fillPrice, pos.quantity)
+        meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()
+        logger.info { "WS fill applied for ${pos.ticker}: order=$orderId price=$fillPrice pnl=$pnl" }
     }
 
     /**
@@ -385,7 +442,7 @@ class TradingBotService(
         open.forEach { pos ->
             try {
                 val price = alorClient.getLastPrice(pos.ticker) ?: pos.currentPrice ?: pos.entryPrice
-                closePosition(pos, price, reason)
+                engine.closePosition(pos, price, reason)
             } catch (e: Exception) {
                 logger.error(e) { "Force close failed ${pos.ticker}" }
             }
@@ -446,294 +503,39 @@ class TradingBotService(
             meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "PORTFOLIO_LIMIT")).increment()
             return
         }
-        val side = if (strat.action == StrategyAction.BUY) "buy" else "sell"
-        val placed = orderOutboxService.placeOrder(strat.ticker, side, qty, strat.targetPrice, "limit")
-        if (!placed.success || placed.alorOrderId == null) {
-            if (placed.uncertain) {
-                // Запрос мог дойти до Alor → создаём позицию в состоянии pendingEntry;
-                // факт исполнения подтвердит реконсилятор (State Reconciliation).
-                logger.warn { "Entry for ${strat.ticker} UNCERTAIN (outbox=${placed.outboxId}); position created as pendingEntry" }
-                val pos =
-                    Position(
-                        ticker = strat.ticker,
-                        direction = dir,
-                        quantity = qty,
-                        entryPrice = strat.targetPrice,
-                        currentPrice = strat.targetPrice,
-                        stopLoss = strat.stopLoss ?: risk.calcSL(strat.targetPrice, dir),
-                        takeProfit = strat.takeProfit ?: risk.calcTP(strat.targetPrice, dir),
-                        trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
-                        pendingEntry = true,
-                        cycleId = strat.cycleId,
-                    )
-                positionRepo.save(pos)
-                meterRegistry.counter("bot.entry.uncertain", Tags.of("ticker", strat.ticker)).increment()
-                return
-            }
-            logger.error { "Order failed ${strat.ticker}" }
-            meterRegistry.counter("bot.order.failed", Tags.of("ticker", strat.ticker)).increment()
-            return
-        }
-        val orderId = placed.alorOrderId
 
-        val execution = alorClient.verifyOrder(orderId)
-        val fillPrice = execution?.avgPrice ?: strat.targetPrice
-        val filledQty = execution?.filledQuantity?.takeIf { it in 1 until qty }
-
-        if (filledQty != null) {
-            // Частичное исполнение входа: остаток лимитки ещё «висит» на бирже.
-            // Позиция создаётся в pendingEntry — реконсилятор (resolveEntryViaOutbox)
-            // после entryPartialFillCancelAfterMs отменит остаток и зафиксирует
-            // фактический объём (защита от скрытого роста позиции без ведома бота).
-            logger.warn {
-                "PARTIAL entry ${strat.ticker}: filled=$filledQty of $qty (order=$orderId) — " +
-                    "pendingEntry until remainder cancelled/filled"
-            }
-            val partialPos =
+        val opened =
+            engine.placeEntryOrder(strat.ticker, dir, qty, strat.targetPrice) { orderId, pending, fillPrice, entryQty ->
                 Position(
                     ticker = strat.ticker,
                     direction = dir,
-                    quantity = filledQty,
+                    quantity = entryQty,
                     entryPrice = fillPrice,
                     currentPrice = fillPrice,
                     stopLoss = strat.stopLoss ?: risk.calcSL(fillPrice, dir),
                     takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
                     trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
                     alorOrderId = orderId,
-                    pendingEntry = true,
+                    pendingEntry = pending,
                     cycleId = strat.cycleId,
                 )
-            positionRepo.save(partialPos)
-            meterRegistry.counter("bot.entry.partial", Tags.of("ticker", strat.ticker)).increment()
-            return
-        }
-        val actualQty = qty
-        logger.info { "Order $orderId for ${strat.ticker} verified: status=${execution?.status}, fillPrice=$fillPrice, qty=$actualQty" }
-
-        val pos =
-            Position(
-                ticker = strat.ticker,
-                direction = dir,
-                quantity = actualQty,
-                entryPrice = fillPrice,
-                currentPrice = fillPrice,
-                stopLoss = strat.stopLoss ?: risk.calcSL(fillPrice, dir),
-                takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
-                trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
-                alorOrderId = orderId,
-                cycleId = strat.cycleId,
+            }
+        if (opened != null) {
+            risk.updateDailyPnL(BigDecimal.ZERO)
+            agentLogRepo.save(
+                AgentLog(
+                    cycleId = strat.cycleId,
+                    agentName = "TradingBot",
+                    ticker = strat.ticker,
+                    action = "OPEN",
+                    confidence = strat.confidence,
+                    reasoning =
+                        "Opened ${dir.name} $qty @ ${opened.entryPrice} " +
+                            "(target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)",
+                ),
             )
-        positionRepo.save(pos)
-        tradeEventService.recordPositionOpened(pos)
-        risk.updateDailyPnL(BigDecimal.ZERO)
-        agentLogRepo.save(
-            AgentLog(
-                cycleId = strat.cycleId,
-                agentName = "TradingBot",
-                ticker = strat.ticker,
-                action = "OPEN",
-                confidence = strat.confidence,
-                reasoning = "Opened ${dir.name} $qty @ $fillPrice (target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)",
-            ),
-        )
-        meterRegistry.counter("bot.position.opened", Tags.of("ticker", strat.ticker, "direction", dir.name)).increment()
-        logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ $fillPrice (adaptive qty=$qty)" }
-    }
-
-    /**
-     * Закрытие позиции (стейт-машина, защита от double execution).
-     */
-    private suspend fun closePosition(
-        pos: Position,
-        price: BigDecimal,
-        reason: String,
-    ) {
-        // Уже идёт закрытие — НЕ создаём второй ордер, сверяем состояние текущего.
-        if (pos.pendingClose) {
-            if (pos.closeOrderId != null) {
-                confirmCloseFill(pos, price, reason)
-            } else {
-                resolveCloseViaOutbox(pos)
-            }
-            return
+            logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ ${opened.entryPrice} (adaptive qty=$qty)" }
         }
-
-        val side =
-            when (pos.direction) {
-                PositionDirection.LONG -> "sell"
-                PositionDirection.SHORT -> "buy"
-            }
-        val placed =
-            orderOutboxService.placeOrder(
-                pos.ticker,
-                side,
-                pos.quantity,
-                null,
-                "market",
-                positionId = pos.id,
-                closeReason = reason,
-            )
-        if (!placed.success || placed.alorOrderId == null) {
-            if (placed.uncertain) {
-                logger.warn {
-                    "Close for ${pos.ticker} UNCERTAIN (outbox=${placed.outboxId}); " +
-                        "position stays open, pending outbox reconciliation"
-                }
-                pos.pendingClose = true
-                pos.closeOrderId = null
-                pos.closeReason = reason
-                positionRepo.save(pos)
-                meterRegistry.counter("bot.close.uncertain", Tags.of("ticker", pos.ticker)).increment()
-            } else {
-                logger.error { "Close order NOT accepted for ${pos.ticker} ($reason); position stays OPEN" }
-                meterRegistry.counter("bot.close.rejected", Tags.of("ticker", pos.ticker)).increment()
-                pos.pendingClose = false
-                positionRepo.save(pos)
-            }
-            return
-        }
-
-        pos.closeOrderId = placed.alorOrderId
-        pos.pendingClose = true
-        pos.closeReason = reason
-        positionRepo.save(pos)
-        confirmCloseFill(pos, price, reason)
-    }
-
-    /**
-     * Подтверждение исполнения close-ордера через verifyOrder.
-     */
-    private suspend fun confirmCloseFill(
-        pos: Position,
-        expectedPrice: BigDecimal,
-        reason: String,
-    ) {
-        val orderId = pos.closeOrderId ?: return
-        val execution = alorClient.verifyOrder(orderId, expectedPrice = expectedPrice)
-        if (execution == null) {
-            // verifyOrder недоступен → вторичная сверка по qty позиции на бирже:
-            // если позиция закрыта/уменьшена, close-ордер исполнился (защита от
-            // зависшего pendingClose после исчерпания REST-сверки заявок).
-            if (closeConfirmedByPositionDelta(pos)) {
-                logger.warn {
-                    "Close order $orderId for ${pos.ticker} confirmed by position delta " +
-                        "(exchange position reduced) — finalizing at $expectedPrice"
-                }
-                applyCloseExecution(pos, pos.quantity, expectedPrice, reason)
-            } else {
-                logger.warn { "Close order $orderId for ${pos.ticker} state UNKNOWN; pending reconciliation" }
-            }
-            return
-        }
-        val avg = execution.avgPrice ?: expectedPrice
-        applyCloseExecution(pos, execution.filledQuantity, avg, reason)
-    }
-
-    /**
-     * Вторичная State Reconciliation close-ордера: позиция на бирже закрыта
-     * (qty=0) или уменьшилась в абсолюте → close исполнился, даже если
-     * verifyOrder/список заявок не подтверждают (eventual consistency).
-     */
-    private suspend fun closeConfirmedByPositionDelta(pos: Position): Boolean =
-        when (val result = alorClient.getPositions()) {
-            is AlorClient.ReconcileResult.Failed -> {
-                false
-            }
-
-            is AlorClient.ReconcileResult.Ok -> {
-                val signed =
-                    if (pos.direction == PositionDirection.LONG) {
-                        pos.quantity.toLong()
-                    } else {
-                        -pos.quantity.toLong()
-                    }
-                val exchangeQty =
-                    result.items
-                        .firstOrNull { it.ticker.equals(pos.ticker, ignoreCase = true) }
-                        ?.qty
-                        ?: 0L
-                exchangeQty == 0L || abs(exchangeQty) < abs(signed)
-            }
-        }
-
-    /**
-     * Применяет результат исполнения close-ордера (verifyOrder или WS):
-     * полное → финализация, частичное → дозакрытие остатка.
-     */
-    private suspend fun applyCloseExecution(
-        pos: Position,
-        filled: Int,
-        avg: BigDecimal,
-        reason: String,
-    ) {
-        val filledQty = filled.coerceIn(0, pos.quantity)
-        if (filledQty <= 0) return
-        if (filledQty >= pos.quantity) {
-            finalizeClosePosition(pos, avg, reason)
-        } else {
-            applyPartialClose(pos, filledQty, avg)
-        }
-    }
-
-    /**
-     * Partial fill: реализуем P&L закрытой части, уменьшаем quantity, остаток дозакрываем.
-     */
-    private suspend fun applyPartialClose(
-        pos: Position,
-        filled: Int,
-        avg: BigDecimal,
-    ) {
-        val qty = BigDecimal(filled)
-        val partialPnl =
-            when (pos.direction) {
-                PositionDirection.LONG -> avg.subtract(pos.entryPrice).multiply(qty)
-                PositionDirection.SHORT -> pos.entryPrice.subtract(avg).multiply(qty)
-            }
-        pos.realizedPnl = pos.realizedPnl.add(partialPnl)
-        pos.quantity -= filled
-        pos.closeOrderId = null
-        pos.pendingClose = false
-        pos.currentPrice = avg
-        positionRepo.save(pos)
-        meterRegistry.counter("bot.partial_close", Tags.of("ticker", pos.ticker)).increment()
-        logger.warn {
-            "PARTIAL close ${pos.ticker}: closed=$filled remainder=${pos.quantity} @ $avg " +
-                "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); remainder will be re-closed"
-        }
-    }
-
-    /**
-     * Полное закрытие: P&L = realizedPnl (partial) + P&L остатка.
-     */
-    private suspend fun finalizeClosePosition(
-        pos: Position,
-        closePrice: BigDecimal,
-        reason: String,
-    ) {
-        val qty = BigDecimal(pos.quantity)
-        val remainderPnl =
-            when (pos.direction) {
-                PositionDirection.LONG -> closePrice.subtract(pos.entryPrice).multiply(qty)
-                PositionDirection.SHORT -> pos.entryPrice.subtract(closePrice).multiply(qty)
-            }
-        val totalPnl = pos.realizedPnl.add(remainderPnl)
-        pos.status =
-            when (reason) {
-                "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
-                else -> PositionStatus.CLOSED
-            }
-        pos.closedAt = LocalDateTime.now()
-        pos.closePrice = closePrice
-        pos.closeReason = reason
-        pos.pnl = totalPnl
-        pos.pendingClose = false
-        pos.closeOrderId = null
-        positionRepo.save(pos)
-        tradeEventService.recordPositionClosed(pos, reason)
-        risk.updateDailyPnL(totalPnl)
-        meterRegistry.counter("bot.position.closed", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
-        meterRegistry.gauge("bot.pnl", Tags.of("ticker", pos.ticker), totalPnl.toDouble())
-        logger.info { "Closed ${pos.ticker} reason=$reason P&L=$totalPnl" }
     }
 
     /**
@@ -746,21 +548,7 @@ class TradingBotService(
                 val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType != InstrumentType.FUTURES }
                 for (pos in open) {
                     try {
-                        when {
-                            pos.pendingEntry -> {
-                                resolveEntryViaOutbox(pos)
-                            }
-
-                            pos.pendingClose -> {
-                                if (pos.closeOrderId != null) {
-                                    confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: "RECONCILIATION")
-                                } else {
-                                    resolveCloseViaOutbox(pos)
-                                }
-                            }
-
-                            else -> {}
-                        }
+                        engine.reconcilePosition(pos)
                     } catch (e: Exception) {
                         logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
                     }
@@ -769,197 +557,5 @@ class TradingBotService(
                 logger.error(e) { "Stock reconciler error" }
             }
         }
-    }
-
-    /**
-     * Сверка pendingEntry-позиции через outbox-запись.
-     *
-     * Управляет остатком лимитного входа после частичного исполнения:
-     * - кумулятивный fill обновляет [Position.quantity] до полного исполнения;
-     * - остаток, «висящий» на бирже дольше [AlorConfig.entryPartialFillCancelAfterMs],
-     *   отменяется ([AlorClient.cancelOrder]), вход фиксируется на фактическом объёме
-     *   (защита от скрытого роста позиции без ведома бота).
-     */
-    private suspend fun resolveEntryViaOutbox(pos: Position) {
-        val outbox = orderOutboxRepo.findLatestByPositionId(pos.id!!)
-        if (outbox == null) {
-            logger.warn { "No outbox row for pending entry ${pos.id}/${pos.ticker}; leaving pending" }
-            return
-        }
-        when {
-            outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
-                val execution = alorClient.verifyOrder(outbox.alorOrderId)
-                if (execution == null) return
-                if (execution.status.contains("reject") || execution.status.contains("cancel")) {
-                    abandonEntry(pos, "ENTRY_REJECTED")
-                    return
-                }
-                if (execution.filledQuantity <= 0) return // лимитный ордер ещё не исполнился
-
-                val requestedQty =
-                    objectMapper
-                        .readTree(outbox.payloadJson)
-                        .path("qty")
-                        .asInt(0)
-                        .takeIf { it > 0 }
-                        ?: pos.quantity
-                val cumulative = execution.filledQuantity.coerceIn(1, requestedQty)
-                val remainder = requestedQty - cumulative
-
-                // Частичное исполнение с остатком на бирже.
-                if (remainder > 0) {
-                    if (cumulative != pos.quantity) {
-                        pos.quantity = cumulative
-                        pos.entryPrice = execution.avgPrice ?: pos.entryPrice
-                        positionRepo.save(pos)
-                    }
-                    val elapsedMs = Duration.between(outbox.createdAt, LocalDateTime.now()).toMillis()
-                    if (elapsedMs < alorConfig.entryPartialFillCancelAfterMs) {
-                        logger.info {
-                            "Pending entry ${pos.ticker}: partial fill ${pos.quantity}/$requestedQty, " +
-                                "remainder $remainder still resting " +
-                                "(${elapsedMs}ms < ${alorConfig.entryPartialFillCancelAfterMs}ms)"
-                        }
-                        return
-                    }
-                    // Порог пройден → снимаем остаток лимитки.
-                    val cancelled =
-                        try {
-                            alorClient.cancelOrder(outbox.alorOrderId, outbox.idempotencyKey ?: "")
-                        } catch (e: Exception) {
-                            logger.error(e) {
-                                "Entry remainder cancel FAILED for ${pos.ticker} " +
-                                    "(order=${outbox.alorOrderId}) — retry next cycle"
-                            }
-                            false
-                        }
-                    if (!cancelled) return // отмена не подтверждена → ждём следующего цикла
-                    val finalExec = alorClient.verifyOrder(outbox.alorOrderId)
-                    val finalQty = (finalExec?.filledQuantity ?: cumulative).coerceIn(1, requestedQty)
-                    pos.alorOrderId = outbox.alorOrderId
-                    pos.pendingEntry = false
-                    pos.entryPrice = finalExec?.avgPrice ?: execution.avgPrice ?: pos.entryPrice
-                    pos.quantity = finalQty
-                    positionRepo.save(pos)
-                    tradeEventService.recordPositionOpened(pos)
-                    meterRegistry.counter("bot.entry.remainder_cancelled", Tags.of("ticker", pos.ticker)).increment()
-                    logger.info {
-                        "Pending entry ${pos.ticker} finalized after remainder cancel: " +
-                            "qty=${pos.quantity} @ ${pos.entryPrice} (order=${outbox.alorOrderId})"
-                    }
-                    return
-                }
-
-                // Полное исполнение → фиксируем вход.
-                pos.alorOrderId = outbox.alorOrderId
-                pos.pendingEntry = false
-                pos.entryPrice = execution.avgPrice ?: pos.entryPrice
-                pos.quantity = cumulative
-                positionRepo.save(pos)
-                tradeEventService.recordPositionOpened(pos)
-                logger.info { "Pending entry resolved ${pos.ticker}: order=${outbox.alorOrderId} qty=${pos.quantity} @ ${pos.entryPrice}" }
-            }
-
-            outbox.status == OutboxStatus.FAILED && outbox.retryCount >= alorConfig.maxOrderRetries -> {
-                abandonEntry(pos, "ENTRY_NOT_CONFIRMED")
-            }
-
-            else -> {}
-        }
-    }
-
-    /**
-     * Сверка pendingClose-позиции без closeOrderId через outbox-запись.
-     */
-    private suspend fun resolveCloseViaOutbox(pos: Position) {
-        val outbox = orderOutboxRepo.findLatestByPositionId(pos.id!!)
-        if (outbox == null) {
-            logger.warn { "No outbox row for pending close ${pos.id}/${pos.ticker}; resetting pendingClose" }
-            pos.pendingClose = false
-            positionRepo.save(pos)
-            return
-        }
-        when {
-            outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
-                pos.closeOrderId = outbox.alorOrderId
-                positionRepo.save(pos)
-                confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: "RECONCILIATION")
-            }
-
-            outbox.status == OutboxStatus.FAILED && outbox.retryCount >= alorConfig.maxOrderRetries -> {
-                logger.warn { "Pending close ${pos.id}/${pos.ticker} permanently failed; resetting for a fresh close order" }
-                pos.pendingClose = false
-                pos.closeOrderId = null
-                positionRepo.save(pos)
-            }
-
-            else -> {}
-        }
-    }
-
-    private suspend fun abandonEntry(
-        pos: Position,
-        reason: String,
-    ) {
-        logger.warn { "Entry for ${pos.ticker} abandoned: $reason" }
-        pos.pendingEntry = false
-        pos.status = PositionStatus.CLOSED
-        pos.closeReason = reason
-        pos.closedAt = LocalDateTime.now()
-        positionRepo.save(pos)
-        meterRegistry.counter("bot.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
-    }
-
-    /**
-     * Применяет ExecutionReport из WebSocket: фиксирует фактическую цену
-     * исполнения (вход/закрытие) — с учётом partial fills.
-     */
-    private suspend fun applyExecutionReport(report: ExecutionReport) {
-        if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
-        val orderId = report.orderId
-        val pos = positionRepo.findByAlorOrderId(orderId) ?: positionRepo.findByCloseOrderId(orderId) ?: return
-        if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
-        if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
-        val fillPrice = report.avgPrice ?: return
-
-        // Подтверждение входа (pendingEntry).
-        if (pos.pendingEntry) {
-            if (report.status == OrderStatus.FILLED) {
-                pos.alorOrderId = orderId
-                pos.pendingEntry = false
-                pos.entryPrice = fillPrice
-                pos.quantity = report.filledQty.coerceAtLeast(1)
-                positionRepo.save(pos)
-                tradeEventService.recordPositionOpened(pos)
-                logger.info { "WS entry fill applied for ${pos.ticker}: order=$orderId qty=${pos.quantity} @ $fillPrice" }
-            }
-            // PARTIALLY_FILLED вход — оставляем реконсилятору (verifyOrder даст кумулятивный fill).
-            return
-        }
-
-        // Подтверждение закрытия (pendingClose).
-        if (pos.pendingClose) {
-            applyCloseExecution(pos, report.filledQty, fillPrice, pos.closeReason ?: "EXECUTION_FILL")
-            return
-        }
-
-        // Обычный путь: WS fill по входному ордеру фиксирует фактическую цену/сдвиг.
-        pos.closePrice = fillPrice
-        val pnl =
-            when (pos.direction) {
-                PositionDirection.LONG -> fillPrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
-                PositionDirection.SHORT -> pos.entryPrice.subtract(fillPrice).multiply(BigDecimal(pos.quantity))
-            }
-        pos.pnl = pnl
-        pos.status = if (report.status == OrderStatus.PARTIALLY_FILLED) PositionStatus.OPEN else PositionStatus.CLOSED
-        pos.closedAt = if (report.status == OrderStatus.PARTIALLY_FILLED) null else LocalDateTime.now()
-        pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
-        positionRepo.save(pos)
-        if (pos.status == PositionStatus.CLOSED) {
-            tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
-        }
-        alorClient.recordSlippage(pos.entryPrice, fillPrice, pos.quantity)
-        meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()
-        logger.info { "WS fill applied for ${pos.ticker}: order=$orderId price=$fillPrice pnl=$pnl" }
     }
 }

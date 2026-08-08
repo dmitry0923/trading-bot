@@ -1,6 +1,6 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.Candle
+import com.trading.bot.model.entity.Candle
 import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.math.sqrt

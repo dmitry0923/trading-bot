@@ -1,12 +1,12 @@
 package com.trading.bot.service
 
 import com.trading.bot.infrastructure.UuidV7
-import com.trading.bot.model.Investor
-import com.trading.bot.model.InvestorAccount
-import com.trading.bot.model.InvestorAllocation
-import com.trading.bot.model.InvestorTransaction
-import com.trading.bot.model.InvestorTransactionType
-import com.trading.bot.model.InvestorView
+import com.trading.bot.model.dto.InvestorView
+import com.trading.bot.model.entity.Investor
+import com.trading.bot.model.entity.InvestorAccount
+import com.trading.bot.model.entity.InvestorAllocation
+import com.trading.bot.model.entity.InvestorTransaction
+import com.trading.bot.model.entity.InvestorTransactionType
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging

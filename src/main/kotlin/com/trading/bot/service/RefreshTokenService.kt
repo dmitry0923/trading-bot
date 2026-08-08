@@ -1,7 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.security.JwtProperties
-import com.trading.bot.model.RefreshToken
+import com.trading.bot.model.entity.RefreshToken
 import com.trading.bot.repository.RefreshTokenRepository
 import org.springframework.stereotype.Service
 import java.security.MessageDigest

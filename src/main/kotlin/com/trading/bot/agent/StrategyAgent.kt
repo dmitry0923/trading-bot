@@ -4,11 +4,11 @@ import com.trading.bot.infrastructure.llm.Guardrails
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
-import com.trading.bot.model.AgentLog
-import com.trading.bot.model.FundamentalReport
-import com.trading.bot.model.MarketSnapshot
 import com.trading.bot.model.StrategyAction
-import com.trading.bot.model.TechnicalReport
+import com.trading.bot.model.dto.FundamentalReport
+import com.trading.bot.model.dto.MarketSnapshot
+import com.trading.bot.model.dto.TechnicalReport
+import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.repository.AgentLogRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry

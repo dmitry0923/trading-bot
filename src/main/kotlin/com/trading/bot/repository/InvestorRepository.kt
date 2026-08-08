@@ -2,10 +2,10 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.Investor
-import com.trading.bot.model.InvestorAccount
-import com.trading.bot.model.InvestorAllocation
-import com.trading.bot.model.InvestorTransaction
+import com.trading.bot.model.entity.Investor
+import com.trading.bot.model.entity.InvestorAccount
+import com.trading.bot.model.entity.InvestorAllocation
+import com.trading.bot.model.entity.InvestorTransaction
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient

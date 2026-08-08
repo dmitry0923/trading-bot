@@ -2,11 +2,11 @@ package com.trading.bot.integration
 
 import com.trading.bot.application.TradingGate
 import com.trading.bot.client.AlorClient
-import com.trading.bot.model.BotSettings
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.Position
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.entity.BotSettings
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.SettingsRepository

@@ -3,16 +3,16 @@ package com.trading.bot.controller
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.config.LlmProvider
-import com.trading.bot.model.BlindSpotEntity
-import com.trading.bot.model.BotSettings
 import com.trading.bot.model.PositionStatus
-import com.trading.bot.model.RagAnalysis
-import com.trading.bot.model.RagAnalyzeRequest
-import com.trading.bot.model.RagTraceRequest
-import com.trading.bot.model.StrategyAdjustment
-import com.trading.bot.model.TimePattern
-import com.trading.bot.model.TradeEvent
-import com.trading.bot.model.TradeStats
+import com.trading.bot.model.dto.RagAnalysis
+import com.trading.bot.model.dto.RagAnalyzeRequest
+import com.trading.bot.model.dto.RagTraceRequest
+import com.trading.bot.model.dto.TimePattern
+import com.trading.bot.model.dto.TradeStats
+import com.trading.bot.model.entity.BlindSpotEntity
+import com.trading.bot.model.entity.BotSettings
+import com.trading.bot.model.entity.StrategyAdjustment
+import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.PositionRepository
@@ -130,7 +130,7 @@ class ApiController(
     @GetMapping("/experiment/decisions")
     suspend fun experimentDecisions(
         @RequestParam(defaultValue = "50") limit: Int,
-    ): List<com.trading.bot.model.ExperimentDecision> = paperTradingService.recentDecisions(limit)
+    ): List<com.trading.bot.model.entity.ExperimentDecision> = paperTradingService.recentDecisions(limit)
 
     /**
      * Статус RAG-корпуса и анализатора.

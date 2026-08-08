@@ -1,4 +1,4 @@
-package com.trading.bot.model
+package com.trading.bot.model.entity
 
 import java.time.LocalDateTime
 import java.util.UUID

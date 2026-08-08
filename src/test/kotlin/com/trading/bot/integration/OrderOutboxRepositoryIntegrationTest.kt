@@ -1,7 +1,7 @@
 package com.trading.bot.integration
 
-import com.trading.bot.model.OrderOutbox
-import com.trading.bot.model.OutboxStatus
+import com.trading.bot.model.entity.OrderOutbox
+import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.repository.OrderOutboxRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals

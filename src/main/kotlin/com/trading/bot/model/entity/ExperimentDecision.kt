@@ -1,4 +1,4 @@
-package com.trading.bot.model
+package com.trading.bot.model.entity
 
 import java.math.BigDecimal
 import java.time.LocalDateTime

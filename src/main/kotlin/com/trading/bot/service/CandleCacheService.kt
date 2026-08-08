@@ -1,6 +1,6 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.Candle
+import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service

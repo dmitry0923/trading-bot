@@ -1,8 +1,8 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.Strategy
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.entity.Strategy
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

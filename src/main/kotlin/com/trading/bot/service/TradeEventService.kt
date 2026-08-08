@@ -1,7 +1,7 @@
 package com.trading.bot.service
 
-import com.trading.bot.model.Position
-import com.trading.bot.model.TradeEvent
+import com.trading.bot.model.entity.Position
+import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.TradeEventRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service

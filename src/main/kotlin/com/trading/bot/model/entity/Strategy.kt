@@ -1,5 +1,6 @@
-package com.trading.bot.model
+package com.trading.bot.model.entity
 
+import com.trading.bot.model.StrategyAction
 import java.math.BigDecimal
 import java.time.LocalDateTime
 

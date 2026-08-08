@@ -1,4 +1,4 @@
-package com.trading.bot.model
+package com.trading.bot.model.entity
 
 import com.trading.bot.infrastructure.UuidV7
 import java.math.BigDecimal
@@ -56,44 +56,4 @@ data class InvestorAllocation(
     val accountId: UUID,
     val amount: BigDecimal,
     val allocatedAt: LocalDateTime = LocalDateTime.now(),
-)
-
-data class InvestorView(
-    val investor: Investor,
-    val account: InvestorAccount,
-    val realizedPnL: BigDecimal,
-    val totalReturnPercent: Double,
-)
-
-/**
- * Прогноз прибыли для инвесторов на основе реальной статистики закрытых сделок.
- */
-data class ProfitForecast(
-    val asOf: LocalDateTime,
-    val horizonDays: Int,
-    val expectedReturnPercent: Double,
-    val expectedReturnAnnualPercent: Double,
-    val confidenceLowPercent: Double,
-    val confidenceHighPercent: Double,
-    val dailyMeanReturnPercent: Double,
-    val dailyVolatilityPercent: Double,
-    val tradesAnalyzed: Int,
-    val note: String,
-)
-
-/**
- * Расчёт клиринга: сколько инвестор может вывести на дату выхода.
- */
-data class ClearingQuote(
-    val investorId: UUID,
-    val investorName: String,
-    val requestedDate: LocalDateTime,
-    val sharesAtTime: BigDecimal,
-    val poolEquity: BigDecimal,
-    val poolContributed: BigDecimal,
-    val poolRealizedPnL: BigDecimal,
-    val attributedPnL: BigDecimal,
-    val forecastComponent: BigDecimal,
-    val estimatedWithdrawalAmount: BigDecimal,
-    val breakdown: Map<String, String>,
 )

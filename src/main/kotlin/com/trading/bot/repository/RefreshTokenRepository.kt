@@ -2,7 +2,7 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
-import com.trading.bot.model.RefreshToken
+import com.trading.bot.model.entity.RefreshToken
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient

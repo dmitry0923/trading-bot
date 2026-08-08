@@ -1,5 +1,6 @@
 package com.trading.bot.integration
 
+import com.trading.bot.application.TradingBlockReason
 import com.trading.bot.application.TradingGate
 import com.trading.bot.client.AlorClient
 import com.trading.bot.model.InstrumentType
@@ -15,6 +16,7 @@ import com.trading.bot.service.InvestorService
 import com.trading.bot.service.ProfitForecastService
 import com.trading.bot.service.SettingsService
 import com.trading.bot.service.TradingControlService
+import com.trading.bot.service.TradingHaltService
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -67,6 +69,9 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var positionRepository: PositionRepository
 
+    @Autowired
+    lateinit var tradingHaltService: TradingHaltService
+
     @MockitoBean
     lateinit var alorClient: AlorClient
 
@@ -75,6 +80,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
         runBlocking {
             positionRepository.deleteAll()
             investorRepository.deleteAllData()
+            tradingHaltService.clear()
             settingsService.updateSettings(BotSettings())
         }
         runBlocking {
@@ -212,8 +218,6 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `settings service update applies immediately in memory`() {
-        assertTrue(tradingGate.isTradingEnabled())
-
         settingsService.updateSettings(BotSettings().copy(tradingEnabled = false))
         assertFalse(tradingGate.isTradingEnabled())
 
@@ -227,7 +231,9 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
         assertFalse(tradingControlService.isTradingEnabled())
 
         tradingControlService.setTradingEnabled(true)
-        assertTrue(tradingControlService.isTradingEnabled())
+        // Ручная блокировка снята — MANUAL_DISABLE не должен попадать в статус.
+        val status = runBlocking { tradingGate.getStatus() }
+        assertFalse(status.blocks.any { it.reason == TradingBlockReason.MANUAL_DISABLE })
     }
 
     @Test

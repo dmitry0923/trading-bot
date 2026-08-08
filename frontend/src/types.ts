@@ -228,8 +228,21 @@ export interface ClearingQuote {
   breakdown?: Record<string, string>;
 }
 
+export interface TradingBlock {
+  reason: string;
+  source: string;
+  detail: string;
+  timestamp: string;
+  ticker?: string | null;
+}
+
 export interface TradingStatus {
   tradingEnabled: boolean;
+  reason?: string | null;
+  source?: string | null;
+  detail?: string | null;
+  blockedAt?: string | null;
+  blocks?: TradingBlock[];
   tradingMode: string;
   forceCloseEnabled: boolean;
   forceCloseTime: string;

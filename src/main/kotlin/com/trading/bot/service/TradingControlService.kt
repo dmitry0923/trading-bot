@@ -28,6 +28,7 @@ class TradingControlService(
     private val tradingBotService: TradingBotService,
     private val futuresTradingBotService: com.trading.bot.application.FuturesTradingBotService,
     private val settingsService: SettingsService,
+    private val tradingHaltService: TradingHaltService,
     private val positionRepo: PositionRepository,
     private val meterRegistry: MeterRegistry,
 ) {
@@ -43,6 +44,17 @@ class TradingControlService(
     fun setTradingEnabled(enabled: Boolean) {
         val current = settingsService.getSettings()
         settingsService.updateSettings(current.copy(tradingEnabled = enabled))
+        if (enabled) {
+            // Ручное включение снимает последнюю глобальную остановку (если была).
+            tradingHaltService.clear()
+        } else {
+            // Персистим причину ручной остановки — видна в статусе/логах даже после рестарта.
+            tradingHaltService.record(
+                reason = "MANUAL_DISABLE",
+                source = "MANUAL",
+                detail = "disabled via UI/API single flag",
+            )
+        }
         meterRegistry.counter("trading.control.toggle", Tags.of("enabled", enabled.toString())).increment()
         logger.info { "Trading ${if (enabled) "ENABLED" else "DISABLED"} via single flag" }
     }

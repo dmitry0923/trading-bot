@@ -2,6 +2,7 @@ package com.trading.bot.controller
 
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.application.TradingGate
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.RagAnalysis
@@ -89,6 +90,7 @@ class ApiController(
     private val clearingService: ClearingService,
     private val profitForecastService: ProfitForecastService,
     private val tradingControlService: TradingControlService,
+    private val tradingGate: TradingGate,
     private val paperTradingService: PaperTradingService,
     private val ragErrorAnalyzer: RagErrorAnalyzer,
     private val traceQueryService: TraceQueryService,
@@ -485,13 +487,30 @@ class ApiController(
     @GetMapping("/trading/status")
     suspend fun getTradingStatus(): Map<String, Any> {
         val settings = settingsService.getSettings()
-        return mapOf(
-            "tradingEnabled" to tradingControlService.isTradingEnabled(),
-            "tradingMode" to settings.tradingMode,
-            "forceCloseEnabled" to settings.forceCloseEnabled,
-            "forceCloseTime" to settings.forceCloseTime,
-            "openPositions" to positionRepository.findOpenCount(),
-        )
+        val status = tradingGate.getStatus()
+        return buildMap {
+            put("tradingEnabled", status.enabled)
+            status.reason?.let { put("reason", it.name) }
+            status.source?.let { put("source", it.name) }
+            status.detail?.let { put("detail", it) }
+            status.blockedAt?.let { put("blockedAt", it.toString()) }
+            put(
+                "blocks",
+                status.blocks.map { b ->
+                    buildMap {
+                        put("reason", b.reason.name)
+                        put("source", b.source.name)
+                        put("detail", b.detail)
+                        put("timestamp", b.timestamp.toString())
+                        b.ticker?.let { put("ticker", it) }
+                    }
+                },
+            )
+            put("tradingMode", settings.tradingMode)
+            put("forceCloseEnabled", settings.forceCloseEnabled)
+            put("forceCloseTime", settings.forceCloseTime)
+            put("openPositions", positionRepository.findOpenCount())
+        }
     }
 
     @PostMapping("/trading/enable")

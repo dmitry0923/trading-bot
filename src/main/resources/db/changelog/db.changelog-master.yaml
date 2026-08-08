@@ -31,3 +31,5 @@ databaseChangeLog:
       file: db/changelog/changes/015-experiment-decisions.sql
   - include:
       file: db/changelog/changes/016-idempotency-key-unique.sql
+  - include:
+      file: db/changelog/changes/017-trading-halt.sql

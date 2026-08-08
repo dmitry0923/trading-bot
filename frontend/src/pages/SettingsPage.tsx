@@ -313,6 +313,22 @@ export default function SettingsPage({ canEdit }: { canEdit: boolean }) {
         {tradingStatus && (
           <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
             Trading: <b>{tradingStatus.tradingEnabled ? 'ENABLED' : 'DISABLED'}</b> · mode {tradingStatus.tradingMode} · open positions {tradingStatus.openPositions}
+            {!tradingStatus.tradingEnabled && (tradingStatus.reason || (tradingStatus.blocks ?? []).length > 0) && (
+              <div style={{ marginTop: 6, lineHeight: 1.5 }}>
+                {(tradingStatus.blocks ?? []).length > 0 ? (
+                  tradingStatus.blocks!.map((b, i) => (
+                    <div key={i} style={{ color: b.ticker ? '#9e6d00' : '#c62828' }}>
+                      {b.ticker ? `[${b.ticker}] ` : ''}<b>{b.reason}</b> ({b.source}){b.detail ? ` — ${b.detail}` : ''}
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ color: '#c62828' }}>
+                    <b>{tradingStatus.reason}</b> ({tradingStatus.source}){tradingStatus.detail ? ` — ${tradingStatus.detail}` : ''}
+                  </div>
+                )}
+                {tradingStatus.blockedAt && <div style={{ color: '#888', fontSize: 12 }}>с {new Date(tradingStatus.blockedAt).toLocaleString()}</div>}
+              </div>
+            )}
           </div>
         )}
       </div>

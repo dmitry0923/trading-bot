@@ -1,6 +1,8 @@
 package com.trading.bot.integration
 
 import com.trading.bot.application.MarketDataGate
+import com.trading.bot.application.TradingBlockReason
+import com.trading.bot.application.TradingGate
 import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.client.AlorClient
 import com.trading.bot.domain.risk.FuturesRiskEngine
@@ -14,10 +16,12 @@ import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DrawdownProtectionService
+import com.trading.bot.service.TradingHaltService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -57,6 +61,12 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     lateinit var drawdownProtection: DrawdownProtectionService
 
     @Autowired
+    lateinit var tradingGate: TradingGate
+
+    @Autowired
+    lateinit var tradingHaltService: TradingHaltService
+
+    @Autowired
     lateinit var meterRegistry: MeterRegistry
 
     @MockitoBean
@@ -73,6 +83,8 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         runBlocking { positionRepo.deleteAll() }
         snapshotRepo.deleteAll()
         futuresRiskEngine.resetDailyState()
+        // Сбрасываем персистентную остановку (critical liquidation выше может оставить halt).
+        tradingHaltService.clear()
         // пересчёт кэша drawdown от пустой БД (сбрасывает stale статус из предыдущего теста)
         runBlocking { drawdownProtection.computeStatus() }
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
@@ -179,11 +191,14 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         futuresRiskEngine.updateDailyPnL(BigDecimal("-5000"))
         assertTrue(futuresRiskEngine.isDailyLossLimitReached())
 
-        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        // Единая точка отключения: TradingGate блокирует до попадания в риск-движок.
+        awaitUntil { !tradingGate.isTradingEnabled() }
+        val status = runBlocking { tradingGate.getStatus() }
+        assertFalse(status.enabled)
+        assertTrue(status.blocks.any { it.reason == TradingBlockReason.DRAWDOWN_PROTECTION || it.reason == TradingBlockReason.DAILY_LOSS_LIMIT })
 
-        awaitUntil {
-            meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).count() >= 1.0
-        }
+        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        Thread.sleep(200) // дать async-обработчику отработать
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
 
@@ -215,11 +230,13 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     fun `entry rejected outside trading hours`() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(false)
 
-        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        // Единая точка отключения: вне торговых часов gate блокирует новые входы.
+        assertFalse(tradingGate.isTradingEnabled())
+        val status = runBlocking { tradingGate.getStatus() }
+        assertTrue(status.blocks.any { it.reason == TradingBlockReason.OUTSIDE_HOURS })
 
-        awaitUntil {
-            meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "OUTSIDE_HOURS")).count() >= 1.0
-        }
+        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        Thread.sleep(200) // дать async-обработчику отработать
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
 

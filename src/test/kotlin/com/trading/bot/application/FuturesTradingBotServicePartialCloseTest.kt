@@ -1,11 +1,12 @@
 package com.trading.bot.application
 
+import com.trading.bot.application.risk.FuturesPositionSizer
+import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.domain.risk.FuturesRiskEngine
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
@@ -16,7 +17,6 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
-import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradeEventService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -44,13 +44,14 @@ import java.util.UUID
  */
 class FuturesTradingBotServicePartialCloseTest {
     private val futuresRiskEngine = Mockito.mock(FuturesRiskEngine::class.java)
+    private val futuresPositionSizer = Mockito.mock(FuturesPositionSizer::class.java)
+    private val orderBuilder = Mockito.mock(OrderBuilder::class.java)
     private val tradingHoursGuard = Mockito.mock(TradingHoursGuard::class.java)
     private val alorClient = Mockito.mock(AlorClient::class.java)
     private val alorFuturesClient = Mockito.mock(AlorFuturesClient::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
-    private val riskManagement = Mockito.mock(RiskManagementService::class.java)
     private val instrumentsConfig = Mockito.mock(InstrumentsConfig::class.java)
     private val leverageConfig = Mockito.mock(LeverageConfig::class.java)
     private val riskConfig = Mockito.mock(RiskConfig::class.java)
@@ -65,13 +66,14 @@ class FuturesTradingBotServicePartialCloseTest {
     private val service =
         FuturesTradingBotService(
             futuresRiskEngine,
+            futuresPositionSizer,
+            orderBuilder,
             tradingHoursGuard,
             alorClient,
             alorFuturesClient,
             orderOutboxService,
             positionRepo,
             orderOutboxRepo,
-            riskManagement,
             instrumentsConfig,
             leverageConfig,
             riskConfig,
@@ -117,9 +119,6 @@ class FuturesTradingBotServicePartialCloseTest {
         Mockito
             .`when`(futuresRiskEngine.checkLiquidationDistance(anyPosition(), anyBigDecimal()))
             .thenReturn(FuturesRiskEngine.LiquidationStatus.SAFE)
-        Mockito.`when`(riskManagement.shouldCloseBySL(anyPosition(), anyBigDecimal())).thenReturn(true)
-        Mockito.`when`(riskManagement.shouldCloseByTP(anyPosition(), anyBigDecimal())).thenReturn(false)
-        Mockito.`when`(riskManagement.shouldCloseByTrailing(anyPosition(), anyBigDecimal())).thenReturn(false)
         Mockito.`when`(instrumentsConfig.pointValue(Mockito.anyString())).thenReturn(BigDecimal("1000"))
         runBlocking {
             Mockito

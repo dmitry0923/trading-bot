@@ -25,6 +25,9 @@ import java.math.BigDecimal
  * - При недоступности LLM возвращает HOLD с причиной
  * - Пост-обработка через Guardrails (низкая уверенность -> HOLD, коррекция цены)
  * - Пишет лог в AgentLogRepository и метрики agent.strategy.decision
+ *
+ * Draft несёт ТОЛЬКО направление сделки (BUY/SELL/HOLD), целевую цену и
+ * уверенность. Размер позиции и SL/TP вычисляет риск-этап (Sizer/OrderBuilder).
  */
 @Component
 class StrategyAgent(
@@ -41,10 +44,6 @@ class StrategyAgent(
     data class Draft(
         val action: StrategyAction,
         val targetPrice: BigDecimal,
-        val quantity: Int,
-        val stopLoss: BigDecimal?,
-        val takeProfit: BigDecimal?,
-        val trailingStop: Boolean,
         val confidence: Double,
         val reasoning: String,
     )
@@ -147,10 +146,6 @@ class StrategyAgent(
                 Draft(
                     action = action,
                     targetPrice = rawPrice,
-                    quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(0).coerceIn(1, 10000),
-                    stopLoss = j.path("stopLoss").asString().toBigDecimalOrNull(),
-                    takeProfit = j.path("takeProfit").asString().toBigDecimalOrNull(),
-                    trailingStop = j.path("trailingStop").asBoolean(false),
                     confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
                     reasoning = j.path("reasoning").asString(""),
                 )
@@ -176,10 +171,6 @@ class StrategyAgent(
                     Guardrails.Signal(
                         action = draft.action,
                         targetPrice = draft.targetPrice,
-                        quantity = draft.quantity,
-                        stopLoss = draft.stopLoss,
-                        takeProfit = draft.takeProfit,
-                        trailingStop = draft.trailingStop,
                         confidence = draft.confidence,
                     ),
                 marketPrice = snapshot.currentPrice,
@@ -192,10 +183,6 @@ class StrategyAgent(
                 draft.copy(
                     action = guarded.signal.action,
                     targetPrice = guarded.signal.targetPrice,
-                    quantity = guarded.signal.quantity,
-                    stopLoss = guarded.signal.stopLoss,
-                    takeProfit = guarded.signal.takeProfit,
-                    trailingStop = guarded.signal.trailingStop,
                     confidence = guarded.signal.confidence,
                     reasoning = draft.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]",
                 )
@@ -219,7 +206,7 @@ class StrategyAgent(
     private fun hold(
         marketPrice: BigDecimal,
         reason: String,
-    ): Draft = Draft(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0, reason)
+    ): Draft = Draft(StrategyAction.HOLD, marketPrice, 0.0, reason)
 
     private suspend fun logAndReturn(
         draft: Draft,

@@ -11,13 +11,13 @@ import java.math.RoundingMode
 /**
  * Guardrails — жёсткая постобработка сигналов агентов (не подлежит обсуждению с LLM).
  *
- * Правила:
+ * Правила (только направление сделки — размер и стопы вычисляет риск-этап):
  * 1. riskLevel == CRITICAL → HOLD (детерминированный override)
- * 2. дневной лимит убытка достигнут → HOLD
- * 3. LLM-агент в Shadow/Read-only режиме (серия убытков) → HOLD
- * 4. confidence < adaptiveThreshold → HOLD
- * 5. отклонение цены от рыночной > 3% → корректировать targetPrice до рыночной
- * 6. action != HOLD при quantity <= 0 → HOLD
+ * 2. confidence < adaptiveThreshold → HOLD
+ * 3. отклонение цены от рыночной > 3% → корректировать targetPrice до рыночной
+ *
+ * Дневной лимит убытка / Shadow-режим / количество позиций — этап RiskEngine
+ * (не здесь и не в агентах).
  */
 @Component
 class Guardrails(
@@ -27,10 +27,6 @@ class Guardrails(
     data class Signal(
         val action: StrategyAction,
         val targetPrice: BigDecimal,
-        val quantity: Int,
-        val stopLoss: BigDecimal?,
-        val takeProfit: BigDecimal?,
-        val trailingStop: Boolean,
         val confidence: Double,
     ) {
         companion object {
@@ -38,10 +34,6 @@ class Guardrails(
                 Signal(
                     action = StrategyAction.HOLD,
                     targetPrice = marketPrice,
-                    quantity = 0,
-                    stopLoss = null,
-                    takeProfit = null,
-                    trailingStop = false,
                     confidence = 0.0,
                 )
         }
@@ -59,8 +51,6 @@ class Guardrails(
         marketPrice: BigDecimal,
         adaptiveThreshold: Double,
         riskLevel: String = "LOW",
-        dailyLossLimitReached: Boolean = false,
-        shadowMode: Boolean = false,
     ): GuardedSignal {
         var current = signal
         val applied = mutableListOf<String>()
@@ -80,40 +70,11 @@ class Guardrails(
             )
         }
 
-        if (dailyLossLimitReached) {
-            recordOverride("DAILY_LOSS_LIMIT")
-            applied += "dailyLossLimitReached -> HOLD"
-            return GuardedSignal(
-                hold(marketPrice),
-                overridden = true,
-                overrideReason = "DETERMINISTIC: DAILY_LOSS_LIMIT",
-                appliedRules = applied,
-            )
-        }
-
-        if (shadowMode) {
-            recordOverride("SHADOW_MODE")
-            applied += "shadowMode -> HOLD"
-            return GuardedSignal(
-                hold(marketPrice),
-                overridden = true,
-                overrideReason = "DETERMINISTIC: SHADOW_MODE",
-                appliedRules = applied,
-            )
-        }
-
         if (current.confidence < adaptiveThreshold) {
             recordOverride("LOW_CONFIDENCE")
             applied += "confidence=${current.confidence} < threshold=$adaptiveThreshold -> HOLD"
-            current = current.copy(action = StrategyAction.HOLD, quantity = 0)
-            return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: LOW_CONFIDENCE", appliedRules = applied)
-        }
-
-        if (current.quantity <= 0) {
-            recordOverride("ZERO_QUANTITY")
-            applied += "quantity<=0 -> HOLD"
             current = current.copy(action = StrategyAction.HOLD)
-            return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: ZERO_QUANTITY", appliedRules = applied)
+            return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: LOW_CONFIDENCE", appliedRules = applied)
         }
 
         val deviation =
@@ -132,7 +93,7 @@ class Guardrails(
         return GuardedSignal(current, overridden = false, overrideReason = null, appliedRules = applied)
     }
 
-    private fun hold(marketPrice: BigDecimal): Signal = Signal(StrategyAction.HOLD, marketPrice, 0, null, null, false, 0.0)
+    private fun hold(marketPrice: BigDecimal): Signal = Signal(StrategyAction.HOLD, marketPrice, 0.0)
 
     private fun recordOverride(reason: String) {
         meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", reason)).increment()

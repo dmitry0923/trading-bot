@@ -1,24 +1,23 @@
 package com.trading.bot.domain.risk
 
+import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
-import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
-import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
 
 /**
- * Проверка risk-first логики FuturesRiskEngine.
+ * Проверка risk-first логики FuturesRiskEngine (только Да/Нет — canEnter).
  */
 class FuturesRiskEngineTest {
     private val riskConfig = RiskConfig()
@@ -39,7 +38,6 @@ class FuturesRiskEngineTest {
                     ),
                 )
         }
-    private val positionRepo: PositionRepository = Mockito.mock(PositionRepository::class.java)
     private val dailyRiskGuard: DailyRiskGuard = Mockito.mock(DailyRiskGuard::class.java)
     private val volatilityFilter: VolatilityFilter = Mockito.mock(VolatilityFilter::class.java)
 
@@ -47,91 +45,56 @@ class FuturesRiskEngineTest {
         FuturesRiskEngine(
             riskConfig = riskConfig,
             leverageConfig = leverageConfig,
-            positionSizer = FuturesPositionSizer(leverageConfig, riskConfig, instrumentsConfig),
-            positionRepo = positionRepo,
-            tradingCalendar = TradingCalendar { openGuard },
-            instrumentsConfig = instrumentsConfig,
+            tradingCalendar = { openGuard },
             dailyRiskGuard = dailyRiskGuard,
             volatilityFilter = volatilityFilter,
+            instrumentsConfig = instrumentsConfig,
             meterRegistry = SimpleMeterRegistry(),
         )
+
+    private fun entryRequest(
+        openPositions: List<Position> = emptyList(),
+        ticker: String = "Si",
+    ) = EntryRequest(
+        ticker = ticker,
+        action = StrategyAction.BUY,
+        entryPrice = BigDecimal("92000"),
+        direction = PositionDirection.LONG,
+        portfolioMoney = BigDecimal("50000"),
+        currentGo = BigDecimal("15000"),
+        openPositions = openPositions,
+    )
 
     @Test
     fun `entry allowed within all limits`() =
         runBlocking {
-            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
+            val result = engine().canEnter(entryRequest())
 
-            val result =
-                engine().validateEntry(
-                    ticker = "Si",
-                    entryPrice = BigDecimal("92000"),
-                    direction = PositionDirection.LONG,
-                    portfolioMoney = BigDecimal("50000"),
-                    currentGo = BigDecimal("15000"),
-                )
-
-            assertTrue(result.allowed)
-            assertEquals(1, result.quantity)
-            assertEquals(0, BigDecimal("7500").compareTo(result.marginRequired))
-            // SL = 92000 - 50*0.01 = 91999.50, TP = 92000 + 100*0.01 = 92001.00 (R:R 1:2)
-            assertEquals(0, BigDecimal("91999.50").compareTo(result.stopLossPrice))
-            assertEquals(0, BigDecimal("92001").compareTo(result.takeProfitPrice))
-            val liq = requireNotNull(result.liquidationPrice)
-            assertEquals(0, BigDecimal("91985").compareTo(liq))
+            assertTrue(result is RiskVerdict.Allowed)
         }
 
     @Test
     fun `entry blocked after daily loss limit reached`() =
         runBlocking {
-            val e = engine()
             Mockito.`when`(dailyRiskGuard.isDailyLossLimitReached()).thenReturn(true)
 
-            val result =
-                e.validateEntry(
-                    ticker = "Si",
-                    entryPrice = BigDecimal("92000"),
-                    direction = PositionDirection.LONG,
-                    portfolioMoney = BigDecimal("50000"),
-                    currentGo = BigDecimal("15000"),
-                )
+            val result = engine().canEnter(entryRequest())
 
-            assertFalse(result.allowed)
-            assertEquals("DAILY_LIMIT", result.reason)
+            assertEquals(RiskVerdict.Rejected("DAILY_LIMIT"), result)
         }
-
-    @Test
-    fun `daily pnl methods delegate to drawdown protection`() {
-        val e = engine()
-        Mockito.`when`(dailyRiskGuard.getDailyPnl()).thenReturn(BigDecimal("-5000"))
-
-        e.updateDailyPnL(BigDecimal("-3000"))
-        e.updateDailyPnL(BigDecimal("-2000"))
-
-        Mockito.verify(dailyRiskGuard).updateDailyPnl(BigDecimal("-3000"))
-        Mockito.verify(dailyRiskGuard).updateDailyPnl(BigDecimal("-2000"))
-        assertEquals(0, BigDecimal("-5000").compareTo(e.getDailyPnL()))
-    }
 
     @Test
     fun `entry blocked outside trading hours`() =
         runBlocking {
-            val result =
-                engine(openGuard = false).validateEntry(
-                    ticker = "Si",
-                    entryPrice = BigDecimal("92000"),
-                    direction = PositionDirection.LONG,
-                    portfolioMoney = BigDecimal("50000"),
-                    currentGo = BigDecimal("15000"),
-                )
+            val result = engine(openGuard = false).canEnter(entryRequest())
 
-            assertFalse(result.allowed)
-            assertEquals("OUTSIDE_HOURS", result.reason)
+            assertEquals(RiskVerdict.Rejected("OUTSIDE_HOURS"), result)
         }
 
     @Test
     fun `entry blocked when position already open`() =
         runBlocking {
-            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
+            val open =
                 listOf(
                     Position(
                         ticker = "Si",
@@ -140,20 +103,19 @@ class FuturesRiskEngineTest {
                         entryPrice = BigDecimal("92000"),
                         instrumentType = InstrumentType.FUTURES,
                     ),
-                ),
-            )
-
-            val result =
-                engine().validateEntry(
-                    ticker = "Si",
-                    entryPrice = BigDecimal("92000"),
-                    direction = PositionDirection.LONG,
-                    portfolioMoney = BigDecimal("50000"),
-                    currentGo = BigDecimal("15000"),
                 )
 
-            assertFalse(result.allowed)
-            assertEquals("MAX_POSITIONS", result.reason)
+            val result = engine().canEnter(entryRequest(openPositions = open))
+
+            assertEquals(RiskVerdict.Rejected("MAX_POSITIONS"), result)
+        }
+
+    @Test
+    fun `entry blocked for unsupported instrument`() =
+        runBlocking {
+            val result = engine().canEnter(entryRequest(ticker = "SBER"))
+
+            assertEquals(RiskVerdict.Rejected("UNSUPPORTED_INSTRUMENT"), result)
         }
 
     @Test
@@ -188,8 +150,7 @@ class FuturesRiskEngineTest {
     }
 
     @Test
-    fun `trailing stop moves only in profit and never below hard stop`() {
-        val e = engine()
+    fun `futures trailing stop moves only in profit and never below hard stop`() {
         val pos =
             Position(
                 ticker = "Si",
@@ -204,11 +165,11 @@ class FuturesRiskEngineTest {
             )
 
         // цена упала → вариационная маржа < 0, trailing не двигается
-        e.updateTrailingStop(pos, BigDecimal("91900"))
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("91900"), riskConfig.trailingStopPercent, BigDecimal("1000"))
         assertEquals(BigDecimal("91950"), pos.trailingStopPrice)
 
         // цена выросла до 94000 → trailing = 94000 * 0.99 = 93060
-        e.updateTrailingStop(pos, BigDecimal("94000"))
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("94000"), riskConfig.trailingStopPercent, BigDecimal("1000"))
         assertEquals(BigDecimal("93060.0000"), pos.trailingStopPrice)
         // вариационная маржа = (94000 - 92000) * 1000 * 1 = 2 000 000 ₽
         assertEquals(0, BigDecimal("2000000").compareTo(pos.variationMargin))

@@ -8,20 +8,14 @@ import com.trading.bot.agent.StrategyAgent
 import com.trading.bot.agent.TechnicalAnalysisAgent
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
-import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
-import com.trading.bot.model.PositionDirection
-import com.trading.bot.model.PositionStatus
-import com.trading.bot.model.StrategyAction
-import com.trading.bot.model.dto.DrawdownStatus
-import com.trading.bot.model.dto.RiskContext
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.CandleRepository
-import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -72,11 +66,6 @@ class StrategyService(
     private val arbAgent: ArbitratorAgent,
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
-    private val riskManagement: RiskManagementService,
-    private val drawdownProtection: DrawdownProtectionService,
-    private val volatilityIndexService: VolatilityIndexService,
-    private val positionRepo: PositionRepository,
-    private val riskConfig: RiskConfig,
     private val redis: RedisCacheService,
     private val candleCache: CandleCacheService,
     private val strategyRepo: StrategyRepository,
@@ -135,20 +124,6 @@ class StrategyService(
         val cycleStart = System.nanoTime()
         try {
             coroutineScope {
-                // Multi-Tier Drawdown Protection + индекс волатильности: пересчёт ОДИН раз за цикл
-                val drawdownStatus =
-                    try {
-                        drawdownProtection.computeStatus()
-                    } catch (e: Exception) {
-                        logger.warn(e) { "Drawdown status compute failed; using neutral state" }
-                        drawdownProtection.cachedOrNeutral()
-                    }
-                try {
-                    volatilityIndexService.refresh()
-                } catch (e: Exception) {
-                    logger.warn(e) { "Volatility index refresh failed" }
-                }
-
                 val feedback =
                     tickers.associateWith { ticker ->
                         async(TraceContext.mdcContext(mapOf(TraceContext.TICKER to ticker))) {
@@ -167,7 +142,7 @@ class StrategyService(
                     .map { (ticker, timeframe) ->
                         async(TraceContext.mdcContext(mapOf(TraceContext.TICKER to ticker))) {
                             try {
-                                processTicker(ticker, timeframe, cycleId, feedback.getValue(ticker), drawdownStatus)
+                                processTicker(ticker, timeframe, cycleId, feedback.getValue(ticker))
                             } catch (e: Exception) {
                                 logger.error(e) { "Strategy error $ticker/$timeframe" }
                                 meterRegistry.counter("strategy.error", Tags.of("ticker", ticker)).increment()
@@ -212,24 +187,12 @@ class StrategyService(
         timeframe: String,
         cycleId: String,
         feedbackDeferred: Deferred<PerformanceFeedbackAgent.StrategyFeedback?>,
-        drawdownStatus: DrawdownStatus,
     ) {
-        // Локальный adaptive risk — без LLM, проверяем первым
+        // Локальный adaptive risk — без LLM, проверяем первым (экономия LLM-затрат:
+        // сигнал при паузе всё равно будет отклонён на этапе RiskEngine).
         if (adaptiveRisk.shouldPauseTrading(ticker)) {
             logger.info { "Skipping $ticker — trading paused by adaptive risk" }
             meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker)).increment()
-            return
-        }
-
-        // Hard pause: скользящие лимиты просадки (7/30 дней) и аномальный индекс волатильности
-        if (drawdownStatus.rolling7dBreached || drawdownStatus.rolling30dBreached) {
-            logger.warn { "Skipping $ticker — rolling drawdown limit breached: ${drawdownStatus.reasons}" }
-            meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker, "reason", "ROLLING_DRAWDOWN")).increment()
-            return
-        }
-        if (volatilityIndexService.isVolatilityAnomalous()) {
-            logger.warn { "Skipping $ticker — volatility index pause (RVI)" }
-            meterRegistry.counter("strategy.skipped", Tags.of("ticker", ticker, "reason", "VOLATILITY_INDEX")).increment()
             return
         }
 
@@ -272,16 +235,6 @@ class StrategyService(
         val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
         val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId, adaptiveThreshold = adaptiveConf)
         val challenge = contrAgent.challenge(draft, tech, fund, snapshot, cycleId)
-
-        val riskContext =
-            RiskContext(
-                shouldPause = adaptiveRisk.shouldPauseTrading(ticker),
-                dailyLossLimitReached = riskManagement.isDailyLossLimitReached() || drawdownStatus.dailyLimitBreached,
-                drawdownRecovery = adaptiveRisk.isInDrawdownRecovery(),
-                shadowMode = drawdownStatus.shadowModeActive,
-                openPositionsCount = positionRepo.findByStatus(PositionStatus.OPEN).size,
-                maxOpenPositions = riskConfig.maxOpenPositions,
-            )
         val final =
             arbAgent.adjudicate(
                 draft,
@@ -292,40 +245,35 @@ class StrategyService(
                 cycleId,
                 contextPrompt = fb?.contextPrompt,
                 adaptiveConfidence = adaptiveConf,
-                riskContext = riskContext,
             )
 
-        val atr = BigDecimal.valueOf(tech.atr)
-        val direction = if (final.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        // Сигнал стратегического этапа — чистое направление (без quantity/SL/TP).
+        val effectiveConfidence = final.confidence.coerceAtLeast(adaptiveConf)
+        val signal =
+            Signal(
+                ticker = ticker,
+                action = final.action,
+                targetPrice = final.targetPrice,
+                confidence = effectiveConfidence,
+                reasoning = final.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}",
+                timeframe = timeframe,
+                cycleId = cycleId,
+            )
 
-        val highVolatility =
-            final.action != StrategyAction.HOLD &&
-                riskManagement.isVolatilityTooHigh(atr, snapshot.currentPrice)
-        val effectiveFinal =
-            if (highVolatility) {
-                logger.warn { "Volatility guard: $ticker ATR=$atr > ${riskConfig.maxVolatilityPercent}%, strategy -> HOLD" }
-                meterRegistry.counter("strategy.volatility.blocked", Tags.of("ticker", ticker)).increment()
-                final.copy(action = StrategyAction.HOLD, quantity = 0, reasoning = final.reasoning + " [VOLATILITY_GUARD]")
-            } else {
-                final
-            }
-
-        val adaptiveSL = adaptiveRisk.calculateAdaptiveSL(effectiveFinal.targetPrice, direction, ticker, atr)
-        val adaptiveTP = adaptiveRisk.calculateAdaptiveTP(effectiveFinal.targetPrice, direction, ticker, atr)
-        val effectiveConfidence = effectiveFinal.confidence.coerceAtLeast(adaptiveConf)
-
+        // Стратегия как история решения. Риск-поля (quantity/SL/TP/trailing)
+        // заполняются на этапе OrderBuilder после исполнения входа.
         val strategy =
             Strategy(
                 ticker = ticker,
-                action = effectiveFinal.action,
-                targetPrice = effectiveFinal.targetPrice,
-                quantity = effectiveFinal.quantity,
-                stopLoss = adaptiveSL,
-                takeProfit = adaptiveTP,
-                trailingStop = effectiveFinal.trailingStop,
-                confidence = effectiveConfidence,
-                reasoning = effectiveFinal.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}, SL/TP adapted, atr=$atr",
-                rawJson = objectMapper.writeValueAsString(effectiveFinal),
+                action = signal.action,
+                targetPrice = signal.targetPrice,
+                quantity = 0,
+                stopLoss = null,
+                takeProfit = null,
+                trailingStop = false,
+                confidence = signal.confidence,
+                reasoning = signal.reasoning,
+                rawJson = objectMapper.writeValueAsString(final),
                 cycleId = cycleId,
                 timeframe = timeframe,
                 validUntil = LocalDateTime.now().plusMinutes(10),
@@ -338,7 +286,7 @@ class StrategyService(
         val inExperiment = experimentEnabled && paperTradingService.inExperiment(cycleId)
         val shadowExecution = inExperiment && paperTradingService.isShadowExecution()
         if (inExperiment) {
-            paperTradingService.recordControlDecision(cycleId, ticker, timeframe, strategy, strategy.rawJson, executed = !shadowExecution)
+            paperTradingService.recordControlDecision(cycleId, ticker, timeframe, signal, strategy.rawJson, executed = !shadowExecution)
             paperTradingService.produceVariantDecision(
                 cycleId = cycleId,
                 ticker = ticker,
@@ -348,25 +296,24 @@ class StrategyService(
                 tech = tech,
                 fund = fund,
                 snapshot = snapshot,
-                control = strategy,
+                control = signal,
                 contextPrompt = fb?.contextPrompt,
                 adaptiveConfidence = adaptiveConf,
-                riskContext = riskContext,
             )
         }
 
         if (shadowExecution) {
-            logger.info { "SHADOW: $ticker/$timeframe decision=${effectiveFinal.action} recorded but NOT executed" }
+            logger.info { "SHADOW: $ticker/$timeframe decision=${final.action} recorded but NOT executed" }
         } else {
-            eventPublisher.publishStrategyGenerated(strategy)
+            eventPublisher.publishStrategyGenerated(signal)
         }
         meterRegistry
             .counter(
                 "strategy.saved",
-                Tags.of("ticker", ticker, "timeframe", timeframe, "action", effectiveFinal.action.name),
+                Tags.of("ticker", ticker, "timeframe", timeframe, "action", final.action.name),
             ).increment()
         logger.info {
-            "Strategy $ticker/$timeframe: ${effectiveFinal.action} @ ${effectiveFinal.targetPrice} (adaptive conf=$adaptiveConf, atr=$atr)"
+            "Strategy $ticker/$timeframe: ${final.action} @ ${final.targetPrice} (adaptive conf=$adaptiveConf)"
         }
     }
 

@@ -2,9 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.PositionDirection
-import com.trading.bot.model.dto.RiskCheckResult
 import com.trading.bot.model.entity.Position
-import com.trading.bot.model.entity.Strategy
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
@@ -16,8 +14,13 @@ import java.math.RoundingMode
  *
  * - Дневной лимит убытка, максимум открытых позиций, секторная концентрация
  * - Проверка волатильности (ATR%) перед входом
- * - Расчёт SL/TP по проценту от цены входа, трейлинг-стоп
- * - Контроль выхода по SL/TP/trailing для открытых позиций
+ * - Жёсткие портфельные лимиты Gross/Net Exposure
+ *
+ * Решение «входить/не входить» — [com.trading.bot.domain.risk.RiskEngine]
+ * (FuturesRiskEngine/StockRiskEngine); размер позиции и SL/TP —
+ * [com.trading.bot.domain.risk.PositionSizer] и OrderBuilder; правила выхода
+ * (SL/TP/trailing) — [com.trading.bot.domain.risk.ExitRules]. Здесь — только
+ * портфельные проверки и делегирование дневного P&L в единый источник.
  *
  * Дневной P&L и все Multi-Tier лимиты просадки (7д/30д, Shadow/Read-only) — единый
  * источник [DrawdownProtectionService]. Здесь — только делегирование без дублирования
@@ -39,40 +42,6 @@ class RiskManagementService(
     fun isDailyLossLimitReached(): Boolean = drawdownProtection.isDailyLossLimitReached()
 
     /**
-     * Валидирует новую стратегию перед открытием позиции.
-     *
-     * @param strategy предлагаемая стратегия
-     * @param openPositions текущие открытые позиции
-     * @return результат проверки: разрешена ли сделка и с каким количеством
-     */
-    fun validateNewStrategy(
-        strategy: Strategy,
-        openPositions: List<Position>,
-    ): RiskCheckResult {
-        if (riskConfig.enabled && drawdownProtection.isEntryBlocked()) {
-            return RiskCheckResult(false, "Drawdown protection blocked entry: ${drawdownProtection.entryBlockReason()}", 0)
-        }
-        if (riskConfig.enabled && isDailyLossLimitReached()) {
-            val message =
-                "Daily loss limit reached (${getDailyPnL()} <= -${drawdownProtection.effectiveDailyLossLimitRub()})"
-            return RiskCheckResult(false, message, 0)
-        }
-        if (riskConfig.enabled && openPositions.size >= riskConfig.maxOpenPositions) {
-            return RiskCheckResult(false, "Max open positions reached (${riskConfig.maxOpenPositions})", 0)
-        }
-        if (riskConfig.enabled && exceedsSectorExposure(strategy.ticker, openPositions)) {
-            val sector = sectorOf(strategy.ticker)
-            val count = openPositions.count { sectorOf(it.ticker) == sector }
-            return RiskCheckResult(
-                false,
-                "Sector concentration exceeded: $count open in sector $sector >= max ${riskConfig.maxSectorExposure}",
-                0,
-            )
-        }
-        return RiskCheckResult(true, "OK", strategy.quantity)
-    }
-
-    /**
      * Проверка волатильности: ATR% от цены больше лимита → вход запрещён.
      * Вызывается перед открытием позиции (при наличии ATR).
      */
@@ -92,27 +61,6 @@ class RiskManagementService(
         }
         return result
     }
-
-    /**
-     * Секторная концентрация: количество открытых позиций в одном секторе.
-     * Справочник секторов — из risk.sectors (ticker -> sector), иначе "UNKNOWN".
-     */
-    fun exceedsSectorExposure(
-        ticker: String,
-        openPositions: List<Position>,
-    ): Boolean {
-        val sector = sectorOf(ticker)
-        val count = openPositions.count { sectorOf(it.ticker) == sector }
-        return count >= riskConfig.maxSectorExposure
-    }
-
-    /**
-     * Сектор инструмента по тикеру.
-     *
-     * @param ticker тикер инструмента
-     * @return сектор из справочника risk.sectors или "UNKNOWN"
-     */
-    fun sectorOf(ticker: String): String = riskConfig.sectors[ticker] ?: "UNKNOWN"
 
     /**
      * Жёсткие портфельные лимиты на Gross/Net Exposure.
@@ -173,112 +121,6 @@ class RiskManagementService(
             return true
         }
         return false
-    }
-
-    /**
-     * Проверяет, нужно ли закрыть позицию по стоп-лоссу при текущей цене.
-     *
-     * @param pos открытая позиция
-     * @param price текущая цена
-     * @return true, если цена пробила stopLoss в сторону убытка
-     */
-    fun shouldCloseBySL(
-        pos: Position,
-        price: BigDecimal,
-    ): Boolean =
-        when (pos.direction) {
-            PositionDirection.LONG -> pos.stopLoss != null && price <= pos.stopLoss
-            PositionDirection.SHORT -> pos.stopLoss != null && price >= pos.stopLoss
-        }
-
-    /**
-     * Проверяет, нужно ли закрыть позицию по тейк-профиту при текущей цене.
-     *
-     * @param pos открытая позиция
-     * @param price текущая цена
-     * @return true, если цена достигла takeProfit
-     */
-    fun shouldCloseByTP(
-        pos: Position,
-        price: BigDecimal,
-    ): Boolean =
-        when (pos.direction) {
-            PositionDirection.LONG -> pos.takeProfit != null && price >= pos.takeProfit
-            PositionDirection.SHORT -> pos.takeProfit != null && price <= pos.takeProfit
-        }
-
-    /**
-     * Проверяет, нужно ли закрыть позицию по трейлинг-стопу при текущей цене.
-     *
-     * @param pos открытая позиция
-     * @param price текущая цена
-     * @return true, если цена пробила trailingStopPrice
-     */
-    fun shouldCloseByTrailing(
-        pos: Position,
-        price: BigDecimal,
-    ): Boolean {
-        if (!riskConfig.trailingStopEnabled || pos.trailingStopPrice == null) return false
-        return when (pos.direction) {
-            PositionDirection.LONG -> price <= pos.trailingStopPrice
-            PositionDirection.SHORT -> price >= pos.trailingStopPrice
-        }
-    }
-
-    /**
-     * Обновляет трейлинг-стоп позиции по текущей цене (если трейлинг включён).
-     *
-     * @param pos открытая позиция (мутируется)
-     * @param price текущая цена
-     */
-    fun updateTrailingStop(
-        pos: Position,
-        price: BigDecimal,
-    ) {
-        if (!riskConfig.trailingStopEnabled) return
-        val percent = BigDecimal(riskConfig.trailingStopPercent.toString()).divide(BigDecimal("100"))
-        val newStop =
-            when (pos.direction) {
-                PositionDirection.LONG -> price.multiply(BigDecimal.ONE.subtract(percent))
-                PositionDirection.SHORT -> price.multiply(BigDecimal.ONE.add(percent))
-            }
-        pos.trailingStopPrice = newStop.setScale(2, RoundingMode.HALF_UP)
-    }
-
-    /**
-     * Рассчитывает цену стоп-лосса по проценту от цены входа.
-     *
-     * @param entryPrice цена входа
-     * @param direction направление позиции
-     * @return цена стоп-лосса (с 2 знаками после запятой)
-     */
-    fun calcSL(
-        entryPrice: BigDecimal,
-        direction: PositionDirection,
-    ): BigDecimal {
-        val percent = BigDecimal(riskConfig.defaultStopLossPercent.toString()).divide(BigDecimal("100"))
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(percent)).setScale(2, RoundingMode.HALF_UP)
-            PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.add(percent)).setScale(2, RoundingMode.HALF_UP)
-        }
-    }
-
-    /**
-     * Рассчитывает цену тейк-профита по проценту от цены входа.
-     *
-     * @param entryPrice цена входа
-     * @param direction направление позиции
-     * @return цена тейк-профита (с 2 знаками после запятой)
-     */
-    fun calcTP(
-        entryPrice: BigDecimal,
-        direction: PositionDirection,
-    ): BigDecimal {
-        val percent = BigDecimal(riskConfig.defaultTakeProfitPercent.toString()).divide(BigDecimal("100"))
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(percent)).setScale(2, RoundingMode.HALF_UP)
-            PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.subtract(percent)).setScale(2, RoundingMode.HALF_UP)
-        }
     }
 
     /**

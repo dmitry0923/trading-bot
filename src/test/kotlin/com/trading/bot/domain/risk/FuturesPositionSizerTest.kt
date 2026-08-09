@@ -1,5 +1,6 @@
 package com.trading.bot.domain.risk
 
+import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig

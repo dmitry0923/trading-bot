@@ -5,7 +5,8 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.domain.risk.FuturesRiskEngine
+import com.trading.bot.application.risk.FuturesRiskEngine
+import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.event.ExecutionReportEvent
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.StrategyGeneratedEvent
@@ -19,7 +20,6 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
-import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -37,11 +37,11 @@ import tools.jackson.databind.ObjectMapper
  * Координатор торговли фьючерсами (Si).
  *
  * - Открытие: делегируется [FuturesEntryCoordinator] (risk-first через
- *   FuturesRiskEngine.validateEntry(), позиция с futures-полями: leverage,
+ *   [FuturesRiskEngine.canEnter], размер позиции через [FuturesPositionSizer],
+ *   параметры заявки через [OrderBuilder]; позиция с futures-полями: leverage,
  *   goPerContract, marginUsed, liquidationPrice, variationMargin, stopLossPoints).
  * - Мониторинг: каждый тик PriceChangedEvent → [FuturesPositionMonitor]
  *   (checkLiquidationDistance, LIQUIDATION_CRITICAL → market close, SL/TP/trailing).
- * - Daily loss limit: перед каждой сделкой проверяется isDailyLossLimitReached().
  * - P&L фьючерса (₽): (close - entry) * qty * pointValue, pointValue = priceStepCost / priceStep.
  * - При закрытии публикуется PositionClosedEvent → DailyLossCircuitBreaker обновляет дневной P&L.
  * - Защита от double execution / потеря контроля над позицией — в общем ядре
@@ -55,13 +55,14 @@ import tools.jackson.databind.ObjectMapper
 @Service
 class FuturesTradingBotService(
     private val futuresRiskEngine: FuturesRiskEngine,
+    private val futuresPositionSizer: FuturesPositionSizer,
+    private val orderBuilder: OrderBuilder,
     private val tradingHoursGuard: TradingHoursGuard,
     private val alorClient: AlorClient,
     private val alorFuturesClient: AlorFuturesClient,
     private val orderOutboxService: OrderOutboxService,
     private val positionRepo: PositionRepository,
     private val orderOutboxRepo: OrderOutboxRepository,
-    private val riskManagement: RiskManagementService,
     private val instrumentsConfig: InstrumentsConfig,
     private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
@@ -98,12 +99,15 @@ class FuturesTradingBotService(
     private val entryCoordinator =
         FuturesEntryCoordinator(
             futuresRiskEngine = futuresRiskEngine,
+            futuresPositionSizer = futuresPositionSizer,
+            orderBuilder = orderBuilder,
             tradingHoursGuard = tradingHoursGuard,
             alorClient = alorClient,
             alorFuturesClient = alorFuturesClient,
             marketDataGate = marketDataGate,
             leverageConfig = leverageConfig,
             riskConfig = riskConfig,
+            positionRepo = positionRepo,
             engine = engine,
             meterRegistry = meterRegistry,
         )
@@ -112,8 +116,8 @@ class FuturesTradingBotService(
     private val positionMonitor =
         FuturesPositionMonitor(
             futuresRiskEngine = futuresRiskEngine,
-            riskManagement = riskManagement,
             riskConfig = riskConfig,
+            instrumentsConfig = instrumentsConfig,
             positionRepo = positionRepo,
             engine = engine,
             meterRegistry = meterRegistry,
@@ -124,32 +128,32 @@ class FuturesTradingBotService(
      */
     @EventListener
     fun onStrategyGenerated(event: StrategyGeneratedEvent) {
-        val strat = event.strategy
-        if (strat.ticker != "Si") return
-        if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
+        val signal = event.signal
+        if (signal.ticker != "Si") return
+        if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
-            logger.info { "Trading disabled (single flag) — futures entry skipped ${strat.ticker}" }
+            logger.info { "Trading disabled (single flag) — futures entry skipped ${signal.ticker}" }
             return
         }
-        if (!marketDataGate.isPriceDataFresh(strat.ticker)) {
-            logger.warn { "STALE market data — futures entry blocked ${strat.ticker}" }
-            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
+        if (!marketDataGate.isPriceDataFresh(signal.ticker)) {
+            logger.warn { "STALE market data — futures entry blocked ${signal.ticker}" }
+            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", signal.ticker, "reason", "STALE_DATA")).increment()
             return
         }
         scope.launch(
             TraceContext.mdcContext(
                 mapOf(
-                    TraceContext.TRACE_ID to strat.cycleId,
-                    TraceContext.CYCLE_ID to strat.cycleId,
-                    TraceContext.TICKER to strat.ticker,
+                    TraceContext.TRACE_ID to signal.cycleId,
+                    TraceContext.CYCLE_ID to signal.cycleId,
+                    TraceContext.TICKER to signal.ticker,
                 ),
             ),
         ) {
             try {
-                entryCoordinator.openPosition(strat.ticker, strat.targetPrice, strat.action, strat.cycleId)
+                entryCoordinator.openPosition(signal)
             } catch (e: Exception) {
-                logger.error(e) { "Futures entry handler error ${strat.ticker}" }
-                meterRegistry.counter("futures.entry.error", Tags.of("ticker", strat.ticker)).increment()
+                logger.error(e) { "Futures entry handler error ${signal.ticker}" }
+                meterRegistry.counter("futures.entry.error", Tags.of("ticker", signal.ticker)).increment()
             }
         }
     }

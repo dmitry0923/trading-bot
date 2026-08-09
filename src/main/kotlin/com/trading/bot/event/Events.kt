@@ -1,8 +1,8 @@
 package com.trading.bot.event
 
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.dto.ExecutionReport
-import com.trading.bot.model.entity.Strategy
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDateTime
@@ -16,7 +16,7 @@ import java.time.LocalDateTime
  * Поток:
  * PriceChangedEvent -> мониторинг открытых позиций (SL/TP/trailing)
  * StrategyGeneratedEvent -> публикация EntrySignalEvent при пригодном сигнале
- * EntrySignalEvent -> RiskEngine.assessEntry() + открытие позиции
+ * EntrySignalEvent -> RiskEngine.canEnter() + открытие позиции
  * ExecutionReportEvent -> фиксация фактического исполнения (closePrice, P&L, slippage)
  */
 data class PriceChangedEvent(
@@ -25,12 +25,16 @@ data class PriceChangedEvent(
     val timestamp: Instant = Instant.now(),
 )
 
+/**
+ * Стратегический этап завершён: сигнал (чистое направление BUY/SELL/HOLD без
+ * размера и стопов) готов. Размер/SL/TP вычисляют риск-этапы при входе.
+ */
 data class StrategyGeneratedEvent(
-    val strategy: Strategy,
+    val signal: Signal,
 )
 
 data class EntrySignalEvent(
-    val strategy: Strategy,
+    val signal: Signal,
 )
 
 data class ExecutionReportEvent(

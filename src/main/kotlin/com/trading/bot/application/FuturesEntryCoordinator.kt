@@ -3,12 +3,18 @@ package com.trading.bot.application
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.domain.risk.FuturesRiskEngine
+import com.trading.bot.application.risk.FuturesPositionSizer
+import com.trading.bot.application.risk.FuturesRiskEngine
+import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.RiskVerdict
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
+import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -22,8 +28,9 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * - Сериализует вход по тикеру (per-ticker mutex — защита от гонки двух сигналов
  *   на один тикер → двойного ордера).
- * - Проверки risk-first: stale market data (defense in depth), дневной лимит убытка,
- *   торговые часы, [FuturesRiskEngine.validateEntry].
+ * - Этапы входа: [FuturesRiskEngine.canEnter] (Да/Нет) →
+ *   [FuturesPositionSizer.calculateContracts] (размер) →
+ *   [OrderBuilder.buildFuturesOrderParams] (SL/TP/маржа/ликвидация).
  * - Фактическое размещение ордера и обработку UNCERTAIN / PARTIAL / full fill
  *   делегирует [OrderExecutionEngine.placeEntryOrder].
  *
@@ -32,12 +39,15 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class FuturesEntryCoordinator(
     private val futuresRiskEngine: FuturesRiskEngine,
+    private val futuresPositionSizer: FuturesPositionSizer,
+    private val orderBuilder: OrderBuilder,
     private val tradingHoursGuard: TradingHoursGuard,
     private val alorClient: AlorClient,
     private val alorFuturesClient: AlorFuturesClient,
     private val marketDataGate: MarketDataGate,
     private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
+    private val positionRepo: PositionRepository,
     private val engine: OrderExecutionEngine,
     private val meterRegistry: MeterRegistry,
 ) {
@@ -47,32 +57,18 @@ class FuturesEntryCoordinator(
      *  гонки двух сигналов на один тикер → двойного ордера). */
     private val entryLocks = ConcurrentHashMap<String, Mutex>()
 
-    suspend fun openPosition(
-        ticker: String,
-        targetPrice: BigDecimal,
-        action: StrategyAction,
-        cycleId: String?,
-    ) {
-        val lock = entryLocks.computeIfAbsent(ticker) { Mutex() }
+    suspend fun openPosition(signal: Signal) {
+        val lock = entryLocks.computeIfAbsent(signal.ticker) { Mutex() }
         lock.withLock {
-            doOpenPosition(ticker, targetPrice, action, cycleId)
+            doOpenPosition(signal)
         }
     }
 
-    private suspend fun doOpenPosition(
-        ticker: String,
-        targetPrice: BigDecimal,
-        action: StrategyAction,
-        cycleId: String?,
-    ) {
+    private suspend fun doOpenPosition(signal: Signal) {
+        val ticker = signal.ticker
         if (!marketDataGate.isPriceDataFresh(ticker)) {
             logger.warn { "STALE market data — futures entry blocked $ticker (defense in depth)" }
             meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", ticker, "reason", "STALE_DATA")).increment()
-            return
-        }
-        if (futuresRiskEngine.isDailyLossLimitReached()) {
-            logger.warn { "Daily loss limit reached — entry blocked $ticker" }
-            meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "DAILY_LIMIT")).increment()
             return
         }
         if (!tradingHoursGuard.isTradingAllowed()) {
@@ -81,45 +77,87 @@ class FuturesEntryCoordinator(
             return
         }
 
-        val direction = if (action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-        val entryPrice = alorClient.getLastPrice(ticker) ?: targetPrice
+        val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        val entryPrice = alorClient.getLastPrice(ticker) ?: signal.targetPrice
         val currentGo = alorFuturesClient.getFuturesGO(ticker)
         val portfolioMoney = alorFuturesClient.getPortfolioMoney()
+        val openPositions = positionRepo.findByStatus(PositionStatus.OPEN)
 
-        val validation = futuresRiskEngine.validateEntry(ticker, entryPrice, direction, portfolioMoney, currentGo)
-        if (!validation.allowed) {
-            logger.warn { "Risk engine rejected $ticker: ${validation.reason}" }
+        val verdict =
+            futuresRiskEngine.canEnter(
+                EntryRequest(
+                    ticker = ticker,
+                    action = signal.action,
+                    entryPrice = entryPrice,
+                    direction = direction,
+                    portfolioMoney = portfolioMoney,
+                    currentGo = currentGo,
+                    openPositions = openPositions,
+                ),
+            )
+        if (verdict is RiskVerdict.Rejected) {
+            logger.warn { "Risk engine rejected $ticker: ${verdict.reason}" }
+            return
+        }
+
+        val size =
+            futuresPositionSizer.calculateContracts(
+                ticker,
+                portfolioMoney,
+                riskConfig.defaultStopLossPoints,
+                currentGo,
+                entryPrice,
+                direction,
+            )
+        if (size.quantity == 0) {
+            logger.warn { "Position sizer rejected $ticker: ${size.reason}" }
+            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", ticker, "reason", size.reason ?: "ZERO_SIZE")).increment()
+            return
+        }
+
+        val params =
+            orderBuilder.buildFuturesOrderParams(
+                ticker = ticker,
+                direction = direction,
+                entryPrice = entryPrice,
+                currentGo = currentGo,
+                size = size,
+                leverage = leverageConfig.effective(),
+            )
+        if (params.quantity <= 0) {
+            logger.warn { "Order builder produced zero quantity for $ticker" }
             return
         }
 
         val opened =
-            engine.placeEntryOrder(ticker, direction, validation.quantity, entryPrice) { orderId, pending, fillPrice, qty ->
+            engine.placeEntryOrder(ticker, direction, params.quantity, entryPrice) { orderId, pending, fillPrice, qty ->
                 Position(
                     ticker = ticker,
                     direction = direction,
                     quantity = qty,
                     entryPrice = fillPrice,
                     currentPrice = fillPrice,
-                    stopLoss = validation.stopLossPrice,
-                    takeProfit = validation.takeProfitPrice,
-                    trailingStopPrice = validation.stopLossPrice,
+                    stopLoss = params.stopLossPrice,
+                    takeProfit = params.takeProfitPrice,
+                    trailingStopPrice = params.trailingStopPrice,
                     instrumentType = InstrumentType.FUTURES,
-                    leverage = leverageConfig.effective(),
-                    goPerContract = currentGo,
-                    marginUsed = validation.marginRequired,
-                    liquidationPrice = validation.liquidationPrice,
+                    leverage = params.leverage ?: leverageConfig.effective(),
+                    goPerContract = params.goPerContract,
+                    marginUsed = params.marginRequired,
+                    liquidationPrice = params.liquidationPrice,
                     variationMargin = BigDecimal.ZERO,
-                    stopLossPoints = riskConfig.defaultStopLossPoints,
+                    stopLossPoints = params.stopLossPoints,
                     alorOrderId = orderId,
                     pendingEntry = pending,
-                    cycleId = cycleId,
+                    cycleId = signal.cycleId,
                 )
             }
         if (opened != null) {
+            orderBuilder.recordStrategyExecution(signal, params)
             logger.info {
                 "Opened futures $ticker $direction qty=${opened.quantity} @ ${opened.entryPrice} " +
-                    "sl=${validation.stopLossPrice} tp=${validation.takeProfitPrice} " +
-                    "margin=${validation.marginRequired} liq=${validation.liquidationPrice}"
+                    "sl=${params.stopLossPrice} tp=${params.takeProfitPrice} " +
+                    "margin=${params.marginRequired} liq=${params.liquidationPrice}"
             }
         }
     }

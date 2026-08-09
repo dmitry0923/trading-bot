@@ -1,8 +1,6 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.StrategyAction
-import com.trading.bot.model.entity.Strategy
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -10,7 +8,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
-import java.time.LocalDateTime
 
 /**
  * Дневной P&L и дневной лимит убытка живут в едином источнике
@@ -54,31 +51,5 @@ class RiskManagementServiceDailyPnLTest {
 
         Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
         assertTrue(s.isDailyLossLimitReached())
-    }
-
-    @Test
-    fun `validateNewStrategy blocks entry when daily loss limit reached`() {
-        val s = service()
-        Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
-        Mockito.`when`(drawdownProtection.getDailyPnl()).thenReturn(BigDecimal("-5000"))
-        Mockito.`when`(drawdownProtection.effectiveDailyLossLimitRub()).thenReturn(BigDecimal("5000"))
-
-        val result =
-            s.validateNewStrategy(
-                Strategy(
-                    ticker = "SBER",
-                    action = StrategyAction.BUY,
-                    targetPrice = BigDecimal("100"),
-                    quantity = 1,
-                    confidence = 0.9,
-                    reasoning = "test",
-                    cycleId = "c",
-                    validUntil = LocalDateTime.now().plusMinutes(5),
-                ),
-                openPositions = emptyList(),
-            )
-
-        assertFalse(result.allowed)
-        assertTrue(result.reason.contains("Daily loss limit reached"))
     }
 }

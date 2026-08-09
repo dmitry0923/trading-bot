@@ -1,7 +1,7 @@
 package com.trading.bot.event
 
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.dto.ExecutionReport
-import com.trading.bot.model.entity.Strategy
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -21,12 +21,12 @@ class TradingEventPublisher(
         publisher.publishEvent(PriceChangedEvent(ticker, price))
     }
 
-    fun publishStrategyGenerated(strategy: Strategy) {
-        publisher.publishEvent(StrategyGeneratedEvent(strategy))
+    fun publishStrategyGenerated(signal: Signal) {
+        publisher.publishEvent(StrategyGeneratedEvent(signal))
     }
 
-    fun publishEntrySignal(strategy: Strategy) {
-        publisher.publishEvent(EntrySignalEvent(strategy))
+    fun publishEntrySignal(signal: Signal) {
+        publisher.publishEvent(EntrySignalEvent(signal))
     }
 
     fun publishExecutionReport(report: ExecutionReport) {

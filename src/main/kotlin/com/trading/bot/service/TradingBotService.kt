@@ -1,16 +1,24 @@
 package com.trading.bot.service
 
 import com.trading.bot.application.MarketDataGate
+import com.trading.bot.application.OrderBuilder
 import com.trading.bot.application.OrderExecutionEngine
 import com.trading.bot.application.PnlCalculator
 import com.trading.bot.application.TradingGate
+import com.trading.bot.application.risk.StockRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorWebSocketClient
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.client.WsConnectionStatus
 import com.trading.bot.client.WsStream
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.ExitRules
+import com.trading.bot.domain.risk.RiskVerdict
+import com.trading.bot.domain.signal.Signal
+import com.trading.bot.domain.signal.toSignal
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
@@ -22,7 +30,6 @@ import com.trading.bot.model.dto.ExecutionReport
 import com.trading.bot.model.dto.OrderStatus
 import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.model.entity.Position
-import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
@@ -69,8 +76,10 @@ class TradingBotService(
     private val redis: RedisCacheService,
     private val risk: RiskManagementService,
     private val adaptiveRisk: AdaptiveRiskService,
-    private val drawdownProtection: DrawdownProtectionService,
-    private val volatilityIndexService: VolatilityIndexService,
+    private val stockRiskEngine: StockRiskEngine,
+    private val orderBuilder: OrderBuilder,
+    private val candleCache: CandleCacheService,
+    private val riskConfig: RiskConfig,
     private val positionRepo: PositionRepository,
     private val orderOutboxRepo: OrderOutboxRepository,
     private val alorConfig: AlorConfig,
@@ -183,76 +192,60 @@ class TradingBotService(
     }
 
     /**
-     * StrategyGeneratedEvent → если сигнал пригоден и нет открытой позиции → EntrySignalEvent.
+     * StrategyGeneratedEvent → если сигнал пригоден → EntrySignalEvent.
+     * Все риск-проверки (дневной лимит, drawdown, волатильность, дубли, лимиты
+     * позиций и секторов) выполняет [StockRiskEngine.canEnter] на этапе входа.
      */
     @EventListener
     fun onStrategyGenerated(event: com.trading.bot.event.StrategyGeneratedEvent) {
-        val strat = event.strategy
-        if (strat.ticker == "Si") return // фьючерсы обрабатывает FuturesTradingBotService
-        if (strat.action != StrategyAction.BUY && strat.action != StrategyAction.SELL) return
+        val signal = event.signal
+        if (signal.ticker == "Si") return // фьючерсы обрабатывает FuturesTradingBotService
+        if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
-            logger.info { "Trading disabled (single flag) — entry skipped ${strat.ticker}" }
+            logger.info { "Trading disabled (single flag) — entry skipped ${signal.ticker}" }
             return
         }
-        if (!marketDataGate.isPriceDataFresh(strat.ticker)) {
-            logger.warn { "STALE market data — entry blocked ${strat.ticker}" }
-            meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
+        if (!marketDataGate.isPriceDataFresh(signal.ticker)) {
+            logger.warn { "STALE market data — entry blocked ${signal.ticker}" }
+            meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", signal.ticker, "reason", "STALE_DATA")).increment()
             return
         }
         scope.launch(
             TraceContext.mdcContext(
                 mapOf(
-                    TraceContext.TRACE_ID to strat.cycleId,
-                    TraceContext.CYCLE_ID to strat.cycleId,
-                    TraceContext.TICKER to strat.ticker,
+                    TraceContext.TRACE_ID to signal.cycleId,
+                    TraceContext.CYCLE_ID to signal.cycleId,
+                    TraceContext.TICKER to signal.ticker,
                 ),
             ),
         ) {
             try {
-                if (risk.isDailyLossLimitReached()) {
-                    logger.warn { "Daily loss limit reached, skip entry ${strat.ticker}" }
-                    return@launch
-                }
-                if (drawdownProtection.isEntryBlocked()) {
-                    logger.warn { "Drawdown protection, skip entry ${strat.ticker}: ${drawdownProtection.entryBlockReason()}" }
-                    return@launch
-                }
-                if (volatilityIndexService.isVolatilityAnomalous()) {
-                    logger.warn { "Volatility index pause, skip entry ${strat.ticker}" }
-                    return@launch
-                }
-                val open = positionRepo.findByStatus(PositionStatus.OPEN)
-                if (open.any { it.ticker == strat.ticker }) return@launch
-                if (open.size > tradingConfig.maxOpenPositionsForNewEntry) {
-                    logger.info { "Open positions ${open.size} > max ${tradingConfig.maxOpenPositionsForNewEntry}, skip ${strat.ticker}" }
-                    return@launch
-                }
-                eventPublisher.publishEntrySignal(strat)
+                eventPublisher.publishEntrySignal(signal)
             } catch (e: Exception) {
-                logger.error(e) { "Strategy generated handler error ${strat.ticker}" }
+                logger.error(e) { "Strategy generated handler error ${signal.ticker}" }
             }
         }
     }
 
     /**
-     * EntrySignalEvent → RiskEngine.assessEntry() + открытие позиции.
+     * EntrySignalEvent → RiskEngine.canEnter() + открытие позиции.
      */
     @EventListener
     fun onEntrySignal(event: com.trading.bot.event.EntrySignalEvent) {
         scope.launch(
             TraceContext.mdcContext(
                 mapOf(
-                    TraceContext.TRACE_ID to event.strategy.cycleId,
-                    TraceContext.CYCLE_ID to event.strategy.cycleId,
-                    TraceContext.TICKER to event.strategy.ticker,
+                    TraceContext.TRACE_ID to event.signal.cycleId,
+                    TraceContext.CYCLE_ID to event.signal.cycleId,
+                    TraceContext.TICKER to event.signal.ticker,
                 ),
             ),
         ) {
             try {
-                openPosition(event.strategy)
+                openPosition(event.signal)
             } catch (e: Exception) {
-                logger.error(e) { "Entry signal handler error ${event.strategy.ticker}" }
-                meterRegistry.counter("bot.entry.error", Tags.of("ticker", event.strategy.ticker)).increment()
+                logger.error(e) { "Entry signal handler error ${event.signal.ticker}" }
+                meterRegistry.counter("bot.entry.error", Tags.of("ticker", event.signal.ticker)).increment()
             }
         }
     }
@@ -287,20 +280,22 @@ class TradingBotService(
                     pos.pnl = pnl
                     updatePositionPnlGauge(pos.ticker, pnl.toDouble())
 
-                    if (risk.shouldCloseBySL(pos, price)) {
+                    if (ExitRules.shouldCloseBySL(pos, price)) {
                         engine.closePosition(pos, price, "STOP_LOSS")
                         return@forEach
                     }
-                    if (risk.shouldCloseByTP(pos, price)) {
+                    if (ExitRules.shouldCloseByTP(pos, price)) {
                         engine.closePosition(pos, price, "TAKE_PROFIT")
                         return@forEach
                     }
-                    if (risk.shouldCloseByTrailing(pos, price)) {
+                    if (ExitRules.shouldCloseByTrailing(pos, price)) {
                         engine.closePosition(pos, price, "TRAILING_STOP")
                         return@forEach
                     }
 
-                    risk.updateTrailingStop(pos, price)
+                    if (riskConfig.trailingStopEnabled) {
+                        ExitRules.updateTrailingStop(pos, price, riskConfig.trailingStopPercent)
+                    }
 
                     var slUpdated = false
                     var tpUpdated = false
@@ -423,7 +418,7 @@ class TradingBotService(
         meterRegistry.counter("bot.cycle").increment()
         scope.launch {
             val strategies = BlockingDb.io { redis.getAllStrategies(tradingConfig.tickers) }
-            strategies.values.forEach { eventPublisher.publishStrategyGenerated(it) }
+            strategies.values.forEach { eventPublisher.publishStrategyGenerated(it.toSignal()) }
         }
     }
 
@@ -451,90 +446,112 @@ class TradingBotService(
         return open.size
     }
 
-    private suspend fun openPosition(strat: Strategy) {
-        val lock = entryLocks.computeIfAbsent(strat.ticker) { Mutex() }
+    private suspend fun openPosition(signal: Signal) {
+        val lock = entryLocks.computeIfAbsent(signal.ticker) { Mutex() }
         lock.withLock {
-            doOpenPosition(strat)
+            doOpenPosition(signal)
         }
     }
 
-    private suspend fun doOpenPosition(strat: Strategy) {
-        if (!marketDataGate.isPriceDataFresh(strat.ticker)) {
-            logger.warn { "STALE market data — entry blocked ${strat.ticker} (defense in depth)" }
-            meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", strat.ticker, "reason", "STALE_DATA")).increment()
-            return
-        }
-        val open = positionRepo.findByStatus(PositionStatus.OPEN)
-        val check = risk.validateNewStrategy(strat, open)
-        if (!check.allowed) {
-            logger.warn { "Risk reject ${strat.ticker}: ${check.reason}" }
-            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker)).increment()
-            return
-        }
-        if (adaptiveRisk.exceedsCorrelationLimit(strat.ticker, open)) {
-            logger.warn { "Correlation filter reject ${strat.ticker}: correlated with an open position" }
-            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "CORRELATION")).increment()
-            return
-        }
-        if (adaptiveRisk.exceedsSectorCorrelationLimit(strat.ticker, open)) {
-            logger.warn { "Sector correlation filter reject ${strat.ticker}: correlated position inside same sector" }
-            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "SECTOR_CORRELATION")).increment()
+    private suspend fun doOpenPosition(signal: Signal) {
+        val ticker = signal.ticker
+        if (!marketDataGate.isPriceDataFresh(ticker)) {
+            logger.warn { "STALE market data — entry blocked $ticker (defense in depth)" }
+            meterRegistry.counter("bot.entry.rejected", Tags.of("ticker", ticker, "reason", "STALE_DATA")).increment()
             return
         }
 
-        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(strat.ticker)
+        val open = positionRepo.findByStatus(PositionStatus.OPEN)
+        val entryPrice = alorClient.getLastPrice(ticker) ?: signal.targetPrice
+        val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        val atr = candleCache.calculateAtr(ticker, "MINUTE_10", 14)
+
+        // Риск-этап: Да/Нет (дневной лимит, drawdown, волатильность индекса,
+        // дубли, лимиты позиций/секторов, ATR%).
+        val verdict =
+            stockRiskEngine.canEnter(
+                EntryRequest(
+                    ticker = ticker,
+                    action = signal.action,
+                    entryPrice = entryPrice,
+                    direction = direction,
+                    portfolioMoney = riskConfig.maxPositionRub,
+                    currentGo = BigDecimal.ZERO,
+                    atr = atr,
+                    openPositions = open,
+                ),
+            )
+        if (verdict is RiskVerdict.Rejected) {
+            logger.warn { "Risk reject $ticker: ${verdict.reason}" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", ticker, "reason", verdict.reason)).increment()
+            return
+        }
+        if (adaptiveRisk.exceedsCorrelationLimit(ticker, open)) {
+            logger.warn { "Correlation filter reject $ticker: correlated with an open position" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", ticker, "reason", "CORRELATION")).increment()
+            return
+        }
+        if (adaptiveRisk.exceedsSectorCorrelationLimit(ticker, open)) {
+            logger.warn { "Sector correlation filter reject $ticker: correlated position inside same sector" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", ticker, "reason", "SECTOR_CORRELATION")).increment()
+            return
+        }
+
+        // Сайзинг (Kelly) — адаптивный риск-менеджмент.
+        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(ticker)
         val kellyQty =
             if (kellySizeRub > BigDecimal.ZERO) {
-                kellySizeRub.divide(strat.targetPrice, 0, RoundingMode.DOWN).toInt().coerceAtLeast(1)
+                kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt().coerceAtLeast(1)
             } else {
                 0
             }
+        val qty = kellyQty.coerceAtLeast(1)
 
-        val qty = if (kellyQty > 0 && kellyQty < strat.quantity) kellyQty else (check.adjustedQty.takeIf { it > 0 } ?: strat.quantity)
-        if (qty <= 0) {
-            logger.warn { "Zero quantity for ${strat.ticker} after adaptive sizing" }
+        val params = orderBuilder.buildStockOrderParams(direction, qty, entryPrice)
+        if (params.quantity <= 0) {
+            logger.warn { "Zero quantity for $ticker after adaptive sizing" }
             return
         }
 
-        val dir = if (strat.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-        val candidateNotional = strat.targetPrice.multiply(BigDecimal(qty))
-        if (risk.exceedsPortfolioLimits(candidateNotional, dir, open)) {
-            logger.warn { "Portfolio exposure reject ${strat.ticker}: gross/net limit" }
-            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", strat.ticker, "reason", "PORTFOLIO_LIMIT")).increment()
+        val candidateNotional = entryPrice.multiply(BigDecimal(params.quantity))
+        if (risk.exceedsPortfolioLimits(candidateNotional, direction, open)) {
+            logger.warn { "Portfolio exposure reject $ticker: gross/net limit" }
+            meterRegistry.counter("bot.risk.reject", Tags.of("ticker", ticker, "reason", "PORTFOLIO_LIMIT")).increment()
             return
         }
 
         val opened =
-            engine.placeEntryOrder(strat.ticker, dir, qty, strat.targetPrice) { orderId, pending, fillPrice, entryQty ->
+            engine.placeEntryOrder(ticker, direction, params.quantity, entryPrice) { orderId, pending, fillPrice, entryQty ->
                 Position(
-                    ticker = strat.ticker,
-                    direction = dir,
+                    ticker = ticker,
+                    direction = direction,
                     quantity = entryQty,
                     entryPrice = fillPrice,
                     currentPrice = fillPrice,
-                    stopLoss = strat.stopLoss ?: risk.calcSL(fillPrice, dir),
-                    takeProfit = strat.takeProfit ?: risk.calcTP(fillPrice, dir),
-                    trailingStopPrice = if (strat.trailingStop) strat.stopLoss else null,
+                    stopLoss = params.stopLossPrice,
+                    takeProfit = params.takeProfitPrice,
+                    trailingStopPrice = params.trailingStopPrice,
                     alorOrderId = orderId,
                     pendingEntry = pending,
-                    cycleId = strat.cycleId,
+                    cycleId = signal.cycleId,
                 )
             }
         if (opened != null) {
+            orderBuilder.recordStrategyExecution(signal, params)
             risk.updateDailyPnL(BigDecimal.ZERO)
             agentLogRepo.save(
                 AgentLog(
-                    cycleId = strat.cycleId,
+                    cycleId = signal.cycleId,
                     agentName = "TradingBot",
-                    ticker = strat.ticker,
+                    ticker = ticker,
                     action = "OPEN",
-                    confidence = strat.confidence,
+                    confidence = signal.confidence,
                     reasoning =
-                        "Opened ${dir.name} $qty @ ${opened.entryPrice} " +
-                            "(target=${strat.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)",
+                        "Opened ${direction.name} $qty @ ${opened.entryPrice} " +
+                            "(target=${signal.targetPrice}, adaptive qty=$qty, kelly=$kellyQty)",
                 ),
             )
-            logger.info { "Opened ${strat.ticker} ${dir.name} $qty @ ${opened.entryPrice} (adaptive qty=$qty)" }
+            logger.info { "Opened $ticker ${direction.name} $qty @ ${opened.entryPrice} (adaptive qty=$qty)" }
         }
     }
 

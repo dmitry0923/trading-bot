@@ -19,14 +19,9 @@ class GuardrailsTest {
     private fun buySignal(
         confidence: Double = 0.8,
         price: BigDecimal = BigDecimal("100"),
-        qty: Int = 10,
     ) = Guardrails.Signal(
         action = StrategyAction.BUY,
         targetPrice = price,
-        quantity = qty,
-        stopLoss = BigDecimal("98"),
-        takeProfit = BigDecimal("104"),
-        trailingStop = true,
         confidence = confidence,
     )
 
@@ -55,14 +50,6 @@ class GuardrailsTest {
     }
 
     @Test
-    fun `daily loss limit forces HOLD`() {
-        val result = guardrails().apply(buySignal(), marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6, dailyLossLimitReached = true)
-        assertTrue(result.overridden)
-        assertEquals(StrategyAction.HOLD, result.signal.action)
-        assertEquals("DETERMINISTIC: DAILY_LOSS_LIMIT", result.overrideReason)
-    }
-
-    @Test
     fun `price deviation above threshold is adjusted to market price`() {
         val result =
             guardrails().apply(
@@ -86,13 +73,6 @@ class GuardrailsTest {
             )
         assertFalse(result.overridden)
         assertEquals(BigDecimal("101"), result.signal.targetPrice)
-    }
-
-    @Test
-    fun `zero quantity is overridden to HOLD`() {
-        val result = guardrails().apply(buySignal(qty = 0), marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6)
-        assertTrue(result.overridden)
-        assertEquals(StrategyAction.HOLD, result.signal.action)
     }
 
     @Test

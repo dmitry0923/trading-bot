@@ -77,7 +77,6 @@ class ContrarianAgent(
         val variables =
             mapOf(
                 "action" to draft.action.name,
-                "quantity" to draft.quantity,
                 "targetPrice" to draft.targetPrice.toPlainString(),
                 "strategyReasoning" to draft.reasoning,
                 "techConclusion" to tech.conclusion,

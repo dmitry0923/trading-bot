@@ -72,6 +72,7 @@ dependencies {
     testImplementation(libs.testcontainersJunitJupiter)
     testImplementation(libs.testcontainersPostgresql)
     testImplementation(libs.testcontainers)
+    testImplementation(libs.archunitJunit5)
 
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

@@ -4,14 +4,13 @@ import com.trading.bot.agent.ArbitratorAgent
 import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.agent.StrategyAgent
 import com.trading.bot.config.ExperimentConfig
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
-import com.trading.bot.model.dto.RiskContext
 import com.trading.bot.model.dto.TechnicalReport
 import com.trading.bot.model.entity.ExperimentDecision
-import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.ExperimentDecisionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -69,7 +68,7 @@ class PaperTradingService(
         cycleId: String,
         ticker: String,
         timeframe: String,
-        strategy: Strategy,
+        signal: Signal,
         rawJson: String?,
         executed: Boolean,
     ): ExperimentDecision {
@@ -80,20 +79,20 @@ class PaperTradingService(
                 arm = "CONTROL",
                 ticker = ticker,
                 timeframe = timeframe,
-                action = strategy.action.name,
-                targetPrice = strategy.targetPrice,
-                quantity = strategy.quantity,
-                stopLoss = strategy.stopLoss,
-                takeProfit = strategy.takeProfit,
-                confidence = strategy.confidence,
-                reasoning = strategy.reasoning,
+                action = signal.action.name,
+                targetPrice = signal.targetPrice,
+                quantity = 0,
+                stopLoss = null,
+                takeProfit = null,
+                confidence = signal.confidence,
+                reasoning = signal.reasoning,
                 isPaper = false,
                 version = PromptRegistry.DEFAULT_VERSION,
                 rawOutput = rawJson,
                 executed = executed,
             )
         decisionRepository.save(decision)
-        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "CONTROL", "action", strategy.action.name)).increment()
+        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "CONTROL", "action", signal.action.name)).increment()
         if (executed) {
             meterRegistry.counter("experiment.control.executed").increment()
         } else {
@@ -114,10 +113,9 @@ class PaperTradingService(
         tech: TechnicalReport,
         fund: FundamentalReport,
         snapshot: MarketSnapshot,
-        control: Strategy,
+        control: Signal,
         contextPrompt: String?,
         adaptiveConfidence: Double,
-        riskContext: RiskContext,
     ): ExperimentDecision {
         val version = experimentConfig.variantPromptVersion
         val usedLlm = version != null
@@ -134,7 +132,6 @@ class PaperTradingService(
                     cycleId = cycleId,
                     contextPrompt = contextPrompt,
                     adaptiveConfidence = adaptiveConfidence,
-                    riskContext = riskContext,
                     version = version,
                     bypassCache = true,
                 )
@@ -143,10 +140,6 @@ class PaperTradingService(
                 ArbitratorAgent.Final(
                     action = control.action,
                     targetPrice = control.targetPrice,
-                    quantity = control.quantity,
-                    stopLoss = control.stopLoss,
-                    takeProfit = control.takeProfit,
-                    trailingStop = control.trailingStop,
                     confidence = control.confidence,
                     reasoning = control.reasoning,
                 )
@@ -161,9 +154,9 @@ class PaperTradingService(
                 timeframe = timeframe,
                 action = variantFinal.action.name,
                 targetPrice = variantFinal.targetPrice,
-                quantity = variantFinal.quantity,
-                stopLoss = variantFinal.stopLoss,
-                takeProfit = variantFinal.takeProfit,
+                quantity = 0,
+                stopLoss = null,
+                takeProfit = null,
                 confidence = variantFinal.confidence,
                 reasoning = variantFinal.reasoning,
                 isPaper = true,

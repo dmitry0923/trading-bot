@@ -7,7 +7,6 @@ import com.trading.bot.infrastructure.llm.SemanticCache
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
-import com.trading.bot.model.dto.RiskContext
 import com.trading.bot.model.dto.TechnicalReport
 import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.repository.AgentLogRepository
@@ -22,13 +21,16 @@ import java.math.BigDecimal
 /**
  * Арбитр (Agent-5) — финальное решение о сделке.
  *
- * - Детерминированные overrides ДО LLM: CRITICAL challenge, пауза риск-менеджера,
- *   дневной лимит убытка, Shadow/Read-only режим (серия убытков), HOLD стратега,
+ * - Детерминированные overrides ДО LLM: CRITICAL challenge, HOLD стратега,
  *   низкая уверенность draft
  * - Вызов LLM с контекстом памяти о последних сделках (memoryBlock)
- * - Пост-обработка через Guardrails (адаптивный порог, риск-уровень, лимит убытка)
+ * - Пост-обработка через Guardrails (адаптивный порог)
  * - Кэширует результат по сигналу + риску (SemanticCache)
  * - Пишет лог в AgentLogRepository и метрики agent.arbitrator.decision
+ *
+ * Final несёт ТОЛЬКО направление (BUY/SELL/HOLD), целевую цену, уверенность и
+ * обоснование. Паузы/лимиты/Shadow-режим — это этап RiskEngine; размер и стопы —
+ * этап Sizer/OrderBuilder (не здесь).
  */
 @Component
 class ArbitratorAgent(
@@ -45,17 +47,13 @@ class ArbitratorAgent(
     data class Final(
         val action: StrategyAction,
         val targetPrice: BigDecimal,
-        val quantity: Int,
-        val stopLoss: BigDecimal?,
-        val takeProfit: BigDecimal?,
-        val trailingStop: Boolean,
         val confidence: Double,
         val reasoning: String,
         val overrideReason: String? = null,
     )
 
     /**
-     * Выносит финальное решение по сделке с учётом challenge и риск-контекста.
+     * Выносит финальное решение по сделке с учётом challenge.
      *
      * @param draft черновик стратега
      * @param challenge оценка контрариан-агента
@@ -65,7 +63,6 @@ class ArbitratorAgent(
      * @param cycleId идентификатор торгового цикла
      * @param contextPrompt контекст памяти о последних результатах сделок (может быть null)
      * @param adaptiveConfidence адаптивный порог уверенности
-     * @param riskContext текущий риск-контекст (пауза, дневной лимит убытка)
      * @param bypassCache обходит semantic cache (нужно для A/B: вариантный арбитр
      *                     с другим версией промпта не должен получать кэшированный ответ
      *                     контрольной руки — иначе эксперимент бессмыслен)
@@ -81,7 +78,6 @@ class ArbitratorAgent(
         cycleId: String,
         contextPrompt: String? = null,
         adaptiveConfidence: Double = 0.60,
-        riskContext: RiskContext = RiskContext(),
         version: String = PromptRegistry.DEFAULT_VERSION,
         bypassCache: Boolean = false,
     ): Final =
@@ -93,43 +89,6 @@ class ArbitratorAgent(
                 meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "CRITICAL_CHALLENGE")).increment()
                 return@coroutineScope logAndReturn(
                     hold(snapshot.currentPrice, "Blocked by Contrarian: ${challenge.critique}", "DETERMINISTIC: CRITICAL_CHALLENGE"),
-                    snapshot.ticker,
-                    cycleId,
-                    start,
-                    "{}",
-                )
-            }
-
-            if (riskContext.shouldPause) {
-                meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "RISK_CONTEXT_PAUSE")).increment()
-                return@coroutineScope logAndReturn(
-                    hold(snapshot.currentPrice, "Trading paused by adaptive risk", "DETERMINISTIC: RISK_CONTEXT_PAUSE"),
-                    snapshot.ticker,
-                    cycleId,
-                    start,
-                    "{}",
-                )
-            }
-
-            if (riskContext.dailyLossLimitReached) {
-                meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "DAILY_LOSS_LIMIT")).increment()
-                return@coroutineScope logAndReturn(
-                    hold(snapshot.currentPrice, "Daily loss limit reached", "DETERMINISTIC: DAILY_LOSS_LIMIT"),
-                    snapshot.ticker,
-                    cycleId,
-                    start,
-                    "{}",
-                )
-            }
-
-            if (riskContext.shadowMode) {
-                meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "SHADOW_MODE")).increment()
-                return@coroutineScope logAndReturn(
-                    hold(
-                        snapshot.currentPrice,
-                        "LLM agent in SHADOW/READ-ONLY mode (consecutive losses); decision logged, not executed",
-                        "DETERMINISTIC: SHADOW_MODE",
-                    ),
                     snapshot.ticker,
                     cycleId,
                     start,
@@ -168,7 +127,6 @@ class ArbitratorAgent(
                 mapOf(
                     "action" to draft.action.name,
                     "targetPrice" to draft.targetPrice.toPlainString(),
-                    "quantity" to draft.quantity,
                     "confidence" to String.format("%.2f", draft.confidence),
                     "strategyReasoning" to draft.reasoning,
                     "riskLevel" to challenge.riskLevel,
@@ -231,17 +189,11 @@ class ArbitratorAgent(
                         Guardrails.Signal(
                             action = dec.action,
                             targetPrice = dec.targetPrice,
-                            quantity = dec.quantity,
-                            stopLoss = dec.stopLoss,
-                            takeProfit = dec.takeProfit,
-                            trailingStop = dec.trailingStop,
                             confidence = dec.confidence,
                         ),
                     marketPrice = snapshot.currentPrice,
                     adaptiveThreshold = adaptiveConfidence,
                     riskLevel = challenge.riskLevel,
-                    dailyLossLimitReached = riskContext.dailyLossLimitReached,
-                    shadowMode = riskContext.shadowMode,
                 )
 
             val finalDec =
@@ -249,10 +201,6 @@ class ArbitratorAgent(
                     dec.copy(
                         action = guarded.signal.action,
                         targetPrice = guarded.signal.targetPrice,
-                        quantity = guarded.signal.quantity,
-                        stopLoss = guarded.signal.stopLoss,
-                        takeProfit = guarded.signal.takeProfit,
-                        trailingStop = guarded.signal.trailingStop,
                         confidence = guarded.signal.confidence,
                         reasoning = dec.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]",
                         overrideReason = guarded.overrideReason,
@@ -277,10 +225,6 @@ class ArbitratorAgent(
         return Final(
             action = action,
             targetPrice = j.path("targetPrice").asString().toBigDecimalOrNull() ?: fallback.targetPrice,
-            quantity = if (action == StrategyAction.HOLD) 0 else j.path("quantity").asInt(fallback.quantity).coerceIn(1, 10000),
-            stopLoss = j.path("stopLoss").asString().toBigDecimalOrNull() ?: fallback.stopLoss,
-            takeProfit = j.path("takeProfit").asString().toBigDecimalOrNull() ?: fallback.takeProfit,
-            trailingStop = j.path("trailingStop").asBoolean(fallback.trailingStop),
             confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
             reasoning = j.path("reasoning").asString(fallback.reasoning),
         )
@@ -290,7 +234,7 @@ class ArbitratorAgent(
         price: BigDecimal,
         reason: String,
         overrideReason: String?,
-    ): Final = Final(StrategyAction.HOLD, price, 0, null, null, false, 0.0, reason, overrideReason)
+    ): Final = Final(StrategyAction.HOLD, price, 0.0, reason, overrideReason)
 
     private suspend fun logAndReturn(
         dec: Final,

@@ -1,11 +1,17 @@
 package com.trading.bot.application
 
+import com.trading.bot.application.risk.FuturesPositionSizer
+import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.domain.risk.FuturesRiskEngine
+import com.trading.bot.domain.order.OrderParams
+import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.PositionSizeResult
+import com.trading.bot.domain.risk.RiskVerdict
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.StrategyGeneratedEvent
 import com.trading.bot.event.TradingEventPublisher
@@ -17,11 +23,9 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.OrderOutbox
 import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
-import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
-import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradeEventService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -48,13 +52,14 @@ import java.util.UUID
  */
 class FuturesTradingBotServiceEntryPartialFillTest {
     private val futuresRiskEngine = Mockito.mock(FuturesRiskEngine::class.java)
+    private val futuresPositionSizer = Mockito.mock(FuturesPositionSizer::class.java)
+    private val orderBuilder = Mockito.mock(OrderBuilder::class.java)
     private val tradingHoursGuard = Mockito.mock(TradingHoursGuard::class.java)
     private val alorClient = Mockito.mock(AlorClient::class.java)
     private val alorFuturesClient = Mockito.mock(AlorFuturesClient::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
-    private val riskManagement = Mockito.mock(RiskManagementService::class.java)
     private val instrumentsConfig = Mockito.mock(InstrumentsConfig::class.java)
     private val leverageConfig = Mockito.mock(LeverageConfig::class.java)
     private val riskConfig = Mockito.mock(RiskConfig::class.java)
@@ -69,13 +74,14 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val service =
         FuturesTradingBotService(
             futuresRiskEngine,
+            futuresPositionSizer,
+            orderBuilder,
             tradingHoursGuard,
             alorClient,
             alorFuturesClient,
             orderOutboxService,
             positionRepo,
             orderOutboxRepo,
-            riskManagement,
             instrumentsConfig,
             leverageConfig,
             riskConfig,
@@ -105,16 +111,39 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         return PositionDirection.LONG
     }
 
-    private fun strategy(): Strategy =
-        Strategy(
+    private fun anyEntryRequest(): EntryRequest {
+        Mockito.any(EntryRequest::class.java)
+        return EntryRequest(
+            ticker = "Si",
+            action = StrategyAction.BUY,
+            entryPrice = BigDecimal.ZERO,
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal.ZERO,
+            currentGo = BigDecimal.ZERO,
+            openPositions = emptyList(),
+        )
+    }
+
+    private fun anyPositionSizeResult(): PositionSizeResult {
+        Mockito.any(PositionSizeResult::class.java)
+        return PositionSizeResult(
+            quantity = 1,
+            marginRequired = BigDecimal.ZERO,
+            riskAmount = BigDecimal.ZERO,
+            liquidationPrice = BigDecimal.ZERO,
+            reason = null,
+        )
+    }
+
+    private fun signal(): Signal =
+        Signal(
             ticker = "Si",
             action = StrategyAction.BUY,
             targetPrice = BigDecimal("92000"),
-            quantity = 3,
             confidence = 0.8,
             reasoning = "test",
+            timeframe = "MINUTE_10",
             cycleId = "cycle-1",
-            validUntil = LocalDateTime.now().plusMinutes(5),
         )
 
     private fun outbox(
@@ -159,13 +188,11 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         )
 
     private fun stubEntryAllowed() {
-        Mockito
-            .`when`(futuresRiskEngine.isDailyLossLimitReached())
-            .thenReturn(false)
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
         runBlocking {
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
                 .`when`(alorClient.getLastPrice(Mockito.anyString()))
                 .thenReturn(BigDecimal("92000"))
@@ -175,24 +202,51 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             Mockito
                 .`when`(alorFuturesClient.getPortfolioMoney())
                 .thenReturn(BigDecimal("100000"))
+            Mockito.`when`(leverageConfig.effective()).thenReturn(BigDecimal("2.0"))
+            Mockito
+                .`when`(futuresRiskEngine.canEnter(anyEntryRequest()))
+                .thenReturn(RiskVerdict.Allowed)
             Mockito
                 .`when`(
-                    futuresRiskEngine.validateEntry(
+                    futuresPositionSizer.calculateContracts(
                         Mockito.anyString(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.nullable(BigDecimal::class.java),
+                        Mockito.nullable(PositionDirection::class.java),
+                    ),
+                ).thenReturn(
+                    PositionSizeResult(
+                        quantity = 3,
+                        marginRequired = BigDecimal("1000"),
+                        riskAmount = BigDecimal("500"),
+                        liquidationPrice = BigDecimal("70000"),
+                        reason = null,
+                    ),
+                )
+            Mockito
+                .`when`(
+                    orderBuilder.buildFuturesOrderParams(
+                        Mockito.anyString(),
                         anyDirection(),
                         anyBigDecimal(),
                         anyBigDecimal(),
+                        anyPositionSizeResult(),
+                        anyBigDecimal(),
                     ),
                 ).thenReturn(
-                    FuturesRiskEngine.EntryValidationResult(
-                        allowed = true,
+                    OrderParams(
+                        direction = PositionDirection.LONG,
                         quantity = 3,
-                        marginRequired = BigDecimal("1000"),
                         stopLossPrice = BigDecimal("91500"),
                         takeProfitPrice = BigDecimal("93000"),
+                        marginRequired = BigDecimal("1000"),
                         liquidationPrice = BigDecimal("70000"),
-                        reason = null,
+                        leverage = BigDecimal("2.0"),
+                        goPerContract = BigDecimal("1000"),
+                        stopLossPoints = 50,
+                        trailingStopPrice = BigDecimal("91500"),
                     ),
                 )
             Mockito
@@ -266,7 +320,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                 .thenReturn(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")))
         }
 
-        service.onStrategyGenerated(StrategyGeneratedEvent(strategy()))
+        service.onStrategyGenerated(StrategyGeneratedEvent(signal()))
         awaitUntil { savedPositions.any { it.pendingEntry } }
 
         val partial = savedPositions.first { it.pendingEntry }
@@ -285,17 +339,11 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
         Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(false)
 
-        service.onStrategyGenerated(StrategyGeneratedEvent(strategy()))
+        service.onStrategyGenerated(StrategyGeneratedEvent(signal()))
 
         assertTrue(savedPositions.isEmpty())
         runBlocking {
-            Mockito.verify(futuresRiskEngine, Mockito.never()).validateEntry(
-                Mockito.anyString(),
-                anyBigDecimal(),
-                anyDirection(),
-                anyBigDecimal(),
-                anyBigDecimal(),
-            )
+            Mockito.verify(futuresRiskEngine, Mockito.never()).canEnter(anyEntryRequest())
         }
     }
 
@@ -389,3 +437,4 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         }
     }
 }
+

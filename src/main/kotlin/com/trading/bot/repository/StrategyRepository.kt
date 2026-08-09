@@ -81,4 +81,38 @@ class StrategyRepository(
                 .awaitSingle()
         return strategy.copy(id = id)
     }
+
+    /**
+     * Заполняет риск-параметры (quantity/SL/TP/trailing) у уже сохранённой
+     * стратегии после фактического исполнения входа (этап OrderBuilder).
+     * До этого стратегия хранится как чистое направление (Signal).
+     *
+     * @return количество обновлённых строк
+     */
+    suspend fun updateOrderParams(
+        cycleId: String,
+        ticker: String,
+        quantity: Int,
+        stopLoss: BigDecimal?,
+        takeProfit: BigDecimal?,
+        trailingStop: Boolean,
+    ): Long {
+        val sql =
+            """
+            UPDATE strategies
+            SET quantity = :quantity, stop_loss = :stopLoss, take_profit = :takeProfit, trailing_stop = :trailingStop
+            WHERE cycle_id = :cycleId AND ticker = :ticker
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("quantity", quantity)
+            .bindOrNull("stopLoss", stopLoss)
+            .bindOrNull("takeProfit", takeProfit)
+            .bind("trailingStop", trailingStop)
+            .bind("cycleId", cycleId)
+            .bind("ticker", ticker)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
+    }
 }

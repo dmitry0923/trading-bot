@@ -1,8 +1,10 @@
-package com.trading.bot.domain.risk
+package com.trading.bot.application.risk
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.PositionSizeResult
+import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.PositionDirection
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -40,21 +42,15 @@ class FuturesPositionSizer(
     private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
     private val instrumentsConfig: InstrumentsConfig,
-) {
-    /**
-     * Базовый расчёт без цены входа (liquidationPrice = null).
-     */
-    fun calculateContracts(
+) : PositionSizer {
+    override fun calculateContracts(
         ticker: String,
         portfolioMoney: BigDecimal,
         stopLossPoints: Int,
         currentGo: BigDecimal,
     ): PositionSizeResult = calculateContracts(ticker, portfolioMoney, stopLossPoints, currentGo, null, null)
 
-    /**
-     * Полный расчёт с ценой входа и направлением — вычисляет liquidationPrice.
-     */
-    fun calculateContracts(
+    override fun calculateContracts(
         ticker: String,
         portfolioMoney: BigDecimal,
         stopLossPoints: Int,
@@ -171,20 +167,3 @@ class FuturesPositionSizer(
         }
     }
 }
-
-/**
- * Результат расчёта размера фьючерсной позиции.
- *
- * @property quantity итоговое количество контрактов (0 = вход запрещён)
- * @property marginRequired требуемая маржа в рублях
- * @property riskAmount допустимый риск на сделку в рублях
- * @property liquidationPrice расчётная цена ликвидации (null, если не считалась)
- * @property reason причина отказа при quantity = 0 (null при успехе)
- */
-data class PositionSizeResult(
-    val quantity: Int,
-    val marginRequired: BigDecimal,
-    val riskAmount: BigDecimal,
-    val liquidationPrice: BigDecimal?,
-    val reason: String?,
-)

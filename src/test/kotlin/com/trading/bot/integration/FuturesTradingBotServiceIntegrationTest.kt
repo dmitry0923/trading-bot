@@ -4,15 +4,15 @@ import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.TradingBlockReason
 import com.trading.bot.application.TradingGate
 import com.trading.bot.application.TradingHoursGuard
+import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
-import com.trading.bot.domain.risk.FuturesRiskEngine
+import com.trading.bot.domain.signal.Signal
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
-import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DrawdownProtectionService
@@ -29,7 +29,6 @@ import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import java.math.BigDecimal
-import java.time.LocalDateTime
 
 /**
  * Интеграционный тест FuturesTradingBotService против реальной Postgres.
@@ -82,7 +81,6 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     fun setup() {
         runBlocking { positionRepo.deleteAll() }
         snapshotRepo.deleteAll()
-        futuresRiskEngine.resetDailyState()
         // Сбрасываем персистентную остановку (critical liquidation выше может оставить halt).
         tradingHaltService.clear()
         // пересчёт кэша drawdown от пустой БД (сбрасывает stale статус из предыдущего теста)
@@ -116,7 +114,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `futures entry creates position with full risk fields`() {
-        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(signal(BigDecimal("92000")))
 
         awaitUntil { runBlocking { positionRepo.findByStatus(PositionStatus.OPEN).isNotEmpty() } }
         val pos = runBlocking { positionRepo.findByStatus(PositionStatus.OPEN).first() }
@@ -183,13 +181,13 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         assertEquals(0, BigDecimal("91986").compareTo(closed.closePrice!!))
         // P&L = (91986 - 92000) * 1000 * 1 = -14 000 ₽
         assertEquals(0, BigDecimal("-14000").compareTo(closed.pnl!!))
-        assertTrue(futuresRiskEngine.isDailyLossLimitReached())
+        assertTrue(drawdownProtection.isDailyLossLimitReached())
     }
 
     @Test
     fun `daily loss limit blocks new entry`() {
-        futuresRiskEngine.updateDailyPnL(BigDecimal("-5000"))
-        assertTrue(futuresRiskEngine.isDailyLossLimitReached())
+        drawdownProtection.updateDailyPnl(BigDecimal("-5000"))
+        assertTrue(drawdownProtection.isDailyLossLimitReached())
 
         // Единая точка отключения: TradingGate блокирует до попадания в риск-движок.
         awaitUntil { !tradingGate.isTradingEnabled() }
@@ -197,7 +195,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         assertFalse(status.enabled)
         assertTrue(status.blocks.any { it.reason == TradingBlockReason.DRAWDOWN_PROTECTION || it.reason == TradingBlockReason.DAILY_LOSS_LIMIT })
 
-        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(signal(BigDecimal("92000")))
         Thread.sleep(200) // дать async-обработчику отработать
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
@@ -218,7 +216,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             )
         }
 
-        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(signal(BigDecimal("92000")))
 
         awaitUntil {
             meterRegistry.counter("risk.entry.rejected", Tags.of("reason", "MAX_POSITIONS")).count() >= 1.0
@@ -235,7 +233,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         val status = runBlocking { tradingGate.getStatus() }
         assertTrue(status.blocks.any { it.reason == TradingBlockReason.OUTSIDE_HOURS })
 
-        eventPublisher.publishStrategyGenerated(strategy(BigDecimal("92000")))
+        eventPublisher.publishStrategyGenerated(signal(BigDecimal("92000")))
         Thread.sleep(200) // дать async-обработчику отработать
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
     }
@@ -245,16 +243,15 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         return BigDecimal.ZERO
     }
 
-    private fun strategy(target: BigDecimal): Strategy =
-        Strategy(
+    private fun signal(target: BigDecimal): Signal =
+        Signal(
             ticker = "Si",
             action = StrategyAction.BUY,
             targetPrice = target,
-            quantity = 1,
             confidence = 0.9,
             reasoning = "integration test",
+            timeframe = "MINUTE_10",
             cycleId = "test-cycle",
-            validUntil = LocalDateTime.now().plusMinutes(5),
         )
 
     private fun awaitUntil(

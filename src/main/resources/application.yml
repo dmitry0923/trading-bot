@@ -353,6 +353,17 @@ risk:
   volatility-index-enabled: true
   volatility-index-ticker: "RVI"
   max-volatility-index-percent: 50.0
+  # Portfolio Risk Engine (агрегированный портфельный риск: VaR95/effectiveN/концентрация)
+  portfolio-risk-enabled: true
+  portfolio-risk-blocked: true
+  max-portfolio-var-percent: 5.0
+  portfolio-var-warn-percent: 3.0
+  min-effective-positions: 1.5
+  portfolio-effective-warn-positions: 2.0
+  max-directional-concentration-percent: 100.0
+  portfolio-concentration-warn-percent: 100.0
+  min-portfolio-scale-factor: 0.25
+  portfolio-correlation-lookback-period: 50
   sectors:
     Si: FX
     SBER: FINANCE

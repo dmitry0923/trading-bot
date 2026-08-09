@@ -7,6 +7,9 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.PortfolioRiskEngine
+import com.trading.bot.domain.risk.PortfolioRiskRequest
+import com.trading.bot.domain.risk.PortfolioRiskReport
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.PositionSizeResult
@@ -69,6 +72,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
     private val marketDataGate = Mockito.mock(MarketDataGate::class.java)
+    private val portfolioRiskEngine = Mockito.mock(PortfolioRiskEngine::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private val service =
@@ -91,6 +95,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             tradeEventService,
             tradingGate,
             marketDataGate,
+            portfolioRiskEngine,
             meterRegistry,
         )
 
@@ -121,6 +126,17 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             portfolioMoney = BigDecimal.ZERO,
             currentGo = BigDecimal.ZERO,
             openPositions = emptyList(),
+        )
+    }
+
+    private fun anyPortfolioRiskRequest(): PortfolioRiskRequest {
+        Mockito.any(PortfolioRiskRequest::class.java)
+        return PortfolioRiskRequest(
+            candidateTicker = "Si",
+            candidateDirection = PositionDirection.LONG,
+            candidateNotionalRub = BigDecimal.ZERO,
+            openPositions = emptyList(),
+            aum = BigDecimal.ZERO,
         )
     }
 
@@ -206,6 +222,9 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             Mockito
                 .`when`(futuresRiskEngine.canEnter(anyEntryRequest()))
                 .thenReturn(RiskVerdict.Allowed)
+            Mockito
+                .`when`(portfolioRiskEngine.evaluate(anyPortfolioRiskRequest()))
+                .thenReturn(PortfolioRiskReport(allowed = true))
             Mockito
                 .`when`(
                     futuresPositionSizer.calculateContracts(

@@ -199,4 +199,51 @@ class RiskConfig {
 
     /** Уровень индекса волатильности (%), выше которого торговля ставится на паузу. */
     var maxVolatilityIndexPercent: Double = 50.0
+
+    // ===== Portfolio Risk Engine (агрегированный портфельный риск) =====
+
+    /** Мастер-выключатель портфельного риск-движка. */
+    var portfolioRiskEnabled: Boolean = true
+
+    /**
+     * Жёсткая блокировка при превышении портфельных лимитов. false — только
+     * мягкое уменьшение размера (SCALE), без запрета входа.
+     */
+    var portfolioRiskBlocked: Boolean = true
+
+    /**
+     * Лимит однодневного VaR95 портфеля, % от AUM. VaR95 = 1.645·σp·grossExposure.
+     * Выше — вход запрещён (PORTFOLIO_VAR).
+     */
+    var maxPortfolioVaRPercent: Double = 5.0
+
+    /** Warn-порог VaR95 (% AUM): выше — размер позиции начинает уменьшаться (SCALE). */
+    var portfolioVarWarnPercent: Double = 3.0
+
+    /**
+     * Лимит эффективного числа НЕЗАВИСИМЫХ ставок (correlation-adjusted HHI):
+     * 1 = весь портфель — одна ставка на рынок. Ниже — вход запрещён
+     * (PORTFOLIO_CONCENTRATION). Например 3 коррелированные позиции с ρ=0.75 -> ~1.2.
+     */
+    var minEffectivePositions: Double = 1.5
+
+    /** Warn-порог эффективного числа ставок: ниже — SCALE. */
+    var portfolioEffectiveWarnPositions: Double = 2.0
+
+    /**
+     * Лимит направленной концентрации |net|/gross, %. Для long-only портфеля
+     * концентрация всегда 100% — поэтому по умолчанию порог 100% (метрика
+     * информационная, в report). Актуализируется для смешанных long/short книг:
+     * ниже порога сигнализирует, что лонги и шорты не нетят друг друга.
+     */
+    var maxDirectionalConcentrationPercent: Double = 100.0
+
+    /** Warn-порог направленной концентрации, %: выше — SCALE. */
+    var portfolioConcentrationWarnPercent: Double = 100.0
+
+    /** Нижняя граница SCALE-фактора (минимальный остаточный размер позиции). */
+    var minPortfolioScaleFactor: Double = 0.25
+
+    /** Глубина расчёта корреляций портфеля (свечей). */
+    var portfolioCorrelationLookbackPeriod: Int = 50
 }

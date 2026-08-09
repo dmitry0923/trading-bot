@@ -29,9 +29,10 @@ class AdaptiveRiskServiceKellyTest {
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
     private val drawdownProtection = Mockito.mock(DrawdownProtectionService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
+    private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
 
     private val service =
-        AdaptiveRiskService(riskConfig, tradeAnalysis, positionRepo, candleCache, drawdownProtection, meterRegistry)
+        AdaptiveRiskService(riskConfig, tradeAnalysis, positionRepo, candleCache, drawdownProtection, meterRegistry, correlationProvider)
 
     private fun stats(
         winRate: Double,

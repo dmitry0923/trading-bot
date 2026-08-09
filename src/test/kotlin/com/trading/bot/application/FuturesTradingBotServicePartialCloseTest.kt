@@ -7,6 +7,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
@@ -61,6 +62,7 @@ class FuturesTradingBotServicePartialCloseTest {
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
     private val marketDataGate = Mockito.mock(MarketDataGate::class.java)
+    private val portfolioRiskEngine = Mockito.mock(PortfolioRiskEngine::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private val service =
@@ -83,6 +85,7 @@ class FuturesTradingBotServicePartialCloseTest {
             tradeEventService,
             tradingGate,
             marketDataGate,
+            portfolioRiskEngine,
             meterRegistry,
         )
 

@@ -256,20 +256,6 @@ qty = kellyQty, если kellyQty > 0 и kellyQty < strategy.quantity, инач�
 (например ENERGY: GAZP/LKOH/ROSN/NVTK/TATN). В отличие от глобального
 `exceedsCorrelationLimit` (порог 0.8), этот фильтр срабатывает только внутри сектора.
 
-### Адаптивные стопы (`calculateAdaptiveSL` / `calculateAdaptiveTP`)
-
-Множитель к ATR зависит от статистики попадания в стоп/тейк:
-
-| Статистика (14 дней) | Множитель SL | Статистика | Множитель TP |
-|---|---|---|---|
-| slHitRate > 0.65 | 2.5 × ATR | tpHitRate > 0.50 | 3.0 × ATR |
-| slHitRate < 0.30 | 1.5 × ATR | tpHitRate < 0.20 | 2.0 × ATR |
-| иначе | 2.0 × ATR | иначе | 2.5 × ATR |
-
-`SL = entry - mult*ATR` (LONG) / `entry + mult*ATR` (SHORT). Аналогично TP с обратным знаком. Результат округляется до 2 знаков.
-
-> Отличие от volatility guard: адаптивные стопы **расширяют** стоп при высокой волатильности статистики (slHitRate высокий), а guard запрещает вход при экстремальном ATR%. Они дополняют друг друга: guard срабатывает до входа, адаптив — внутри удержания.
-
 ### Динамический порог confidence
 
 `getAdaptiveConfidenceThreshold(ticker)` — таблица в разделе 3.5 (0.55–0.80).

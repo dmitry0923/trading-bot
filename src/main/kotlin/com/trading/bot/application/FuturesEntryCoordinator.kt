@@ -6,6 +6,8 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.PortfolioRiskEngine
+import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.RiskVerdict
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
@@ -49,6 +51,7 @@ class FuturesEntryCoordinator(
     private val riskConfig: RiskConfig,
     private val positionRepo: PositionRepository,
     private val engine: OrderExecutionEngine,
+    private val portfolioRiskEngine: PortfolioRiskEngine,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -127,6 +130,37 @@ class FuturesEntryCoordinator(
         if (params.quantity <= 0) {
             logger.warn { "Order builder produced zero quantity for $ticker" }
             return
+        }
+
+        // Портфельный риск (агрегат) — READ-ONLY для фьючерсного контура (фаза 1):
+        // Si-хедж не блокируется, но портфельная метрика (VaR95/effectiveN) фиксируется
+        // в gauges и логах. Жёсткий BLOCK/SCALE для Si включается отдельно в фазе 2.
+        val portfolioNotional = entryPrice.multiply(BigDecimal(params.quantity))
+        val portfolioReport =
+            portfolioRiskEngine.evaluate(
+                PortfolioRiskRequest(
+                    candidateTicker = ticker,
+                    candidateDirection = direction,
+                    candidateNotionalRub = portfolioNotional,
+                    openPositions = openPositions,
+                    aum = portfolioMoney,
+                ),
+            )
+        if (!portfolioReport.allowed) {
+            meterRegistry
+                .counter(
+                    "futures.portfolio.readonly",
+                    Tags.of("reasons", portfolioReport.reasons.joinToString("|")),
+                ).increment()
+            logger.warn {
+                "Portfolio risk (read-only) $ticker: ${portfolioReport.reasons.joinToString("|")} " +
+                    "eff=${portfolioReport.effectivePositions} var95=${portfolioReport.var95Rub}"
+            }
+        } else if (portfolioReport.scaleDownFactor < BigDecimal.ONE) {
+            logger.info {
+                "Portfolio risk (read-only) $ticker: scale ${portfolioReport.scaleDownFactor} " +
+                    "eff=${portfolioReport.effectivePositions}"
+            }
         }
 
         val opened =

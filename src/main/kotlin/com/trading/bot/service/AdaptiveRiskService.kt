@@ -1,7 +1,6 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -23,7 +22,8 @@ import kotlin.math.sqrt
  * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
  * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
  * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
- * - correlationOf()/exceedsCorrelationLimit(): корреляционный фильтр по закрытиям из Redis
+ * - exceedsCorrelationLimit()/exceedsSectorCorrelationLimit(): корреляционные
+ *   фильтры по закрытиям из Redis (математика — общий [CorrelationMatrixProvider])
  * - Все решения логируются в метрики adaptive.*
  */
 @Service
@@ -34,49 +34,23 @@ class AdaptiveRiskService(
     private val candleCache: CandleCacheService,
     private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
+    private val correlationProvider: CorrelationMatrixProvider,
 ) {
     private val logger = KotlinLogging.logger {}
     private val correlationThreshold = 0.8
-    private val correlationMinSamples = 30
 
     /**
-     * Коэффициент корреляции Пирсона между ценами закрытия двух тикеров
-     * за последние [period] свечей из Redis-кэша.
+     * Коэффициент корреляции Пирсона между ценами закрытия двух тикеров.
      *
-     * @param a первый тикер
-     * @param b второй тикер
-     * @param timeframe таймфрейм свечей
-     * @param period глубина расчёта
-     * @return корреляция в [-1, 1] или null, если данных недостаточно
+     * Делегирование в общий [CorrelationMatrixProvider] — единая математика
+     * для корреляционных фильтров и портфельного риск-движка.
      */
     fun correlationOf(
         a: String,
         b: String,
         timeframe: String = "MINUTE_10",
         period: Int = 50,
-    ): Double? {
-        if (a == b) return 1.0
-        val x = candleCache.getRecentCandles(a, timeframe, period).map { it.closePrice.toDouble() }
-        val y = candleCache.getRecentCandles(b, timeframe, period).map { it.closePrice.toDouble() }
-        if (x.size < correlationMinSamples || y.size < correlationMinSamples) return null
-        val n = minOf(x.size, y.size)
-        val xs = x.takeLast(n)
-        val ys = y.takeLast(n)
-        val mx = xs.average()
-        val my = ys.average()
-        var num = 0.0
-        var dx2 = 0.0
-        var dy2 = 0.0
-        for (i in 0 until n) {
-            val dx = xs[i] - mx
-            val dy = ys[i] - my
-            num += dx * dy
-            dx2 += dx * dx
-            dy2 += dy * dy
-        }
-        if (dx2 == 0.0 || dy2 == 0.0) return null
-        return num / sqrt(dx2 * dy2)
-    }
+    ): Double? = correlationProvider.correlationOf(a, b, timeframe, period)
 
     /**
      * Корреляционный фильтр: запрещает открытие позиции, если корреляция
@@ -328,64 +302,6 @@ class AdaptiveRiskService(
      * @return последняя цена закрытия или null
      */
     private fun resolvePrice(ticker: String): BigDecimal? = candleCache.getRecentCandles(ticker, "MINUTE_10", 1).lastOrNull()?.closePrice
-
-    /**
-     * Адаптивная цена стоп-лосса: ATR * множитель, зависящий от SL hit rate тикера.
-     *
-     * @param entryPrice цена входа
-     * @param direction направление позиции
-     * @param ticker тикер инструмента
-     * @param atr текущее значение ATR
-     * @return цена стоп-лосса (с 2 знаками после запятой)
-     */
-    suspend fun calculateAdaptiveSL(
-        entryPrice: BigDecimal,
-        direction: PositionDirection,
-        ticker: String,
-        atr: BigDecimal,
-    ): BigDecimal {
-        val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        val baseMultiplier =
-            when {
-                (stats?.slHitRate ?: 0.0) > 0.65 -> BigDecimal("2.5")
-                (stats?.slHitRate ?: 0.0) < 0.30 -> BigDecimal("1.5")
-                else -> BigDecimal("2.0")
-            }
-        val atrBased = atr.multiply(baseMultiplier)
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.subtract(atrBased).setScale(2, RoundingMode.HALF_UP)
-            PositionDirection.SHORT -> entryPrice.add(atrBased).setScale(2, RoundingMode.HALF_UP)
-        }
-    }
-
-    /**
-     * Адаптивная цена тейк-профита: ATR * множитель, зависящий от TP hit rate тикера.
-     *
-     * @param entryPrice цена входа
-     * @param direction направление позиции
-     * @param ticker тикер инструмента
-     * @param atr текущее значение ATR
-     * @return цена тейк-профита (с 2 знаками после запятой)
-     */
-    suspend fun calculateAdaptiveTP(
-        entryPrice: BigDecimal,
-        direction: PositionDirection,
-        ticker: String,
-        atr: BigDecimal,
-    ): BigDecimal {
-        val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        val baseMultiplier =
-            when {
-                (stats?.tpHitRate ?: 0.0) > 0.50 -> BigDecimal("3.0")
-                (stats?.tpHitRate ?: 0.0) < 0.20 -> BigDecimal("2.0")
-                else -> BigDecimal("2.5")
-            }
-        val atrBased = atr.multiply(baseMultiplier)
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.add(atrBased).setScale(2, RoundingMode.HALF_UP)
-            PositionDirection.SHORT -> entryPrice.subtract(atrBased).setScale(2, RoundingMode.HALF_UP)
-        }
-    }
 
     /**
      * Адаптивный порог уверенности для арбитра по тикеру.

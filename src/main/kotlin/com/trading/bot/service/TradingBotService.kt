@@ -16,6 +16,8 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.ExitRules
+import com.trading.bot.domain.risk.PortfolioRiskEngine
+import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.RiskVerdict
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.domain.signal.toSignal
@@ -77,6 +79,7 @@ class TradingBotService(
     private val risk: RiskManagementService,
     private val adaptiveRisk: AdaptiveRiskService,
     private val stockRiskEngine: StockRiskEngine,
+    private val portfolioRiskEngine: PortfolioRiskEngine,
     private val orderBuilder: OrderBuilder,
     private val candleCache: CandleCacheService,
     private val riskConfig: RiskConfig,
@@ -505,9 +508,9 @@ class TradingBotService(
             } else {
                 0
             }
-        val qty = kellyQty.coerceAtLeast(1)
+        var qty = kellyQty.coerceAtLeast(1)
 
-        val params = orderBuilder.buildStockOrderParams(direction, qty, entryPrice)
+        var params = orderBuilder.buildStockOrderParams(direction, qty, entryPrice)
         if (params.quantity <= 0) {
             logger.warn { "Zero quantity for $ticker after adaptive sizing" }
             return
@@ -518,6 +521,43 @@ class TradingBotService(
             logger.warn { "Portfolio exposure reject $ticker: gross/net limit" }
             meterRegistry.counter("bot.risk.reject", Tags.of("ticker", ticker, "reason", "PORTFOLIO_LIMIT")).increment()
             return
+        }
+
+        // Портфельный риск (агрегат): VaR95 / эффективное число ставок / направленная
+        // концентрация. BLOCK — запрет входа (когда несколько коррелированных позиций
+        // фактически образуют одну ставку на рынок); SCALE — уменьшение размера.
+        val portfolioReport =
+            portfolioRiskEngine.evaluate(
+                PortfolioRiskRequest(
+                    candidateTicker = ticker,
+                    candidateDirection = direction,
+                    candidateNotionalRub = candidateNotional,
+                    openPositions = open,
+                    aum = riskConfig.maxPositionRub,
+                ),
+            )
+        if (!portfolioReport.allowed) {
+            logger.warn { "Portfolio risk reject $ticker: ${portfolioReport.reasons.joinToString("|")}" }
+            meterRegistry
+                .counter("bot.risk.reject", Tags.of("ticker", ticker, "reason", portfolioReport.reasons.joinToString("|")))
+                .increment()
+            return
+        }
+        if (portfolioReport.scaleDownFactor < BigDecimal.ONE) {
+            val scaledQty =
+                BigDecimal(params.quantity)
+                    .multiply(portfolioReport.scaleDownFactor)
+                    .setScale(0, RoundingMode.DOWN)
+                    .toInt()
+                    .coerceAtLeast(1)
+            if (scaledQty != params.quantity) {
+                qty = scaledQty
+                params = orderBuilder.buildStockOrderParams(direction, scaledQty, entryPrice)
+                meterRegistry.counter("bot.portfolio.scaled", Tags.of("ticker", ticker)).increment()
+                logger.info {
+                    "Portfolio risk scale $ticker: qty ${params.quantity} (factor=${portfolioReport.scaleDownFactor})"
+                }
+            }
         }
 
         val opened =

@@ -50,9 +50,11 @@ class TradingGateTest {
         Mockito.`when`(drawdownProtection.entryBlockReason()).thenReturn("DAILY_LOSS: -12000 RUB <= -10000 RUB")
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(hoursAllowed)
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(freshData)
-        Mockito.`when`(candleCache.getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+        Mockito
+            .`when`(candleCache.getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
             .thenReturn(emptyList())
-        Mockito.`when`(candleCache.calculateAtr(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+        Mockito
+            .`when`(candleCache.calculateAtr(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
             .thenReturn(null)
         runBlocking {
             Mockito.`when`(adaptiveRisk.shouldPauseTrading(Mockito.anyString())).thenReturn(false)
@@ -188,9 +190,11 @@ class TradingGateTest {
                 volume = 100L,
                 time = java.time.LocalDateTime.now(),
             )
-        Mockito.`when`(candleCache.getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+        Mockito
+            .`when`(candleCache.getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
             .thenReturn(listOf(candle))
-        Mockito.`when`(candleCache.calculateAtr(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+        Mockito
+            .`when`(candleCache.calculateAtr(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
             .thenReturn(BigDecimal("20"))
         Mockito.`when`(riskManagement.isVolatilityTooHigh(any(), any())).thenReturn(true)
         val status = runBlocking { g.getStatus() }

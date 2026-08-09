@@ -31,6 +31,7 @@ class StrategyRepository(
             cycleId = row.require("cycle_id", String::class.java),
             validUntil = row.require("valid_until", LocalDateTime::class.java),
             timeframe = row.get("timeframe", String::class.java) ?: "MINUTE_10",
+            strategyName = row.get("strategy_name", String::class.java),
             createdAt = row.require("created_at", LocalDateTime::class.java),
         )
 
@@ -55,8 +56,8 @@ class StrategyRepository(
     suspend fun save(strategy: Strategy): Strategy {
         val sql =
             """
-            INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, timeframe, created_at)
-            VALUES (:ticker, :action, :targetPrice, :quantity, :stopLoss, :takeProfit, :trailingStop, :confidence, :reasoning, :rawJson, :cycleId, :validUntil, :timeframe, :createdAt)
+            INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, timeframe, strategy_name, created_at)
+            VALUES (:ticker, :action, :targetPrice, :quantity, :stopLoss, :takeProfit, :trailingStop, :confidence, :reasoning, :rawJson, :cycleId, :validUntil, :timeframe, :strategyName, :createdAt)
             RETURNING id
             """.trimIndent()
         val id =
@@ -75,6 +76,7 @@ class StrategyRepository(
                 .bindOrNull("cycleId", strategy.cycleId)
                 .bind("validUntil", strategy.validUntil)
                 .bind("timeframe", strategy.timeframe)
+                .bindOrNull("strategyName", strategy.strategyName)
                 .bind("createdAt", strategy.createdAt)
                 .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
                 .one()

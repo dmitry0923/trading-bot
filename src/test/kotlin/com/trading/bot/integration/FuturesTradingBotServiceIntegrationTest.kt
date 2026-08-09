@@ -193,7 +193,12 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         awaitUntil { !tradingGate.isTradingEnabled() }
         val status = runBlocking { tradingGate.getStatus() }
         assertFalse(status.enabled)
-        assertTrue(status.blocks.any { it.reason == TradingBlockReason.DRAWDOWN_PROTECTION || it.reason == TradingBlockReason.DAILY_LOSS_LIMIT })
+        assertTrue(
+            status.blocks.any {
+                it.reason == TradingBlockReason.DRAWDOWN_PROTECTION ||
+                    it.reason == TradingBlockReason.DAILY_LOSS_LIMIT
+            },
+        )
 
         eventPublisher.publishStrategyGenerated(signal(BigDecimal("92000")))
         Thread.sleep(200) // дать async-обработчику отработать

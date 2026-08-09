@@ -10,5 +10,7 @@ package com.trading.bot.domain.risk
 sealed interface RiskVerdict {
     data object Allowed : RiskVerdict
 
-    data class Rejected(val reason: String) : RiskVerdict
+    data class Rejected(
+        val reason: String,
+    ) : RiskVerdict
 }

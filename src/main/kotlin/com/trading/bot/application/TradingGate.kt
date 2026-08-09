@@ -51,10 +51,11 @@ class TradingGate(
      * Полный статус торговли: глобальные блоки (по приоритету) + per-ticker блоки.
      */
     suspend fun getStatus(): TradingStatus {
-        val blocks = buildList {
-            addAll(globalBlocks())
-            addAll(perTickerBlocks())
-        }
+        val blocks =
+            buildList {
+                addAll(globalBlocks())
+                addAll(perTickerBlocks())
+            }
         return TradingStatus(blocks = blocks)
     }
 

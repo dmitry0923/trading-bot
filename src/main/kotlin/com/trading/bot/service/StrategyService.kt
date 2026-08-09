@@ -1,18 +1,19 @@
 package com.trading.bot.service
 
-import com.trading.bot.agent.ArbitratorAgent
-import com.trading.bot.agent.ContrarianAgent
-import com.trading.bot.agent.FundamentalAnalysisAgent
 import com.trading.bot.agent.PerformanceFeedbackAgent
-import com.trading.bot.agent.StrategyAgent
-import com.trading.bot.agent.TechnicalAnalysisAgent
+import com.trading.bot.application.StrategyRunner
+import com.trading.bot.application.strategy.DiscretionaryStrategy
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.signal.Signal
+import com.trading.bot.domain.strategy.StrategyContext
+import com.trading.bot.domain.strategy.StrategyDecision
+import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.CandleRepository
@@ -43,27 +44,23 @@ import java.time.ZoneId
  * Каждый тик (cycleId) бота:
  *  1. Meta-Agent (feedback) генерируется ПАРАЛЛЕЛЬНО для всех тикеров.
  *  2. Все тикеры обрабатываются ПАРАЛЛЕЛЬНО (по одному coroutine на тикер).
- *  3. Внутри тикера независимые LLM-агенты (Technical + Fundamental) вызываются
- *     одновременно, затем последовательно: Strategist -> Contrarian -> Arbitrator.
+ *  3. Внутри тикера StrategyRunner запускает ВСЕ стратегии параллельно
+ *     (детерминированные правила + LLM-путь DiscretionaryStrategy); победитель
+ *     по максимальной уверенности даёт Signal.
  *
  * Ускорение цикла на 10 тикерах: ~50-150 сек x5 агентов -> <60 сек на весь цикл.
  *
- * @see com.trading.bot.agent.TechnicalAnalysisAgent
- * @see com.trading.bot.agent.FundamentalAnalysisAgent
- * @see com.trading.bot.agent.StrategyAgent
- * @see com.trading.bot.agent.ContrarianAgent
- * @see com.trading.bot.agent.ArbitratorAgent
+ * @see com.trading.bot.application.StrategyRunner
+ * @see com.trading.bot.domain.strategy.Strategy
+ * @see com.trading.bot.application.strategy.DiscretionaryStrategy
  */
 @Service
 class StrategyService(
     private val tradingConfig: TradingConfig,
     private val alorClient: AlorClient,
     private val moexClient: MoexClient,
-    private val techAgent: TechnicalAnalysisAgent,
-    private val fundAgent: FundamentalAnalysisAgent,
-    private val stratAgent: StrategyAgent,
-    private val contrAgent: ContrarianAgent,
-    private val arbAgent: ArbitratorAgent,
+    private val strategyRunner: StrategyRunner,
+    private val discretionaryStrategy: DiscretionaryStrategy,
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
     private val redis: RedisCacheService,
@@ -196,11 +193,30 @@ class StrategyService(
             return
         }
 
-        val (candles, snapshot, fb) =
+        val relatedTicker = tradingConfig.pairs[ticker]
+        val (candles, snapshot, fb, relatedQuote) =
             coroutineScope {
                 val candlesDeferred = async { loadCandles(ticker, timeframe) }
                 val snapshotDeferred = async { alorClient.getMarketSnapshot(ticker) }
-                Triple(candlesDeferred.await(), snapshotDeferred.await(), feedbackDeferred.await())
+                val relatedDeferred =
+                    async {
+                        if (relatedTicker == null) {
+                            null
+                        } else {
+                            try {
+                                alorClient.getMarketSnapshot(relatedTicker)?.currentPrice
+                            } catch (e: Exception) {
+                                logger.warn(e) { "Failed to fetch related quote $relatedTicker for $ticker" }
+                                null
+                            }
+                        }
+                    }
+                TickerInputs(
+                    candles = candlesDeferred.await(),
+                    snapshot = snapshotDeferred.await(),
+                    feedback = feedbackDeferred.await(),
+                    relatedQuote = relatedDeferred.await(),
+                )
             }
 
         // Защита от анализа на «мёртвых» свечах: если последняя свеча старше
@@ -224,40 +240,33 @@ class StrategyService(
             return
         }
 
-        // Независимые агенты Tech + Fund — параллельно (экономит ~1 LLM-вызов за такт)
-        val (tech, fund) =
-            coroutineScope {
-                val techDeferred = async { techAgent.analyze(ticker, candles, snapshot, cycleId) }
-                val fundDeferred = async { fundAgent.analyze(ticker, cycleId) }
-                techDeferred.await() to fundDeferred.await()
-            }
-
-        val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
-        val draft = stratAgent.formulate(ticker, tech, fund, snapshot, cycleId, adaptiveThreshold = adaptiveConf)
-        val challenge = contrAgent.challenge(draft, tech, fund, snapshot, cycleId)
-        val final =
-            arbAgent.adjudicate(
-                draft,
-                challenge,
-                tech,
-                fund,
-                snapshot,
-                cycleId,
+        // Все стратегии запускаются ПАРАЛЛЕЛЬНО; победитель — по максимальной
+        // уверенности. LLM-путь (DiscretionaryStrategy) — одна из реализаций.
+        val context =
+            StrategyContext(
+                ticker = ticker,
+                snapshot = snapshot,
+                candles = candles,
+                indicators = IndicatorCalculator.calculate(candles),
+                cycleId = cycleId,
                 contextPrompt = fb?.contextPrompt,
-                adaptiveConfidence = adaptiveConf,
+                relatedQuote = relatedQuote,
             )
+        val result = strategyRunner.runAll(context)
+        val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
 
         // Сигнал стратегического этапа — чистое направление (без quantity/SL/TP).
-        val effectiveConfidence = final.confidence.coerceAtLeast(adaptiveConf)
+        val effectiveConfidence = result.decision.confidence.coerceAtLeast(adaptiveConf)
         val signal =
             Signal(
                 ticker = ticker,
-                action = final.action,
-                targetPrice = final.targetPrice,
+                action = result.decision.action,
+                targetPrice = result.decision.targetPrice,
                 confidence = effectiveConfidence,
-                reasoning = final.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}",
+                reasoning = result.decision.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}",
                 timeframe = timeframe,
                 cycleId = cycleId,
+                strategyName = result.winnerId,
             )
 
         // Стратегия как история решения. Риск-поля (quantity/SL/TP/trailing)
@@ -273,9 +282,10 @@ class StrategyService(
                 trailingStop = false,
                 confidence = signal.confidence,
                 reasoning = signal.reasoning,
-                rawJson = objectMapper.writeValueAsString(final),
+                rawJson = objectMapper.writeValueAsString(result.all),
                 cycleId = cycleId,
                 timeframe = timeframe,
+                strategyName = result.winnerId,
                 validUntil = LocalDateTime.now().plusMinutes(10),
             )
 
@@ -287,33 +297,31 @@ class StrategyService(
         val shadowExecution = inExperiment && paperTradingService.isShadowExecution()
         if (inExperiment) {
             paperTradingService.recordControlDecision(cycleId, ticker, timeframe, signal, strategy.rawJson, executed = !shadowExecution)
-            paperTradingService.produceVariantDecision(
-                cycleId = cycleId,
-                ticker = ticker,
-                timeframe = timeframe,
-                draft = draft,
-                challenge = challenge,
-                tech = tech,
-                fund = fund,
-                snapshot = snapshot,
-                control = signal,
-                contextPrompt = fb?.contextPrompt,
-                adaptiveConfidence = adaptiveConf,
-            )
+            // Вариант = повторный вызов Арбитра с другим промптом (LLM A/B) либо
+            // теневая копия контроля. Входы варианта берутся из DiscretionaryStrategy.
+            val variantVersion = paperTradingService.variantVersion()
+            val variant =
+                if (variantVersion != null) {
+                    discretionaryStrategy.produceVariant(context, variantVersion)
+                } else {
+                    StrategyDecision(signal.action, signal.targetPrice, signal.confidence, signal.reasoning)
+                }
+            paperTradingService.recordVariantDecision(cycleId, ticker, timeframe, variant, version = variantVersion)
         }
 
         if (shadowExecution) {
-            logger.info { "SHADOW: $ticker/$timeframe decision=${final.action} recorded but NOT executed" }
+            logger.info { "SHADOW: $ticker/$timeframe decision=${result.decision.action} recorded but NOT executed" }
         } else {
             eventPublisher.publishStrategyGenerated(signal)
         }
         meterRegistry
             .counter(
                 "strategy.saved",
-                Tags.of("ticker", ticker, "timeframe", timeframe, "action", final.action.name),
+                Tags.of("ticker", ticker, "timeframe", timeframe, "action", result.decision.action.name, "strategy", result.winnerId),
             ).increment()
         logger.info {
-            "Strategy $ticker/$timeframe: ${final.action} @ ${final.targetPrice} (adaptive conf=$adaptiveConf)"
+            "Strategy $ticker/$timeframe: ${result.decision.action} @ ${result.decision.targetPrice} " +
+                "via ${result.winnerId} (adaptive conf=$adaptiveConf)"
         }
     }
 
@@ -374,4 +382,12 @@ class StrategyService(
     private companion object {
         private val MOSCOW_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
     }
+
+    /** Параллельно загруженные входные данные тикера для стратегического этапа. */
+    private data class TickerInputs(
+        val candles: List<Candle>,
+        val snapshot: MarketSnapshot?,
+        val feedback: PerformanceFeedbackAgent.StrategyFeedback?,
+        val relatedQuote: BigDecimal?,
+    )
 }

@@ -1,15 +1,10 @@
 package com.trading.bot.service
 
-import com.trading.bot.agent.ArbitratorAgent
-import com.trading.bot.agent.ContrarianAgent
-import com.trading.bot.agent.StrategyAgent
 import com.trading.bot.config.ExperimentConfig
 import com.trading.bot.domain.signal.Signal
+import com.trading.bot.domain.strategy.StrategyDecision
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.infrastructure.llm.PromptRegistry
-import com.trading.bot.model.dto.FundamentalReport
-import com.trading.bot.model.dto.MarketSnapshot
-import com.trading.bot.model.dto.TechnicalReport
 import com.trading.bot.model.entity.ExperimentDecision
 import com.trading.bot.repository.ExperimentDecisionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -28,10 +23,12 @@ import java.math.RoundingMode
  * Shadow Mode / Decision-level A/B эксперимент.
  *
  * Для каждого цикла пишутся две записи в [ExperimentDecisionRepository]:
- *  - CONTROL — решение текущего пайплайна; исполняется (если не включён полный shadow);
+ *  - CONTROL — решение текущего пайплайна (победитель StrategyRunner); исполняется
+ *    (если не включён полный shadow);
  *  - VARIANT — экспериментальная рука (is_paper=true, никогда не исполняется):
- *    повторный вызов Арбитра с [ExperimentConfig.variantPromptVersion] (реальное A/B,
- *    extra LLM-вызов) либо теневая копия CONTROL (без доп. затрат).
+ *    повторный вызов Арбитра через DiscretionaryStrategy.produceVariant с
+ *    [ExperimentConfig.variantPromptVersion] (реальное A/B, extra LLM-вызов)
+ *    либо теневая копия CONTROL (без доп. затрат).
  *
  * Исходы сравниваются при закрытии контрольной позиции ([onPositionClosed]):
  *  - контрольная рука получает фактический P&L;
@@ -44,7 +41,6 @@ import java.math.RoundingMode
 @Service
 class PaperTradingService(
     private val experimentConfig: ExperimentConfig,
-    private val arbitratorAgent: ArbitratorAgent,
     private val decisionRepository: ExperimentDecisionRepository,
     private val meterRegistry: MeterRegistry,
 ) {
@@ -101,50 +97,23 @@ class PaperTradingService(
         return decision
     }
 
+    /** Версия промпта вариантной руки; null — вариант = теневая копия контроля. */
+    fun variantVersion(): String? = experimentConfig.variantPromptVersion
+
     /**
-     * Вычисляет и записывает вариантное (paper) решение. Никогда не исполняется.
+     * Записывает вариантное (paper) решение эксперимента. Никогда не исполняется.
+     *
+     * @param variant решение вариантной руки: LLM-пересчёт Арбитра
+     *                (DiscretionaryStrategy.produceVariant) либо теневая копия контроля
+     * @param version версия промпта вариантной руки (null — теневая копия)
      */
-    suspend fun produceVariantDecision(
+    suspend fun recordVariantDecision(
         cycleId: String,
         ticker: String,
         timeframe: String,
-        draft: StrategyAgent.Draft,
-        challenge: ContrarianAgent.ChallengeReport,
-        tech: TechnicalReport,
-        fund: FundamentalReport,
-        snapshot: MarketSnapshot,
-        control: Signal,
-        contextPrompt: String?,
-        adaptiveConfidence: Double,
+        variant: StrategyDecision,
+        version: String?,
     ): ExperimentDecision {
-        val version = experimentConfig.variantPromptVersion
-        val usedLlm = version != null
-        val variantFinal: ArbitratorAgent.Final =
-            if (usedLlm) {
-                // Реальное A/B: тот же вход, другой промпт Арбитра. Semantic cache
-                // обходится, чтобы вариантная рука не получила ответ контрольной.
-                arbitratorAgent.adjudicate(
-                    draft = draft,
-                    challenge = challenge,
-                    tech = tech,
-                    fund = fund,
-                    snapshot = snapshot,
-                    cycleId = cycleId,
-                    contextPrompt = contextPrompt,
-                    adaptiveConfidence = adaptiveConfidence,
-                    version = version,
-                    bypassCache = true,
-                )
-            } else {
-                // Без variantPromptVersion вариант = тень контроля (копия решения).
-                ArbitratorAgent.Final(
-                    action = control.action,
-                    targetPrice = control.targetPrice,
-                    confidence = control.confidence,
-                    reasoning = control.reasoning,
-                )
-            }
-
         val decision =
             ExperimentDecision(
                 cycleId = cycleId,
@@ -152,23 +121,23 @@ class PaperTradingService(
                 arm = "VARIANT",
                 ticker = ticker,
                 timeframe = timeframe,
-                action = variantFinal.action.name,
-                targetPrice = variantFinal.targetPrice,
+                action = variant.action.name,
+                targetPrice = variant.targetPrice,
                 quantity = 0,
                 stopLoss = null,
                 takeProfit = null,
-                confidence = variantFinal.confidence,
-                reasoning = variantFinal.reasoning,
+                confidence = variant.confidence,
+                reasoning = variant.reasoning,
                 isPaper = true,
                 version = version ?: "shadow-copy",
                 executed = false,
             )
         decisionRepository.save(decision)
-        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "VARIANT", "action", variantFinal.action.name)).increment()
-        meterRegistry.counter("experiment.variant.llm", Tags.of("mode", if (usedLlm) "LLM" else "COPY")).increment()
+        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "VARIANT", "action", variant.action.name)).increment()
+        meterRegistry.counter("experiment.variant.llm", Tags.of("mode", if (version != null) "LLM" else "COPY")).increment()
         logger.info {
-            "Experiment ${experimentConfig.experimentId}: $ticker/$timeframe variant=${variantFinal.action} " +
-                "conf=${String.format("%.2f", variantFinal.confidence)} (${if (usedLlm) "LLM v$version" else "shadow copy"})"
+            "Experiment ${experimentConfig.experimentId}: $ticker/$timeframe variant=${variant.action} " +
+                "conf=${String.format("%.2f", variant.confidence)} (${if (version != null) "LLM v$version" else "shadow copy"})"
         }
         return decision
     }

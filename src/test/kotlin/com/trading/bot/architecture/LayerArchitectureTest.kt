@@ -20,8 +20,8 @@ import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
     packages = ["com.trading.bot"],
     importOptions = [ImportOption.DoNotIncludeTests::class],
 )
+@Suppress("ktlint:standard:property-naming", "unused")
 class LayerArchitectureTest {
-
     /** Правило 1: чистый домен. domain зависит только от model, java и kotlin. */
     @ArchTest
     val `domain must not depend on infrastructure` =
@@ -152,4 +152,21 @@ class LayerArchitectureTest {
             .should()
             .onlyHaveDependentClassesThat()
             .resideInAnyPackage("..domain..", "..application..", "..service..", "..event..", "..model..", "..agent..")
+
+    /** Стратегии (детерминированные правила + LLM-путь) не считают риск-параметры
+     *  и не исполняют сделки: сайзинг/стопы — этап RiskEngine/PositionSizer/OrderBuilder. */
+    @ArchTest
+    val `strategies must not depend on risk or execution layer` =
+        noClasses()
+            .that()
+            .resideInAnyPackage("..application.strategy..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAnyPackage(
+                "..domain.risk..",
+                "..application.risk..",
+                "..application.OrderExecutionEngine",
+                "..service.OrderOutboxService",
+                "..event.TradingEventPublisher",
+            )
 }

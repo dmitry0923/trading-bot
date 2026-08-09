@@ -19,5 +19,6 @@ data class Strategy(
     val cycleId: String,
     val validUntil: LocalDateTime,
     val timeframe: String = "MINUTE_10",
+    val strategyName: String? = null,
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

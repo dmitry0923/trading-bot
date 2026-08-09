@@ -33,3 +33,5 @@ databaseChangeLog:
       file: db/changelog/changes/016-idempotency-key-unique.sql
   - include:
       file: db/changelog/changes/017-trading-halt.sql
+  - include:
+      file: db/changelog/changes/018-strategy-name.sql

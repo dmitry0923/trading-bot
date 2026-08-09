@@ -1,4 +1,4 @@
-package com.trading.bot.service
+package com.trading.bot.domain.technical
 
 import com.trading.bot.model.entity.Candle
 import java.math.BigDecimal
@@ -14,6 +14,8 @@ import kotlin.math.sqrt
  * - Все методы чисто функциональные и потокобезопасные (без состояния)
  */
 object IndicatorCalculator {
+    private const val MACD_SIGNAL_EMA_PERIOD = 9
+
     data class Indicators(
         val rsi: Double,
         val atr: Double,
@@ -166,12 +168,9 @@ object IndicatorCalculator {
         return result
     }
 
-    private fun emaFromDoubles(
-        values: List<Double>,
-        period: Int,
-    ): List<Double> {
+    private fun emaFromDoubles(values: List<Double>): List<Double> {
         if (values.isEmpty()) return emptyList()
-        val k = 2.0 / (period + 1)
+        val k = 2.0 / (MACD_SIGNAL_EMA_PERIOD + 1)
         val result = ArrayList<Double>()
         var prev = values.first()
         result.add(prev)
@@ -192,7 +191,7 @@ object IndicatorCalculator {
         val e12 = ema(closes, 12)
         val e26 = ema(closes, 26)
         val macdLine = e12.zip(e26).map { it.first - it.second }
-        val signal = emaFromDoubles(macdLine, 9)
+        val signal = emaFromDoubles(macdLine)
         return Triple(macdLine.last(), signal.last(), macdLine.last() - signal.last())
     }
 

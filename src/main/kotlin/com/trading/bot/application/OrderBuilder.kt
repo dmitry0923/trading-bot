@@ -40,8 +40,9 @@ class OrderBuilder(
         size: PositionSizeResult,
         leverage: BigDecimal,
     ): OrderParams {
-        val instrument = instrumentsConfig.find(ticker)
-            ?: return OrderParams(direction = direction, quantity = 0)
+        val instrument =
+            instrumentsConfig.find(ticker)
+                ?: return OrderParams(direction = direction, quantity = 0)
         val stopLossPoints = riskConfig.defaultStopLossPoints
         val takeProfitPoints = riskConfig.defaultTakeProfitPoints
         val slOffset = BigDecimal(stopLossPoints).multiply(instrument.priceStep)

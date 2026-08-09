@@ -1,12 +1,12 @@
 package com.trading.bot.application
 
+import com.trading.bot.application.risk.FuturesPositionSizer
+import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.application.risk.FuturesRiskEngine
-import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.event.ExecutionReportEvent
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.StrategyGeneratedEvent

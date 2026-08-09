@@ -1,10 +1,10 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.CandleRepository
-import com.trading.bot.service.IndicatorCalculator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal

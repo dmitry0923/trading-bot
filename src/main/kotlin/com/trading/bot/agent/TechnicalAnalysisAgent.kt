@@ -1,5 +1,6 @@
 package com.trading.bot.agent
 
+import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -8,7 +9,6 @@ import com.trading.bot.model.dto.TechnicalReport
 import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.AgentLogRepository
-import com.trading.bot.service.IndicatorCalculator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags

@@ -103,8 +103,16 @@ object ExitRules {
         val qty = BigDecimal(pos.quantity)
         val variationMargin =
             when (pos.direction) {
-                PositionDirection.LONG -> price.subtract(pos.entryPrice).multiply(pointValue).multiply(qty)
-                PositionDirection.SHORT -> pos.entryPrice.subtract(price).multiply(pointValue).multiply(qty)
+                PositionDirection.LONG -> {
+                    price.subtract(pos.entryPrice).multiply(pointValue).multiply(qty)
+                }
+
+                PositionDirection.SHORT -> {
+                    pos.entryPrice
+                        .subtract(price)
+                        .multiply(pointValue)
+                        .multiply(qty)
+                }
             }
         pos.variationMargin = variationMargin
         if (variationMargin <= BigDecimal.ZERO) return

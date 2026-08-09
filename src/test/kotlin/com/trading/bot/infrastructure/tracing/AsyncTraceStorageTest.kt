@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.Instant
+import java.util.concurrent.CopyOnWriteArrayList
 
 class AsyncTraceStorageTest {
     private val meterRegistry = SimpleMeterRegistry()
@@ -45,7 +46,7 @@ class AsyncTraceStorageTest {
         }
 
     private suspend fun awaitUntil(
-        timeoutMs: Long = 2_000,
+        timeoutMs: Long = 5_000,
         condition: () -> Boolean,
     ) {
         val deadline = System.currentTimeMillis() + timeoutMs
@@ -56,7 +57,7 @@ class AsyncTraceStorageTest {
     }
 
     private open class InMemoryStorage : TraceStorage {
-        val saved = mutableListOf<Pair<String, LlmTrace>>()
+        val saved = CopyOnWriteArrayList<Pair<String, LlmTrace>>()
 
         override suspend fun save(
             trace: LlmTrace,
@@ -111,12 +112,14 @@ class AsyncTraceStorageTest {
     fun `buffer overflow falls back to synchronous save`() =
         runBlocking {
             val gate = CompletableDeferred<Unit>()
+            val firstSaveStarted = CompletableDeferred<Unit>()
             val delegate =
                 object : InMemoryStorage() {
                     override suspend fun save(
                         trace: LlmTrace,
                         key: String?,
                     ): String? {
+                        firstSaveStarted.complete(Unit)
                         gate.await()
                         return super.save(trace, key)
                     }
@@ -127,9 +130,9 @@ class AsyncTraceStorageTest {
                 val a = async { storage.save(trace(traceId = "a")) }
                 val b = async { storage.save(trace(traceId = "b")) }
                 val c = async { storage.save(trace(traceId = "c")) }
-                // Даём фоновому консюмеру подхватить первую запись и заблокироваться,
-                // чтобы буфер гарантированно переполнился для третьей.
-                delay(50)
+                // Ждём, пока первый вызов delegate.save заблокируется на gate:
+                // буфер переполнен, третья запись гарантированно уйдёт в sync-fallback.
+                firstSaveStarted.await()
                 gate.complete(Unit)
                 val keys = listOf(a, b, c).awaitAll()
                 assertTrue(keys.all { it != null }, "all saves must return a key")

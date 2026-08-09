@@ -21,6 +21,9 @@ import org.springframework.stereotype.Component
  * @property candleStaleBufferMs дополнительный буфер к свежести последней свечи в
  *   стратегическом цикле (поверх 2×длительности таймфрейма); при устаревших свечах
  *   тикер пропускается
+ * @property pairs пары для арбитража: тикер -> связанный инструмент
+ *   (напр. "Si" -> "USDRUB"). Задаёт relatedQuote в StrategyContext; без пары
+ *   ArbitrageStrategy всегда HOLD
  */
 @Component
 @ConfigurationProperties(prefix = "trading")
@@ -36,4 +39,5 @@ class TradingConfig {
     var wsQuotesEnabled: Boolean = true
     var marketDataMaxAgeMs: Long = 15_000
     var candleStaleBufferMs: Long = 120_000
+    var pairs: Map<String, String> = emptyMap()
 }

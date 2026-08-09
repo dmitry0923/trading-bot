@@ -20,6 +20,7 @@ data class Signal(
     val reasoning: String,
     val timeframe: String,
     val cycleId: String,
+    val strategyName: String? = null,
 )
 
 /**
@@ -37,4 +38,5 @@ fun Strategy.toSignal(): Signal =
         reasoning = reasoning,
         timeframe = timeframe,
         cycleId = cycleId,
+        strategyName = strategyName,
     )

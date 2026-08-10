@@ -123,16 +123,42 @@ class PositionRepository(
     }
 
     /**
-     * Все закрытые позиции (включая фьючерсы) в порядке закрытия — источник данных
-     * для Multi-Tier Drawdown Protection (AUM, дневной/скользящие лимиты, серия убытков).
+     * Агрегаты по закрытым позициям за ВСЮ историю (без загрузки строк):
+     * - [totalRealized] — суммарный реализованный P&L;
+     * - [peakRealized] — максимальное кумулятивное значение реализованного P&L
+     *   в хронологическом порядке закрытий (для просадки от пика).
+     *
+     * Позиции с NULL pnl не влияют на сумму (аналог sumOf { pnl ?: ZERO }).
+     * Один агрегирующий проход в БД вместо загрузки всех строк в память.
      */
-    suspend fun findClosed(): List<Position> {
-        val sql = "SELECT * FROM positions WHERE status != 'OPEN' ORDER BY closed_at DESC"
+    data class ClosedPositionAggregates(
+        val totalRealized: BigDecimal,
+        val peakRealized: BigDecimal,
+    )
+
+    suspend fun findClosedAggregates(): ClosedPositionAggregates {
+        val sql =
+            """
+            SELECT COALESCE(SUM(pnl), 0) AS total,
+                   COALESCE(MAX(cum), 0) AS peak
+            FROM (
+                SELECT pnl,
+                       SUM(pnl) OVER (
+                           ORDER BY closed_at ASC NULLS FIRST
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                       ) AS cum
+                FROM positions
+                WHERE status != 'OPEN'
+            ) s
+            """.trimIndent()
         return databaseClient
             .sql(sql)
-            .map { row, _ -> toPosition(row) }
-            .all()
-            .collectList()
+            .map { row, _ ->
+                ClosedPositionAggregates(
+                    totalRealized = row.get("total", BigDecimal::class.java) ?: BigDecimal.ZERO,
+                    peakRealized = row.get("peak", BigDecimal::class.java) ?: BigDecimal.ZERO,
+                )
+            }.one()
             .awaitSingle()
     }
 

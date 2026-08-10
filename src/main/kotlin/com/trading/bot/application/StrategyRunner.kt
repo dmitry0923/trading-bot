@@ -117,7 +117,13 @@ class StrategyRunner(
                 id to weightedDecision
             }
 
-        val winner = weighted.maxByOrNull { it.second.confidence }!!
+        val winner =
+            weighted.maxByOrNull { it.second.confidence }
+                ?: return StrategyResult(
+                    winnerId = "NONE",
+                    decision = StrategyDecision.hold(context.snapshot.currentPrice, "No strategies evaluated"),
+                    all = emptyMap(),
+                )
         meterRegistry.counter("strategy.runner.winner", Tags.of("strategy", winner.first)).increment()
         if (regime != null && evaluated.size < strategies.size) {
             meterRegistry

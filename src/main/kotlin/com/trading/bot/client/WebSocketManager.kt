@@ -104,6 +104,15 @@ class WebSocketManager(
      */
     private val lastQuoteReceivedAtByTicker = ConcurrentHashMap<String, AtomicLong>()
 
+    // Потокобезопасные accessors без `!!`: init() гарантирует наличие записей,
+    // но при будущем динамическом добавлении потоков map-доступ не должен падать.
+    private fun stateOf(stream: WsStream): AtomicReference<WsConnectionStatus> =
+        statuses.computeIfAbsent(stream) { AtomicReference(WsConnectionStatus.DISCONNECTED) }
+
+    private fun activityOf(stream: WsStream): AtomicLong = lastActivityAt.computeIfAbsent(stream) { AtomicLong(0) }
+
+    private fun sequenceOf(stream: WsStream): AtomicLong = sequences.computeIfAbsent(stream) { AtomicLong(0) }
+
     init {
         for (stream in WsStream.entries) {
             statuses[stream] = AtomicReference(WsConnectionStatus.DISCONNECTED)
@@ -111,7 +120,7 @@ class WebSocketManager(
             sequences[stream] = AtomicLong(0)
         }
         for (stream in WsStream.entries) {
-            meterRegistry.gauge("alor.ws.status", Tags.of("stream", stream.name), statuses[stream]!!) { ref ->
+            meterRegistry.gauge("alor.ws.status", Tags.of("stream", stream.name), stateOf(stream)) { ref ->
                 if (ref.get() == WsConnectionStatus.CONNECTED) 1.0 else 0.0
             }
         }
@@ -127,8 +136,8 @@ class WebSocketManager(
         reconnectAttempt: Int,
         reason: String = "SUBSCRIBED",
     ) {
-        val was = statuses[stream]!!.getAndSet(WsConnectionStatus.CONNECTED)
-        lastActivityAt[stream]!!.set(Instant.now().toEpochMilli())
+        val was = stateOf(stream).getAndSet(WsConnectionStatus.CONNECTED)
+        activityOf(stream).set(Instant.now().toEpochMilli())
         lastQuoteTimeByTicker.clear()
         lastQuoteSeqByTicker.clear()
         lastQuoteReceivedAtByTicker.clear()
@@ -148,7 +157,7 @@ class WebSocketManager(
         reconnectAttempt: Int,
         reason: String,
     ) {
-        val was = statuses[stream]!!.getAndSet(WsConnectionStatus.DISCONNECTED)
+        val was = stateOf(stream).getAndSet(WsConnectionStatus.DISCONNECTED)
         meterRegistry.counter("alor.ws.disconnected", Tags.of("stream", stream.name, "reason", reason)).increment()
         if (was != WsConnectionStatus.DISCONNECTED) {
             logger.warn { "WS ${stream.name}: disconnected (attempt=$reconnectAttempt, reason=$reason)" }
@@ -161,16 +170,16 @@ class WebSocketManager(
      * heartbeat-ping. Используется watchdog'ом для определения «тихого» обрыва.
      */
     fun onActivity(stream: WsStream) {
-        lastActivityAt[stream]!!.set(System.currentTimeMillis())
+        activityOf(stream).set(System.currentTimeMillis())
     }
 
-    fun isConnected(stream: WsStream): Boolean = statuses[stream]!!.get() == WsConnectionStatus.CONNECTED
+    fun isConnected(stream: WsStream): Boolean = stateOf(stream).get() == WsConnectionStatus.CONNECTED
 
     /**
      * Глобальный монотонный номер сообщения для потока. Инкрементируется на
      * каждом принятом сообщении (в т.ч. через реконнекты).
      */
-    fun nextSequence(stream: WsStream): Long = sequences[stream]!!.incrementAndGet()
+    fun nextSequence(stream: WsStream): Long = sequenceOf(stream).incrementAndGet()
 
     /**
      * Проверка «устарелости» котировки:
@@ -246,8 +255,8 @@ class WebSocketManager(
     @Scheduled(fixedDelay = 10_000)
     fun watchdog() {
         for (stream in WsStream.entries) {
-            if (statuses[stream]!!.get() != WsConnectionStatus.CONNECTED) continue
-            val idleMs = System.currentTimeMillis() - lastActivityAt[stream]!!.get()
+            if (stateOf(stream).get() != WsConnectionStatus.CONNECTED) continue
+            val idleMs = System.currentTimeMillis() - activityOf(stream).get()
             if (idleMs <= alorConfig.wsHeartbeatTimeoutMs) continue
             logger.error {
                 "WS ${stream.name}: no inbound data or heartbeat for ${idleMs}ms " +

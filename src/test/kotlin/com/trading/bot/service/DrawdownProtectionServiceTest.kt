@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.any
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -44,6 +45,33 @@ class DrawdownProtectionServiceTest {
         Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
     }
 
+    /**
+     * Стаббит оконные запросы [PositionRepository.findClosedSince] и
+     * [PositionRepository.findClosedAggregates] — согласованно с одним списком.
+     */
+    private suspend fun stubClosedPositions(positions: List<Position>) {
+        Mockito.`when`(positionRepo.findClosedSince(any())).thenAnswer { inv ->
+            val since = inv.getArgument<LocalDateTime>(0)
+            positions.filter { (it.closedAt ?: LocalDateTime.MIN) >= since }
+        }
+        Mockito.`when`(positionRepo.findClosedAggregates()).thenReturn(
+            PositionRepository.ClosedPositionAggregates(
+                totalRealized = positions.sumOf { it.pnl ?: BigDecimal.ZERO },
+                peakRealized = peakCumulativeRealized(positions),
+            ),
+        )
+    }
+
+    private fun peakCumulativeRealized(positions: List<Position>): BigDecimal {
+        var running = BigDecimal.ZERO
+        var peak = BigDecimal.ZERO
+        for (pos in positions.filter { it.pnl != null }.sortedBy { it.closedAt ?: LocalDateTime.MIN }) {
+            running = running.add(pos.pnl)
+            if (running > peak) peak = running
+        }
+        return peak
+    }
+
     private fun closedPosition(
         pnl: BigDecimal,
         closedAt: LocalDateTime,
@@ -62,10 +90,10 @@ class DrawdownProtectionServiceTest {
     fun `aum includes realized pnl and daily limit scales with it`() =
         runBlocking {
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(
-                    closedPosition(BigDecimal("30000"), LocalDateTime.now().minusDays(1)),
-                    closedPosition(BigDecimal("-10000"), LocalDateTime.now().minusDays(2)),
+                    closedPosition(BigDecimal("30000"), LocalDateTime.now()),
+                    closedPosition(BigDecimal("-10000"), LocalDateTime.now().minusMinutes(5)),
                 ),
             )
 
@@ -85,7 +113,7 @@ class DrawdownProtectionServiceTest {
     fun `daily loss breach blocks entry`() =
         runBlocking {
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now())),
             )
 
@@ -102,7 +130,7 @@ class DrawdownProtectionServiceTest {
     fun `rolling 7d loss breach blocks entry even if today is flat`() =
         runBlocking {
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-8000"), LocalDateTime.now().minusDays(6))),
             )
 
@@ -120,7 +148,7 @@ class DrawdownProtectionServiceTest {
         runBlocking {
             // 20 дней назад — вне окна 7д, но внутри 30д
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-13000"), LocalDateTime.now().minusDays(20))),
             )
 
@@ -138,7 +166,7 @@ class DrawdownProtectionServiceTest {
         runBlocking {
             // AUM упал до 30 000 → 10% = 3 000, рублёвый floor НЕ применяется
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-20000"), LocalDateTime.now().minusDays(1))),
             )
             val config =
@@ -162,7 +190,7 @@ class DrawdownProtectionServiceTest {
             val now = LocalDateTime.now()
 
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(
                     closedPosition(BigDecimal("-100"), now.minusMinutes(5)),
                     closedPosition(BigDecimal("-200"), now.minusMinutes(10)),
@@ -180,7 +208,7 @@ class DrawdownProtectionServiceTest {
             assertTrue(status.reasons.any { it.startsWith("SHADOW_MODE") })
 
             // прибыльная сделка сбрасывает серию → shadow снимается
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(
                     closedPosition(BigDecimal("500"), now.minusMinutes(1)),
                     closedPosition(BigDecimal("-100"), now.minusMinutes(5)),
@@ -213,7 +241,7 @@ class DrawdownProtectionServiceTest {
     fun `drawdown percent is measured from peak aum`() =
         runBlocking {
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(
                     closedPosition(BigDecimal("10000"), LocalDateTime.now().minusDays(2)),
                     closedPosition(BigDecimal("-25000"), LocalDateTime.now().minusDays(1)),
@@ -233,7 +261,7 @@ class DrawdownProtectionServiceTest {
     fun `drawdown percent is zero when equity at all time high`() =
         runBlocking {
             stubNoOpenPositions()
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(
                     closedPosition(BigDecimal("5000"), LocalDateTime.now().minusDays(2)),
                     closedPosition(BigDecimal("2000"), LocalDateTime.now().minusDays(1)),
@@ -326,7 +354,7 @@ class DrawdownProtectionServiceTest {
     fun `computeStatus reconciles daily pnl from db including open positions`() =
         runBlocking {
             // закрытая сегодня: -1000 (реализованный); открытая сегодня: -3000 unrealized
-            Mockito.`when`(positionRepo.findClosed()).thenReturn(
+            stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-1000"), LocalDateTime.now())),
             )
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(

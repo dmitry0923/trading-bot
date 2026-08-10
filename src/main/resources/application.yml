@@ -54,6 +54,7 @@ alor:
   exchange: ${ALOR_EXCHANGE:MOEX}
   retry-enabled: ${ALOR_RETRY_ENABLED:true}
   rate-limiter-enabled: ${ALOR_RATE_LIMITER_ENABLED:true}
+  circuit-breaker-enabled: ${ALOR_CIRCUIT_BREAKER_ENABLED:true}
   max-order-retries: ${ALOR_MAX_ORDER_RETRIES:5}
   ws-reconcile-on-reconnect: ${ALOR_WS_RECONCILE_ON_RECONNECT:true}
   ws-heartbeat-interval-ms: ${ALOR_WS_HEARTBEAT_INTERVAL_MS:30000}
@@ -141,6 +142,25 @@ resilience4j:
           - java.io.IOException
           - org.springframework.web.reactive.function.client.WebClientRequestException
           - org.springframework.web.reactive.function.client.WebClientResponseException
+      alor:
+        registerHealthIndicator: true
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        permittedNumberOfCallsInHalfOpenState: 4
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 30s
+        failureRateThreshold: 50
+        recordExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$BadRequest
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Unauthorized
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Forbidden
+          - org.springframework.web.reactive.function.client.WebClientResponseException$NotFound
+          - org.springframework.web.reactive.function.client.WebClientResponseException$UnprocessableEntity
   ratelimiter:
     instances:
       llm:
@@ -212,7 +232,6 @@ trading:
 
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
-  default-leverage: ${LEVERAGE_DEFAULT:2.0}
   max-leverage: ${LEVERAGE_MAX:3.0}
   min-leverage: ${LEVERAGE_MIN:1.0}
   user-leverage: ${LEVERAGE_USER:2.0}
@@ -390,8 +409,10 @@ risk:
 
 logging:
   level:
-    com.trading.bot: DEBUG
-    org.springframework.jdbc: DEBUG
+    # Прод по умолчанию — INFO: DEBUG даёт огромный объём логов и SQL-параметры.
+    # Для локальной отладки используйте профиль dev: --spring.profiles.active=dev
+    com.trading.bot: INFO
+    org.springframework.jdbc: INFO
 
 security:
   auth:

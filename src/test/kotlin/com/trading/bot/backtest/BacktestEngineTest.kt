@@ -33,15 +33,11 @@ class BacktestEngineTest {
         )
 
     /** Нисходящий тренд: RSI низкий, MACD hist должен давать BUY на дне. */
-    private fun candles(
-        seed: Double,
-        count: Int,
-        step: Double,
-    ): List<Candle> = (0 until count).map { i -> candle(seed - i * step, i) }
+    private fun candles(): List<Candle> = (0 until 300).map { i -> candle(300.0 - i * 0.5, i) }
 
     @Test
     fun `simulate produces results on trending data`() {
-        val candles = candles(seed = 300.0, count = 300, step = 0.5)
+        val candles = candles()
         val result = engine.simulate("SBER", candles)
 
         assertTrue(result.totalTrades >= 0)
@@ -117,5 +113,19 @@ class BacktestEngineTest {
     fun `commission and slippage constants`() {
         assertEquals(BigDecimal("0.0005"), SimulatedExecution.COMMISSION_RATE)
         assertEquals(BigDecimal("0.001"), SimulatedExecution.MARKET_SLIPPAGE_RATE)
+    }
+
+    @Test
+    fun `lot rounding is down to whole lots of instrument`() {
+        // SBER lot = 10
+        assertEquals(0, SimulatedExecution.lotRounded(5, 10))
+        assertEquals(10, SimulatedExecution.lotRounded(10, 10))
+        assertEquals(90, SimulatedExecution.lotRounded(99, 10))
+        // VTBR lot = 1000
+        assertEquals(0, SimulatedExecution.lotRounded(999, 1000))
+        assertEquals(1000, SimulatedExecution.lotRounded(1500, 1000))
+        // неизвестный инструмент (lotSize <= 0) — лотность игнорируется
+        assertEquals(77, SimulatedExecution.lotRounded(77, 0))
+        assertEquals(77, SimulatedExecution.lotRounded(77, -1))
     }
 }

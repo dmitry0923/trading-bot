@@ -262,8 +262,8 @@ class TradingBotService(
                         strat.stopLoss?.let { newSL ->
                             val shouldUpd =
                                 when (pos.direction) {
-                                    PositionDirection.LONG -> pos.stopLoss == null || newSL > pos.stopLoss!!
-                                    PositionDirection.SHORT -> pos.stopLoss == null || newSL < pos.stopLoss!!
+                                    PositionDirection.LONG -> pos.stopLoss?.let { newSL > it } ?: true
+                                    PositionDirection.SHORT -> pos.stopLoss?.let { newSL < it } ?: true
                                 }
                             if (shouldUpd) {
                                 pos.stopLoss = newSL
@@ -274,8 +274,8 @@ class TradingBotService(
                         strat.takeProfit?.let { newTP ->
                             val shouldUpd =
                                 when (pos.direction) {
-                                    PositionDirection.LONG -> pos.takeProfit == null || newTP > pos.takeProfit!!
-                                    PositionDirection.SHORT -> pos.takeProfit == null || newTP < pos.takeProfit!!
+                                    PositionDirection.LONG -> pos.takeProfit?.let { newTP > it } ?: true
+                                    PositionDirection.SHORT -> pos.takeProfit?.let { newTP < it } ?: true
                                 }
                             if (shouldUpd) {
                                 pos.takeProfit = newTP

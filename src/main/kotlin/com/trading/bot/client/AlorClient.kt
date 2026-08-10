@@ -4,9 +4,13 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.dto.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
+import io.github.resilience4j.kotlin.circuitbreaker.decorateSuspendFunction
 import io.github.resilience4j.kotlin.ratelimiter.decorateSuspendFunction
 import io.github.resilience4j.kotlin.retry.decorateSuspendFunction
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -47,6 +51,7 @@ class AlorClient(
     private val meterRegistry: MeterRegistry,
     private val retryRegistry: RetryRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
+    private val circuitBreakerRegistry: CircuitBreakerRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -191,6 +196,14 @@ class AlorClient(
                 logger.error(e) { "placeLimitOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
                 throw e
             }
+        } catch (_: RequestNotPermitted) {
+            logger.warn { "Limit order $ticker NOT sent (rate limit) — will retry on next outbox cycle" }
+            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "RATE_LIMIT")).increment()
+            null
+        } catch (_: CallNotPermittedException) {
+            logger.warn { "Limit order $ticker NOT sent (circuit breaker open) — will retry on next outbox cycle" }
+            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "CIRCUIT_OPEN")).increment()
+            null
         } catch (e: Exception) {
             logger.error(e) { "placeLimitOrder failed for $ticker after retries — delivery UNCERTAIN" }
             meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
@@ -279,6 +292,14 @@ class AlorClient(
                 logger.error(e) { "Order cancel failed for $orderId after retries (${e.statusCode.value()}) — UNCERTAIN" }
                 throw e
             }
+        } catch (_: RequestNotPermitted) {
+            logger.warn { "Order cancel NOT sent for $orderId (rate limit) — will retry on next outbox cycle" }
+            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
+            false
+        } catch (_: CallNotPermittedException) {
+            logger.warn { "Order cancel NOT sent for $orderId (circuit breaker open) — will retry on next outbox cycle" }
+            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
+            false
         } catch (e: Exception) {
             logger.error(e) { "Order cancel failed for $orderId after retries — UNCERTAIN" }
             meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
@@ -638,8 +659,17 @@ class AlorClient(
         return if (root.isArray) root else root.path("orders")
     }
 
+    /**
+     * Оборачивает HTTP-вызов в Resilience4j: CircuitBreaker (самый внутренний —
+     * размыкается при падении биржи и гасит таранный залп) → RateLimiter (лимит
+     * на каждую попытку) → Retry с exponential backoff + jitter (снаружи).
+     * Конфиг — application.yml (resilience4j.circuitbreaker/ratelimiter/retry.instances.alor).
+     */
     private suspend fun <T> resilient(block: suspend () -> T): T {
         var call: suspend () -> T = block
+        if (alorConfig.circuitBreakerEnabled) {
+            call = circuitBreakerRegistry.circuitBreaker("alor").decorateSuspendFunction { call() }
+        }
         if (alorConfig.rateLimiterEnabled) {
             call = rateLimiterRegistry.rateLimiter("alor").decorateSuspendFunction { call() }
         }

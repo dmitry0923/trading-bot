@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
@@ -20,11 +21,15 @@ import java.time.LocalDateTime
  * - Проверяет SL/TP по внутрисвечному диапазону (high/low)
  * - Считает метрики: Sharpe, MaxDD, PF, win rate
  *
+ * Лотность позиций берётся из [InstrumentsConfig] (как в live) — размер позиции
+ * округляется вниз до целого лота, совпадая с реальным исполнением на бирже.
+ *
  * Запуск (проект): ./gradlew bootRun --args="--spring.profiles.active=backtest"
  */
 @Service
 class BacktestEngine(
     private val candleRepo: CandleRepository,
+    private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -123,7 +128,7 @@ class BacktestEngine(
                 val opposite = if (signal == StrategyAction.BUY) PositionDirection.SHORT else PositionDirection.LONG
                 if (curPos.direction == opposite) {
                     cash = closePosition(ticker, curPos, "REVERSAL", current.openPrice, cash, equityCurve, tradeReturns)
-                    position = openPosition(signal, current.openPrice, cash, i, slPercent, tpPercent)
+                    position = openPosition(ticker, signal, current.openPrice, cash, i, slPercent, tpPercent)
                     if (position != null) {
                         cash = applyOpen(cash, position)
                     }
@@ -133,7 +138,7 @@ class BacktestEngine(
             }
 
             // Открытие новой позиции на открытии текущей свечи
-            position = openPosition(signal, current.openPrice, cash, i, slPercent, tpPercent)
+            position = openPosition(ticker, signal, current.openPrice, cash, i, slPercent, tpPercent)
             if (position != null) {
                 cash = applyOpen(cash, position)
             }
@@ -182,6 +187,7 @@ class BacktestEngine(
     }
 
     private fun openPosition(
+        ticker: String,
         signal: StrategyAction,
         price: BigDecimal,
         cash: BigDecimal,
@@ -190,9 +196,10 @@ class BacktestEngine(
         tpPercent: Double,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
+        val lotSize = instrumentsConfig.find(ticker)?.lotSize ?: 1
         val capitalSlice = cash.multiply(BigDecimal("0.20"))
         val qty = capitalSlice.divide(price, 0, RoundingMode.DOWN).toInt()
-        val lotQty = SimulatedExecution.lotRounded(qty)
+        val lotQty = SimulatedExecution.lotRounded(qty, lotSize)
         if (lotQty <= 0) return null
 
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT

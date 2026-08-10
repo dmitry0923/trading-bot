@@ -34,9 +34,18 @@ object SimulatedExecution {
     fun commissionOn(price: BigDecimal): BigDecimal = price.multiply(COMMISSION_RATE).setScale(4, RoundingMode.HALF_UP)
 
     /**
-     * Округление до целого лота (вниз). Если меньше 1 лота — 0 (позиция не открывается).
+     * Округление до целого лота (вниз) по лотности инструмента.
+     * Если результат меньше 1 лота — 0 (позиция не открывается).
+     * При lotSize <= 0 (инструмент не найден) лотность игнорируется.
      */
-    fun lotRounded(quantity: Int): Int = if (quantity < 1) 0 else quantity
+    fun lotRounded(
+        quantity: Int,
+        lotSize: Int,
+    ): Int {
+        if (lotSize <= 0) return quantity
+        val lots = quantity / lotSize
+        return lots * lotSize
+    }
 
     /** Проверка достижения SL/TP внутри диапазона свечи (intraday high/low). */
     fun hitStopOrTarget(

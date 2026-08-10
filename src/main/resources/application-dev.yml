@@ -1,0 +1,6 @@
+# Локальная отладка: подробные логи и SQL.
+# Запуск: --spring.profiles.active=dev
+logging:
+  level:
+    com.trading.bot: DEBUG
+    org.springframework.jdbc: DEBUG

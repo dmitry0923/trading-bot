@@ -90,13 +90,16 @@ class DrawdownProtectionService(
     suspend fun computeStatus(): DrawdownStatus {
         resetDailyStateIfNewDay()
         val now = LocalDateTime.now()
-        val closed = positionRepo.findClosed()
-        val open = positionRepo.findByStatus(PositionStatus.OPEN)
-        val aum = currentAum(closed, open)
-        val (peakAum, drawdownPercent) = peakAumAndDrawdown(closed)
-
         val todayStart = now.toLocalDate().atStartOfDay()
-        val realizedToday = sumPnl(closed.filter { isClosedOnOrAfter(it, todayStart) })
+        // Оконные запросы вместо полного сканирования всех закрытых позиций.
+        val closedSince30d = positionRepo.findClosedSince(now.minusDays(30))
+        val closedToday = positionRepo.findClosedSince(todayStart)
+        val open = positionRepo.findByStatus(PositionStatus.OPEN)
+        val aggregates = positionRepo.findClosedAggregates()
+        val aum = currentAum(aggregates.totalRealized, open)
+        val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates)
+
+        val realizedToday = sumPnl(closedToday)
         val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
         val dailyPnl = realizedToday.add(dailyUnrealized)
 
@@ -105,8 +108,8 @@ class DrawdownProtectionService(
         todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
         persistDailyState()
 
-        val rolling7d = sumPnl(closed.filter { isClosedOnOrAfter(it, now.minusDays(7)) })
-        val rolling30d = sumPnl(closed.filter { isClosedOnOrAfter(it, now.minusDays(30)) })
+        val rolling7d = sumPnl(closedSince30d.filter { isClosedOnOrAfter(it, now.minusDays(7)) })
+        val rolling30d = sumPnl(closedSince30d)
 
         val dailyLimit = effectiveDailyLossLimitRub(aum)
         val rolling7dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent7d)
@@ -116,7 +119,7 @@ class DrawdownProtectionService(
         val rolling7dBreached = rolling7d <= rolling7dLimit.negate()
         val rolling30dBreached = rolling30d <= rolling30dLimit.negate()
 
-        val consecutive = consecutiveLosses(closed)
+        val consecutive = consecutiveLosses(closedSince30d)
         val shadowUntil = refreshShadowMode(consecutive)
         val shadowActive = shadowUntil != null && Instant.now().isBefore(shadowUntil)
 
@@ -194,7 +197,11 @@ class DrawdownProtectionService(
      * Синхронный учёт P&L закрытой сделки. Единственный аккумулятор дневного P&L:
      * вызывается из RiskManagementService (акции) и DailyLossCircuitBreaker (фьючерсы).
      * Персистит состояние в daily_risk_snapshot (восстановление после рестарта).
+     *
+     * Метод сериализован ([Synchronized]): конкурирующие вызовы из разных корутин
+     * не должны терять обновления (`todayPnl = todayPnl + pnl` — read-modify-write).
      */
+    @Synchronized
     override fun updateDailyPnl(pnl: BigDecimal) {
         resetDailyStateIfNewDay()
         todayPnl = todayPnl.add(pnl)
@@ -261,20 +268,18 @@ class DrawdownProtectionService(
      */
     fun consecutiveLosses(closed: List<Position>): Int =
         closed
-            .filter { it.pnl != null }
             .sortedByDescending { it.closedAt ?: LocalDateTime.MIN }
-            .takeWhile { it.pnl!! < BigDecimal.ZERO }
+            .takeWhile { it.pnl?.compareTo(BigDecimal.ZERO) == -1 }
             .count()
 
     private fun currentAum(
-        closed: List<Position>,
+        totalRealized: BigDecimal,
         open: List<Position>,
     ): BigDecimal {
-        val realized = sumPnl(closed)
         val unrealized = unrealizedPnl(open)
         return riskConfig
             .maxPositionRub
-            .add(realized)
+            .add(totalRealized)
             .add(unrealized)
             .coerceAtLeast(BigDecimal.ZERO)
     }
@@ -311,20 +316,17 @@ class DrawdownProtectionService(
     /**
      * Пиковый AUM и текущая просадка от пика в %.
      *
-     * Строится running equity: стартовый депозит + накопленный реализованный P&L
-     * в хронологическом порядке закрытий. Просадка = (peak - current) / peak * 100.
-     * (Нереализованный P&L в пике не учитывается — только реализованные закрытия.)
+     * Running equity: стартовый депозит + накопленный реализованный P&L
+     * в хронологическом порядке закрытий (агрегируется в БД). Просадка =
+     * (peak - current) / peak * 100. (Нереализованный P&L в пике не учитывается —
+     * только реализованные закрытия.)
      *
-     * @return пара (peakAum, drawdownPercent), drawdownPercent в [0..100]
+     * @return (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
-    private fun peakAumAndDrawdown(closed: List<Position>): Pair<BigDecimal, Double> {
+    private fun peakAumAndDrawdown(aggregates: PositionRepository.ClosedPositionAggregates): PeakAndDrawdown {
         val start = riskConfig.maxPositionRub
-        var running = start
-        var peak = start
-        for (pos in closed.filter { it.pnl != null }.sortedBy { it.closedAt ?: LocalDateTime.MIN }) {
-            running = running.add(pos.pnl!!)
-            if (running > peak) peak = running
-        }
+        val running = start.add(aggregates.totalRealized)
+        val peak = start.add(aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO))
         val drawdownPercent =
             if (peak > BigDecimal.ZERO) {
                 peak
@@ -335,8 +337,13 @@ class DrawdownProtectionService(
             } else {
                 0.0
             }
-        return peak to drawdownPercent
+        return PeakAndDrawdown(peakAum = peak, drawdownPercent = drawdownPercent)
     }
+
+    private data class PeakAndDrawdown(
+        val peakAum: BigDecimal,
+        val drawdownPercent: Double,
+    )
 
     private fun sumPnl(positions: List<Position>): BigDecimal = positions.sumOf { it.pnl ?: BigDecimal.ZERO }
 

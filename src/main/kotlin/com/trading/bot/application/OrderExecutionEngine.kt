@@ -422,7 +422,12 @@ class OrderExecutionEngine(
      *   (защита от скрытого роста позиции без ведома бота).
      */
     suspend fun resolveEntryViaOutbox(pos: Position) {
-        val outbox = orderOutboxRepo.findLatestByPositionId(pos.id!!)
+        val positionId =
+            pos.id ?: run {
+                logger.error { "Pending entry ${pos.ticker} has no id — cannot reconcile via outbox" }
+                return
+            }
+        val outbox = orderOutboxRepo.findLatestByPositionId(positionId)
         if (outbox == null) {
             logger.warn { "No outbox row for pending entry ${pos.id}/${pos.ticker}; leaving pending" }
             return
@@ -516,7 +521,12 @@ class OrderExecutionEngine(
      * Сверка pendingClose-позиции без closeOrderId через outbox-запись.
      */
     suspend fun resolveCloseViaOutbox(pos: Position) {
-        val outbox = orderOutboxRepo.findLatestByPositionId(pos.id!!)
+        val positionId =
+            pos.id ?: run {
+                logger.error { "Pending close ${pos.ticker} has no id — cannot reconcile via outbox" }
+                return
+            }
+        val outbox = orderOutboxRepo.findLatestByPositionId(positionId)
         if (outbox == null) {
             logger.warn { "No outbox row for pending close ${pos.id}/${pos.ticker}; resetting pendingClose" }
             pos.pendingClose = false

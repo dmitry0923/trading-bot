@@ -22,6 +22,7 @@ class RiskManagementServiceDailyPnLTest {
             RiskConfig(),
             drawdownProtection,
             SimpleMeterRegistry(),
+            Mockito.mock(AumProvider::class.java),
         )
 
     @Test

@@ -1,5 +1,6 @@
 package com.trading.bot.application
 
+import com.trading.bot.domain.strategy.AdvisoryOnlyStrategy
 import com.trading.bot.domain.strategy.Strategy
 import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.strategy.StrategyDecision
@@ -22,9 +23,13 @@ data class StrategyResult(
 )
 
 /**
- * Запускает стратегии параллельно и выбирает победителя по максимальной
- * взвешенной уверенности. Не знает ни об одной конкретной стратегии: реализации
- * приходят как [List] интерфейса [Strategy] (Spring-инжекция).
+ * Запускает детерминированные стратегии параллельно и выбирает победителя по
+ * максимальной взвешенной уверенности. Не знает ни об одной конкретной
+ * стратегии: реализации приходят как [List] интерфейса [Strategy] (Spring-инжекция).
+ *
+ * Стратегии, помеченные [AdvisoryOnlyStrategy] (LLM-контур), исключаются из
+ * конкуренции за сигнал (C-001): единственный источник сигнала — детерминированные
+ * стратегии, LLM работает советником вне критического пути.
  *
  * Учёт рыночного режима ([StrategyContext.regime]) — через [StrategySelector]:
  *   1. Жёсткий фильтр: при [com.trading.bot.domain.risk.PerTickerRegime.blocksEntry]
@@ -39,17 +44,18 @@ data class StrategyResult(
  */
 @Component
 class StrategyRunner(
-    private val strategies: List<Strategy>,
+    strategies: List<Strategy>,
     private val strategySelector: StrategySelector,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
+    private val signalStrategies: List<Strategy> = strategies.filterNot { it is AdvisoryOnlyStrategy }
 
     suspend fun runAll(context: StrategyContext): StrategyResult {
-        if (strategies.isEmpty()) {
+        if (signalStrategies.isEmpty()) {
             return StrategyResult(
                 winnerId = "NONE",
-                decision = StrategyDecision.hold(context.snapshot.currentPrice, "No strategies registered"),
+                decision = StrategyDecision.hold(context.snapshot.currentPrice, "No signal strategies registered"),
                 all = emptyMap(),
             )
         }
@@ -74,7 +80,7 @@ class StrategyRunner(
         }
 
         val eligibleIds = regime?.let { strategySelector.eligibleStrategyIds(it) }
-        val toRun = strategies.filter { eligibleIds == null || it.id in eligibleIds }
+        val toRun = signalStrategies.filter { eligibleIds == null || it.id in eligibleIds }
         if (toRun.isEmpty()) {
             return StrategyResult(
                 winnerId = "NONE",
@@ -125,7 +131,7 @@ class StrategyRunner(
                     all = emptyMap(),
                 )
         meterRegistry.counter("strategy.runner.winner", Tags.of("strategy", winner.first)).increment()
-        if (regime != null && evaluated.size < strategies.size) {
+        if (regime != null && evaluated.size < signalStrategies.size) {
             meterRegistry
                 .counter("strategy.runner.filtered", Tags.of("ticker", context.ticker))
                 .increment()

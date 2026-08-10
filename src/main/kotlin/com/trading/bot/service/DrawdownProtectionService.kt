@@ -45,10 +45,11 @@ import java.time.ZoneId
  *     в [DrawdownStatus]) для переобучения/калибровки: минимум [RiskConfig.shadowModeCooldownHours],
  *     снимается только после прибыльной сделки (сброс серии).
  *
- * AUM = стартовый депозит (`risk.max-position-rub`) + реализованный P&L всех закрытых
- * сделок + **нереализованный P&L открытых позиций** (фьючерсы — по вариационной марже,
- * акции — по текущей цене). Кэшируется в памяти и обновляется на каждое закрытие
- * позиции и каждый стратегический цикл — горячие проверки входа читают кэш без БД.
+ * AUM = актуальный баланс портфеля из Alor ([AumProvider], кэшируется на 60с) +
+ * реализованный P&L всех закрытых сделок + **нереализованный P&L открытых позиций**
+ * (фьючерсы — по вариационной марже, акции — по текущей цене). Кэшируется в памяти
+ * и обновляется на каждое закрытие позиции и каждый стратегический цикл — горячие
+ * проверки входа читают кэш без БД.
  *
  * Единый источник истины дневного P&L: синхронный аккумулятор [updateDailyPnl] кормится
  * путями закрытия акций (RiskManagementService) и фьючерсов (DailyLossCircuitBreaker),
@@ -61,6 +62,7 @@ class DrawdownProtectionService(
     private val dailyRiskSnapshotRepo: DailyRiskSnapshotRepository,
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
+    private val aumProvider: AumProvider,
 ) : DailyRiskGuard {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -89,6 +91,7 @@ class DrawdownProtectionService(
      */
     suspend fun computeStatus(): DrawdownStatus {
         resetDailyStateIfNewDay()
+        aumProvider.currentAum() // обновление баланса из Alor перед расчётом лимитов
         val now = LocalDateTime.now()
         val todayStart = now.toLocalDate().atStartOfDay()
         // Оконные запросы вместо полного сканирования всех закрытых позиций.
@@ -170,7 +173,7 @@ class DrawdownProtectionService(
      */
     override fun cachedOrNeutral(): DrawdownStatus {
         cachedStatus?.let { return it }
-        val aum = riskConfig.maxPositionRub
+        val aum = aumProvider.latestAum()
         return DrawdownStatus(
             aum = aum,
             peakAum = aum,
@@ -205,7 +208,7 @@ class DrawdownProtectionService(
     override fun updateDailyPnl(pnl: BigDecimal) {
         resetDailyStateIfNewDay()
         todayPnl = todayPnl.add(pnl)
-        val aum = cachedStatus?.aum ?: riskConfig.maxPositionRub
+        val aum = cachedStatus?.aum ?: aumProvider.latestAum()
         val dailyLimit = effectiveDailyLossLimitRub(aum)
         if (todayPnl <= dailyLimit.negate()) {
             todayDailyLossReached = true
@@ -259,7 +262,7 @@ class DrawdownProtectionService(
      * если процентный лимит отключён (<= 0).
      */
     fun effectiveDailyLossLimitRub(): BigDecimal {
-        val aum = cachedStatus?.aum ?: riskConfig.maxPositionRub
+        val aum = cachedStatus?.aum ?: aumProvider.latestAum()
         return effectiveDailyLossLimitRub(aum)
     }
 
@@ -277,8 +280,8 @@ class DrawdownProtectionService(
         open: List<Position>,
     ): BigDecimal {
         val unrealized = unrealizedPnl(open)
-        return riskConfig
-            .maxPositionRub
+        return aumProvider
+            .latestAum()
             .add(totalRealized)
             .add(unrealized)
             .coerceAtLeast(BigDecimal.ZERO)
@@ -324,7 +327,7 @@ class DrawdownProtectionService(
      * @return (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
     private fun peakAumAndDrawdown(aggregates: PositionRepository.ClosedPositionAggregates): PeakAndDrawdown {
-        val start = riskConfig.maxPositionRub
+        val start = aumProvider.latestAum()
         val running = start.add(aggregates.totalRealized)
         val peak = start.add(aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO))
         val drawdownPercent =

@@ -26,9 +26,14 @@ class RiskExposureServiceTest {
     private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
+    private val aumProvider = Mockito.mock(AumProvider::class.java)
 
     private val service =
-        RiskExposureService(riskConfig, positionRepo, correlationProvider, candleCache, meterRegistry)
+        RiskExposureService(riskConfig, positionRepo, correlationProvider, candleCache, meterRegistry, aumProvider)
+
+    private suspend fun stubAum() {
+        Mockito.`when`(aumProvider.currentAum()).thenReturn(riskConfig.maxPositionRub)
+    }
 
     private fun position(
         ticker: String,
@@ -73,6 +78,7 @@ class RiskExposureServiceTest {
     fun `empty portfolio has zero score and zero exposure`() =
         runBlocking {
             stubPositions(emptyList())
+            stubAum()
 
             val report = service.buildSnapshot()
 
@@ -95,6 +101,7 @@ class RiskExposureServiceTest {
                     position("GAZP", BigDecimal("100")),
                 ),
             )
+            stubAum()
             stubCorrelations(listOf("SBER", "VTBR", "GAZP"), 0.75)
             stubVols(listOf("SBER", "VTBR", "GAZP"))
 
@@ -123,6 +130,7 @@ class RiskExposureServiceTest {
                     position("GAZP", BigDecimal("100"), PositionDirection.SHORT),
                 ),
             )
+            stubAum()
             stubCorrelations(listOf("SBER", "GAZP"), 0.5)
             stubVols(listOf("SBER", "GAZP"))
 
@@ -139,6 +147,7 @@ class RiskExposureServiceTest {
         runBlocking {
             riskConfig.sectors = mapOf("SBER" to "FINANCE")
             stubPositions(listOf(position("SBER", BigDecimal("100"))))
+            stubAum()
             stubCorrelations(listOf("SBER"), 1.0)
             stubVols(listOf("SBER"))
 

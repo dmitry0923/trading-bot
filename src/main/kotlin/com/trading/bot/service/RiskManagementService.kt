@@ -31,6 +31,7 @@ class RiskManagementService(
     private val riskConfig: RiskConfig,
     private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
+    private val aumProvider: AumProvider,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -81,7 +82,7 @@ class RiskManagementService(
         openPositions: List<Position>,
     ): Boolean {
         if (candidateNotionalRub <= BigDecimal.ZERO) return false
-        val deposit = riskConfig.maxPositionRub
+        val deposit = aumProvider.latestAum()
 
         val grossBefore = openPositions.sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
         val grossAfter = grossBefore.add(candidateNotionalRub)

@@ -43,6 +43,7 @@ class RiskExposureService(
     private val correlationProvider: CorrelationMatrixProvider,
     private val candleCache: CandleCacheService,
     private val meterRegistry: MeterRegistry,
+    private val aumProvider: AumProvider,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -68,7 +69,7 @@ class RiskExposureService(
      */
     suspend fun buildSnapshot(): RiskExposureReport {
         val open = positionRepo.findByStatus(PositionStatus.OPEN)
-        val aum = riskConfig.maxPositionRub
+        val aum = aumProvider.currentAum()
         val timestamp = LocalDateTime.now()
 
         val perPosition = open.map { toPositionExposure(it, aum) }

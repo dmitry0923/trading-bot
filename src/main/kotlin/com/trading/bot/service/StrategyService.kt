@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.agent.PerformanceFeedbackAgent
 import com.trading.bot.application.StrategyRunner
+import com.trading.bot.application.advisor.LlmAdvisor
 import com.trading.bot.application.strategy.DiscretionaryStrategy
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
@@ -65,6 +66,7 @@ class StrategyService(
     private val moexClient: MoexClient,
     private val strategyRunner: StrategyRunner,
     private val discretionaryStrategy: DiscretionaryStrategy,
+    private val llmAdvisor: LlmAdvisor,
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
     private val redis: RedisCacheService,
@@ -280,17 +282,35 @@ class StrategyService(
         val result = strategyRunner.runAll(context)
         val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
 
+        // LLM-советник (C-001): оценивает детерминированное решение вне критического
+        // пути. VETO (CRITICAL-риск) блокирует вход; иначе — ограниченная поправка
+        // уверенности. Советник не меняет направление сделки.
+        val advisorVerdict = llmAdvisor.advise(context, result.decision, adaptiveConf)
+        val decision =
+            if (advisorVerdict.blocksEntry) {
+                meterRegistry.counter("advisor.blocked", Tags.of("ticker", ticker)).increment()
+                StrategyDecision.hold(
+                    snapshot.currentPrice,
+                    "Advisor VETO: ${advisorVerdict.explanation}",
+                )
+            } else {
+                result.decision.copy(
+                    confidence = (result.decision.confidence + advisorVerdict.confidenceAdjustment).coerceIn(0.0, 1.0),
+                )
+            }
+
         // Сигнал стратегического этапа — чистое направление (без quantity/SL/TP).
-        val effectiveConfidence = result.decision.confidence.coerceAtLeast(adaptiveConf)
+        val effectiveConfidence = decision.confidence.coerceAtLeast(adaptiveConf)
         val signal =
             Signal(
                 ticker = ticker,
-                action = result.decision.action,
-                targetPrice = result.decision.targetPrice,
+                action = decision.action,
+                targetPrice = decision.targetPrice,
                 confidence = effectiveConfidence,
                 reasoning =
-                    result.decision.reasoning +
-                        " | Regime: ${regime.describe()} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}",
+                    decision.reasoning +
+                        " | Regime: ${regime.describe()} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}" +
+                        " | Advisor: ${advisorVerdict.verdict} (confAdj=${advisorVerdict.confidenceAdjustment}, risk=${advisorVerdict.riskLevel})",
                 timeframe = timeframe,
                 cycleId = cycleId,
                 strategyName = result.winnerId,
@@ -344,11 +364,11 @@ class StrategyService(
         meterRegistry
             .counter(
                 "strategy.saved",
-                Tags.of("ticker", ticker, "timeframe", timeframe, "action", result.decision.action.name, "strategy", result.winnerId),
+                Tags.of("ticker", ticker, "timeframe", timeframe, "action", decision.action.name, "strategy", result.winnerId),
             ).increment()
         logger.info {
-            "Strategy $ticker/$timeframe: ${result.decision.action} @ ${result.decision.targetPrice} " +
-                "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime.describe()})"
+            "Strategy $ticker/$timeframe: ${decision.action} @ ${decision.targetPrice} " +
+                "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime.describe()}, advisor=${advisorVerdict.verdict})"
         }
     }
 

@@ -15,6 +15,7 @@ import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.AdaptiveRiskService
+import com.trading.bot.service.AumProvider
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.RiskManagementService
 import org.springframework.stereotype.Component
@@ -44,6 +45,7 @@ class StockEntryProfile(
     private val riskConfig: RiskConfig,
     private val instrumentsConfig: InstrumentsConfig,
     private val agentLogRepo: AgentLogRepository,
+    private val aumProvider: AumProvider,
 ) : EntryProfile {
     override val instrumentType: InstrumentType = InstrumentType.STOCK
     override val metricPrefix: String = "bot"
@@ -61,7 +63,7 @@ class StockEntryProfile(
             action = signal.action,
             entryPrice = entryPrice,
             direction = signal.direction(),
-            portfolioMoney = riskConfig.maxPositionRub,
+            portfolioMoney = aumProvider.currentAum(),
             currentGo = BigDecimal.ZERO,
             atr = candleCache.calculateAtr(signal.ticker, "MINUTE_10", 14),
             openPositions = openPositions,
@@ -85,14 +87,43 @@ class StockEntryProfile(
         val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker)
         val kellyQty =
             if (kellySizeRub > BigDecimal.ZERO) {
-                kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt().coerceAtLeast(1)
+                kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt()
             } else {
                 0
             }
+
+        // Риск-кап на сделку (аналог FuturesPositionSizer): убыток при срабатывании
+        // стопа не может превысить riskPerTradePercent% от AUM.
+        // lossPerShare = entryPrice * defaultStopLossPercent% (SL-цена у OrderBuilder такая же).
+        val riskAmount =
+            request.portfolioMoney
+                .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
+                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
+        val lossPerShare =
+            entryPrice
+                .multiply(BigDecimal(riskConfig.defaultStopLossPercent.toString()))
+                .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+        val maxQtyByRisk =
+            if (lossPerShare > BigDecimal.ZERO) {
+                riskAmount.divide(lossPerShare, 4, RoundingMode.DOWN).toInt()
+            } else {
+                0
+            }
+
+        val finalQty = minOf(kellyQty, maxQtyByRisk)
+        if (finalQty < 1) {
+            return PositionSizeResult(
+                quantity = 0,
+                marginRequired = BigDecimal.ZERO,
+                riskAmount = riskAmount,
+                liquidationPrice = null,
+                reason = "ZERO_RISK_SIZE",
+            )
+        }
         return PositionSizeResult(
-            quantity = kellyQty,
+            quantity = finalQty,
             marginRequired = kellySizeRub,
-            riskAmount = kellySizeRub,
+            riskAmount = riskAmount,
             liquidationPrice = null,
             reason = null,
         )

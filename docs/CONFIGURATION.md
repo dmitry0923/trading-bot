@@ -215,7 +215,7 @@ leverage:
 ```yaml
 risk:
   enabled: true
-  max-position-rub: 50000            # максимум рублей в одну позицию
+  max-position-rub: 50000            # депозит по умолчанию: база AUM (fallback, если Alor недоступен)
   max-daily-loss-rub: 5000           # стоп на день: убыток больше этой суммы = торговля сегодня стоп
   max-open-positions: 3              # сколько позиций можно держать одновременно
   max-sector-exposure: 2             # максимум позиций в одном секторе (например, 2 банка)
@@ -227,7 +227,7 @@ risk:
   risk-per-trade-percent: 1.0        # риск в 1% капитала на одну сделку
   kelly-fraction: 0.25               # «жадность» расчёта размера позиции (0.25 = четверть Келли)
   kelly-min-trades: 15
-  kelly-max-position-fraction: 0.50
+  kelly-max-position-fraction: 0.10   # жёсткий кап позиции на тикер, 10% от AUM
   trading-hours-start: "10:00"       # торговая сессия: с 10:00
   trading-hours-end: "18:30"         # ... до 18:30 (Москва)
   max-consecutive-losses: 3          # 3 убытка подряд = пауза до следующего дня

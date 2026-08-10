@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Instant
 
 /**
@@ -33,6 +34,7 @@ class AdaptiveRiskServiceKellyTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
     private val marketRegimeProvider: MarketRegimeProvider = { MarketRegime.NORMAL }
+    private val aumProvider = Mockito.mock(AumProvider::class.java)
 
     private val service =
         AdaptiveRiskService(
@@ -44,6 +46,7 @@ class AdaptiveRiskServiceKellyTest {
             meterRegistry,
             correlationProvider,
             marketRegimeProvider,
+            aumProvider,
         )
 
     private fun stats(
@@ -79,6 +82,10 @@ class AdaptiveRiskServiceKellyTest {
         Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
     }
 
+    private suspend fun stubAum() {
+        Mockito.`when`(aumProvider.currentAum()).thenReturn(riskConfig.maxPositionRub)
+    }
+
     private fun stubDrawdown(ddPercent: Double) {
         val aum = riskConfig.maxPositionRub
         Mockito
@@ -109,15 +116,18 @@ class AdaptiveRiskServiceKellyTest {
 
     @BeforeEach
     fun stubDefaults() {
-        runBlocking { stubClosedPositions(emptyList()) }
+        runBlocking {
+            stubClosedPositions(emptyList())
+            stubAum()
+        }
         stubDrawdown(0.0)
     }
 
     @Test
     fun `half kelly reduces full kelly by exactly half`() =
         runBlocking {
-            // w=0.6, r=2.0, n=20 -> wilson lower bound ~0.488 -> full kelly ~0.232
-            val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
+            // w=0.6, r=1.25, n=20 -> wilson lower bound ~0.488 -> full kelly ~0.079 (~3940 < cap 5000)
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("125"), avgLoss = BigDecimal("100"))
             stubStats(mapOf("SBER" to s))
 
             riskConfig.kellyFraction = 1.0
@@ -132,29 +142,29 @@ class AdaptiveRiskServiceKellyTest {
     @Test
     fun `wilson shrinkage makes kelly smaller than raw win rate`() =
         runBlocking {
-            // Raw w=0.6, r=2 -> full kelly = 0.4 -> 20000.
-            // Wilson lower bound (z=1, n=20) ~0.488 -> full kelly ~0.232 -> ~11617.
-            val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
+            // Raw w=0.6, r=1.25 -> full kelly = 0.28 -> 14000.
+            // Wilson lower bound (z=1, n=20) ~0.488 -> full kelly ~0.079 -> ~3940 (ниже капа 5000).
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("125"), avgLoss = BigDecimal("100"))
             stubStats(mapOf("SBER" to s))
             riskConfig.kellyFraction = 1.0
 
             val size = service.calculateOptimalPositionSize("SBER")
 
-            assertTrue(size > BigDecimal("10000"), "wilson size should stay positive, was $size")
-            assertTrue(size < BigDecimal("13000"), "wilson size should be shrunk well below 20000, was $size")
+            assertTrue(size > BigDecimal("3800"), "wilson size should stay positive, was $size")
+            assertTrue(size < BigDecimal("4100"), "wilson size should be shrunk well below 14000, was $size")
         }
 
     @Test
-    fun `kelly is capped at 50 percent of max position`() =
+    fun `kelly is capped at 10 percent of aum`() =
         runBlocking {
-            // Экстремально выгодная статистика -> wilson lower bound всё ещё > 0.5 -> cap 0.50
+            // Экстремально выгодная статистика -> wilson lower bound всё ещё > 0.1 -> cap 0.10
             val s = stats(winRate = 0.9, avgWin = BigDecimal("1000"), avgLoss = BigDecimal("100"))
             stubStats(mapOf("SBER" to s))
             riskConfig.kellyFraction = 1.0
 
             val size = service.calculateOptimalPositionSize("SBER")
-            val cap = riskConfig.maxPositionRub.multiply(BigDecimal("0.50"))
-            assertEquals(0, cap.compareTo(size))
+            val cap = riskConfig.maxPositionRub.multiply(BigDecimal("0.10"))
+            assertEquals(0, size.setScale(4, RoundingMode.HALF_UP).compareTo(cap))
         }
 
     @Test
@@ -163,7 +173,9 @@ class AdaptiveRiskServiceKellyTest {
             stubStats(emptyMap())
             riskConfig.kellyFraction = 0.5
             val size = service.calculateOptimalPositionSize("SBER")
-            val fallback = riskConfig.maxPositionRub.multiply(BigDecimal(riskConfig.kellyNoDataFraction.toString()))
+            // no-data fallback ограничен капом: min(0.15, 0.10) = 0.10
+            val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
+            val fallback = riskConfig.maxPositionRub.multiply(BigDecimal(fallbackFraction.toString()))
             assertEquals(0, fallback.compareTo(size))
         }
 
@@ -176,14 +188,15 @@ class AdaptiveRiskServiceKellyTest {
             riskConfig.kellyFraction = 1.0
 
             val size = service.calculateOptimalPositionSize("SBER")
-            val fallback = riskConfig.maxPositionRub.multiply(BigDecimal(riskConfig.kellyNoDataFraction.toString()))
+            val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
+            val fallback = riskConfig.maxPositionRub.multiply(BigDecimal(fallbackFraction.toString()))
             assertEquals(0, fallback.compareTo(size))
         }
 
     @Test
     fun `volatility targeting reduces size for high atr`() =
         runBlocking {
-            // w=0.6, r=2.0, n=20 -> wilson kelly ~0.232 -> base ~11617
+            // w=0.6, r=2.0, n=20 -> wilson kelly ~0.232, но кап 0.10 -> base ~5000
             val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
             stubStats(mapOf("SBER" to s))
             riskConfig.kellyFraction = 1.0
@@ -193,7 +206,7 @@ class AdaptiveRiskServiceKellyTest {
             val extremeVol = service.calculateOptimalPositionSize("SBER", atr = BigDecimal("20"), currentPrice = BigDecimal("100"))
 
             // ATR 2% -> mult=2.0, ATR 10% -> mult=0.4, ATR 20% -> mult=0.25 (floor)
-            val base = BigDecimal("11617")
+            val base = BigDecimal("5000")
             assertEquals(base.multiply(BigDecimal("2.0")).toDouble(), lowVol.toDouble(), 60.0)
             assertEquals(base.multiply(BigDecimal("0.4")).toDouble(), highVol.toDouble(), 30.0)
             assertEquals(base.multiply(BigDecimal("0.25")).toDouble(), extremeVol.toDouble(), 30.0)
@@ -209,8 +222,8 @@ class AdaptiveRiskServiceKellyTest {
             // candleCache mocked: calculateRealizedVolatility/calculateAtr/getRecentCandles -> null/empty
             val size = service.calculateOptimalPositionSize("SBER")
 
-            // wilson kelly ~0.232 * 50000 ~11617, без vol-множителя и без просадки
-            assertTrue(size > BigDecimal("10000") && size < BigDecimal("13000"), "unexpected size $size")
+            // wilson kelly ~0.232, но кап 0.10 * 50000 ~5000, без vol-множителя и без просадки
+            assertTrue(size > BigDecimal("4900") && size < BigDecimal("5100"), "unexpected size $size")
         }
 
     @Test
@@ -235,8 +248,8 @@ class AdaptiveRiskServiceKellyTest {
 
             riskConfig.kellyDrawdownReduction = 0.5
             val size = service.calculateOptimalPositionSize("SBER")
-            // full kelly ~11617 -> drawdown reduction *0.5
-            assertEquals(5808.0, size.toDouble(), 60.0)
+            // base ~5000 (cap 0.10) -> drawdown reduction *0.5
+            assertEquals(2500.0, size.toDouble(), 60.0)
         }
 
     @Test
@@ -248,8 +261,8 @@ class AdaptiveRiskServiceKellyTest {
             stubDrawdown(7.0)
 
             val size = service.calculateOptimalPositionSize("SBER")
-            // base ~11617 * 0.5 (tier 6%) -> ~5808
-            assertEquals(5808.0, size.toDouble(), 60.0)
+            // base ~5000 (cap 0.10) * 0.5 (tier 6%) -> ~2500
+            assertEquals(2500.0, size.toDouble(), 60.0)
         }
 
     @Test
@@ -261,8 +274,8 @@ class AdaptiveRiskServiceKellyTest {
             stubDrawdown(12.0)
 
             val size = service.calculateOptimalPositionSize("SBER")
-            // base ~11617 * 0.25 (tier 10%) -> ~2904
-            assertEquals(2904.0, size.toDouble(), 60.0)
+            // base ~5000 (cap 0.10) * 0.25 (tier 10%) -> ~1250
+            assertEquals(1250.0, size.toDouble(), 60.0)
         }
 
     @Test

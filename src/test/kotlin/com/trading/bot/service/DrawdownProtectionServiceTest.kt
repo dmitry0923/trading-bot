@@ -34,8 +34,18 @@ class DrawdownProtectionServiceTest {
     private val instrumentsConfig = InstrumentsConfig()
     private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
-    private fun service(config: RiskConfig = RiskConfig()): DrawdownProtectionService =
-        DrawdownProtectionService(config, positionRepo, snapshotRepo, instrumentsConfig, SimpleMeterRegistry())
+    private fun service(config: RiskConfig = RiskConfig()): DrawdownProtectionService {
+        val aumProvider = Mockito.mock(AumProvider::class.java)
+        Mockito.`when`(aumProvider.latestAum()).thenReturn(config.maxPositionRub)
+        return DrawdownProtectionService(
+            config,
+            positionRepo,
+            snapshotRepo,
+            instrumentsConfig,
+            SimpleMeterRegistry(),
+            aumProvider,
+        )
+    }
 
     /**
      * Suspend-метод на моке возвращает null по умолчанию — явно стаббим пустой список

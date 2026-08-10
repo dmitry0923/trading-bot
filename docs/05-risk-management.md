@@ -33,18 +33,22 @@
 @ConfigurationProperties(prefix = "risk")
 class RiskConfig {
     var enabled: Boolean = true
-    var maxPositionRub: BigDecimal = BigDecimal("500000")
-    var maxDailyLossRub: BigDecimal = BigDecimal("50000")
-    var maxOpenPositions: Int = 5
+    var maxPositionRub: BigDecimal = BigDecimal("50000")   // fallback AUM (см. AumProvider)
+    var maxDailyLossRub: BigDecimal = BigDecimal("5000")
+    var maxOpenPositions: Int = 1
     var maxSectorExposure: Int = 2
     var maxVolatilityPercent: Double = 5.0
     var defaultStopLossPercent: Double = 2.0
     var defaultTakeProfitPercent: Double = 4.0
     var trailingStopEnabled: Boolean = true
-    var trailingStopPercent: Double = 1.5
+    var trailingStopPercent: Double = 1.0
     var sectors: Map<String, String> = emptyMap()
 }
 ```
+
+> **AUM (активы под управлением)** для Kelly, Gross/Net exposure и Multi-Tier drawdown лимитов
+> берётся из `AumProvider` (реальный баланс портфеля Alor, кэш 60с). `maxPositionRub` —
+> только fallback (SIMULATION / недоступность Alor / нулевой баланс).
 
 ### Справочник секторов по умолчанию
 
@@ -204,12 +208,18 @@ flowchart LR
 Формула (Quarter-Kelly по умолчанию):
 
 ```
-w = winRate (за 30 дней)
+aum = AumProvider.currentAum()   # реальный баланс из Alor (кэш 60с), fallback — risk.max-position-rub
+w = winRate (за 30 дней, Wilson lower bound — шринкейдж при малой выборке)
 r = avgWin / |avgLoss| (выигрыш/проигрыш)
 kelly = (w * r - (1 - w)) / r
-safeKelly = clamp(kelly, 0.0, 0.50)
-base = maxPositionRub * safeKelly * kellyFraction   # kellyFraction = 0.25 (Quarter)
+safeKelly = clamp(kelly * kellyFraction, 0.0, 0.10)   # kellyFraction = 0.25 (Quarter), жёсткий кап 10% AUM
+base = aum * safeKelly
 ```
+
+- Без статистики / сделок < `kellyMinTrades` (15): `base = aum * min(kellyNoDataFraction, kellyMaxPositionFraction)`
+  (0.15 → ограничено капом 0.10) — консервативный fallback, «жёсткий кап» не обходится.
+- База размера — **актуальный AUM** ([AumProvider]), а не конфигурационная константа `maxPositionRub`
+  (константа — только fallback в SIMULATION / при недоступности Alor).
 
 **Volatility targeting** (размер зависит от ATR инструмента):
 
@@ -230,14 +240,28 @@ size = base * volMultiplier
 итоговый размер ещё умножается на `kellyDrawdownReduction = 0.5`. Итого в просадке
 позиции могут быть в 4 раза меньше, чем при Full-Kelly.
 
-- Если сделок < 5 → `base = maxPositionRub` (без статистики не ограничиваем, но и не увеличиваем; множители волатильности/просадки применяются).
+- Если сделок < `kellyMinTrades` (15) → `base = aum * min(kellyNoDataFraction, kellyMaxPositionFraction)`
+  (консервативный fallback вместо 100% депозита; множители волатильности/просадки применяются).
 - Метрика: `adaptive.position_size{ticker}` (gauge).
 
-**Применение в `TradingBotService.openPosition`**:
+**Risk-per-trade кап для акций** (`StockEntryProfile.sizePosition`, аналог `FuturesPositionSizer`):
 
 ```
-kellyQty = size / targetPrice (округляется вниз, минимум 1)
-qty = kellyQty, если kellyQty > 0 и kellyQty < strategy.quantity, иначе adjustedQty/strategy.quantity
+riskAmount = aum * riskPerTradePercent / 100          # 1% от AUM
+lossPerShare = entryPrice * defaultStopLossPercent / 100   # SL 2%
+maxQtyByRisk = floor(riskAmount / lossPerShare)
+finalQty = min(kellyQty, maxQtyByRisk);  finalQty < 1 → reject ZERO_RISK_SIZE
+```
+
+Т.е. убыток при срабатывании стопа по акциям не может превысить `riskPerTradePercent`% от AUM —
+двойная защита от оверсайзинга вместе с капом Kelly 0.10.
+
+**Применение в `StockEntryProfile.sizePosition`** (акции):
+
+```
+kellyQty = floor(kellySizeRub / entryPrice)
+finalQty = min(kellyQty, maxQtyByRisk)   # risk-per-trade кап, см. выше
+finalQty < 1 → вход отклонён (ZERO_RISK_SIZE)
 ```
 
 ### Портфельные лимиты (Gross/Net Exposure, `RiskManagementService.exceedsPortfolioLimits`)
@@ -246,6 +270,8 @@ qty = kellyQty, если kellyQty > 0 и kellyQty < strategy.quantity, инач�
 
 - **Gross Exposure** (сумма нотионалов всех позиций) ≤ `maxGrossExposurePercent` (150%) депозита;
 - **Net Exposure** (long − short) в пределах ±`maxNetExposurePercent` (100%) депозита.
+
+Депозит для лимитов — актуальный AUM ([AumProvider]), не константа `maxPositionRub`.
 
 Превышение → вход запрещён (`bot.risk.reject{reason=PORTFOLIO_LIMIT}`).
 

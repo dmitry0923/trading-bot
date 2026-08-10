@@ -42,6 +42,7 @@ class AdaptiveRiskService(
     private val meterRegistry: MeterRegistry,
     private val correlationProvider: CorrelationMatrixProvider,
     private val marketRegimeProvider: MarketRegimeProvider,
+    private val aumProvider: AumProvider,
 ) {
     private val logger = KotlinLogging.logger {}
     private val correlationThreshold = 0.8
@@ -122,11 +123,11 @@ class AdaptiveRiskService(
      * Оптимальный размер позиции по критерию Келли для тикера.
      *
      * Порядок расчёта:
-     * 1. Kelly (fraction = Quarter/Half) -> базовый размер от депозита.
+     * 1. Kelly (fraction = Quarter/Half) -> базовый размер от AUM ([AumProvider]).
      *    Статистика робастная: win rate заменяется Wilson lower bound (шринкейдж
      *    при малой выборке), минимум сделок [RiskConfig.kellyMinTrades], при
      *    недостатке данных — консервативная доля [RiskConfig.kellyNoDataFraction]
-     *    вместо 100% депозита. Кап — [RiskConfig.kellyMaxPositionFraction] (50%).
+     *    вместо 100% депозита. Кап — [RiskConfig.kellyMaxPositionFraction] (10% от AUM).
      * 2. Volatility targeting (ДНЕВНОЙ горизонт): множитель =
      *    volatilityTargetPercent / dailyVolPercent, где dailyVolPercent — realized
      *    volatility (stddev лог-доходностей по DAY_1) либо дневной эквивалент
@@ -145,10 +146,13 @@ class AdaptiveRiskService(
         atr: BigDecimal? = null,
         currentPrice: BigDecimal? = null,
     ): BigDecimal {
+        val aum = aumProvider.currentAum()
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
+        // No-data fallback тоже ограничен жёстким капом: min(noDataFraction, kellyMaxPositionFraction).
+        val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
         val base =
             if (stats == null || stats.totalTrades < riskConfig.kellyMinTrades) {
-                riskConfig.maxPositionRub.multiply(BigDecimal(riskConfig.kellyNoDataFraction.toString()))
+                aum.multiply(BigDecimal(fallbackFraction.toString()))
             } else {
                 val w = wilsonLowerBound(stats.winRate, stats.totalTrades, riskConfig.kellyWilsonZ)
                 val avgLossAbs = kotlin.math.abs(stats.avgLoss.toDouble()).coerceAtLeast(0.01)
@@ -159,7 +163,7 @@ class AdaptiveRiskService(
                 val safeKelly =
                     (kelly * riskConfig.kellyFraction)
                         .coerceIn(0.0, riskConfig.kellyMaxPositionFraction)
-                if (safeKelly > 0) riskConfig.maxPositionRub.multiply(BigDecimal(safeKelly)) else BigDecimal.ZERO
+                if (safeKelly > 0) aum.multiply(BigDecimal(safeKelly)) else BigDecimal.ZERO
             }
 
         var size = base

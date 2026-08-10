@@ -2,6 +2,7 @@ package com.trading.bot.controller
 
 import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
+import com.trading.bot.backtest.BacktestValidator
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.PositionStatus
@@ -16,6 +17,7 @@ import com.trading.bot.model.entity.StrategyAdjustment
 import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.BlindSpotRepository
+import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.repository.StrategyRepository
@@ -83,7 +85,9 @@ class ApiController(
     private val adjustmentRepository: StrategyAdjustmentRepository,
     private val tradeEventRepository: TradeEventRepository,
     private val backtestEngine: BacktestEngine,
+    private val backtestValidator: BacktestValidator,
     private val historicalDataLoader: HistoricalDataLoader,
+    private val candleRepository: CandleRepository,
     private val dashboardService: DashboardService,
     private val dashboardSseService: DashboardSseService,
     private val investorService: InvestorService,
@@ -311,6 +315,45 @@ class ApiController(
                 LocalDateTime
                     .now()
                     .toString(),
+        )
+    }
+
+    /**
+     * Walk-forward валидация стратегии (C-002): OOS-метрики по фолдам и оценка
+     * устойчивости (защита от переобучения на in-sample бэктесте).
+     */
+    @GetMapping("/backtest/{ticker}/validate")
+    suspend fun validateBacktest(
+        @PathVariable ticker: String,
+        @RequestParam(defaultValue = "365") days: Int,
+        @RequestParam(defaultValue = "false") loadHistory: Boolean,
+        @RequestParam(defaultValue = "4") folds: Int,
+        @RequestParam(defaultValue = "MINUTE_10") timeframe: String,
+    ): Map<String, Any> {
+        meterRegistry
+            .counter(
+                "api.backtest.validate",
+                Tags
+                    .of("ticker", ticker),
+            ).increment()
+        if (loadHistory) {
+            historicalDataLoader.loadAndSave(ticker, days)
+        }
+        val from = LocalDateTime.now().minusDays(days.toLong())
+        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
+        val result = backtestValidator.validate(ticker, candles, folds = folds)
+        return mapOf(
+            "ticker" to ticker,
+            "timeframe" to timeframe,
+            "folds" to result.folds.size,
+            "consistency" to result.consistency,
+            "robust" to result.isRobust(),
+            "oosTrades" to result.aggregateOutOfSample.totalTrades,
+            "oosReturn" to result.aggregateOutOfSample.totalReturn,
+            "oosSharpe" to result.aggregateOutOfSample.sharpeRatio,
+            "oosSortino" to result.aggregateOutOfSample.sortinoRatio,
+            "oosProfitFactor" to result.aggregateOutOfSample.profitFactor,
+            "timestamp" to LocalDateTime.now().toString(),
         )
     }
 

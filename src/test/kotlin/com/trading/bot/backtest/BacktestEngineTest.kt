@@ -98,15 +98,39 @@ class BacktestEngineTest {
                 ticker = "SBER",
                 totalReturn = 0.30,
                 sharpeRatio = 1.5,
+                sortinoRatio = 1.8,
                 maxDrawdown = 0.10,
                 winRate = 0.55,
                 profitFactor = 1.8,
-                totalTrades = 150,
+                totalTrades = 250,
                 avgHoldBars = 3.0,
                 equityCurve = emptyList(),
                 monthlyReturns = emptyMap(),
+                expectancy = 120.0,
+                winLossRatio = 1.4,
+                avgTrade = 100.0,
+                recoveryFactor = 3.0,
             )
         assertTrue(result.isPassable())
+    }
+
+    @Test
+    fun `backtest metrics include risk and quality ratios`() {
+        val result =
+            BacktestMetrics.compute(
+                "SBER",
+                listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("99000"), BigDecimal("102000")),
+                listOf(1000.0, -500.0, 2000.0),
+            )
+        assertEquals(3, result.totalTrades)
+        assertEquals(2.0 / 3.0, result.winRate, 1e-9)
+        assertTrue(result.sortinoRatio.isFinite())
+        // AvgTrade = средний P&L сделки; Expectancy (Van Tharp) для $-доходностей
+        // совпадает с ним: (Win% × AvgWin) − (Loss% × AvgLoss) = 833.33
+        assertEquals(2500.0 / 3.0, result.avgTrade, 1e-9)
+        assertEquals((2.0 / 3.0) * 1500.0 - (1.0 / 3.0) * 500.0, result.expectancy, 1e-9)
+        assertEquals(1500.0 / 500.0, result.winLossRatio, 1e-9)
+        assertEquals(2500.0 / result.maxDrawdown, result.recoveryFactor, 1e-9)
     }
 
     @Test

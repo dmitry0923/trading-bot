@@ -5,26 +5,26 @@ import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.agent.FundamentalAnalysisAgent
 import com.trading.bot.agent.StrategyAgent
 import com.trading.bot.agent.TechnicalAnalysisAgent
-import com.trading.bot.domain.strategy.Strategy
+import com.trading.bot.domain.strategy.AdvisoryOnlyStrategy
 import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.strategy.StrategyDecision
-import com.trading.bot.model.dto.FundamentalReport
-import com.trading.bot.model.dto.MarketSnapshot
-import com.trading.bot.model.dto.TechnicalReport
+import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.service.AdaptiveRiskService
 import org.springframework.stereotype.Component
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Дискреционная (LLM) стратегия — текущий агентный контур как реализация [Strategy].
+ * Дискреционная (LLM) стратегия — агентный контур для A/B-эксперимента и аналитики.
  *
- * Оборачивает цепочку Technical + Fundamental -> Strategist -> Contrarian ->
- * Arbitrator в единый контракт стратегического этапа. Guardrails (адаптивный
- * порог уверенности, коррекция цены) применяются агентами внутри, как раньше.
+ * Помечена [AdvisoryOnlyStrategy]: НЕ участвует в конкуренции за сигнал
+ * (C-001). Единственный источник сигнала — детерминированные стратегии; LLM
+ * работает советником через [com.trading.bot.application.advisor.LlmAdvisor].
+ * Цепочка Technical + Fundamental -> Strategist -> Contrarian -> Arbitrator
+ * сохраняется как вариантная рука A/B-эксперимента ([produceVariant]).
  *
- * Промежуточные результаты цепочки (tech/fund/draft/challenge) сохраняются на
- * время цикла для вариантной руки A/B-эксперимента ([produceVariant]) — повторный
- * вызов Арбитра с другим версией промпта без дублирования остальных LLM-вызовов.
+ * [evaluate] вызывается только вручную/для аналитики: тот же контур с версией
+ * промпта по умолчанию. [produceVariant] запускает контур с вариантной версией
+ * промпта Арбитра и обходом семантического кэша (иначе вариант получил бы
+ * кэшированный ответ контрольной руки — эксперимент бессмыслен).
  */
 @Component
 class DiscretionaryStrategy(
@@ -34,22 +34,27 @@ class DiscretionaryStrategy(
     private val contrAgent: ContrarianAgent,
     private val arbAgent: ArbitratorAgent,
     private val adaptiveRisk: AdaptiveRiskService,
-) : Strategy {
+) : AdvisoryOnlyStrategy {
     override val id = "DISCRETIONARY"
 
-    data class ChainInputs(
-        val tech: TechnicalReport,
-        val fund: FundamentalReport,
-        val draft: StrategyAgent.Draft,
-        val challenge: ContrarianAgent.ChallengeReport,
-        val snapshot: MarketSnapshot,
-        val contextPrompt: String?,
-        val adaptiveConfidence: Double,
-    )
+    override suspend fun evaluate(context: StrategyContext): StrategyDecision =
+        runChain(context, PromptRegistry.DEFAULT_VERSION, bypassCache = false)
 
-    private val chainCache = ConcurrentHashMap<String, ChainInputs>()
+    /**
+     * Вариантная рука A/B-эксперимента: полный агентный контур с вариантной
+     * версией промпта Арбитра. Не полагается на кэш цепочки: контур запускается
+     * целиком (shadow-режим, по конфигурации эксперимента).
+     */
+    suspend fun produceVariant(
+        context: StrategyContext,
+        version: String,
+    ): StrategyDecision = runChain(context, version, bypassCache = true)
 
-    override suspend fun evaluate(context: StrategyContext): StrategyDecision {
+    private suspend fun runChain(
+        context: StrategyContext,
+        version: String,
+        bypassCache: Boolean,
+    ): StrategyDecision {
         val tech = techAgent.analyze(context.ticker, context.candles, context.snapshot, context.cycleId)
         val fund = fundAgent.analyze(context.ticker, context.cycleId)
         val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(context.ticker)
@@ -65,40 +70,9 @@ class DiscretionaryStrategy(
                 context.cycleId,
                 contextPrompt = context.contextPrompt,
                 adaptiveConfidence = adaptiveConf,
+                version = version,
+                bypassCache = bypassCache,
             )
-
-        chainCache[key(context)] =
-            ChainInputs(tech, fund, draft, challenge, context.snapshot, context.contextPrompt, adaptiveConf)
         return StrategyDecision(final.action, final.targetPrice, final.confidence, final.reasoning)
     }
-
-    /**
-     * Вариантная рука A/B-эксперимента: повторный вызов Арбитра с другим версией
-     * промпта на тех же входах контрольной руки (семантический кэш обходится).
-     * Если контрольная цепочка недоступна (не запускалась в этом цикле) — HOLD.
-     */
-    suspend fun produceVariant(
-        context: StrategyContext,
-        version: String,
-    ): StrategyDecision {
-        val inputs =
-            chainCache.remove(key(context))
-                ?: return StrategyDecision.hold(context.snapshot.currentPrice, "No control chain for variant")
-        val variantFinal =
-            arbAgent.adjudicate(
-                draft = inputs.draft,
-                challenge = inputs.challenge,
-                tech = inputs.tech,
-                fund = inputs.fund,
-                snapshot = inputs.snapshot,
-                cycleId = context.cycleId,
-                contextPrompt = inputs.contextPrompt,
-                adaptiveConfidence = inputs.adaptiveConfidence,
-                version = version,
-                bypassCache = true,
-            )
-        return StrategyDecision(variantFinal.action, variantFinal.targetPrice, variantFinal.confidence, variantFinal.reasoning)
-    }
-
-    private fun key(context: StrategyContext): String = "${context.ticker}|${context.cycleId}"
 }

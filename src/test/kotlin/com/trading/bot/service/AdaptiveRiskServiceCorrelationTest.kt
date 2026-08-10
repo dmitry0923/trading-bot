@@ -41,6 +41,7 @@ class AdaptiveRiskServiceCorrelationTest {
             meterRegistry,
             correlationProvider,
             marketRegimeProvider,
+            Mockito.mock(AumProvider::class.java),
         )
 
     private fun stubCorrelation(value: Double?) {

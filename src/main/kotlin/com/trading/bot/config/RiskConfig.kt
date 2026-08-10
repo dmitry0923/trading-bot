@@ -56,16 +56,19 @@ class RiskConfig {
     var kellyMinTrades: Int = 15
 
     /**
-     * Доля от maxPositionRub при отсутствии/недостатке статистики для Kelly.
+     * Доля от AUM при отсутствии/недостатке статистики для Kelly.
      * 0.15 = 15% от 50k = 7 500 ₽. Консервативный fallback вместо 100% депозита.
+     * Эффективно ограничивается сверху жёстким капом [kellyMaxPositionFraction]
+     * (min(noDataFraction, cap)) — «жёсткий кап» не обходится без статистики.
      */
     var kellyNoDataFraction: Double = 0.15
 
     /**
-     * Жёсткий кап доли Kelly от maxPositionRub (0..1). 0.50 = Half-Kelly cap.
-     * Даже при идеальной статистике позиция не превысит 50% депозита на тикер.
+     * Жёсткий кап доли Kelly от AUM (0..1). 0.10 = консервативный кап: даже при
+     * идеальной статистике позиция не превысит 10% депозита на тикер (в паре
+     * с risk-per-trade-капом [riskPerTradePercent] — двойная защита от оверсайзинга).
      */
-    var kellyMaxPositionFraction: Double = 0.50
+    var kellyMaxPositionFraction: Double = 0.10
 
     /**
      * Целевая волатильность для volatility targeting, % в ДЕНЬ (дневной горизонт).

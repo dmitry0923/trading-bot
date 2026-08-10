@@ -154,9 +154,11 @@ class BacktestEngine(
         val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns)
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
-                "Sharpe=${String.format("%.2f", result.sharpeRatio)}, MDD=${String.format("%.2f%%", result.maxDrawdown * 100)}, " +
-                "PF=${String.format("%.2f", result.profitFactor)}, win=${String.format("%.2f%%", result.winRate * 100)}, " +
-                "trades=${result.totalTrades} -> ${if (result.isPassable()) "PASS" else "REJECT"}"
+                "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
+                "MDD=${String.format("%.2f%%", result.maxDrawdown * 100)}, PF=${String.format("%.2f", result.profitFactor)}, " +
+                "win=${String.format("%.2f%%", result.winRate * 100)}, expectancy=${String.format("%.2f", result.expectancy)}, " +
+                "W/L=${String.format("%.2f", result.winLossRatio)}, trades=${result.totalTrades} " +
+                "-> ${if (result.isPassable()) "PASS" else "REJECT"}"
         }
         return result
     }

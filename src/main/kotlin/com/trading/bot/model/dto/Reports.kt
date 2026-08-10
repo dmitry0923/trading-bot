@@ -29,9 +29,3 @@ data class MarketSnapshot(
     val volume: Long? = null,
     val timestamp: Instant = Instant.now(),
 )
-
-data class RiskCheckResult(
-    val allowed: Boolean,
-    val reason: String,
-    val adjustedQty: Int,
-)

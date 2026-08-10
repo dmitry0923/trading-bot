@@ -151,12 +151,14 @@ class TradingGateTest {
         val g = gate()
         g.onTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT", timestamp = Instant.parse("2026-01-01T10:00:00Z")))
 
-        verify(tradingHaltService).record(
-            eq("DAILY_LOSS_LIMIT"),
-            eq("RISK_SYSTEM"),
-            eq(""),
-            eq(Instant.parse("2026-01-01T10:00:00Z")),
-        )
+        runBlocking {
+            verify(tradingHaltService).record(
+                eq("DAILY_LOSS_LIMIT"),
+                eq("RISK_SYSTEM"),
+                eq(""),
+                eq(Instant.parse("2026-01-01T10:00:00Z")),
+            )
+        }
     }
 
     @Test

@@ -57,11 +57,9 @@ class SettingsService(
      * Заменяет настройки бота новыми значениями, персистит их и применяет
      * в runtime-конфиги (риск, плечо) — без перезапуска.
      */
-    fun updateSettings(newSettings: BotSettings) {
+    suspend fun updateSettings(newSettings: BotSettings) {
         settings = newSettings
-        runBlocking {
-            settingsRepository.saveSettings(newSettings)
-        }
+        settingsRepository.saveSettings(newSettings)
         applyRuntimeConfig(newSettings)
         logger.info { "Bot settings updated: tradingEnabled=${newSettings.tradingEnabled} provider=${newSettings.llmProvider}" }
     }

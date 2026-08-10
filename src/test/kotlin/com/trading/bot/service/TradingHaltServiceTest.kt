@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.repository.TradingHaltRepository
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -13,7 +14,7 @@ class TradingHaltServiceTest {
     fun `record updates in-memory last`() {
         val service = TradingHaltService(repository)
 
-        service.record("DAILY_LOSS_LIMIT", "RISK_SYSTEM", "detail")
+        runBlocking { service.record("DAILY_LOSS_LIMIT", "RISK_SYSTEM", "detail") }
 
         val last = service.last()
         assertEquals("DAILY_LOSS_LIMIT", last?.reason)
@@ -24,9 +25,9 @@ class TradingHaltServiceTest {
     @Test
     fun `clear resets last`() {
         val service = TradingHaltService(repository)
-        service.record("STATE_DESYNC", "STATE_RECONCILIATION")
+        runBlocking { service.record("STATE_DESYNC", "STATE_RECONCILIATION") }
 
-        service.clear()
+        runBlocking { service.clear() }
 
         assertNull(service.last())
     }

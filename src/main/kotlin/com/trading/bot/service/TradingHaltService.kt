@@ -41,7 +41,7 @@ class TradingHaltService(
     /**
      * Фиксирует новую остановку торговли (кэш + БД).
      */
-    fun record(
+    suspend fun record(
         reason: String,
         source: String,
         detail: String = "",
@@ -50,7 +50,7 @@ class TradingHaltService(
         val record = TradingHaltRecord(reason = reason, source = source, detail = detail, haltedAt = haltedAt)
         cachedLast = record
         try {
-            runBlocking { repository.save(record) }
+            repository.save(record)
         } catch (e: Exception) {
             logger.warn(e) { "Failed to persist trading halt: $reason (in-memory only)" }
         }
@@ -65,10 +65,10 @@ class TradingHaltService(
     /**
      * Сбрасывает сохранённую остановку (ручное включение торговли).
      */
-    fun clear() {
+    suspend fun clear() {
         cachedLast = null
         try {
-            runBlocking { repository.deleteAll() }
+            repository.deleteAll()
         } catch (e: Exception) {
             logger.warn(e) { "Failed to clear trading halt from DB" }
         }

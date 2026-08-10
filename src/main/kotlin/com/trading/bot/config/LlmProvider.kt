@@ -7,11 +7,9 @@ package com.trading.bot.config
  * доступа к десяткам моделей по одному ключу. При необходимости можно переключиться
  * на прямые API Kimi (Moonshot), DeepSeek или Qwen (DashScope) — все они OpenAI-совместимы.
  */
-enum class LlmProvider(
-    val displayName: String,
-) {
-    ROUTER_AI("RouterAI (агрегатор)"),
-    KIMI("Kimi (Moonshot)"),
-    DEEPSEEK("DeepSeek"),
-    QWEN("Qwen (Alibaba DashScope)"),
+enum class LlmProvider {
+    ROUTER_AI,
+    KIMI,
+    DEEPSEEK,
+    QWEN,
 }

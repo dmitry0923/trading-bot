@@ -38,26 +38,6 @@ class StrategyAdjustmentRepository(
             .awaitSingle()
     }
 
-    suspend fun findByTickerAndAdjustmentTypeOrderByCreatedAtDesc(
-        ticker: String,
-        type: String,
-    ): List<StrategyAdjustment> {
-        val sql =
-            """
-            SELECT * FROM strategy_adjustments
-            WHERE ticker = :ticker AND adjustment_type = :type
-            ORDER BY created_at DESC
-            """.trimIndent()
-        return databaseClient
-            .sql(sql)
-            .bind("ticker", ticker)
-            .bind("type", type)
-            .map { row, _ -> toStrategyAdjustment(row) }
-            .all()
-            .collectList()
-            .awaitSingle()
-    }
-
     suspend fun findAll(): List<StrategyAdjustment> =
         databaseClient
             .sql("SELECT * FROM strategy_adjustments ORDER BY created_at DESC")

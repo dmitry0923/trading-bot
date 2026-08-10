@@ -64,29 +64,24 @@ class DashboardSseService(
     }
 
     @EventListener
-    fun onPositionOpened(
-        @Suppress("UNUSED_PARAMETER") event: PositionOpenedEvent,
-    ) = throttledBroadcast("POSITION_OPENED")
+    @Suppress("UNUSED_PARAMETER")
+    fun onPositionOpened(event: PositionOpenedEvent) = throttledBroadcast("POSITION_OPENED")
 
     @EventListener
-    fun onPositionClosed(
-        @Suppress("UNUSED_PARAMETER") event: PositionClosedEvent,
-    ) = throttledBroadcast("POSITION_CLOSED")
+    @Suppress("UNUSED_PARAMETER")
+    fun onPositionClosed(event: PositionClosedEvent) = throttledBroadcast("POSITION_CLOSED")
 
     @EventListener
-    fun onStrategyGenerated(
-        @Suppress("UNUSED_PARAMETER") event: StrategyGeneratedEvent,
-    ) = throttledBroadcast("STRATEGY")
+    @Suppress("UNUSED_PARAMETER")
+    fun onStrategyGenerated(event: StrategyGeneratedEvent) = throttledBroadcast("STRATEGY")
 
     @EventListener
-    fun onExecutionReport(
-        @Suppress("UNUSED_PARAMETER") event: ExecutionReportEvent,
-    ) = throttledBroadcast("EXECUTION")
+    @Suppress("UNUSED_PARAMETER")
+    fun onExecutionReport(event: ExecutionReportEvent) = throttledBroadcast("EXECUTION")
 
     @EventListener
-    fun onPriceChanged(
-        @Suppress("UNUSED_PARAMETER") event: PriceChangedEvent,
-    ) = throttledBroadcast("PRICE")
+    @Suppress("UNUSED_PARAMETER")
+    fun onPriceChanged(event: PriceChangedEvent) = throttledBroadcast("PRICE")
 
     /**
      * Рассылка с троттлингом: не чаще одного раза за [minIntervalMs].

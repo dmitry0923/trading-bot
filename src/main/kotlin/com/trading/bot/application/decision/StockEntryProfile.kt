@@ -81,7 +81,6 @@ class StockEntryProfile(
         signal: Signal,
         entryPrice: BigDecimal,
         request: EntryRequest,
-        openPositions: List<Position>,
     ): PositionSizeResult {
         val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker)
         val kellyQty =
@@ -100,7 +99,6 @@ class StockEntryProfile(
     }
 
     override suspend fun postSizingChecks(
-        ticker: String,
         direction: PositionDirection,
         entryPrice: BigDecimal,
         size: PositionSizeResult,

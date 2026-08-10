@@ -4,6 +4,7 @@ import com.tngtech.archunit.base.DescribedPredicate
 import com.tngtech.archunit.core.importer.ImportOption
 import com.tngtech.archunit.junit.AnalyzeClasses
 import com.tngtech.archunit.junit.ArchTest
+import com.tngtech.archunit.lang.ArchRule
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields
 import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods
@@ -20,11 +21,11 @@ import com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses
     packages = ["com.trading.bot"],
     importOptions = [ImportOption.DoNotIncludeTests::class],
 )
-@Suppress("ktlint:standard:property-naming", "unused")
+@Suppress("ktlint:standard:property-naming", "unused", "PropertyName")
 class LayerArchitectureTest {
     /** Правило 1: чистый домен. domain зависит только от model, java и kotlin. */
     @ArchTest
-    val `domain must not depend on infrastructure` =
+    val `domain must not depend on infrastructure`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..domain..")
@@ -42,7 +43,7 @@ class LayerArchitectureTest {
 
     /** Правило 1: в domain не должно быть Spring-компонентов. */
     @ArchTest
-    val `domain must not use spring stereotypes` =
+    val `domain must not use spring stereotypes`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..domain..")
@@ -58,7 +59,7 @@ class LayerArchitectureTest {
 
     /** Правило 2: агенты не декларируют риск-параметры сделки. */
     @ArchTest
-    val `agents must not declare position sizing fields` =
+    val `agents must not declare position sizing fields`: ArchRule =
         fields()
             .that()
             .areDeclaredInClassesThat()
@@ -73,7 +74,7 @@ class LayerArchitectureTest {
      *  (Контекстные сервисы — IndicatorCalculator/MacroContextService/TradeAnalysisService/
      *  RedisCacheService — разрешены: это данные, а не риск.) */
     @ArchTest
-    val `agents must not depend on risk services` =
+    val `agents must not depend on risk services`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..agent..")
@@ -90,7 +91,7 @@ class LayerArchitectureTest {
 
     /** Правило 3: риск-сервисы не рассчитывают стопы и не управляют trailing. */
     @ArchTest
-    val `risk services must not compute sl tp trailing` =
+    val `risk services must not compute sl tp trailing`: ArchRule =
         methods()
             .that()
             .areDeclaredInClassesThat()
@@ -103,7 +104,7 @@ class LayerArchitectureTest {
 
     /** Правило 3: риск-движок фьючерсов отвечает только Да/Нет (нет сайзинга и стопов). */
     @ArchTest
-    val `futures risk engine must not compute order params` =
+    val `futures risk engine must not compute order params`: ArchRule =
         methods()
             .that()
             .areDeclaredInClassesThat()
@@ -116,7 +117,7 @@ class LayerArchitectureTest {
 
     /** Правило 3: риск не исполняет сделки и не публикует события. */
     @ArchTest
-    val `risk must not execute orders or publish events` =
+    val `risk must not execute orders or publish events`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..domain.risk..", "..service.RiskManagementService")
@@ -132,7 +133,7 @@ class LayerArchitectureTest {
 
     /** Правило 3: риск-движок фьючерсов не читает БД напрямую. */
     @ArchTest
-    val `futures risk engine must not depend on position repository` =
+    val `futures risk engine must not depend on position repository`: ArchRule =
         noClasses()
             .that()
             .haveSimpleName("FuturesRiskEngine")
@@ -143,7 +144,7 @@ class LayerArchitectureTest {
     /** Стратегия (сущность-решение) больше не несёт размер/стопы — только в историю.
      *  Ограничено доменным Signal (внутренний Guardrails$Signal с таким же simple name не в счёт). */
     @ArchTest
-    val `signal must not carry sizing or stops` =
+    val `signal must not carry sizing or stops`: ArchRule =
         classes()
             .that()
             .resideInAnyPackage("..domain.signal..")
@@ -156,7 +157,7 @@ class LayerArchitectureTest {
     /** Стратегии (детерминированные правила + LLM-путь) не считают риск-параметры
      *  и не исполняют сделки: сайзинг/стопы — этап RiskEngine/PositionSizer/OrderBuilder. */
     @ArchTest
-    val `strategies must not depend on risk or execution layer` =
+    val `strategies must not depend on risk or execution layer`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..application.strategy..")
@@ -172,7 +173,7 @@ class LayerArchitectureTest {
 
     /** DecisionEngine — оркестратор входа: домен не знает о нём. */
     @ArchTest
-    val `domain must not depend on decision layer` =
+    val `domain must not depend on decision layer`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..domain..")
@@ -182,7 +183,7 @@ class LayerArchitectureTest {
 
     /** DecisionEngine — оркестратор входа: риск-слой не знает о нём. */
     @ArchTest
-    val `risk must not depend on decision layer` =
+    val `risk must not depend on decision layer`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..application.risk..", "..domain.risk..")
@@ -192,7 +193,7 @@ class LayerArchitectureTest {
 
     /** DecisionEngine — оркестратор входа: стратегии не знают о нём. */
     @ArchTest
-    val `strategies must not depend on decision layer` =
+    val `strategies must not depend on decision layer`: ArchRule =
         noClasses()
             .that()
             .resideInAnyPackage("..application.strategy..")

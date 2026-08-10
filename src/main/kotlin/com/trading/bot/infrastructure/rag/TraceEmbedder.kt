@@ -1,6 +1,8 @@
 package com.trading.bot.infrastructure.rag
 
 import org.springframework.stereotype.Component
+import kotlin.math.ln
+import kotlin.math.sqrt
 
 /**
  * Локальный TF-IDF эмбеддер текста для RAG-поиска по LLM-трейсам.
@@ -35,7 +37,7 @@ class TraceEmbedder {
             }
         }
         val n = docs.size
-        return df.mapValues { (_, docFreq) -> Math.log((1.0 + n) / (1.0 + docFreq)) + 1.0 }
+        return df.mapValues { (_, docFreq) -> ln((1.0 + n) / (1.0 + docFreq)) + 1.0 }
     }
 
     /**
@@ -47,9 +49,9 @@ class TraceEmbedder {
     ): Map<String, Double> {
         val raw =
             terms.mapValues { (term, tf) ->
-                (idf[term] ?: 1.0) * (1.0 + Math.log(tf.toDouble()))
+                (idf[term] ?: 1.0) * (1.0 + ln(tf.toDouble()))
             }
-        val norm = Math.sqrt(raw.values.sumOf { it * it })
+        val norm = sqrt(raw.values.sumOf { it * it })
         if (norm == 0.0) return emptyMap()
         return raw.mapValues { (_, w) -> w / norm }
     }

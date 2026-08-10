@@ -102,7 +102,7 @@ class ImpliedVolatilityService(
     ): SiIvSnapshot? {
         if (quotes.isEmpty()) return null
         val future = quotes.filter { it.lastTradeDate >= today }
-        val pool = if (future.isNotEmpty()) future else quotes
+        val pool = future.ifEmpty { quotes }
         val byExpiry = pool.groupBy { it.lastTradeDate }
         val expiries = byExpiry.keys.sorted()
         if (expiries.isEmpty()) return null

@@ -102,7 +102,7 @@ class OrderExecutionEngine(
      * - UNCERTAIN → позиция создаётся в pendingEntry (факт подтвердит реконсилятор);
      * - PARTIAL fill → позиция в pendingEntry на фактическом объёме, остаток лимитки
      *   отменяет реконсилятор после [AlorConfig.entryPartialFillCancelAfterMs];
-     * - полное исполнение → фиксация входа, [tradeEventService.recordPositionOpened] +
+     * - полное исполнение → фиксация входа, [TradeEventService.recordPositionOpened] +
      *   [onEntryOpened].
      *
      * @param buildPosition строит позицию инструмента (акции/фьючерсы): аргументы
@@ -429,8 +429,7 @@ class OrderExecutionEngine(
         }
         when {
             outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
-                val execution = alorClient.verifyOrder(outbox.alorOrderId)
-                if (execution == null) return
+                val execution = alorClient.verifyOrder(outbox.alorOrderId) ?: return
                 if (execution.status.contains("reject") || execution.status.contains("cancel")) {
                     abandonEntry(pos, "ENTRY_REJECTED")
                     return

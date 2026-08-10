@@ -48,7 +48,7 @@ class MoexClient(
         if (stock.isNotEmpty()) return stock
         // Фьючерсы (Si и др.) торгуются на FORTS — ищем там
         val futures = fetchCandles("futures", "forts", "RFUD", ticker, from)
-        return if (futures.isNotEmpty()) futures else stock
+        return futures.ifEmpty { stock }
     }
 
     /**
@@ -70,9 +70,7 @@ class MoexClient(
     ): List<Candle> {
         val stock = fetchCandlesPaged("stock", "shares", "TQBR", ticker, from, to, intervalMinutes)
         val result =
-            if (stock.isNotEmpty()) {
-                stock
-            } else {
+            stock.ifEmpty {
                 fetchCandlesPaged("futures", "forts", "RFUD", ticker, from, to, intervalMinutes)
             }
         return result.sortedBy { it.time }.distinctBy { it.time }

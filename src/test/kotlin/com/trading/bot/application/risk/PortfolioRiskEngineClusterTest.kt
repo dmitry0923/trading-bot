@@ -57,9 +57,9 @@ class PortfolioRiskEngineClusterTest {
         tickers: List<String>,
         corr: Double?,
     ) {
-        Mockito.`when`(correlationProvider.correlations(tickers, "MINUTE_10", 50)).thenReturn(
-            tickers.associateWith { a ->
-                tickers.associateWith { b -> if (a == b) 1.0 else corr }
+        Mockito.`when`(correlationProvider.resolved(tickers, "MINUTE_10", 50)).thenReturn(
+            tickers.map { a ->
+                tickers.map { b -> if (a == b) 1.0 else (corr ?: 0.0) }
             },
         )
     }

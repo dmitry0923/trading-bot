@@ -100,7 +100,7 @@ class ApiController(
     fun getSettings(): BotSettings = settingsService.getSettings()
 
     @PostMapping("/settings")
-    fun updateSettings(
+    suspend fun updateSettings(
         @RequestBody settings: BotSettings,
     ): BotSettings {
         settingsService.updateSettings(settings)
@@ -117,7 +117,7 @@ class ApiController(
      * Включить/выключить эксперимент через BotSettings.
      */
     @PostMapping("/experiment/enable")
-    fun experimentEnable(
+    suspend fun experimentEnable(
         @RequestParam enabled: Boolean,
     ): BotSettings {
         val current = settingsService.getSettings()
@@ -186,10 +186,9 @@ class ApiController(
         meterRegistry.counter("api.traces").increment()
         return when {
             !key.isNullOrBlank() -> {
-                val trace = traceQueryService.getByStorageKey(key)
-                if (trace == null) {
-                    throw ResponseStatusException(HttpStatus.NOT_FOUND, "trace not found: $key")
-                }
+                val trace =
+                    traceQueryService.getByStorageKey(key)
+                        ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "trace not found: $key")
                 mapOf("trace" to trace)
             }
 
@@ -514,13 +513,13 @@ class ApiController(
     }
 
     @PostMapping("/trading/enable")
-    fun enableTrading(): Map<String, Any> {
+    suspend fun enableTrading(): Map<String, Any> {
         tradingControlService.setTradingEnabled(true)
         return mapOf("tradingEnabled" to true)
     }
 
     @PostMapping("/trading/disable")
-    fun disableTrading(): Map<String, Any> {
+    suspend fun disableTrading(): Map<String, Any> {
         tradingControlService.setTradingEnabled(false)
         return mapOf("tradingEnabled" to false)
     }
@@ -531,7 +530,7 @@ class ApiController(
     ): Map<String, Any> = mapOf("closed" to tradingControlService.forceCloseNow(reason))
 
     @PostMapping("/trading/force-close-at")
-    fun forceCloseAt(
+    suspend fun forceCloseAt(
         @RequestParam time: String,
     ): Map<String, Any> {
         LocalTime.parse(time) // валидация формата HH:mm
@@ -541,7 +540,7 @@ class ApiController(
     }
 
     @PostMapping("/trading/force-close-cancel")
-    fun cancelForceClose(): Map<String, Any> {
+    suspend fun cancelForceClose(): Map<String, Any> {
         val current = settingsService.getSettings()
         settingsService.updateSettings(current.copy(forceCloseEnabled = false, forceCloseTime = ""))
         return mapOf("forceCloseEnabled" to false)

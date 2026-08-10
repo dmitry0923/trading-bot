@@ -42,11 +42,11 @@ import javax.crypto.SecretKey
 @Configuration
 @EnableWebSecurity
 class SecurityConfig(
-    @param:Value("\${security.auth.user:}") private val authUser: String,
-    @param:Value("\${security.auth.password:}") private val authPassword: String,
-    @param:Value("\${security.analytics.user:}") private val analyticsUser: String,
-    @param:Value("\${security.analytics.password:}") private val analyticsPassword: String,
-    @param:Value("\${security.metrics.scrape-token:}") private val metricsScrapeToken: String,
+    @param:Value($$"${security.auth.user:}") private val authUser: String,
+    @param:Value($$"${security.auth.password:}") private val authPassword: String,
+    @param:Value($$"${security.analytics.user:}") private val analyticsUser: String,
+    @param:Value($$"${security.analytics.password:}") private val analyticsPassword: String,
+    @param:Value($$"${security.metrics.scrape-token:}") private val metricsScrapeToken: String,
 ) {
     @Bean
     fun securityFilterChain(

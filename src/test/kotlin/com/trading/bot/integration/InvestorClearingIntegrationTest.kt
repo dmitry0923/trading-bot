@@ -218,7 +218,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `settings service update applies immediately in memory`() {
-        settingsService.updateSettings(BotSettings().copy(tradingEnabled = false))
+        runBlocking { settingsService.updateSettings(BotSettings().copy(tradingEnabled = false)) }
         assertFalse(tradingGate.isTradingEnabled())
 
         val loaded = runBlocking { settingsRepository.loadSettings() }
@@ -227,10 +227,10 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `trading control toggles single flag`() {
-        tradingControlService.setTradingEnabled(false)
+        runBlocking { tradingControlService.setTradingEnabled(false) }
         assertFalse(tradingControlService.isTradingEnabled())
 
-        tradingControlService.setTradingEnabled(true)
+        runBlocking { tradingControlService.setTradingEnabled(true) }
         // Ручная блокировка снята — MANUAL_DISABLE не должен попадать в статус.
         val status = runBlocking { tradingGate.getStatus() }
         assertFalse(status.blocks.any { it.reason == TradingBlockReason.MANUAL_DISABLE })

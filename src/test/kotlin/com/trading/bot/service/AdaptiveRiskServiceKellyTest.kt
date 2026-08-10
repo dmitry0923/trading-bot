@@ -71,16 +71,12 @@ class AdaptiveRiskServiceKellyTest {
             blindSpots = emptyList(),
         )
 
-    private fun stubStats(map: Map<String, TradeStats>) {
-        runBlocking {
-            Mockito.`when`(tradeAnalysis.analyzeLastNDays(30)).thenReturn(map)
-        }
+    private suspend fun stubStats(map: Map<String, TradeStats>) {
+        Mockito.`when`(tradeAnalysis.analyzeLastNDays(30)).thenReturn(map)
     }
 
-    private fun stubClosedPositions(list: List<Position>) {
-        runBlocking {
-            Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
-        }
+    private suspend fun stubClosedPositions(list: List<Position>) {
+        Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
     }
 
     private fun stubDrawdown(ddPercent: Double) {
@@ -113,7 +109,7 @@ class AdaptiveRiskServiceKellyTest {
 
     @BeforeEach
     fun stubDefaults() {
-        stubClosedPositions(emptyList())
+        runBlocking { stubClosedPositions(emptyList()) }
         stubDrawdown(0.0)
     }
 

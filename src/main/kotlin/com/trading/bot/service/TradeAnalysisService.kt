@@ -95,13 +95,7 @@ class TradeAnalysisService(
                 0L
             }
 
-        val hourly =
-            trades
-                .groupBy { it.openedAt.hour }
-                .mapValues { (_, list) ->
-                    val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
-                    if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
-                }
+        val hourly = hourlyWinRate(trades)
         val bestEntryHour = hourly.filter { it.value > 0 }.maxByOrNull { it.value }?.key
         val worstEntryHour = hourly.filter { it.value < 1.0 }.minByOrNull { it.value }?.key
 
@@ -218,13 +212,15 @@ class TradeAnalysisService(
     ): TimePattern {
         val since = LocalDateTime.now().minusDays(days.toLong())
         val trades = positionRepo.findClosedByTickerSince(ticker, since)
-        val hourly =
-            trades
-                .groupBy { it.openedAt.hour }
-                .mapValues { (_, list) ->
-                    val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
-                    if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
-                }
+        val hourly = hourlyWinRate(trades)
         return TimePattern(ticker, hourly)
     }
+
+    private fun hourlyWinRate(trades: List<Position>): Map<Int, Double> =
+        trades
+            .groupBy { it.openedAt.hour }
+            .mapValues { (_, list) ->
+                val w = list.count { (it.pnl ?: BigDecimal.ZERO) > BigDecimal.ZERO }
+                if (list.isNotEmpty()) w.toDouble() / list.size else 0.0
+            }
 }

@@ -10,7 +10,6 @@ import com.trading.bot.domain.risk.TradingCalendar
 import com.trading.bot.domain.risk.VolatilityFilter
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -88,9 +87,5 @@ class StockRiskEngine(
         return atrPercent > riskConfig.maxVolatilityPercent
     }
 
-    private fun reject(reason: String): RiskVerdict {
-        meterRegistry.counter("risk.entry.rejected", Tags.of("reason", reason)).increment()
-        logger.warn { "Entry REJECTED: $reason" }
-        return RiskVerdict.Rejected(reason)
-    }
+    private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger)
 }

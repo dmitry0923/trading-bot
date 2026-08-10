@@ -164,72 +164,8 @@ class PositionRepository(
             position
         }
 
-    private suspend fun insert(position: Position): Position {
-        val sql =
-            """
-            INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
-                stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
-                liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
-                alor_order_id, close_order_id, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id)
-            VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
-                :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
-                :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
-                :alorOrderId, :closeOrderId, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId)
-            RETURNING id
-            """.trimIndent()
-        val id =
-            databaseClient
-                .sql(sql)
-                .bind("ticker", position.ticker)
-                .bind("direction", position.direction.name)
-                .bind("quantity", position.quantity)
-                .bind("entryPrice", position.entryPrice)
-                .bindOrNull("currentPrice", position.currentPrice)
-                .bindOrNull("closePrice", position.closePrice)
-                .bindOrNull("stopLoss", position.stopLoss)
-                .bindOrNull("takeProfit", position.takeProfit)
-                .bind("instrumentType", position.instrumentType.name)
-                .bindOrNull("leverage", position.leverage)
-                .bindOrNull("goPerContract", position.goPerContract)
-                .bindOrNull("marginUsed", position.marginUsed)
-                .bindOrNull("liquidationPrice", position.liquidationPrice)
-                .bind("variationMargin", position.variationMargin)
-                .bindOrNull("stopLossPoints", position.stopLossPoints)
-                .bindOrNull("trailingStopPrice", position.trailingStopPrice)
-                .bindOrNull("pnl", position.pnl)
-                .bind("status", position.status.name)
-                .bindOrNull("alorOrderId", position.alorOrderId)
-                .bindOrNull("closeOrderId", position.closeOrderId)
-                .bind("pendingClose", position.pendingClose)
-                .bind("pendingEntry", position.pendingEntry)
-                .bind("realizedPnl", position.realizedPnl)
-                .bindOrNull("closeReason", position.closeReason)
-                .bind("openedAt", position.openedAt)
-                .bindOrNull("closedAt", position.closedAt)
-                .bindOrNull("cycleId", position.cycleId)
-                .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
-                .one()
-                .awaitSingle()
-        return position.copy(id = id)
-    }
-
-    private suspend fun update(position: Position) {
-        val sql =
-            """
-            UPDATE positions SET
-                ticker = :ticker, direction = :direction, quantity = :quantity, entry_price = :entryPrice,
-                current_price = :currentPrice, close_price = :closePrice, stop_loss = :stopLoss,
-                take_profit = :takeProfit, instrument_type = :instrumentType, leverage = :leverage,
-                go_per_contract = :goPerContract, margin_used = :marginUsed, liquidation_price = :liquidationPrice,
-                variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
-                trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
-                alor_order_id = :alorOrderId, close_order_id = :closeOrderId,
-                pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
-                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId
-            WHERE id = :id
-            """.trimIndent()
-        databaseClient
-            .sql(sql)
+    private fun DatabaseClient.GenericExecuteSpec.bindPosition(position: Position): DatabaseClient.GenericExecuteSpec =
+        this
             .bind("ticker", position.ticker)
             .bind("direction", position.direction.name)
             .bind("quantity", position.quantity)
@@ -257,6 +193,48 @@ class PositionRepository(
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
             .bindOrNull("cycleId", position.cycleId)
+
+    private suspend fun insert(position: Position): Position {
+        val sql =
+            """
+            INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
+                stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
+                liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
+                alor_order_id, close_order_id, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id)
+            VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
+                :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
+                :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
+                :alorOrderId, :closeOrderId, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId)
+            RETURNING id
+            """.trimIndent()
+        val id =
+            databaseClient
+                .sql(sql)
+                .bindPosition(position)
+                .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+                .one()
+                .awaitSingle()
+        return position.copy(id = id)
+    }
+
+    private suspend fun update(position: Position) {
+        val sql =
+            """
+            UPDATE positions SET
+                ticker = :ticker, direction = :direction, quantity = :quantity, entry_price = :entryPrice,
+                current_price = :currentPrice, close_price = :closePrice, stop_loss = :stopLoss,
+                take_profit = :takeProfit, instrument_type = :instrumentType, leverage = :leverage,
+                go_per_contract = :goPerContract, margin_used = :marginUsed, liquidation_price = :liquidationPrice,
+                variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
+                trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
+                alor_order_id = :alorOrderId, close_order_id = :closeOrderId,
+                pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
+                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId
+            WHERE id = :id
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
+            .bindPosition(position)
             .bind("id", position.id!!)
             .then()
             .awaitSingleOrNull()

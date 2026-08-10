@@ -191,17 +191,8 @@ class PortfolioRiskEngineImpl(
      * Матрица корреляций (индекс = позиция в списке тикеров) с консервативным fallback:
      * отсутствующая пара заменяется максимальной наблюдаемой корреляцией (без данных — 0).
      */
-    private fun resolveCorrelationMatrix(tickers: List<String>): List<List<Double>> {
-        val distinct = tickers.distinct()
-        val raw = correlationProvider.correlations(distinct, "MINUTE_10", riskConfig.portfolioCorrelationLookbackPeriod)
-        val observed = distinct.flatMap { a -> distinct.map { b -> raw[a]?.get(b) } }.filterNotNull()
-        val fallback = observed.maxOrNull() ?: 0.0
-        return tickers.map { a ->
-            tickers.map { b ->
-                if (a == b) 1.0 else raw[a]?.get(b) ?: fallback
-            }
-        }
-    }
+    private fun resolveCorrelationMatrix(tickers: List<String>): List<List<Double>> =
+        correlationProvider.resolved(tickers, "MINUTE_10", riskConfig.portfolioCorrelationLookbackPeriod)
 
     /**
      * Портфельная дисперсия (десятичные доли):

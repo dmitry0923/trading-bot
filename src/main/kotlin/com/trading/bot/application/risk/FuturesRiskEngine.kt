@@ -81,11 +81,7 @@ class FuturesRiskEngine(
         return RiskVerdict.Allowed
     }
 
-    private fun reject(reason: String): RiskVerdict {
-        meterRegistry.counter("risk.entry.rejected", Tags.of("reason", reason)).increment()
-        logger.warn { "Entry REJECTED: $reason" }
-        return RiskVerdict.Rejected(reason)
-    }
+    private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger)
 
     // ===================== Guardrail ликвидации (удержание) =====================
 

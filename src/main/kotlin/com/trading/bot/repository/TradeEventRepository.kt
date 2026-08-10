@@ -62,15 +62,4 @@ class TradeEventRepository(
             .collectList()
             .awaitSingle()
     }
-
-    suspend fun findRecent(limit: Int): List<TradeEvent> {
-        val sql = "SELECT * FROM trade_events ORDER BY occurred_at DESC LIMIT :limit"
-        return databaseClient
-            .sql(sql)
-            .bind("limit", limit)
-            .map { row, _ -> toTradeEvent(row) }
-            .all()
-            .collectList()
-            .awaitSingle()
-    }
 }

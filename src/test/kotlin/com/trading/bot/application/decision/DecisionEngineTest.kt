@@ -355,11 +355,9 @@ class DecisionEngineTest {
             signal: Signal,
             entryPrice: BigDecimal,
             request: EntryRequest,
-            openPositions: List<Position>,
         ): PositionSizeResult = size
 
         override suspend fun postSizingChecks(
-            ticker: String,
             direction: PositionDirection,
             entryPrice: BigDecimal,
             size: PositionSizeResult,

@@ -23,7 +23,6 @@ enum class InvestorTransactionType {
     DEPOSIT,
     WITHDRAWAL,
     CLEARING,
-    FEE,
 }
 
 data class InvestorAccount(

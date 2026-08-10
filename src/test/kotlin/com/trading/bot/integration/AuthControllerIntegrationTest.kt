@@ -9,6 +9,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -35,13 +36,13 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/login",
                 """{"username":"test-admin","password":"test-admin-pass"}""",
             )
-        assertTrue(response.statusCode() == 200)
+        assertEquals(200, response.statusCode())
 
         val body = objectMapper.readTree(response.body())
         assertTrue(body.get("accessToken").asString().isNotBlank())
         assertTrue(body.get("refreshToken").asString().isNotBlank())
-        assertTrue(body.get("tokenType").asString() == "Bearer")
-        assertTrue(body.get("username").asString() == "test-admin")
+        assertEquals("Bearer", body.get("tokenType").asString())
+        assertEquals("test-admin", body.get("username").asString())
         assertTrue(body.get("roles").any { it.asString() == "ROLE_ADMIN" })
 
         val cookie = response.headers().firstValue("Set-Cookie").orElse("")
@@ -57,7 +58,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/login",
                 """{"username":"test-admin","password":"wrong"}""",
             )
-        assertTrue(response.statusCode() == 401)
+        assertEquals(401, response.statusCode())
     }
 
     @Test
@@ -70,7 +71,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/refresh",
                 """{"refreshToken":"$originalRefresh"}""",
             )
-        assertTrue(firstRefresh.statusCode() == 200)
+        assertEquals(200, firstRefresh.statusCode())
 
         // Повторное использование уже ротированного токена = 401
         val reuse =
@@ -78,7 +79,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/refresh",
                 """{"refreshToken":"$originalRefresh"}""",
             )
-        assertTrue(reuse.statusCode() == 401)
+        assertEquals(401, reuse.statusCode())
 
         // Обнаруженный reuse отзывает всю сессию пользователя
         val rotated =
@@ -91,8 +92,9 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/refresh",
                 """{"refreshToken":"$rotated"}""",
             )
-        assertTrue(
-            afterReuse.statusCode() == 401,
+        assertEquals(
+            401,
+            afterReuse.statusCode(),
             "expected 401 after reuse, got ${afterReuse.statusCode()}: ${afterReuse.body().take(200)}",
         )
     }
@@ -106,20 +108,20 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/logout",
                 """{"refreshToken":"$refreshToken"}""",
             )
-        assertTrue(logout.statusCode() == 200)
+        assertEquals(200, logout.statusCode())
 
         val afterLogout =
             postJson(
                 "/api/v1/auth/refresh",
                 """{"refreshToken":"$refreshToken"}""",
             )
-        assertTrue(afterLogout.statusCode() == 401)
+        assertEquals(401, afterLogout.statusCode())
     }
 
     @Test
     fun `protected endpoints require authentication`() {
-        assertTrue(get("/api/v1/settings").statusCode() == 401)
-        assertTrue(get("/api/v1/me").statusCode() == 401)
+        assertEquals(401, get("/api/v1/settings").statusCode())
+        assertEquals(401, get("/api/v1/me").statusCode())
     }
 
     @Test
@@ -127,11 +129,11 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
         val accessToken = login().get("accessToken").asString()
 
         val me = objectMapper.readTree(get("/api/v1/me", accessToken).body())
-        assertTrue(me.get("username").asString() == "test-admin")
+        assertEquals("test-admin", me.get("username").asString())
 
         val settingsBody = get("/api/v1/settings", accessToken).body()
         val update = postJson("/api/v1/settings", settingsBody, accessToken)
-        assertTrue(update.statusCode() == 200)
+        assertEquals(200, update.statusCode())
     }
 
     @Test
@@ -143,18 +145,15 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
 
         val settingsBody = get("/api/v1/settings", accessToken).body()
         val update = postJson("/api/v1/settings", settingsBody, accessToken)
-        assertTrue(update.statusCode() == 403)
+        assertEquals(403, update.statusCode())
     }
 
     @Test
     fun `prometheus metrics require scrape token`() {
-        assertTrue(get("/actuator/prometheus").statusCode() == 401)
-        assertTrue(get("/actuator/prometheus", "wrong-token").statusCode() == 401)
+        assertEquals(401, get("/actuator/prometheus").statusCode())
+        assertEquals(401, get("/actuator/prometheus", "wrong-token").statusCode())
         val ok = get("/actuator/prometheus", "test-metrics-scrape-token")
-        assertTrue(
-            ok.statusCode() == 200,
-            "expected 200 for valid scrape token, got ${ok.statusCode()}: ${ok.body().take(200)}",
-        )
+        assertEquals(200, ok.statusCode(), "expected 200 for valid scrape token, got ${ok.statusCode()}: ${ok.body().take(200)}")
     }
 
     private fun login(): JsonNode = login("test-admin", "test-admin-pass")
@@ -168,7 +167,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
                 "/api/v1/auth/login",
                 """{"username":"$username","password":"$password"}""",
             )
-        assertTrue(response.statusCode() == 200)
+        assertEquals(200, response.statusCode())
         return objectMapper.readTree(response.body())
     }
 

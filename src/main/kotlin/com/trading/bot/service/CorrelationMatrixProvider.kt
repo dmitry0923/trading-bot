@@ -77,4 +77,26 @@ class CorrelationMatrixProvider(
             }
         }
     }
+
+    /**
+     * Разрешённая матрица корреляций для списка тикеров (индекс = позиция в списке)
+     * с консервативным fallback: отсутствующая пара заменяется максимальной
+     * наблюдаемой корреляцией (без данных — 0). Дубли тикеров сохраняются
+     * (диагональ = 1.0).
+     *
+     * @return матрица размером tickers.size × tickers.size
+     */
+    fun resolved(
+        tickers: List<String>,
+        timeframe: String = "MINUTE_10",
+        period: Int = 50,
+    ): List<List<Double>> {
+        val distinct = tickers.distinct()
+        val raw = correlations(distinct, timeframe, period)
+        val observed = distinct.flatMap { a -> distinct.map { b -> raw[a]?.get(b) } }.filterNotNull()
+        val fallback = observed.maxOrNull() ?: 0.0
+        return tickers.map { a ->
+            tickers.map { b -> if (a == b) 1.0 else raw[a]?.get(b) ?: fallback }
+        }
+    }
 }

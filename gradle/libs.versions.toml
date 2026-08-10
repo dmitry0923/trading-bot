@@ -11,7 +11,7 @@ mockitoKotlin = "4.1.0"
 archunit = "1.3.0"
 jjwt = "0.12.6"
 logstashLogbackEncoder = "8.1"
-minio = "8.5.17"
+minio = "8.6.0"
 
 [libraries]
 springBootBom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }

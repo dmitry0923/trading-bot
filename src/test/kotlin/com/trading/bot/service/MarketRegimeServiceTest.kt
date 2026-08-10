@@ -25,12 +25,10 @@ class MarketRegimeServiceTest {
     private fun service(config: RiskConfig = RiskConfig()): MarketRegimeService =
         MarketRegimeService(config, moexClient, ivService, SimpleMeterRegistry())
 
-    private fun stubHistory(list: List<Double>) {
+    private suspend fun stubHistory(list: List<Double>) {
         // refresh() запрашивает историю за regimeLookbackDays (60) календарных дней
         val from = LocalDate.now().minusDays(RiskConfig().regimeLookbackDays.toLong())
-        runBlocking {
-            Mockito.`when`(moexClient.getVolatilityIndexDailyCloses("RVI", from)).thenReturn(list)
-        }
+        Mockito.`when`(moexClient.getVolatilityIndexDailyCloses("RVI", from)).thenReturn(list)
     }
 
     @Test

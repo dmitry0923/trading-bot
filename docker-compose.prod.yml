@@ -10,8 +10,8 @@ version: "3.9"
 
 services:
   app:
-    image: ${REGISTRY:?REGISTRY is required}/trading-bot-app:${TAG:?TAG is required}
-    build: null
+    image: ${REGISTRY}/trading-bot-app:${TAG}
+    build: !reset null
   frontend:
     image: ${REGISTRY}/trading-bot-frontend:${TAG}
-    build: null
+    build: !reset null

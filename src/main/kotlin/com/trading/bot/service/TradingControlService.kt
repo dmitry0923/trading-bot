@@ -41,7 +41,7 @@ class TradingControlService(
     /**
      * Включает/выключает торговлю единым флагом.
      */
-    fun setTradingEnabled(enabled: Boolean) {
+    suspend fun setTradingEnabled(enabled: Boolean) {
         val current = settingsService.getSettings()
         settingsService.updateSettings(current.copy(tradingEnabled = enabled))
         if (enabled) {

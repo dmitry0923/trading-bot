@@ -298,21 +298,7 @@ class AlorClient(
     ): OrderReconciliation {
         if (!isLive || idempotencyKey.isBlank()) return OrderReconciliation.NotFound
         return try {
-            val raw: String =
-                resilient {
-                    webClient
-                        .get()
-                        .uri(
-                            "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
-                                "?portfolio=${alorConfig.portfolio}&includeOrders=true",
-                        ).header("Authorization", "Bearer ${getActualToken()}")
-                        .retrieve()
-                        .bodyToMono(String::class.java)
-                        .timeout(Duration.ofSeconds(10))
-                        .awaitSingle()
-                }
-            val root = objectMapper.readTree(raw)
-            val orders = if (root.isArray) root else root.path("orders")
+            val orders = fetchOrdersJson()
             for (order in orders) {
                 if (order.path("id").asString() != idempotencyKey) continue
                 val orderTicker = order.path("ticker").asString()
@@ -446,21 +432,7 @@ class AlorClient(
     suspend fun getOpenOrders(): ReconcileResult<ExchangeOrder> {
         if (!isLive) return ReconcileResult.Ok(emptyList())
         return try {
-            val raw: String =
-                resilient {
-                    webClient
-                        .get()
-                        .uri(
-                            "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
-                                "?portfolio=${alorConfig.portfolio}&includeOrders=true",
-                        ).header("Authorization", "Bearer ${getActualToken()}")
-                        .retrieve()
-                        .bodyToMono(String::class.java)
-                        .timeout(Duration.ofSeconds(10))
-                        .awaitSingle()
-                }
-            val root = objectMapper.readTree(raw)
-            val arr = if (root.isArray) root else root.path("orders")
+            val arr = fetchOrdersJson()
             val items =
                 arr.mapNotNull { o ->
                     val orderId =
@@ -648,6 +620,24 @@ class AlorClient(
      * попытку) → Retry с exponential backoff + jitter (снаружи). Конфиг — application.yml
      * (resilience4j.retry.instances.alor / ratelimiter.instances.alor).
      */
+    private suspend fun fetchOrdersJson(): tools.jackson.databind.JsonNode {
+        val raw: String =
+            resilient {
+                webClient
+                    .get()
+                    .uri(
+                        "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
+                            "?portfolio=${alorConfig.portfolio}&includeOrders=true",
+                    ).header("Authorization", "Bearer ${getActualToken()}")
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
+            }
+        val root = objectMapper.readTree(raw)
+        return if (root.isArray) root else root.path("orders")
+    }
+
     private suspend fun <T> resilient(block: suspend () -> T): T {
         var call: suspend () -> T = block
         if (alorConfig.rateLimiterEnabled) {

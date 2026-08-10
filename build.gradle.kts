@@ -77,6 +77,12 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("org.bouncycastle:bcprov-jdk18on:1.81.1")
+    }
+}
+
 tasks.withType<Test> {
     useJUnitPlatform()
     jvmArgs("-Xshare:off", "-XX:+EnableDynamicAgentLoading")

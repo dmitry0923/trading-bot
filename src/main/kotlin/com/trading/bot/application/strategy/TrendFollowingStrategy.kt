@@ -29,13 +29,21 @@ class TrendFollowingStrategy : Strategy {
         val price = context.snapshot.currentPrice
 
         val direction =
-            when {
-                indicators.trend == "UP" && indicators.macdHistogram > 0.0 && indicators.rsi in 40.0..70.0 -> {
-                    StrategyAction.BUY
+            when (indicators.trend) {
+                "UP" -> {
+                    if (indicators.macdHistogram > 0.0 && indicators.rsi in 40.0..70.0) {
+                        StrategyAction.BUY
+                    } else {
+                        StrategyAction.HOLD
+                    }
                 }
 
-                indicators.trend == "DOWN" && indicators.macdHistogram < 0.0 && indicators.rsi in 30.0..60.0 -> {
-                    StrategyAction.SELL
+                "DOWN" -> {
+                    if (indicators.macdHistogram < 0.0 && indicators.rsi in 30.0..60.0) {
+                        StrategyAction.SELL
+                    } else {
+                        StrategyAction.HOLD
+                    }
                 }
 
                 else -> {

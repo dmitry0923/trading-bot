@@ -55,25 +55,23 @@ class TechnicalAnalysisAgent(
         version: String = PromptRegistry.DEFAULT_VERSION,
     ): TechnicalReport {
         val start = System.currentTimeMillis()
-        val indicators = IndicatorCalculator.calculate(candles)
-
-        if (indicators == null) {
-            return logAndReturn(
-                TechnicalReport(
-                    trend = "NEUTRAL",
-                    rsi = 50.0,
-                    atr = 0.0,
-                    conclusion = "INSUFFICIENT_DATA",
-                    confidence = 0.0,
-                    reasoning = "Not enough candles (need >= 30, got ${candles.size})",
-                ),
-                ticker,
-                cycleId,
-                start,
-                "{}",
-                isCached = false,
-            )
-        }
+        val indicators =
+            IndicatorCalculator.calculate(candles)
+                ?: return logAndReturn(
+                    TechnicalReport(
+                        trend = "NEUTRAL",
+                        rsi = 50.0,
+                        atr = 0.0,
+                        conclusion = "INSUFFICIENT_DATA",
+                        confidence = 0.0,
+                        reasoning = "Not enough candles (need >= 30, got ${candles.size})",
+                    ),
+                    ticker,
+                    cycleId,
+                    start,
+                    "{}",
+                    isCached = false,
+                )
 
         val baseline =
             TechnicalReport(

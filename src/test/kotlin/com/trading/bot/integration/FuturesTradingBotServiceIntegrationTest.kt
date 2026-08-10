@@ -82,7 +82,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         runBlocking { positionRepo.deleteAll() }
         snapshotRepo.deleteAll()
         // Сбрасываем персистентную остановку (critical liquidation выше может оставить halt).
-        tradingHaltService.clear()
+        runBlocking { tradingHaltService.clear() }
         // пересчёт кэша drawdown от пустой БД (сбрасывает stale статус из предыдущего теста)
         runBlocking { drawdownProtection.computeStatus() }
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)

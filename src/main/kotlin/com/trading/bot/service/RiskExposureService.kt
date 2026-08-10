@@ -256,14 +256,8 @@ class RiskExposureService(
         return vol * sqrt(n.toDouble())
     }
 
-    private fun resolveCorrelationMatrix(tickers: List<String>): List<List<Double>> {
-        val raw = correlationProvider.correlations(tickers, "MINUTE_10", riskConfig.portfolioCorrelationLookbackPeriod)
-        val observed = tickers.flatMap { a -> tickers.map { b -> raw[a]?.get(b) } }.filterNotNull()
-        val fallback = observed.maxOrNull() ?: 0.0
-        return tickers.map { a ->
-            tickers.map { b -> if (a == b) 1.0 else raw[a]?.get(b) ?: fallback }
-        }
-    }
+    private fun resolveCorrelationMatrix(tickers: List<String>): List<List<Double>> =
+        correlationProvider.resolved(tickers, "MINUTE_10", riskConfig.portfolioCorrelationLookbackPeriod)
 
     private fun maxPairCorrelation(
         tickers: List<String>,

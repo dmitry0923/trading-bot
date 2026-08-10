@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import kotlin.math.pow
 import kotlin.math.sin
 
 class RegimeDetectorTest {
@@ -48,7 +49,7 @@ class RegimeDetectorTest {
 
     @Test
     fun `trend up detected from steady rising closes`() {
-        val closes = (0 until 60).map { 100.0 * Math.pow(1.001, it.toDouble()) }
+        val closes = (0 until 60).map { 100.0 * 1.001.pow(it.toDouble()) }
         val regime = RegimeDetector.detect(series(closes, risingVolumes(closes.size)), config)
         assertEquals(RegimeDirection.TREND_UP, regime.direction)
         assertEquals(MarketEvent.NONE, regime.event)
@@ -57,7 +58,7 @@ class RegimeDetectorTest {
 
     @Test
     fun `trend down detected from steady falling closes`() {
-        val closes = (0 until 60).map { 100.0 * Math.pow(0.999, it.toDouble()) }
+        val closes = (0 until 60).map { 100.0 * 0.999.pow(it.toDouble()) }
         val regime = RegimeDetector.detect(series(closes, risingVolumes(closes.size)), config)
         assertEquals(RegimeDirection.TREND_DOWN, regime.direction)
         assertFalse(regime.blocksEntry)

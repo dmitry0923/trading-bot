@@ -17,7 +17,6 @@ import java.math.BigDecimal
 @ConfigurationProperties(prefix = "leverage")
 class LeverageConfig {
     var enabled: Boolean = true
-    var defaultLeverage: BigDecimal = BigDecimal("2.0")
     var maxLeverage: BigDecimal = BigDecimal("3.0")
     var minLeverage: BigDecimal = BigDecimal("1.0")
     var userLeverage: BigDecimal = BigDecimal("2.0")
@@ -29,7 +28,4 @@ class LeverageConfig {
         } else {
             userLeverage.coerceIn(minLeverage, maxLeverage)
         }
-
-    /** Валидация значения плеча против допустимого диапазона. */
-    fun isValid(leverage: BigDecimal): Boolean = leverage >= minLeverage && leverage <= maxLeverage
 }

@@ -44,7 +44,7 @@ gantt
 
 | Фича | Описание | Статус |
 |---|---|---|
-| Emergency stop endpoint | `POST /api/v1/bot/emergency-stop` — закрывает все позиции + запрещает открытие | 🔜 |
+| Emergency stop endpoint | `POST /api/v1/bot/emergency-stop` — закрывает все позиции + запрещает открытие | ✅ |
 | Persist daily PnL | перенос `dailyPnl` из памяти в БД + `/api/v1/risk/daily-pnl-history` (раздел 6.6) | 🔜 |
 | Партиционирование `candles` | TimescaleDB hypertable: чанки по time (1 неделя) + retention 90 дней (раздел 6.4) | ✅ v2.2 |
 | Партиционирование `positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | 🔜 |
@@ -87,7 +87,7 @@ gantt
 
 | Миля | Критерий готовности |
 |---|---|
-| M1 (v2.2) | Emergency stop + persist daily PnL, тесты зелёные, документация обновлена |
+| M1 (v2.2) | Emergency stop ✅ + persist daily PnL 🔜, тесты зелёные, документация обновлена |
 | M2 (v2.3) | LLM-бэктест проходит критерии по ≥ 5 тикерам; WebSocket-only стабилен 1 неделю SIMULATION |
 | M3 (v2.4) | ML-модель выигрывает у базовой LLM-версии на out-of-sample выборке |
 | M4 (v2.5) | Cross-exchange сигналы без ложных арбитражных входов |
@@ -122,6 +122,8 @@ gantt
 
 ### 13.7.1. Emergency stop
 
+> **Статус**: ✅ реализовано (`EmergencyStopService`, 2 endpoints, halt `EMERGENCY_STOP` в `TradingGate`). Коммит с планом C-001..C-003 → emergency stop.
+
 **Требования:**
 
 - `POST /api/v1/bot/emergency-stop` с телом `{"reason": "...", "liquidate": bool}`.
@@ -137,6 +139,14 @@ gantt
 | Controller | 2 endpoints: `POST /emergency-stop`, `POST /resume` |
 | Service | `EmergencyStopService` (флаг Redis + локальный, проверка в циклах) |
 | Risk | `RiskManagementService` учитывает флаг в `validateNewStrategy` → сразу HOLD |
+
+**Статус реализации (текущая версия):**
+
+- `EmergencyStopService` — флаг Redis (`bot:emergency-stop`) + локальный, персист причины в `trading_halt` (reason `EMERGENCY_STOP`), восстановление после рестарта, опциональная ликвидация позиций через `TradingControlService.forceCloseNow("EMERGENCY_STOP")`.
+- `TradingGate` — halt `EMERGENCY_STOP` → `TradingBlockReason.EMERGENCY_STOP` (source MANUAL/AUTO); блокирует все входы акций и фьючерсов (`isTradingEnabled()`).
+- `StrategyService.run()` — ранний выход при активном флаге (метрика `strategy.skipped{reason=EMERGENCY_STOP}`).
+- В текущей архитектуре `TradingBotService.run()`/`monitor()` отсутствуют (событийная модель): входы маршрутизируются через `onStrategyGenerated` → `TradingGate.isTradingEnabled()`, поэтому они блокируются автоматически; мониторинг открытых позиций и реконсиляция продолжают работать.
+- Авто-стоп (source=AUTO, убыток >10% за час) — не реализован, требует хранения PnL с таймстампами (см. 5.8).
 | Метрики | `bot.emergency_stop{reason}`, alert `EmergencyStop` |
 
 ### 13.7.2. Persist daily PnL

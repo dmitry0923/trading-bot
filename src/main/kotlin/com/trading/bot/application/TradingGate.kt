@@ -165,6 +165,7 @@ class TradingGate(
                 "DAILY_LOSS_LIMIT" -> TradingBlockReason.DAILY_LOSS_LIMIT
                 "LEVERAGE_DISABLED" -> TradingBlockReason.LEVERAGE_DISABLED
                 "STATE_DESYNC" -> TradingBlockReason.STATE_DESYNC
+                "EMERGENCY_STOP" -> TradingBlockReason.EMERGENCY_STOP
                 "MANUAL", "MANUAL_DISABLE" -> TradingBlockReason.MANUAL_DISABLE
                 else -> return null
             }
@@ -172,6 +173,7 @@ class TradingGate(
             when (reason) {
                 TradingBlockReason.MANUAL_DISABLE -> TradingBlockSource.MANUAL
                 TradingBlockReason.STATE_DESYNC -> TradingBlockSource.STATE_RECONCILIATION
+                TradingBlockReason.EMERGENCY_STOP -> emergencySource(this.source)
                 else -> TradingBlockSource.RISK_SYSTEM
             }
         return TradingBlock(
@@ -182,9 +184,13 @@ class TradingGate(
         )
     }
 
+    private fun emergencySource(recordedSource: String): TradingBlockSource =
+        if (recordedSource == "AUTO") TradingBlockSource.RISK_SYSTEM else TradingBlockSource.MANUAL
+
     private fun sourceOf(reason: String): String =
         when (reason) {
             "MANUAL", "MANUAL_DISABLE" -> TradingBlockSource.MANUAL.name
+            "EMERGENCY_STOP" -> TradingBlockSource.MANUAL.name
             "STATE_DESYNC" -> TradingBlockSource.STATE_RECONCILIATION.name
             else -> TradingBlockSource.RISK_SYSTEM.name
         }

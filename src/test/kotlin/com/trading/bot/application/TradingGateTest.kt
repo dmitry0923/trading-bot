@@ -100,6 +100,43 @@ class TradingGateTest {
     }
 
     @Test
+    fun `manual emergency stop blocks globally with MANUAL source`() {
+        val halt =
+            TradingHaltRecord(
+                reason = "EMERGENCY_STOP",
+                source = "MANUAL",
+                detail = "ops call",
+                haltedAt = Instant.parse("2026-01-01T10:00:00Z"),
+            )
+        val g = gate(halt = halt)
+        val status = runBlocking { g.getStatus() }
+
+        assertFalse(status.enabled)
+        assertEquals(TradingBlockReason.EMERGENCY_STOP, status.reason)
+        assertEquals(TradingBlockSource.MANUAL, status.source)
+        assertEquals("ops call", status.detail)
+        assertFalse(g.isTradingEnabled())
+    }
+
+    @Test
+    fun `automatic emergency stop blocks globally with RISK_SYSTEM source`() {
+        val halt =
+            TradingHaltRecord(
+                reason = "EMERGENCY_STOP",
+                source = "AUTO",
+                detail = "hourly loss exceeded",
+                haltedAt = Instant.parse("2026-01-01T10:00:00Z"),
+            )
+        val g = gate(halt = halt)
+        val status = runBlocking { g.getStatus() }
+
+        assertFalse(status.enabled)
+        assertEquals(TradingBlockReason.EMERGENCY_STOP, status.reason)
+        assertEquals(TradingBlockSource.RISK_SYSTEM, status.source)
+        assertFalse(g.isTradingEnabled())
+    }
+
+    @Test
     fun `drawdown protection blocks globally`() {
         val g = gate(drawdownBlocked = true)
         val status = runBlocking { g.getStatus() }

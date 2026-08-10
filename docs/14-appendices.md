@@ -208,7 +208,7 @@ curl http://localhost:8080/actuator/prometheus
 - [ ] Алерты Prometheus активны: BotDown, DailyLossLimitReached, LLMCircuitBreakerOpen, OutboxStuck
 - [ ] `risk.sectors` покрывает все тикеры из `trading.tickers` (иначе сектор UNKNOWN)
 - [ ] `MAX_OPEN_POS` выставлен желаемым (не 0!)
-- [ ] Тест emergency-остановки: `MAX_OPEN_POS=0` + перезапуск (endpoint пока не реализован, раздел 5.8)
+- [ ] Тест emergency-остановки: `POST /api/v1/bot/emergency-stop` (liquidate=true), проверка блокировки входов, затем `POST /api/v1/bot/resume`
 
 ## 14.10. Глоссарий новых терминов v2.1
 
@@ -297,4 +297,4 @@ sequenceDiagram
 | Дата актуализации | 2026-08-03 |
 | Тесты | 39 зелёных (включая 6 BacktestEngineTest) |
 | Сборка | BUILD SUCCESSFUL |
-| Известные расхождения с кодом | emergency stop (🔜), persist daily PnL (🔜), k8s (🔜) — все честно помечены |
+| Известные расхождения с кодом | persist daily PnL (🔜), k8s (🔜) — все честно помечены; emergency stop реализован |

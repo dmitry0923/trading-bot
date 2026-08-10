@@ -27,6 +27,8 @@ import com.trading.bot.service.ClearingService
 import com.trading.bot.service.DashboardService
 import com.trading.bot.service.DashboardSseService
 import com.trading.bot.service.DrawdownProtectionService
+import com.trading.bot.service.EmergencyStopService
+import com.trading.bot.service.EmergencyStopSource
 import com.trading.bot.service.InvestorService
 import com.trading.bot.service.PaperTradingService
 import com.trading.bot.service.ProfitForecastService
@@ -94,6 +96,7 @@ class ApiController(
     private val clearingService: ClearingService,
     private val profitForecastService: ProfitForecastService,
     private val tradingControlService: TradingControlService,
+    private val emergencyStopService: EmergencyStopService,
     private val tradingGate: TradingGate,
     private val paperTradingService: PaperTradingService,
     private val ragErrorAnalyzer: RagErrorAnalyzer,
@@ -587,5 +590,40 @@ class ApiController(
         val current = settingsService.getSettings()
         settingsService.updateSettings(current.copy(forceCloseEnabled = false, forceCloseTime = ""))
         return mapOf("forceCloseEnabled" to false)
+    }
+
+    // ---------- Emergency stop ----------
+
+    /**
+     * Аварийная остановка торговли: блокирует новые входы (TradingGate), опционально
+     * закрывает все открытые позиции рыночными ордерами. Снятие — только [resumeTrading].
+     *
+     * Request body: `{"reason": "manual", "liquidate": true}` (source: "manual"|"auto").
+     */
+    @PostMapping("/bot/emergency-stop")
+    suspend fun emergencyStop(
+        @RequestBody request: Map<String, Any>,
+    ): Map<String, Any> {
+        val reason = (request["reason"] as? String)?.takeIf { it.isNotBlank() } ?: "MANUAL_OPERATOR"
+        val source =
+            if ((request["source"] as? String).equals("auto", ignoreCase = true)) {
+                EmergencyStopSource.AUTO
+            } else {
+                EmergencyStopSource.MANUAL
+            }
+        val liquidate = (request["liquidate"] as? Boolean) ?: false
+        val closed = emergencyStopService.stop(reason, source, liquidate)
+        return mapOf(
+            "stopped" to true,
+            "positionsLiquidated" to closed,
+            "reason" to reason,
+            "source" to source.name,
+        )
+    }
+
+    @PostMapping("/bot/resume")
+    suspend fun resumeTrading(): Map<String, Any> {
+        emergencyStopService.resume()
+        return mapOf("stopped" to false)
     }
 }

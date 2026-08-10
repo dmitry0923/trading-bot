@@ -76,6 +76,7 @@ class StrategyService(
     private val eventPublisher: TradingEventPublisher,
     private val settingsService: SettingsService,
     private val paperTradingService: PaperTradingService,
+    private val emergencyStopService: EmergencyStopService,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
 ) {
@@ -88,6 +89,12 @@ class StrategyService(
      */
     @Scheduled(fixedDelayString = "#{@tradingConfig.strategyIntervalMs}")
     fun run() {
+        // Emergency stop: проверка в начале цикла — немедленный выход (см. roadmap 13.7.1).
+        if (emergencyStopService.isActive()) {
+            logger.warn { "Strategy cycle skipped — EMERGENCY STOP active (reason=${emergencyStopService.lastReason()})" }
+            meterRegistry.counter("strategy.skipped", Tags.of("reason", "EMERGENCY_STOP")).increment()
+            return
+        }
         val cycleId =
             com.trading.bot.infrastructure.UuidV7
                 .uuidString()

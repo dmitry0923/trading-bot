@@ -46,6 +46,7 @@
    - Technical/Fundamental: NEUTRAL + baseline.
 3. `raw_output` сохраняется в `agent_logs` — можно посмотреть, что именно вернула модель:
    ```sql
+   -- noinspection SqlNoDataSourceInspection
    SELECT cycle_id, agent_name, raw_output FROM agent_logs WHERE raw_output LIKE '%```%' ORDER BY created_at DESC LIMIT 10;
    ```
 4. Если модель «оборачивает» JSON в ```json ... ``` — парсеры уже делают `.replace("```json","").replace("```","")`.
@@ -53,6 +54,7 @@
 ### «Ордер висит в PENDING»
 
 ```sql
+-- noinspection SqlNoDataSourceInspection
 SELECT id, status, alor_order_id, created_at, error_message FROM order_outbox ORDER BY created_at DESC LIMIT 20;
 ```
 
@@ -102,12 +104,14 @@ Graceful degradation встроен везде:
 
 1. **Мало свечей** — `BacktestEngine` требует ≥ 32 свечей (`minBarsForSignal + 2`), иначе `emptyResult()`:
    ```sql
+   -- noinspection SqlNoDataSourceInspection
    SELECT count(*) FROM candles WHERE ticker='SBER' AND timeframe='MINUTE_10';
    ```
    Если < 32 — подождите накопления данных или загрузите историю через MOEX ISS (fallback в `loadCandles`).
 2. **Нет сигналов** — RSI/MACD не входили в зоны (RSI<30 с MACD>0 или RSI>70 с MACD<0) → 0 сделок, это валидный результат, но `isPassable=false`.
 3. **Тикер с пробелами данных** — свечи есть, но непокрытый период. Проверьте диапазон:
    ```sql
+   -- noinspection SqlNoDataSourceInspection
    SELECT min(time), max(time) FROM candles WHERE ticker='SBER' AND timeframe='MINUTE_10';
    ```
 
@@ -120,6 +124,7 @@ Graceful degradation встроен везде:
    Лог: `Volatility guard: SBER ATR=... > 5.0%, strategy -> HOLD`.
 2. `overrideReason` в `agent_logs`:
    ```sql
+   -- noinspection SqlNoDataSourceInspection
    SELECT ticker, action, confidence, override_reason FROM agent_logs
    WHERE agent_name='Agent-5-Arbitrator' AND ticker='SBER' ORDER BY created_at DESC LIMIT 5;
    ```
@@ -266,11 +271,12 @@ A: Метрики `event.published` и `event.handled` по типам. Долж
 
 ## 12.5. Аварийные процедуры
 
-### Остановка торговли (нет endpoint'а — roadmap)
+### Остановка торговли
 
-1. `kubectl scale deploy/trading-bot --replicas=0` (или `docker compose stop app`).
-2. Или перезапуск с `MAX_OPEN_POS=0` — новые входы запрещены, открытые позиции мониторятся и закрываются.
-3. При необходимости закрыть позиции вручную через Alor-терминал (не через бота).
+1. `POST /api/v1/bot/emergency-stop` — блокирует входы, опционально ликвидирует позиции (`{"liquidate": true}`). Снятие — `POST /api/v1/bot/resume` (раздел 5.8).
+2. `kubectl scale deploy/trading-bot --replicas=0` (или `docker compose stop app`).
+3. Перезапуск с `MAX_OPEN_POS=0` — новые входы запрещены, открытые позиции мониторятся и закрываются.
+4. При необходимости закрыть позиции вручную через Alor-терминал (не через бота).
 
 ### После аварии
 
@@ -297,7 +303,7 @@ R = responsible, A = accountable, C = consulted.
 | Ограничение | Раздел | Влияние |
 |---|---|---|
 | Дневной P&L в памяти, сброс при рестарте | 5.6 | рестарт в течение дня сбрасывает лимит — до v2.2 не останавливать бот |
-| Нет emergency-stop endpoint | 5.8 | остановка через env/масштабирование |
+| Emergency stop — нет авто-остановки по убытку | 5.8 | ручной emergency stop доступен; авто-стоп (source=AUTO) — roadmap |
 | Бэктест без LLM | 11.8 | индикаторные сигналы, не LLM-решения |
 | Бэктест: вход по market (с slippage) | 11.3 | limit-входы не используются в цикле |
 | Позиция только в одной реплике | 2.6 | мульти-реплика требует distributed lock |

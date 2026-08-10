@@ -61,7 +61,8 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | GET | `/api/v1/backtest/{ticker}` | бэктест тикера за N дней | ✅ |
 | GET | `/api/v1/risk/exposure` | live-снимок портфельного риска (Correlation Engine) | ✅ |
 | GET | `/api/v1/risk/correlation` | корреляционная матрица watchlist (heatmap) | ✅ |
-| POST | `/api/v1/bot/emergency-stop` | аварийная остановка | 🔜 запланирован |
+| POST | `/api/v1/bot/emergency-stop` | аварийная остановка | ✅ |
+| POST | `/api/v1/bot/resume` | снятие аварийной остановки | ✅ |
 | GET | `/actuator/health` | health Spring Boot | ✅ |
 | GET | `/actuator/prometheus` | метрики Prometheus | ✅ |
 
@@ -349,13 +350,38 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 
 При недостатке свечей (< 32) возвращаются нулевые метрики, `totalTrades = 0`.
 
-### POST /api/v1/bot/emergency-stop (запланирован)
+### POST /api/v1/bot/emergency-stop
 
-> **Статус**: в текущей версии endpoint отсутствует. Проект (раздел 5.8):
+Аварийная остановка торговли (раздел 5.8): блокирует новые входы и (опционально) закрывает все открытые позиции рыночными ордерами. Причина персистится в `trading_halt` (reason `EMERGENCY_STOP`), флаг `bot:emergency-stop=true` — в Redis + локально; остановка переживает рестарт. Повторный вход — только через `POST /api/v1/bot/resume`.
 
-**Request body**: `{"reason": "manual", "liquidate": true}` (liquidate — закрыть ли позиции).
+**Request body** (все поля опциональны):
+```json
+{
+  "reason": "manual",
+  "source": "manual",
+  "liquidate": true
+}
+```
 
-**Response 200**: `{"stopped": true, "positionsLiquidated": 2}`.
+- `reason` — человекочитаемая причина (default `MANUAL_OPERATOR`);
+- `source` — инициатор: `manual` (default) | `auto` (автоматика);
+- `liquidate` — закрыть ли позиции (default `false`).
+
+**Response 200**:
+```json
+{
+  "stopped": true,
+  "positionsLiquidated": 2,
+  "reason": "manual",
+  "source": "MANUAL"
+}
+```
+
+### POST /api/v1/bot/resume
+
+Снимает аварийную остановку: очищает локальный флаг, Redis-ключ `bot:emergency-stop` и запись в `trading_halt`.
+
+**Response 200**: `{"stopped": false}`.
 
 ## 7.3. Ошибки
 

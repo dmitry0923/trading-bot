@@ -10,6 +10,7 @@ import java.time.Instant
  * - [DAILY_LOSS_LIMIT] — достигнут дневной лимит убытка (TradingHaltedEvent);
  * - [LEVERAGE_DISABLED] — плечо отключено (TradingHaltedEvent);
  * - [STATE_DESYNC] — критический рассинхрон состояния с биржей (TradingHaltedEvent);
+ * - [EMERGENCY_STOP] — аварийная остановка (EmergencyStopService, source MANUAL/AUTO);
  * - [DRAWDOWN_PROTECTION] — Multi-Tier просадка (дневная/7д/30д/Shadow mode);
  * - [OUTSIDE_HOURS] — вне торгового окна.
  *
@@ -23,6 +24,7 @@ enum class TradingBlockReason {
     DAILY_LOSS_LIMIT,
     LEVERAGE_DISABLED,
     STATE_DESYNC,
+    EMERGENCY_STOP,
     DRAWDOWN_PROTECTION,
     OUTSIDE_HOURS,
     VOLATILITY,

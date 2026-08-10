@@ -397,18 +397,13 @@ fun calcTP(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
 
 ## 5.8. Emergency Stop
 
-> **Статус**: endpoint `POST /api/v1/bot/emergency-stop` **не реализован** в текущей версии — запланирован (см. раздел 13 и 7.2).
+**Реализовано** (`EmergencyStopService`, endpoint `POST /api/v1/bot/emergency-stop`):
 
-**Проектное решение**:
+1. **Ручная остановка**: `POST /api/v1/bot/emergency-stop` — ставит флаг `bot:emergency-stop=true` в Redis + локально, персистит причину в `trading_halt` (reason `EMERGENCY_STOP`), блокирует новые входы через `TradingGate` (`TradingBlockReason.EMERGENCY_STOP`) и опционально закрывает все позиции рыночными ордерами (`liquidate=true`). `StrategyService.run()` проверяет флаг в начале цикла и выходит.
+2. **Возобновление**: только `POST /api/v1/bot/resume` (или рестарт — остановка переживает рестарт через `trading_halt`).
+3. **Автоматическая остановка**: если убыток закрытых позиций за час > 10% от `max-position-rub` (500 000 × 10% = 50 000 ₽) — автоматический emergency stop (`source=AUTO`). Реализация требует хранить PnL с таймстампами (БД) — roadmap.
 
-1. **Ручная остановка**: `POST /api/v1/bot/emergency-stop` — ставит флаг в Redis (`bot:emergency-stop=true`), `TradingBotService.run()` и `StrategyService.run()` проверяют флаг в начале цикла и выходят.
-2. **Автоматическая остановка**: если убыток закрытых позиций за час > 10% от `max-position-rub` (500 000 × 10% = 50 000 ₽) — автоматический emergency stop. Реализация требует хранить PnL с таймстампами (БД) — roadmap.
-
-**Как остановить сейчас**:
-
-- `MAX_OPEN_POS=0` (не открывать новые позиции);
-- `risk.max-daily-loss-rub` (дневной лимит);
-- перезапуск с `TRADING_MODE=SIMULATION`.
+Метрики: `bot.emergency_stop{source}`, `bot.emergency_resume`.
 
 ## 5.9. Иерархия риск-решений
 
@@ -449,7 +444,7 @@ flowchart TB
 | Рыночный режим (RVI overlay) | ✅ реализовано | `MarketRegimeService` / `MarketRegimeClassifier` |
 | Per-ticker режим (RegimeDetector) | ✅ реализовано | `RegimeDetector` → `PerTickerRegime` |
 | Стратегия-селектор | ✅ реализовано | `StrategySelector` / `StrategyRunner` |
-| Emergency stop (endpoint) | 🔜 запланировано | — |
+| Emergency stop (endpoint) | ✅ реализовано (5.8) | — |
 | Дневной лимит в БД (календарный день) | 🔜 запланировано | — |
 | `RiskBreachedEvent` (event-driven) | 🔜 запланировано | — |
 

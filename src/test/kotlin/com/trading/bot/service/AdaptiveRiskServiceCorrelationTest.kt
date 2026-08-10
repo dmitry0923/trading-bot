@@ -1,6 +1,8 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.MarketRegime
+import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
@@ -27,9 +29,19 @@ class AdaptiveRiskServiceCorrelationTest {
     private val drawdownProtection = Mockito.mock(DrawdownProtectionService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
     private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
+    private val marketRegimeProvider: MarketRegimeProvider = { MarketRegime.NORMAL }
 
     private val service =
-        AdaptiveRiskService(riskConfig, tradeAnalysis, positionRepo, candleCache, drawdownProtection, meterRegistry, correlationProvider)
+        AdaptiveRiskService(
+            riskConfig,
+            tradeAnalysis,
+            positionRepo,
+            candleCache,
+            drawdownProtection,
+            meterRegistry,
+            correlationProvider,
+            marketRegimeProvider,
+        )
 
     private fun stubCorrelation(value: Double?) {
         Mockito.`when`(correlationProvider.correlationOf("A", "B", "MINUTE_10", 50)).thenReturn(value)
@@ -95,36 +107,38 @@ class AdaptiveRiskServiceCorrelationTest {
     }
 
     @Test
-    fun `sector correlation filter blocks second position in same sector`() = runBlocking {
-        riskConfig.sectors = mapOf("A" to "ENERGY", "B" to "ENERGY")
-        riskConfig.maxSectorCorrelation = 0.7
-        stubCorrelation(0.9)
-        val openPosition =
-            Position(
-                id = 1,
-                ticker = "B",
-                direction = PositionDirection.LONG,
-                quantity = 1,
-                entryPrice = BigDecimal("120"),
-            )
+    fun `sector correlation filter blocks second position in same sector`() =
+        runBlocking {
+            riskConfig.sectors = mapOf("A" to "ENERGY", "B" to "ENERGY")
+            riskConfig.maxSectorCorrelation = 0.7
+            stubCorrelation(0.9)
+            val openPosition =
+                Position(
+                    id = 1,
+                    ticker = "B",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("120"),
+                )
 
-        assertTrue(service.exceedsSectorCorrelationLimit("A", listOf(openPosition)))
-    }
+            assertTrue(service.exceedsSectorCorrelationLimit("A", listOf(openPosition)))
+        }
 
     @Test
-    fun `sector correlation filter passes when correlation below threshold`() = runBlocking {
-        riskConfig.sectors = mapOf("A" to "ENERGY", "B" to "ENERGY")
-        riskConfig.maxSectorCorrelation = 0.7
-        stubCorrelation(0.5)
-        val openPosition =
-            Position(
-                id = 1,
-                ticker = "B",
-                direction = PositionDirection.LONG,
-                quantity = 1,
-                entryPrice = BigDecimal("120"),
-            )
+    fun `sector correlation filter passes when correlation below threshold`() =
+        runBlocking {
+            riskConfig.sectors = mapOf("A" to "ENERGY", "B" to "ENERGY")
+            riskConfig.maxSectorCorrelation = 0.7
+            stubCorrelation(0.5)
+            val openPosition =
+                Position(
+                    id = 1,
+                    ticker = "B",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("120"),
+                )
 
-        assertFalse(service.exceedsSectorCorrelationLimit("A", listOf(openPosition)))
-    }
+            assertFalse(service.exceedsSectorCorrelationLimit("A", listOf(openPosition)))
+        }
 }

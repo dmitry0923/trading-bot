@@ -72,9 +72,11 @@ class PortfolioRiskEngineImpl(
         if (dailyVols.isEmpty()) return PortfolioRiskReport(allowed = true)
 
         val corrMatrix = resolveCorrelationMatrix(tickers)
-        val maxPairCorrelation = tickers.indices.flatMap { i -> tickers.indices.map { j -> corrMatrix[i][j] } }
-            .filter { it != 1.0 }
-            .maxOrNull() ?: 0.0
+        val maxPairCorrelation =
+            tickers.indices
+                .flatMap { i -> tickers.indices.map { j -> corrMatrix[i][j] } }
+                .filter { it != 1.0 }
+                .maxOrNull() ?: 0.0
 
         val variance = portfolioVariance(tickers, weights, dailyVols, corrMatrix)
         val dailyVol = sqrt(variance.coerceAtLeast(0.0))
@@ -86,12 +88,21 @@ class PortfolioRiskEngineImpl(
 
         // SCALE: минимум факторов по всем метрикам (1.0 = без изменений).
         var factor = scaleHigherIsWorse(varPercent, riskConfig.portfolioVarWarnPercent, riskConfig.maxPortfolioVaRPercent)
-        factor = minOf(factor, scaleHigherIsWorse(directionalConcentration, riskConfig.portfolioConcentrationWarnPercent, riskConfig.maxDirectionalConcentrationPercent))
-        if (tickers.size >= 2) {
-            factor = minOf(
+        factor =
+            minOf(
                 factor,
-                scaleLowerIsWorse(effectivePositions, riskConfig.portfolioEffectiveWarnPositions, riskConfig.minEffectivePositions),
+                scaleHigherIsWorse(
+                    directionalConcentration,
+                    riskConfig.portfolioConcentrationWarnPercent,
+                    riskConfig.maxDirectionalConcentrationPercent,
+                ),
             )
+        if (tickers.size >= 2) {
+            factor =
+                minOf(
+                    factor,
+                    scaleLowerIsWorse(effectivePositions, riskConfig.portfolioEffectiveWarnPositions, riskConfig.minEffectivePositions),
+                )
         }
 
         // BLOCK.
@@ -119,10 +130,13 @@ class PortfolioRiskEngineImpl(
                         "conc=${"%.2f".format(directionalConcentration)}% maxCorr=${"%.2f".format(maxPairCorrelation)}"
                 }
             }
-            scaleDown < BigDecimal.ONE -> logger.info {
-                "Portfolio risk SCALE ${request.candidateTicker}: factor=$scaleDown " +
-                    "var95=${"%.2f".format(varPercent)}% eff=${"%.2f".format(effectivePositions)} " +
-                    "conc=${"%.2f".format(directionalConcentration)}%"
+
+            scaleDown < BigDecimal.ONE -> {
+                logger.info {
+                    "Portfolio risk SCALE ${request.candidateTicker}: factor=$scaleDown " +
+                        "var95=${"%.2f".format(varPercent)}% eff=${"%.2f".format(effectivePositions)} " +
+                        "conc=${"%.2f".format(directionalConcentration)}%"
+                }
             }
         }
 

@@ -5,6 +5,8 @@ import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.DailyRiskGuard
 import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.MarketRegime
+import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.domain.risk.RiskEngine
 import com.trading.bot.domain.risk.RiskVerdict
 import com.trading.bot.domain.risk.TradingCalendar
@@ -32,9 +34,10 @@ import java.math.RoundingMode
  *   2. Daily loss limit (единый источник — [DailyRiskGuard]) → DAILY_LIMIT.
  *   3. Multi-Tier Drawdown Protection (7d/30d rolling, Shadow/Read-only) → DRAWDOWN_PROTECTION.
  *   4. Аномальный индекс волатильности MOEX (RVI) → VOLATILITY_INDEX.
- *   5. Уже есть открытая позиция (max futuresMaxOpenPositions) → MAX_POSITIONS.
- *   6. Инструмент поддерживается (futures) → UNSUPPORTED_INSTRUMENT.
- *   7. Входные данные валидны → INVALID_INPUT.
+ *   5. Стрессовый режим волатильности (Market Regime = STRESS) → MARKET_STRESS.
+ *   6. Уже есть открытая позиция (max futuresMaxOpenPositions) → MAX_POSITIONS.
+ *   7. Инструмент поддерживается (futures) → UNSUPPORTED_INSTRUMENT.
+ *   8. Входные данные валидны → INVALID_INPUT.
  *
  * Без Spring-состояния и без БД: открытые позиции приходят через
  * [EntryRequest.openPositions].
@@ -46,6 +49,7 @@ class FuturesRiskEngine(
     private val tradingCalendar: TradingCalendar,
     private val dailyRiskGuard: DailyRiskGuard,
     private val volatilityFilter: VolatilityFilter,
+    private val marketRegimeProvider: MarketRegimeProvider,
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
 ) : RiskEngine {
@@ -58,6 +62,9 @@ class FuturesRiskEngine(
         if (dailyRiskGuard.isDailyLossLimitReached()) return reject("DAILY_LIMIT")
         if (dailyRiskGuard.isEntryBlocked()) return reject("DRAWDOWN_PROTECTION")
         if (volatilityFilter.isVolatilityAnomalous()) return reject("VOLATILITY_INDEX")
+        if (riskConfig.marketRegimeEnabled && marketRegimeProvider.currentRegime() == MarketRegime.STRESS) {
+            return reject("MARKET_STRESS")
+        }
 
         if (request.openPositions.size >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
 

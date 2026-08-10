@@ -1,6 +1,8 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.MarketRegime
+import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.DrawdownStatus
 import com.trading.bot.model.dto.TradeStats
@@ -30,9 +32,19 @@ class AdaptiveRiskServiceKellyTest {
     private val drawdownProtection = Mockito.mock(DrawdownProtectionService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
     private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
+    private val marketRegimeProvider: MarketRegimeProvider = { MarketRegime.NORMAL }
 
     private val service =
-        AdaptiveRiskService(riskConfig, tradeAnalysis, positionRepo, candleCache, drawdownProtection, meterRegistry, correlationProvider)
+        AdaptiveRiskService(
+            riskConfig,
+            tradeAnalysis,
+            positionRepo,
+            candleCache,
+            drawdownProtection,
+            meterRegistry,
+            correlationProvider,
+            marketRegimeProvider,
+        )
 
     private fun stats(
         winRate: Double,

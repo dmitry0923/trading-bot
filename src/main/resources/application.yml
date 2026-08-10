@@ -353,6 +353,18 @@ risk:
   volatility-index-enabled: true
   volatility-index-ticker: "RVI"
   max-volatility-index-percent: 50.0
+  # Volatility Engine 2.0 (Market Regime + Implied Volatility Si по опционам FORTS)
+  market-regime-enabled: true
+  regime-lookback-days: 60
+  regime-min-history-samples: 20
+  regime-percentile-low: 40.0
+  regime-percentile-normal: 70.0
+  regime-percentile-volatile: 90.0
+  regime-volatile-size-multiplier: 0.5
+  regime-min-open-position: 1000
+  implied-volatility-enabled: true
+  implied-volatility-ticker: "Si"
+  implied-volatility-cache-ttl-minutes: 15
   # Portfolio Risk Engine (агрегированный портфельный риск: VaR95/effectiveN/концентрация)
   portfolio-risk-enabled: true
   portfolio-risk-blocked: true

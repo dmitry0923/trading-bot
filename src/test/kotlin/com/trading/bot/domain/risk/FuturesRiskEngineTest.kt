@@ -41,13 +41,17 @@ class FuturesRiskEngineTest {
     private val dailyRiskGuard: DailyRiskGuard = Mockito.mock(DailyRiskGuard::class.java)
     private val volatilityFilter: VolatilityFilter = Mockito.mock(VolatilityFilter::class.java)
 
-    private fun engine(openGuard: Boolean = true): FuturesRiskEngine =
+    private fun engine(
+        openGuard: Boolean = true,
+        regime: MarketRegime = MarketRegime.NORMAL,
+    ): FuturesRiskEngine =
         FuturesRiskEngine(
             riskConfig = riskConfig,
             leverageConfig = leverageConfig,
             tradingCalendar = { openGuard },
             dailyRiskGuard = dailyRiskGuard,
             volatilityFilter = volatilityFilter,
+            marketRegimeProvider = { regime },
             instrumentsConfig = instrumentsConfig,
             meterRegistry = SimpleMeterRegistry(),
         )
@@ -69,6 +73,22 @@ class FuturesRiskEngineTest {
     fun `entry allowed within all limits`() =
         runBlocking {
             val result = engine().canEnter(entryRequest())
+
+            assertTrue(result is RiskVerdict.Allowed)
+        }
+
+    @Test
+    fun `entry blocked in stress regime`() =
+        runBlocking {
+            val result = engine(regime = MarketRegime.STRESS).canEnter(entryRequest())
+
+            assertEquals(RiskVerdict.Rejected("MARKET_STRESS"), result)
+        }
+
+    @Test
+    fun `entry allowed in volatile regime`() =
+        runBlocking {
+            val result = engine(regime = MarketRegime.VOLATILE).canEnter(entryRequest())
 
             assertTrue(result is RiskVerdict.Allowed)
         }

@@ -1,5 +1,7 @@
 package com.trading.bot.client
 
+import com.trading.bot.domain.risk.OptionKind
+import com.trading.bot.domain.risk.OptionQuote
 import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
@@ -9,6 +11,7 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -178,6 +181,69 @@ class MoexClient(
         }
 
     /**
+     * Загружает полную опционную таблицу FORTS (все контракты всех базовых активов).
+     *
+     * Внимание: ISS-эндпоинт options/securities.json игнорирует фильтры (assetcode,
+     * underlyingasset, strike) и пагинацию (limit/start) — отдаёт всегда всю таблицу
+     * (~37k строк за ~1.2s). Поэтому фильтрация по инструменту выполняется клиентски,
+     * здесь возвращается весь срез (securities + marketdata одной таблицей).
+     *
+     * @return список опционных котировок или пустой список при недоступности ISS
+     */
+    suspend fun getFortsOptions(): List<OptionQuote> =
+        try {
+            val url =
+                "$baseUrl/engines/futures/markets/options/securities.json" +
+                    "?securities.columns=SECID,ASSETCODE,OPTIONTYPE,STRIKE,LASTTRADEDATE,UNDERLYINGASSET,UNDERLYINGSETTLEPRICE" +
+                    "&marketdata.columns=SECID,LAST,BID,OPENPOSITION"
+            val raw: String =
+                webClient
+                    .get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(15))
+                    .awaitSingle()
+            parseFortsOptions(raw)
+        } catch (e: Exception) {
+            logger.warn(e) { "MOEX FORTS options request failed" }
+            emptyList()
+        }
+
+    /**
+     * Дневные закрытия индекса волатильности (RVI) — распределение для режима рынка.
+     *
+     * Свечи interval=24 по доске SNDX (индексный рынок). Возвращаются цены закрытия,
+     * не завершённая текущая свеча исключается (end <= now).
+     *
+     * @param ticker тикер индекса волатильности (по умолчанию "RVI")
+     * @param from нижняя граница периода (включительно)
+     * @return список дневных закрытий по возрастанию времени
+     */
+    suspend fun getVolatilityIndexDailyCloses(
+        ticker: String = "RVI",
+        from: LocalDate,
+    ): List<Double> =
+        try {
+            val dateFormatter = DateTimeFormatter.ISO_LOCAL_DATE
+            val url =
+                "$baseUrl/engines/stock/markets/index/boards/SNDX/securities/$ticker/candles.json" +
+                    "?interval=24&from=${from.format(dateFormatter)}&until=${LocalDate.now().format(dateFormatter)}"
+            val raw: String =
+                webClient
+                    .get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(10))
+                    .awaitSingle()
+            parseCloses(raw)
+        } catch (e: Exception) {
+            logger.warn(e) { "MOEX volatility index candles request failed for $ticker" }
+            emptyList()
+        }
+
+    /**
      * Извлекает последнюю цену (столбец LAST) из блока marketdata ответа ISS.
      */
     private fun parseLastPrice(raw: String): BigDecimal? {
@@ -190,6 +256,101 @@ class MoexClient(
         val value = firstRow.get(lastIdx)
         if (value == null || value.isNull || value.asString().isBlank()) return null
         return value.asString().toBigDecimalOrNull()
+    }
+
+    /**
+     * Парсит опционную таблицу: блоки securities и marketdata с общим индексом строк.
+     *
+     * Невалидные строки (неизвестный тип опциона, непарсящийся страйк/дата)
+     * пропускаются — полная таблица содержит служебные строки (маржа и пр.).
+     */
+    private fun parseFortsOptions(raw: String): List<OptionQuote> {
+        val root = objectMapper.readTree(raw)
+        val securities = root.path("securities")
+        val marketdata = root.path("marketdata")
+        if (!securities.path("data").isArray || !marketdata.path("data").isArray) return emptyList()
+
+        val sColumns = securities.path("columns").map { it.asString() }
+        val secidIdx = sColumns.indexOf("SECID")
+        val assetCodeIdx = sColumns.indexOf("ASSETCODE")
+        val optionTypeIdx = sColumns.indexOf("OPTIONTYPE")
+        val strikeIdx = sColumns.indexOf("STRIKE")
+        val lastTradeDateIdx = sColumns.indexOf("LASTTRADEDATE")
+        val underlyingAssetIdx = sColumns.indexOf("UNDERLYINGASSET")
+        val underlyingSettlePriceIdx = sColumns.indexOf("UNDERLYINGSETTLEPRICE")
+        if (listOf(secidIdx, assetCodeIdx, optionTypeIdx, strikeIdx, lastTradeDateIdx, underlyingAssetIdx).any { it < 0 }) {
+            return emptyList()
+        }
+
+        val mColumns = marketdata.path("columns").map { it.asString() }
+        val lastIdx = mColumns.indexOf("LAST")
+        val bidIdx = mColumns.indexOf("BID")
+        val openPositionIdx = mColumns.indexOf("OPENPOSITION")
+
+        val rows = securities.path("data")
+        val result = ArrayList<OptionQuote>(rows.size())
+        for (i in 0 until rows.size()) {
+            val sRow = rows.get(i)
+            val kind =
+                when (sRow.get(optionTypeIdx).asString()) {
+                    "C" -> OptionKind.CALL
+                    "P" -> OptionKind.PUT
+                    else -> null
+                }
+            if (kind == null) continue
+            val strike = sRow.get(strikeIdx).asString().toBigDecimalOrNull() ?: continue
+            val lastTradeDate = runCatching { LocalDate.parse(sRow.get(lastTradeDateIdx).asString()) }.getOrNull() ?: continue
+
+            val mRow = marketdata.path("data").get(i)
+            if (mRow == null || mRow.isNull) continue
+            result.add(
+                OptionQuote(
+                    secid = sRow.get(secidIdx).asString(),
+                    assetCode = sRow.get(assetCodeIdx).asString(),
+                    kind = kind,
+                    strike = strike,
+                    lastTradeDate = lastTradeDate,
+                    underlyingAsset = sRow.get(underlyingAssetIdx).asString(),
+                    underlyingSettlePrice = decimalOrNull(sRow, underlyingSettlePriceIdx),
+                    last = decimalOrNull(mRow, lastIdx),
+                    bid = decimalOrNull(mRow, bidIdx),
+                    openPosition =
+                        if (openPositionIdx >= 0 && mRow.has(openPositionIdx)) {
+                            mRow.get(openPositionIdx).asLong()
+                        } else {
+                            0L
+                        },
+                ),
+            )
+        }
+        return result
+    }
+
+    /**
+     * Извлекает дневные цены закрытия (столбец close) из блока candles ответа ISS.
+     */
+    private fun parseCloses(raw: String): List<Double> {
+        val candles = objectMapper.readTree(raw).path("candles")
+        if (!candles.path("data").isArray) return emptyList()
+        val columns = candles.path("columns").map { it.asString() }
+        val closeIdx = columns.indexOf("close")
+        if (closeIdx < 0) return emptyList()
+        return candles
+            .path("data")
+            .mapNotNull { row -> row.get(closeIdx)?.asString()?.toDoubleOrNull() }
+            .sorted()
+    }
+
+    private fun decimalOrNull(
+        row: JsonNode,
+        idx: Int,
+    ): BigDecimal? {
+        if (idx < 0 || !row.has(idx)) return null
+        val node = row.get(idx)
+        if (node == null || node.isNull) return null
+        val text = node.asString()
+        if (text.isBlank() || text == "0") return null
+        return text.toBigDecimalOrNull()
     }
 
     private fun parseCandlesAll(

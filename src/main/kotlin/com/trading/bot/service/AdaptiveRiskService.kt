@@ -1,6 +1,8 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.MarketRegime
+import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -19,6 +21,8 @@ import kotlin.math.sqrt
  *   статистикой (Wilson lower bound win rate, минимум сделок, консервативный fallback),
  *   volatility targeting по ДНЕВНОЙ волатильности (realized-vol / ATR%) и непрерывной
  *   деградацией по глубине просадки от пика AUM
+ * - Market regime: режим VOLATILE урезает размер на regimeVolatileSizeMultiplier,
+ *   STRESS обнуляет размер (входы блокирует FuturesRiskEngine)
  * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
  * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
  * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
@@ -35,6 +39,7 @@ class AdaptiveRiskService(
     private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
     private val correlationProvider: CorrelationMatrixProvider,
+    private val marketRegimeProvider: MarketRegimeProvider,
 ) {
     private val logger = KotlinLogging.logger {}
     private val correlationThreshold = 0.8
@@ -169,10 +174,24 @@ class AdaptiveRiskService(
         val drawdownFactor = drawdownScaleMultiplier().coerceAtMost(recoveryReductionFactor())
         size = size.multiply(BigDecimal(drawdownFactor))
 
+        // Market regime: VOLATILE урезает размер, STRESS обнуляет (входы блокирует риск-движок).
+        val regimeFactor =
+            if (riskConfig.marketRegimeEnabled) {
+                when (marketRegimeProvider.currentRegime()) {
+                    MarketRegime.VOLATILE -> riskConfig.regimeVolatileSizeMultiplier
+                    MarketRegime.STRESS -> 0.0
+                    MarketRegime.LOW, MarketRegime.NORMAL -> 1.0
+                }
+            } else {
+                1.0
+            }
+        size = size.multiply(BigDecimal(regimeFactor))
+
         val finalSize = size.coerceAtLeast(BigDecimal.ZERO)
         meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), finalSize.toDouble())
         logger.info {
-            "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, drawdownFactor=$drawdownFactor)"
+            "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, " +
+                "drawdownFactor=$drawdownFactor, regimeFactor=$regimeFactor)"
         }
         return finalSize
     }

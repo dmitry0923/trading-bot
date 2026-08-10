@@ -246,4 +246,35 @@ class RiskConfig {
 
     /** Глубина расчёта корреляций портфеля (свечей). */
     var portfolioCorrelationLookbackPeriod: Int = 50
+
+    // ===== Volatility Engine 2.0 (Market Regime + Implied Volatility) =====
+
+    /** Включён ли движок рыночного режима волатильности. */
+    var marketRegimeEnabled: Boolean = true
+
+    /** Глубина окна истории волатильности (календарных дней) для распределения режима. */
+    var regimeLookbackDays: Int = 60
+
+    /** Минимум исторических наблюдений для классификации (иначе режим NORMAL). */
+    var regimeMinHistorySamples: Int = 20
+
+    /** Перцентили перехода между режимами: LOW → NORMAL, NORMAL → VOLATILE, VOLATILE → STRESS. */
+    var regimePercentileLow: Double = 40.0
+    var regimePercentileNormal: Double = 70.0
+    var regimePercentileVolatile: Double = 90.0
+
+    /** Множитель размера позиции при режиме VOLATILE (0.5 = половина). */
+    var regimeVolatileSizeMultiplier: Double = 0.5
+
+    /** Минимальный открытый интерес (OPENPOSITION) месяца для выбора ближайшего ликвидного. */
+    var regimeMinOpenPosition: Long = 1000
+
+    /** Включён ли расчёт подразумеваемой волатильности по опционам FORTS (Black-76). */
+    var impliedVolatilityEnabled: Boolean = true
+
+    /** Тикер базового фьючерса для расчёта IV (опционы с ASSETCODE = Si). */
+    var impliedVolatilityTicker: String = "Si"
+
+    /** TTL кэша опционной таблицы / IV, минуты. */
+    var impliedVolatilityCacheTtlMinutes: Long = 15
 }

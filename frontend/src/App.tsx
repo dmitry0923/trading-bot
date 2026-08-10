@@ -8,6 +8,7 @@ import SettingsPage from './pages/SettingsPage';
 import BacktestPage from './pages/BacktestPage';
 import InvestorsPage from './pages/InvestorsPage';
 import ForecastPage from './pages/ForecastPage';
+import CorrelationPage from './pages/CorrelationPage';
 import LoginPage from './LoginPage';
 import { useAuth } from './auth';
 
@@ -17,6 +18,7 @@ const TABS = [
   { key: 'strategies', label: 'Strategies' },
   { key: 'logs', label: 'Agents Log' },
   { key: 'analytics', label: 'Analytics' },
+  { key: 'correlation', label: 'Correlation' },
   { key: 'investors', label: 'Investors' },
   { key: 'forecast', label: 'Forecast' },
   { key: 'settings', label: 'Settings' },
@@ -87,6 +89,7 @@ function App() {
       {tab === 'strategies' && <StrategiesPage />}
       {tab === 'logs' && <LogsPage />}
       {tab === 'analytics' && <AnalyticsPage />}
+      {tab === 'correlation' && <CorrelationPage />}
       {tab === 'investors' && <InvestorsPage />}
       {tab === 'forecast' && <ForecastPage />}
       {tab === 'settings' && <SettingsPage canEdit={isAdmin} />}

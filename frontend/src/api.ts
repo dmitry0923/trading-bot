@@ -3,9 +3,23 @@ import { getAccessToken, refreshAccessToken } from './auth';
 
 const BASE = '';
 
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
+function authHeaders(extra?: HeadersInit): Record<string, string> {
   const token = getAccessToken();
-  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(extra || {}) };
+  const base: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  if (!extra) return base;
+  if (extra instanceof Headers) {
+    const headers: Record<string, string> = {};
+    extra.forEach((value, key) => {
+      headers[key] = value;
+    });
+    return { ...base, ...headers };
+  }
+  if (Array.isArray(extra)) {
+    const headers: Record<string, string> = {};
+    for (const [key, value] of extra) headers[key] = value;
+    return { ...base, ...headers };
+  }
+  return { ...base, ...extra };
 }
 
 let refreshPromise: Promise<boolean> | null = null;

@@ -288,3 +288,39 @@ export interface HealthData {
   pausedTickers: string[];
   timestamp: string;
 }
+
+export interface PositionExposure {
+  ticker: string;
+  direction: string;
+  sector: string;
+  notionalRub: number | string;
+  exposurePercentAum: number | string;
+}
+
+export interface SectorExposure {
+  sector: string;
+  positionCount: number;
+  grossPercentAum: number | string;
+  netPercentAum: number | string;
+}
+
+export type CorrelationMatrix = Record<string, Record<string, number | null>>;
+
+export interface RiskExposureReport {
+  aum: number | string;
+  exposureScore: number;
+  grossExposureRub: number | string;
+  grossExposurePercent: number | string;
+  grossLimitPercent: number | string;
+  netExposureRub: number | string;
+  netExposurePercent: number | string;
+  netLimitPercent: number | string;
+  perPositionExposure: PositionExposure[];
+  perSectorExposure: SectorExposure[];
+  correlationMatrix: CorrelationMatrix;
+  maxPairCorrelation: number;
+  effectivePositions: number | string;
+  var95Rub: number | string;
+  var95Percent: number | string;
+  timestamp?: string;
+}

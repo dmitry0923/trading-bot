@@ -70,6 +70,27 @@ const DRAWDOWN = {
   timestamp: '2026-01-01T00:00:00Z'
 };
 
+const EXPOSURE = {
+  aum: 500000,
+  exposureScore: 35,
+  grossExposureRub: 150000,
+  grossExposurePercent: 30,
+  grossLimitPercent: 150,
+  netExposureRub: 150000,
+  netExposurePercent: 30,
+  netLimitPercent: 100,
+  perPositionExposure: [{ ticker: 'SBER', direction: 'LONG', sector: 'FINANCE', notionalRub: 150000, exposurePercentAum: 30 }],
+  perSectorExposure: [{ sector: 'FINANCE', positionCount: 1, grossPercentAum: 30, netPercentAum: 30 }],
+  correlationMatrix: { SBER: { SBER: 1 } },
+  maxPairCorrelation: 1,
+  effectivePositions: 1,
+  var95Rub: 5000,
+  var95Percent: 1,
+  timestamp: '2026-01-01T00:00:00Z'
+};
+
+const CORR_MATRIX = { SBER: { SBER: 1, GAZP: -0.3 }, GAZP: { SBER: -0.3, GAZP: 1 } };
+
 let currentUser = { username: 'tester', roles: ['ROLE_ADMIN'] };
 let userAuthed = true;
 
@@ -89,6 +110,8 @@ const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.includes('/api/v1/llm/providers')) return json(PROVIDERS);
   if (url.includes('/api/v1/trading/status')) return json(STATUS);
   if (url.includes('/api/v1/risk/drawdown')) return json(DRAWDOWN);
+  if (url.includes('/api/v1/risk/exposure')) return json(EXPOSURE);
+  if (url.includes('/api/v1/risk/correlation')) return json(CORR_MATRIX);
   return json({});
 });
 
@@ -105,10 +128,11 @@ afterEach(() => {
 describe('App', () => {
   it('renders title, user info and all tab buttons', async () => {
     render(<App />);
-    expect(screen.getByRole('heading', { name: /Trading Bot Dashboard v2/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Trading Bot Dashboard v2/ })).toBeInTheDocument();
     expect(await screen.findByText('tester · ADMIN')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Positions' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Correlation' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Backtest' })).toBeInTheDocument();
   });
@@ -116,14 +140,14 @@ describe('App', () => {
   it('navigates to the Positions tab and renders empty table', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Positions' }));
+    await user.click(await screen.findByRole('button', { name: 'Positions' }));
     expect(await screen.findByText('No positions')).toBeInTheDocument();
   });
 
   it('renders Settings editable for ADMIN role', async () => {
     const user = userEvent.setup();
     render(<App />);
-    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Settings' }));
     expect(await screen.findByRole('button', { name: 'Save Settings' })).toBeEnabled();
     expect(screen.queryByText(/У вас роль ANALYTICS/)).not.toBeInTheDocument();
   });
@@ -143,7 +167,7 @@ describe('App', () => {
     const user = userEvent.setup();
     render(<App />);
     expect(await screen.findByRole('button', { name: /Sign In/ })).toBeInTheDocument();
-    await user.type(screen.getByLabelText(/Username/), 'admin');
+    await user.type(await screen.findByLabelText(/Username/), 'admin');
     await user.type(screen.getByLabelText(/Password/), 'secret');
     await user.click(screen.getByRole('button', { name: /Sign In/ }));
     expect(await screen.findByText('admin · ADMIN')).toBeInTheDocument();
@@ -153,9 +177,19 @@ describe('App', () => {
     userAuthed = false;
     const user = userEvent.setup();
     render(<App />);
-    await user.type(screen.getByLabelText(/Username/), 'admin');
+    await user.type(await screen.findByLabelText(/Username/), 'admin');
     await user.type(screen.getByLabelText(/Password/), 'wrong');
     await user.click(screen.getByRole('button', { name: /Sign In/ }));
     expect(await screen.findByText('Неверные учётные данные')).toBeInTheDocument();
+  });
+
+  it('renders Correlation tab with exposure score and heatmap', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Correlation' }));
+    expect(await screen.findByText('Exposure Score')).toBeInTheDocument();
+    expect(screen.getByText('35')).toBeInTheDocument();
+    expect(await screen.findByText('Watchlist correlation heatmap')).toBeInTheDocument();
+    expect(screen.getAllByText('-0.30').length).toBe(2);
   });
 });

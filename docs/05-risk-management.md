@@ -423,3 +423,68 @@ flowchart TB
 | Emergency stop (endpoint) | 🔜 запланировано | — |
 | Дневной лимит в БД (календарный день) | 🔜 запланировано | — |
 | `RiskBreachedEvent` (event-driven) | 🔜 запланировано | — |
+
+## 5.11. Correlation Engine — видимость портфельного риска
+
+> **Статус**: реализовано. Входные корреляционные фильтры (`PortfolioRiskEngineImpl`,
+> `AdaptiveRiskService`) существовали ранее; этот раздел описывает **видимость** —
+> live-снимок текущего портфеля через `RiskExposureService` (вкладка **Correlation** в UI).
+
+### Назначение
+
+Входные фильтры отвечают на вопрос «можно ли добавить кандидата» (VaR / effectiveN /
+концентрация гипотетического входа). `RiskExposureService` показывает **ТЕКУЩЕЕ**
+состояние портфеля: насколько оно уже сконцентрировано и коррелировано. Единый
+**Exposure Score (0..100)** агрегирует риск в одну цифру.
+
+### Классы
+
+- `RiskExposureService` (`com.trading.bot.service`) — сборка снимка, без записи в БД;
+- `RiskExposureReport` / `PositionExposure` / `SectorExposure` (`com.trading.bot.model.dto`);
+- `RiskExposureController` (`com.trading.bot.controller`) — read-only API.
+
+### Что входит в снимок
+
+- **Gross / Net Exposure** в % AUM + лимиты (`maxGrossExposurePercent` 150%,
+  `maxNetExposurePercent` 100%);
+- **Sector exposure** по `risk.sectors` (gross/net % AUM, число позиций);
+- **Корреляционная матрица** открытых позиций — общий `CorrelationMatrixProvider`
+  (Пирсон по закрытиям, `MINUTE_10`, период `portfolioCorrelationLookbackPeriod` = 50);
+- **Effective positions** — корреляционно-скорректированное число независимых ставок:
+  `eff = (Σ|wᵢ|)² / Σᵢⱼ|wᵢ||wⱼ|ρᵢⱼ` (кластер ρ≈1 → eff≈1, «одна ставка на рынок»);
+- **VaR95** — `1.645 · σp · gross`, дневная волатильность из `DAY_1` (fallback —
+  внутридневная ×√57);
+- **Max pair correlation** по открытым позициям.
+
+### Exposure Score (0..100)
+
+Взвешенный композит, каждый член ограничен [0, 1]:
+
+```
+Score = 100 · ( 0.25·концентрация          |net|/gross
+              + 0.25·(1/eff, нормализовано) min(eff,10)/10 → (1 - норм) инвертированно
+              + 0.25·(VaR% / maxPortfolioVaRPercent)
+              + 0.125·(gross% / maxGrossExposurePercent)
+              + 0.125·(|net%| / maxNetExposurePercent) )
+```
+
+Уровни: < 40 — LOW (зелёный), 40–69 — MEDIUM (оранжевый), ≥ 70 — HIGH (красный).
+Score **информационный**: входа не блокирует (гейты входа — фильтры из раздела 5.10);
+пустой портфель → score = 0.
+
+### Prometheus-метрики
+
+| Метрика | Тип | Описание |
+|---|---|---|
+| `risk.exposure.score` | gauge | Exposure Score 0..100 |
+| `risk.exposure.gross_percent` | gauge | Gross exposure, % AUM ×100 |
+| `risk.exposure.net_percent` | gauge | Net exposure, % AUM ×100 |
+| `risk.exposure.var95_percent` | gauge | VaR95, % AUM ×100 |
+| `risk.exposure.effective_positions` | gauge | эффективное число ставок ×100 |
+| `risk.exposure.sector_percent{sector}` | gauge | gross экспозиция сектора, % AUM ×100 |
+
+### API
+
+- `GET /api/v1/risk/exposure` — снимок портфеля (см. раздел 7);
+- `GET /api/v1/risk/correlation?tickers=&timeframe=&period=` — полная матрица watchlist
+  (heatmap; без `tickers` — `trading.tickers`).

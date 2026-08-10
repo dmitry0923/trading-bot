@@ -59,6 +59,8 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | GET | `/api/v1/analytics/time-pattern/{ticker}` | win rate по часам | ✅ |
 | GET | `/api/v1/analytics/health` | health аналитики | ✅ |
 | GET | `/api/v1/backtest/{ticker}` | бэктест тикера за N дней | ✅ |
+| GET | `/api/v1/risk/exposure` | live-снимок портфельного риска (Correlation Engine) | ✅ |
+| GET | `/api/v1/risk/correlation` | корреляционная матрица watchlist (heatmap) | ✅ |
 | POST | `/api/v1/bot/emergency-stop` | аварийная остановка | 🔜 запланирован |
 | GET | `/actuator/health` | health Spring Boot | ✅ |
 | GET | `/actuator/prometheus` | метрики Prometheus | ✅ |
@@ -359,6 +361,63 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 
 Spring Boot DefaultErrorAttributes:
 
+### GET /api/v1/risk/exposure
+
+Live-снимок портфельного риска (Correlation Engine). Read-only, доступен ADMIN и ANALYTICS. Расчёт — `RiskExposureService`, см. раздел 5.11.
+
+**Response 200**:
+```json
+{
+  "aum": 500000,
+  "exposureScore": 52,
+  "grossExposureRub": 300000.00,
+  "grossExposurePercent": 60.00,
+  "grossLimitPercent": 150.00,
+  "netExposureRub": 300000.00,
+  "netExposurePercent": 60.00,
+  "netLimitPercent": 100.00,
+  "perPositionExposure": [
+    {
+      "ticker": "SBER",
+      "direction": "LONG",
+      "sector": "FINANCE",
+      "notionalRub": 100000.00,
+      "exposurePercentAum": 20.00
+    }
+  ],
+  "perSectorExposure": [
+    {
+      "sector": "FINANCE",
+      "positionCount": 2,
+      "grossPercentAum": 40.00,
+      "netPercentAum": 40.00
+    }
+  ],
+  "correlationMatrix": {
+    "SBER": { "SBER": 1.0, "VTBR": 0.75 },
+    "VTBR": { "SBER": 0.75, "VTBR": 1.0 }
+  },
+  "maxPairCorrelation": 0.75,
+  "effectivePositions": 1.2,
+  "var95Rub": 12345.67,
+  "var95Percent": 2.4691,
+  "timestamp": "2026-08-03T10:05:12"
+}
+```
+
+`exposureScore` — единый Exposure Score 0..100 (LOW < 40, MEDIUM 40–69, HIGH ≥ 70); пустой портфель → 0.
+
+### GET /api/v1/risk/correlation
+
+Полная корреляционная матрица watchlist для heatmap.
+
+**Query**:
+- `tickers` (необязателен) — тикеры через запятую; по умолчанию `trading.tickers`;
+- `timeframe` (default `MINUTE_10`) — `MINUTE_10` / `HOUR_1` / `DAY_1`;
+- `period` (default 50) — глубина расчёта в свечах.
+
+**Response 200**: `Map<String, Map<String, Double|null>>` (Пирсон по закрытиям, < 30 свечей → null).
+
 **404 — не найдено**:
 ```json
 {
@@ -413,6 +472,12 @@ curl -H "$AUTH" -X POST http://localhost:8080/api/v1/strategy/trigger
 
 # Дневной P&L
 curl -H "$AUTH" http://localhost:8080/api/v1/risk/daily-pnl
+
+# Снимок портфельного риска (Correlation Engine)
+curl -H "$AUTH" http://localhost:8080/api/v1/risk/exposure
+
+# Корреляционная матрица watchlist на 1h
+curl -H "$AUTH" "http://localhost:8080/api/v1/risk/correlation?timeframe=HOUR_1&period=50"
 
 # Бэктест SBER за год
 curl -H "$AUTH" "http://localhost:8080/api/v1/backtest/SBER?days=365"

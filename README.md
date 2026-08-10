@@ -1,273 +1,97 @@
 # MMVB Trading Bot v2
 
-Production-ready trading bot for Moscow Exchange (MOEX) with AI-driven strategy optimization.
+**Торговый робот для Московской биржи (MOEX): он сам анализирует рынок, сам придумывает торговые стратегии с помощью ИИ (LLM) и сам открывает и закрывает сделки через брокера Алор.**
 
-- Ведёт собственную статистику (реальные закрытые сделки), строит **прогноз прибыли**
-  для инвесторов и **автоматически рассчитывает клиринг** (вывод средств) на дату выхода.
-- **Гибкое подключение LLM**: по умолчанию агрегатор RouterAI (`routerai.ru`),
-  переключение на Kimi / DeepSeek / Qwen через UI или env.
-- **Мультиинструменты + мультитаймфреймы** (10m / 1h / 1d).
-- **Единый флаг торговли** и принудительное закрытие позиций — сейчас или по времени.
-- **Безопасность**: self-issued JWT (access + ротируемые refresh-токены в httpOnly cookie),
-  фронтенд login-флоу, секреты через Yandex Lockbox, отдельные UI-пользователи:
-  **ADMIN** (настройки) и **ANALYTICS** (только просмотр). Дефолтных кредов нет.
-- UUIDv7 для всех новых записей, CI с автодеплоем на Yandex Cloud.
+---
 
-## Architecture
+> ## ⚠️ ВНИМАНИЕ. ПРОЧТИТЕ ПЕРЕД ЗАПУСКОМ
+>
+> **Это экспериментальное программное обеспечение. Автор не несёт никакой ответственности за потерю денег, упущенную выгоду или любые другие убытки, возникшие в результате использования этого робота.**
+>
+> - Робот тратит **реальные деньги только когда вы сами включите режим `LIVE`**. По умолчанию он работает в режиме симуляции (`SIMULATION`) — виртуальные деньги, никакого риска.
+> - Алгоритмическая торговля — это высокий риск. Рынок может пойти против вас, робот может ошибаться, интернет может отключиться в самый неподходящий момент.
+> - Используйте только те суммы, потерю которых можете позволить себе без последствий. **Не вкладывайте заёмные деньги и деньги, нужные на жизнь.**
+> - Ни один бэктест или период симуляции **не гарантирует** прибыль в будущем.
 
-- **Kotlin 1.9.21** + **Spring Boot 3.2.0**
-- **R2DBC** (reactive `DatabaseClient`, all repositories `suspend`) + **Liquibase** migrations (JDBC)
-- **PostgreSQL** for persistence
-- **Redis** for caching
-- **Micrometer** + **Prometheus** metrics
-- **Docker** + **Docker Compose**
+---
 
-## Quick Start
+## Что умеет робот
 
-### 1. Prerequisites
+- Торгует акциями и фьючерсами на **Московской бирже (MOEX)** через брокера **Алор**.
+- Анализирует рынок по **свечам** (10 минут / 1 час / 1 день) и с помощью **ИИ-агентов** (RouterAI / Kimi / DeepSeek / Qwen).
+- Сам управляет рисками: стоп-лоссы, тейк-профиты, лимит дневного убытка, критерий Келли.
+- Ведёт статистику сделок, строит **прогноз прибыли** и автоматически считает **клиринг** (вывод средств инвесторов).
+- Работает в трёх режимах:
+  | Режим | Деньги | Когда использовать |
+  |---|---|---|
+  | `SIMULATION` | виртуальные | всегда для начала |
+  | бэктест | не тратит ничего | проверить стратегию на истории |
+  | `LIVE` | реальные | только после недель симуляции |
 
-- Docker & Docker Compose
-- Java 21 (for local development)
-- Gradle 8.x (wrapper included)
+## Что должно быть установлено на компьютере
 
-### 2. Environment Setup
+Это проект на Java (Kotlin). Никакого Python ему не нужно — вместо этого используется Docker.
 
-Create `.env` file. **Дефолтных паролей нет** — если переменная не задана,
-`docker compose` упадёт (`${VAR:?...}`), а приложение не стартует с пустыми кредами.
+| Программа | Зачем | Ссылка для скачивания |
+|---|---|---|
+| **Docker Desktop** | Запускает робота и его базы данных в «коробках»-контейнерах | https://www.docker.com/products/docker-desktop/ (кнопка «Download for Windows») |
+| **Git** (опционально) | Скачать код через команду `git clone` | https://git-scm.com/download/win |
+| **Java 21** (только для разработчиков) | Нужно только если хотите запускать робота без Docker командой `gradlew` | https://adoptium.net/temurin/releases/?version=21 |
 
-```bash
-# --- Торговля ---
-ALOR_TOKEN=your_alor_token
-ALOR_REFRESH_TOKEN=your_refresh_token
-ALOR_PORTFOLIO=D12345
-TRADING_MODE=SIMULATION
+> Новичкам достаточно **Docker Desktop** + **Git**. Всё остальное подтянется само.
 
-# --- БД / Redis (пароль обязателен, без дефолта) ---
-DB_PASS=strong-db-password
+## Быстрый старт за 5 минут
 
-# --- LLM (по умолчанию RouterAI, агрегатор) ---
-LLM_PROVIDER=ROUTER_AI
-LLM_API_KEY=your_routerai_api_key
-# ROUTER_AI_BASE_URL=https://routerai.ru/api/v1
-# KIMI_API_KEY=...
-# DEEPSEEK_API_KEY=...
-# QWEN_API_KEY=...
+```powershell
+# 1. Скачайте код (см. SETUP_GUIDE.md, раздел 1) и перейдите в папку проекта
+cd trading-bot
 
-# --- Аутентификация (JWT). Креды и secret обязательны, без дефолтов ---
-AUTH_USER=admin
-AUTH_PASSWORD=very-strong-admin-password
-ANALYTICS_USER=analytics
-ANALYTICS_PASSWORD=read-only-analytics-password
-JWT_SECRET=$(openssl rand -base64 48)   # min 32 байта, HS256
-# JWT_ACCESS_TTL_MINUTES=15
-# JWT_REFRESH_TTL_DAYS=30
+# 2. Создайте файл .env по образцу из SETUP_GUIDE.md (раздел 4)
+#    Минимальный набор: DB_PASS, AUTH_USER, AUTH_PASSWORD, JWT_SECRET
 
-# --- Prometheus scrape-токен (Bearer на /actuator/prometheus) ---
-METRICS_SCRAPE_TOKEN=$(openssl rand -base64 32)
+# 3. Запустите всё одной командой (робот + базы данных + веб-интерфейс)
+docker compose up -d
+
+# 4. Проверьте, что робот здоров
+curl http://localhost:8080/actuator/health
 ```
 
-> **Important**: креды и `JWT_SECRET` — без дефолтов; приложение откажется стартовать,
-> если `AUTH_USER`/`AUTH_PASSWORD` пустые. На проде секреты берутся из **Yandex Lockbox**
-> (`LOCKBOX_ENABLED=true`, `LOCKBOX_SECRET_ID=...`), см. `docs/08-configuration.md`.
+После запуска откройте в браузере **http://localhost** — там веб-интерфейс (войти под логином/паролем из `.env`).
 
-### 3. Run with Docker Compose
+## Где какая документация
 
-```bash
-docker-compose up -d
-```
+### 📖 Для новичка (человек без технического образования)
 
-Services:
-- Dashboard (frontend, nginx, login-флоу): http://localhost:80
-- App API: внутри docker-сети (наружу только через nginx на 80)
-- Health check: http://localhost:8080/actuator/health (внутри сети)
-- Prometheus: http://127.0.0.1:9090 (только localhost)
-- Grafana: http://127.0.0.1:3000 (только localhost, без публичного доступа)
+| Файл | О чём |
+|---|---|
+| [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md) | Как скачать код, установить программы, заполнить `.env` с ключами и не слить их в интернет |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Что означает каждая настройка: свечи, таймфреймы, стоп-лоссы, таблица разрешённых значений |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Запуск: бэктест → симуляция → реальный счёт → облако Yandex Cloud (пошагово) |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Что делать при ошибках: нет интернета, кончилась память, как читать логи |
+| [docs/GLOSSARY.md](docs/GLOSSARY.md) | Словарь терминов простым языком |
 
-### 4. Local Development
+### 🔧 Для технической команды (существующая документация)
 
-```bash
-# Start dependencies
-docker-compose up -d postgres redis
+| Файл | О чём |
+|---|---|
+| [docs/01-executive-summary.md](docs/01-executive-summary.md) | Обзор для бизнеса |
+| [docs/02-architecture.md](docs/02-architecture.md) | Архитектура, слои, события |
+| [docs/03-llm-pipeline.md](docs/03-llm-pipeline.md) | ИИ-конвейер из агентов |
+| [docs/04-integrations.md](docs/04-integrations.md) | Брокер Алор, биржа MOEX, Outbox |
+| [docs/05-risk-management.md](docs/05-risk-management.md) | Управление рисками, Келли |
+| [docs/06-database.md](docs/06-database.md) | Схема базы данных |
+| [docs/07-api.md](docs/07-api.md) | Все REST-эндпоинты |
+| [docs/08-configuration.md](docs/08-configuration.md) | Все переменные окружения |
+| [docs/09-monitoring.md](docs/09-monitoring.md) | Prometheus / Grafana |
+| [docs/10-deployment.md](docs/10-deployment.md) | Деплой и CI/CD |
+| [docs/11-backtest.md](docs/11-backtest.md) | Как устроен бэктест |
+| [docs/12-troubleshooting.md](docs/12-troubleshooting.md) | Технические проблемы |
+| [docs/15-futures-trading.md](docs/15-futures-trading.md) | Фьючерсный контур (Si) |
 
-# Run app
-./gradlew bootRun
+## Технологии одним абзацем
 
-# Run tests
-./gradlew clean check
-```
+Kotlin + Spring Boot 3.2 · Java 21 · PostgreSQL 15 (TimescaleDB) · Redis 7 · Docker / Docker Compose · ИИ-агенты (LLM) · Alor Open API + WebSocket · MOEX ISS · Prometheus + Grafana.
 
-## API Endpoints
+## Лицензия
 
-Аутентификация — **self-issued JWT**: короткоживущий access-токен (в памяти фронта)
-плюс ротируемый refresh-токен в httpOnly cookie (`Path=/api/v1/auth`).
-Вход: `POST /api/v1/auth/login` (JSON `{username, password}`) → `{accessToken, refreshToken, ...}`.
-Обновление: `POST /api/v1/auth/refresh` (тело или cookie), выход: `POST /api/v1/auth/logout`.
-Все запросы к `/api/v1/**` и `/actuator/**` требуют `Authorization: Bearer <accessToken>`,
-изменяющие POST — только роль ADMIN.
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/auth/login` | POST | Вход: проверка кредов → access + refresh (public) |
-| `/api/v1/auth/refresh` | POST | Ротация refresh-токена (public, reuse = отзыв сессии) |
-| `/api/v1/auth/logout` | POST | Отзыв текущего refresh-токена (public) |
-| `/api/v1/settings` | GET/POST | Bot settings (POST — только ADMIN) |
-| `/api/v1/me` | GET | Текущий пользователь и роли |
-| `/api/v1/llm/providers` | GET | Доступные LLM-провайдеры и активный |
-| `/api/v1/trading/status` | GET | Флаг торговли, force-close, открытые позиции |
-| `/api/v1/trading/enable` / `disable` | POST | Единый флаг включения/выключения торговли |
-| `/api/v1/trading/force-close` | POST | Принудительное закрытие всех позиций сейчас |
-| `/api/v1/trading/force-close-at?time=HH:mm` | POST | Плановое закрытие по времени |
-| `/api/v1/trading/force-close-cancel` | POST | Отмена планового закрытия |
-| `/api/v1/investors` | GET/POST | Список / создание инвесторов |
-| `/api/v1/investors/{id}` | GET | Инвестор + счёт + P&L |
-| `/api/v1/investors/{id}/deposit` | POST | Депозит |
-| `/api/v1/investors/{id}/withdraw` | POST | Вывод |
-| `/api/v1/investors/{id}/transactions` | GET | Транзакции инвестора |
-| `/api/v1/investors/allocations` | GET | Аллокации |
-| `/api/v1/forecast?horizonDays=&capitalBase=` | GET | Прогноз прибыли на реальной статистике |
-| `/api/v1/clearing/quote?investorId=&date=` | GET | Расчёт клиринга (доля + P&L + прогноз) |
-| `/api/v1/clearing/settle?investorId=&date=` | POST | Исполнение клиринга |
-| `/api/v1/clearing/pool` | GET | Статистика пула инвесторов |
-| `/api/v1/strategies` | GET | Last 50 strategies |
-| `/api/v1/positions` | GET | Open positions |
-| `/api/v1/positions/all` | GET | All positions |
-| `/api/v1/logs` | GET | Last 100 agent logs |
-| `/api/v1/analytics/trade-stats` | GET | Trade statistics |
-| `/api/v1/analytics/blind-spots` | GET | Active blind spots |
-| `/api/v1/analytics/adjustments` | GET | Strategy adjustments |
-| `/api/v1/analytics/health` | GET | Analytics health |
-| `/api/v1/strategy/trigger` | POST | Manual strategy cycle |
-| `/api/v1/bot/trigger` | POST | Manual bot cycle |
-
-## Investor Clearing
-
-Робот самостоятельно ведёт расчёты с инвесторами на основе собственной статистики:
-
-1. **Доля инвестора** = баланс / суммарный внесённый капитал пула.
-2. **Атрибутированный P&L** = доля × реализованный P&L пула (реальные закрытые сделки).
-3. **Прогнозная компонента** = баланс × ожидаемая доходность на дни до вывода
-   (из `ProfitForecastService` — дневная доходность закрытых сделок, 95% ДИ, годовая ×252).
-4. **Сумма вывода** = баланс + атрибутированный P&L + прогнозная компонента.
-
-Исполнение клиринга фиксируется транзакцией `CLEARING` в `investor_transactions`.
-
-## LLM Providers
-
-Активный провайдер переключается через UI (Settings) или env:
-
-| Provider | Default base URL | Default model |
-|----------|------------------|---------------|
-| `ROUTER_AI` | `https://routerai.ru/api/v1` | `auto` (авто-роутинг) |
-| `KIMI` | `https://api.moonshot.cn/v1` | `kimi-k3` |
-| `DEEPSEEK` | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| `QWEN` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
-
-Приоритет настроек: значения из UI (перезаписывают env). Клиент устойчив
-(Circuit Breaker / Rate Limiter / Retry / очередь запросов / semantic cache / fallback).
-
-## Multi-timeframe
-
-Каждая стратегия хранит свой `timeframe` (`MINUTE_10`, `HOUR_1`, `DAY_1`).
-Активный набор таймфреймов управляется через настройки (`settings.timeframes`),
-fallback: `trading.timeframes` → `trading.timeframe`.
-
-## Database Schema
-
-Managed by Liquibase. Tables:
-- `positions` — open/closed trades
-- `strategies` — generated strategies (with `timeframe`)
-- `candles` — market data
-- `agent_logs` — agent decisions
-- `blind_spots` — detected patterns
-- `strategy_adjustments` — parameter adjustments
-- `investors`, `investor_accounts`, `investor_transactions`, `investor_allocations` — инвесторы и клиринг
-- `bot_settings` — персистентные настройки бота (JSON-блоб по ключу `global`)
-
-## Configuration
-
-See `application.yml` for all options. Key env vars:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_HOST` | localhost | PostgreSQL host |
-| `DB_PORT` | 5432 | PostgreSQL port |
-| `DB_NAME` | trading_bot | Database name |
-| `DB_USER` | trader | DB username |
-| `DB_PASS` | trader | DB password |
-| `REDIS_HOST` | localhost | Redis host |
-| `REDIS_PORT` | 6379 | Redis port |
-| `TRADING_MODE` | SIMULATION | SIMULATION or LIVE |
-| `ALOR_TOKEN` | — | Alor API token |
-| `LLM_PROVIDER` | ROUTER_AI | ROUTER_AI, KIMI, DEEPSEEK, QWEN |
-| `LLM_API_KEY` | — | API key активного LLM-провайдера |
-| `ROUTER_AI_BASE_URL` | https://routerai.ru/api/v1 | RouterAI endpoint |
-| `ROUTER_AI_MODEL` | auto | RouterAI model |
-| `KIMI_BASE_URL` / `KIMI_MODEL` | moonshot.cn / kimi-k3 | Kimi endpoint |
-| `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` | deepseek.com / deepseek-chat | DeepSeek endpoint |
-| `QWEN_BASE_URL` / `QWEN_MODEL` | dashscope / qwen-plus | Qwen endpoint |
-| `AUTH_USER` | — (обязателен) | Администратор (роль ADMIN) |
-| `AUTH_PASSWORD` | — (обязателен) | Пароль администратора |
-| `ANALYTICS_USER` / `ANALYTICS_PASSWORD` | — | Аналитик (только просмотр) |
-| `JWT_SECRET` | — (обязателен, ≥32 байта) | HS256-ключ для подписи JWT |
-| `JWT_ACCESS_TTL_MINUTES` | 15 | Время жизни access-токена |
-| `JWT_REFRESH_TTL_DAYS` | 30 | Время жизни refresh-токена |
-| `JWT_COOKIE_SECURE` | false | `Secure` на refresh-cookie (true за HTTPS) |
-| `METRICS_SCRAPE_TOKEN` | — | Bearer-токен Prometheus на `/actuator/prometheus` |
-| `LOCKBOX_ENABLED` | false | Читать секреты из Yandex Lockbox |
-| `LOCKBOX_SECRET_ID` | — | ID секрета Lockbox |
-
-## Risk Management
-
-- **Half-Kelly sizing** (`risk.kelly-fraction=0.5`): the Kelly criterion result is
-  multiplied by 0.5 (Half-Kelly) before being capped at 50% of the max position.
-  Full Kelly is too aggressive on real markets; use 0.25 for Quarter-Kelly.
-- **LLM guardrails**: agent outputs are clamped to safe ranges before use
-  (e.g. confidence adjustment in [-0.20, +0.20], SL/TP adjustment in [-0.30, +0.30]),
-  NaN/Infinity collapse to 0. Signals also pass through `Guardrails`
-  (daily loss limit, price deviation, confidence threshold).
-- **Daily loss circuit breaker**: when the daily P&L reaches `max-daily-loss-rub`,
-  the bot halts new entries until the next day.
-- **Единый флаг торговли** (`/api/v1/trading/enable|disable`) блокирует все входы
-  на уровне `TradingGate` — как для акций, так и для фьючерсов.
-- **Force close**: мгновенный (`/api/v1/trading/force-close`) или по времени
-  (`forceCloseTime` + `forceCloseEnabled`, проверка каждую минуту, Europe/Moscow).
-
-## CI/CD
-
-`.github/workflows/ci.yml` runs on every push/PR:
-- `./gradlew ktlintCheck` (lint, baseline in `config/ktlint/baseline.xml`)
-- `./gradlew test` (unit + Testcontainers integration tests)
-- `./gradlew koverVerify` (coverage gate, min 50%, `koverReport` is uploaded as artifact)
-- `npm run test` + `npm run build` (Vitest + TypeScript/Vite frontend)
-
-Dеплой — job `deploy` в том же `ci.yml`, после merge в `main`/`master` (и только если
-прошли все тесты, `needs: [backend, frontend]`):
-1. Образы backend (`trading-bot-app`) и frontend (`trading-bot-frontend`) собираются
-   и пушатся в **Yandex Container Registry** (`cr.yandex`).
-2. По SSH на VM (`/opt/trading-bot`) пишется `.env` с runtime-секретами, затем
-   `docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && up -d`.
-
-Требуемые GitHub Secrets:
-- `YC_FOLDER_ID`, `YC_REGISTRY_ID`, `YC_SA_JSON` (ключ сервисного аккаунта с правами на YCR)
-- `VM_HOST`, `VM_USER`, `VM_SSH_KEY` (SSH-доступ к VM)
-- `AUTH_USER`, `AUTH_PASSWORD`, `ANALYTICS_USER`, `ANALYTICS_PASSWORD`
-- `JWT_SECRET`, `METRICS_SCRAPE_TOKEN`, `DB_PASS`, `GRAFANA_ADMIN_PASSWORD`
-- `ALOR_TOKEN`, `ALOR_REFRESH_TOKEN`, `LLM_PROVIDER`, `LLM_API_KEY`, `TRADING_MODE`
-- `LOCKBOX_ENABLED`, `LOCKBOX_SECRET_ID`, `LOCKBOX_SA_KEY_JSON` (опционально)
-
-## Monitoring
-
-Prometheus metrics exposed at `/actuator/prometheus` (требуется заголовок
-`Authorization: Bearer $METRICS_SCRAPE_TOKEN`):
-- `strategy.cycle` — strategy cycles
-- `bot.cycle` — bot cycles
-- `bot.position.opened` — opened positions
-- `bot.position.closed` — closed positions
-- `adaptive.position_size` — Kelly position size
-- `feedback.cache.hit` — feedback cache hits
-- `llm.latency`, `llm.tokens.used`, `llm.fallback.activated` — LLM-метрики
-- `trading.control.force_close`, `trading.control.toggle` — управление торговлей
-
-## License
-
-MIT
+MIT. Используйте на свой страх и риск (см. предупреждение в начале файла).

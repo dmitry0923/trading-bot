@@ -169,4 +169,34 @@ class LayerArchitectureTest {
                 "..service.OrderOutboxService",
                 "..event.TradingEventPublisher",
             )
+
+    /** DecisionEngine — оркестратор входа: домен не знает о нём. */
+    @ArchTest
+    val `domain must not depend on decision layer` =
+        noClasses()
+            .that()
+            .resideInAnyPackage("..domain..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAnyPackage("..application.decision..")
+
+    /** DecisionEngine — оркестратор входа: риск-слой не знает о нём. */
+    @ArchTest
+    val `risk must not depend on decision layer` =
+        noClasses()
+            .that()
+            .resideInAnyPackage("..application.risk..", "..domain.risk..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAnyPackage("..application.decision..")
+
+    /** DecisionEngine — оркестратор входа: стратегии не знают о нём. */
+    @ArchTest
+    val `strategies must not depend on decision layer` =
+        noClasses()
+            .that()
+            .resideInAnyPackage("..application.strategy..")
+            .should()
+            .dependOnClassesThat()
+            .resideInAnyPackage("..application.decision..")
 }

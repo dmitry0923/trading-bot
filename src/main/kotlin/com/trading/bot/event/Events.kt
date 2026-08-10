@@ -15,8 +15,7 @@ import java.time.LocalDateTime
  *
  * Поток:
  * PriceChangedEvent -> мониторинг открытых позиций (SL/TP/trailing)
- * StrategyGeneratedEvent -> публикация EntrySignalEvent при пригодном сигнале
- * EntrySignalEvent -> RiskEngine.canEnter() + открытие позиции
+ * StrategyGeneratedEvent -> единый оркестратор входа DecisionEngine (риск-этапы + позиция)
  * ExecutionReportEvent -> фиксация фактического исполнения (closePrice, P&L, slippage)
  */
 data class PriceChangedEvent(
@@ -30,10 +29,6 @@ data class PriceChangedEvent(
  * размера и стопов) готов. Размер/SL/TP вычисляют риск-этапы при входе.
  */
 data class StrategyGeneratedEvent(
-    val signal: Signal,
-)
-
-data class EntrySignalEvent(
     val signal: Signal,
 )
 

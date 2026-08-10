@@ -1,19 +1,16 @@
 package com.trading.bot.application
 
-import com.trading.bot.application.risk.FuturesPositionSizer
+import com.trading.bot.application.decision.DecisionEngine
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
-import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.event.ExecutionReportEvent
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.StrategyGeneratedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
-import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionStatus
@@ -37,10 +34,11 @@ import tools.jackson.databind.ObjectMapper
 /**
  * Координатор торговли фьючерсами (Si).
  *
- * - Открытие: делегируется [FuturesEntryCoordinator] (risk-first через
- *   [FuturesRiskEngine.canEnter], размер позиции через [FuturesPositionSizer],
- *   параметры заявки через [OrderBuilder]; позиция с futures-полями: leverage,
- *   goPerContract, marginUsed, liquidationPrice, variationMargin, stopLossPoints).
+ * - Открытие: делегируется [com.trading.bot.application.decision.DecisionEngine]
+ *   (risk-first через [FuturesRiskEngine.canEnter], размер позиции через
+ *   FuturesPositionSizer, параметры заявки через OrderBuilder; позиция с
+ *   futures-полями: leverage, goPerContract, marginUsed, liquidationPrice,
+ *   variationMargin, stopLossPoints — всё в [com.trading.bot.application.decision.FuturesEntryProfile]).
  * - Мониторинг: каждый тик PriceChangedEvent → [FuturesPositionMonitor]
  *   (checkLiquidationDistance, LIQUIDATION_CRITICAL → market close, SL/TP/trailing).
  * - P&L фьючерса (₽): (close - entry) * qty * pointValue, pointValue = priceStepCost / priceStep.
@@ -49,31 +47,25 @@ import tools.jackson.databind.ObjectMapper
  *   [OrderExecutionEngine]: idempotency key на ордер, стейт-машина pendingEntry/pendingClose,
  *   State Reconciliation через outbox + verifyOrder, partial fills с дозакрытием остатка.
  *
- * Роли: [FuturesEntryCoordinator] — вход, [FuturesPositionMonitor] — мониторинг,
- * [OrderExecutionEngine] — исполнение/реконсиляция. Здесь — оркестрация событий,
- * force close и периодическая реконсиляция.
+ * Роли: [com.trading.bot.application.decision.DecisionEngine] — вход,
+ * [FuturesPositionMonitor] — мониторинг, [OrderExecutionEngine] — исполнение/реконсиляция.
+ * Здесь — оркестрация событий, force close и периодическая реконсиляция.
  */
 @Service
 class FuturesTradingBotService(
     private val futuresRiskEngine: FuturesRiskEngine,
-    private val futuresPositionSizer: FuturesPositionSizer,
-    private val orderBuilder: OrderBuilder,
-    private val tradingHoursGuard: TradingHoursGuard,
     private val alorClient: AlorClient,
-    private val alorFuturesClient: AlorFuturesClient,
     private val orderOutboxService: OrderOutboxService,
     private val positionRepo: PositionRepository,
     private val orderOutboxRepo: OrderOutboxRepository,
     private val instrumentsConfig: InstrumentsConfig,
-    private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
     private val eventPublisher: TradingEventPublisher,
     private val tradeEventService: TradeEventService,
     private val tradingGate: TradingGate,
-    private val marketDataGate: MarketDataGate,
-    private val portfolioRiskEngine: PortfolioRiskEngine,
+    private val decisionEngine: DecisionEngine,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -97,24 +89,6 @@ class FuturesTradingBotService(
             onPositionClosed = { eventPublisher.publishPositionClosed(it) },
         )
 
-    /** Оркестратор входа (per-ticker mutex, risk-first проверки, размещение ордера). */
-    private val entryCoordinator =
-        FuturesEntryCoordinator(
-            futuresRiskEngine = futuresRiskEngine,
-            futuresPositionSizer = futuresPositionSizer,
-            orderBuilder = orderBuilder,
-            tradingHoursGuard = tradingHoursGuard,
-            alorClient = alorClient,
-            alorFuturesClient = alorFuturesClient,
-            marketDataGate = marketDataGate,
-            leverageConfig = leverageConfig,
-            riskConfig = riskConfig,
-            positionRepo = positionRepo,
-            engine = engine,
-            portfolioRiskEngine = portfolioRiskEngine,
-            meterRegistry = meterRegistry,
-        )
-
     /** Мониторинг открытых позиций на каждом тике. */
     private val positionMonitor =
         FuturesPositionMonitor(
@@ -127,7 +101,10 @@ class FuturesTradingBotService(
         )
 
     /**
-     * Сигнал стратегии для Si → вход. Только Si (фьючерс) обрабатывается здесь.
+     * Сигнал стратегии для Si → вход через единый [DecisionEngine].
+     * Только Si (фьючерс) обрабатывается здесь; риск-проверки (свежесть данных,
+     * торговые часы, лимиты, STRESS) выполняет DecisionEngine через
+     * [com.trading.bot.application.decision.FuturesEntryProfile].
      */
     @EventListener
     fun onStrategyGenerated(event: StrategyGeneratedEvent) {
@@ -136,11 +113,6 @@ class FuturesTradingBotService(
         if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
             logger.info { "Trading disabled (single flag) — futures entry skipped ${signal.ticker}" }
-            return
-        }
-        if (!marketDataGate.isPriceDataFresh(signal.ticker)) {
-            logger.warn { "STALE market data — futures entry blocked ${signal.ticker}" }
-            meterRegistry.counter("futures.entry.rejected", Tags.of("ticker", signal.ticker, "reason", "STALE_DATA")).increment()
             return
         }
         scope.launch(
@@ -153,7 +125,7 @@ class FuturesTradingBotService(
             ),
         ) {
             try {
-                entryCoordinator.openPosition(signal)
+                decisionEngine.openPosition(signal, engine::placeEntryOrder)
             } catch (e: Exception) {
                 logger.error(e) { "Futures entry handler error ${signal.ticker}" }
                 meterRegistry.counter("futures.entry.error", Tags.of("ticker", signal.ticker)).increment()

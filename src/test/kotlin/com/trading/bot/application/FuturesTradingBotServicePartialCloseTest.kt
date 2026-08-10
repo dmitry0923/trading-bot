@@ -1,16 +1,13 @@
 package com.trading.bot.application
 
-import com.trading.bot.application.risk.FuturesPositionSizer
+import com.trading.bot.application.decision.DecisionEngine
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
-import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.TradingEventPublisher
-import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -45,47 +42,35 @@ import java.util.UUID
  */
 class FuturesTradingBotServicePartialCloseTest {
     private val futuresRiskEngine = Mockito.mock(FuturesRiskEngine::class.java)
-    private val futuresPositionSizer = Mockito.mock(FuturesPositionSizer::class.java)
-    private val orderBuilder = Mockito.mock(OrderBuilder::class.java)
-    private val tradingHoursGuard = Mockito.mock(TradingHoursGuard::class.java)
     private val alorClient = Mockito.mock(AlorClient::class.java)
-    private val alorFuturesClient = Mockito.mock(AlorFuturesClient::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
     private val instrumentsConfig = Mockito.mock(InstrumentsConfig::class.java)
-    private val leverageConfig = Mockito.mock(LeverageConfig::class.java)
     private val riskConfig = Mockito.mock(RiskConfig::class.java)
     private val alorConfig = Mockito.mock(AlorConfig::class.java)
     private val objectMapper = jacksonObjectMapper()
     private val eventPublisher = Mockito.mock(TradingEventPublisher::class.java)
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
-    private val marketDataGate = Mockito.mock(MarketDataGate::class.java)
-    private val portfolioRiskEngine = Mockito.mock(PortfolioRiskEngine::class.java)
+    private val decisionEngine = Mockito.mock(DecisionEngine::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private val service =
         FuturesTradingBotService(
             futuresRiskEngine,
-            futuresPositionSizer,
-            orderBuilder,
-            tradingHoursGuard,
             alorClient,
-            alorFuturesClient,
             orderOutboxService,
             positionRepo,
             orderOutboxRepo,
             instrumentsConfig,
-            leverageConfig,
             riskConfig,
             alorConfig,
             objectMapper,
             eventPublisher,
             tradeEventService,
             tradingGate,
-            marketDataGate,
-            portfolioRiskEngine,
+            decisionEngine,
             meterRegistry,
         )
 

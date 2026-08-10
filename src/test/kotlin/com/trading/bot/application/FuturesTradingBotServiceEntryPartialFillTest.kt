@@ -1,5 +1,7 @@
 package com.trading.bot.application
 
+import com.trading.bot.application.decision.DecisionEngine
+import com.trading.bot.application.decision.FuturesEntryProfile
 import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
@@ -30,6 +32,7 @@ import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
+import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -57,7 +60,6 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val futuresRiskEngine = Mockito.mock(FuturesRiskEngine::class.java)
     private val futuresPositionSizer = Mockito.mock(FuturesPositionSizer::class.java)
     private val orderBuilder = Mockito.mock(OrderBuilder::class.java)
-    private val tradingHoursGuard = Mockito.mock(TradingHoursGuard::class.java)
     private val alorClient = Mockito.mock(AlorClient::class.java)
     private val alorFuturesClient = Mockito.mock(AlorFuturesClient::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
@@ -75,27 +77,43 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val portfolioRiskEngine = Mockito.mock(PortfolioRiskEngine::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
-    private val service =
-        FuturesTradingBotService(
+    private val futuresEntryProfile =
+        FuturesEntryProfile(
             futuresRiskEngine,
             futuresPositionSizer,
             orderBuilder,
-            tradingHoursGuard,
-            alorClient,
             alorFuturesClient,
+            riskConfig,
+            leverageConfig,
+            instrumentsConfig,
+            meterRegistry,
+        )
+    private val decisionEngine =
+        DecisionEngine(
+            marketDataGate,
+            alorClient,
+            orderBuilder,
+            portfolioRiskEngine,
+            positionRepo,
+            meterRegistry,
+            listOf(futuresEntryProfile),
+        )
+
+    private val service =
+        FuturesTradingBotService(
+            futuresRiskEngine,
+            alorClient,
             orderOutboxService,
             positionRepo,
             orderOutboxRepo,
             instrumentsConfig,
-            leverageConfig,
             riskConfig,
             alorConfig,
             objectMapper,
             eventPublisher,
             tradeEventService,
             tradingGate,
-            marketDataGate,
-            portfolioRiskEngine,
+            decisionEngine,
             meterRegistry,
         )
 
@@ -204,8 +222,8 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         )
 
     private fun stubEntryAllowed() {
-        Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+        Mockito.`when`(instrumentsConfig.isFutures("Si")).thenReturn(true)
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
         runBlocking {
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
@@ -354,12 +372,17 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
     @Test
     fun `stale market data blocks futures entry`() {
-        Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+        Mockito.`when`(instrumentsConfig.isFutures("Si")).thenReturn(true)
         Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(false)
 
         service.onStrategyGenerated(StrategyGeneratedEvent(signal()))
 
+        awaitUntil {
+            meterRegistry
+                .counter("futures.entry.rejected", Tags.of("ticker", "Si", "reason", "STALE_DATA"))
+                .count() == 1.0
+        }
         assertTrue(savedPositions.isEmpty())
         runBlocking {
             Mockito.verify(futuresRiskEngine, Mockito.never()).canEnter(anyEntryRequest())

@@ -25,10 +25,6 @@ class TradingEventPublisher(
         publisher.publishEvent(StrategyGeneratedEvent(signal))
     }
 
-    fun publishEntrySignal(signal: Signal) {
-        publisher.publishEvent(EntrySignalEvent(signal))
-    }
-
     fun publishExecutionReport(report: ExecutionReport) {
         publisher.publishEvent(ExecutionReportEvent(report))
     }

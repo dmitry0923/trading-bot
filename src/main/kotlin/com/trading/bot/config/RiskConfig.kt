@@ -1,5 +1,6 @@
 package com.trading.bot.config
 
+import com.trading.bot.domain.risk.RegimeDetectionConfig
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -277,4 +278,54 @@ class RiskConfig {
 
     /** TTL кэша опционной таблицы / IV, минуты. */
     var impliedVolatilityCacheTtlMinutes: Long = 15
+
+    // ===== Per-ticker Market Regime (RegimeDetector + Strategy Selector) =====
+
+    /** Включена ли детекция per-ticker рыночного режима (Strategy Selector). */
+    var perTickerRegimeEnabled: Boolean = true
+
+    /** Минимум свечей для классификации режима (иначе fail-safe NORMAL/RANGE). */
+    var regimeMinBars: Int = 20
+
+    /** Окно (свечей) для определения направления по выравниванию EMA12/EMA26. */
+    var regimeDirectionWindowBars: Int = 10
+
+    /** Окно (свечей) для определения Crash/Pump по движению цены. */
+    var regimeMoveWindowBars: Int = 6
+
+    /** Падение за окно (%), при котором режим = CRASH. */
+    var regimeCrashPercent: Double = 2.5
+
+    /** Рост за окно (%), при котором режим = PUMP. */
+    var regimePumpPercent: Double = 2.5
+
+    /** Перцентиль объёма, ниже которого ликвидность = THIN. */
+    var regimeLowVolumePercentile: Double = 10.0
+
+    /** Перцентиль ATR%, ниже которого волатильность = LOW. */
+    var regimeLowVolatilityPercentile: Double = 40.0
+
+    /** Перцентиль ATR%, ниже которого волатильность = NORMAL. */
+    var regimeNormalVolatilityPercentile: Double = 70.0
+
+    /** Перцентиль ATR%, начиная с которого волатильность = EXTREME. */
+    var regimeHighVolatilityPercentile: Double = 90.0
+
+    /** Глубина скользящего ATR% для распределения волатильности. */
+    var regimeVolatilityHistoryBars: Int = 50
+
+    /** Конфигурация классификатора [RegimeDetectionConfig] из настроек risk.regime.*. */
+    fun toRegimeDetectionConfig(): RegimeDetectionConfig =
+        RegimeDetectionConfig(
+            directionWindowBars = regimeDirectionWindowBars,
+            moveWindowBars = regimeMoveWindowBars,
+            crashPercent = regimeCrashPercent,
+            pumpPercent = regimePumpPercent,
+            lowVolumePercentile = regimeLowVolumePercentile,
+            lowVolatilityPercentile = regimeLowVolatilityPercentile,
+            normalVolatilityPercentile = regimeNormalVolatilityPercentile,
+            highVolatilityPercentile = regimeHighVolatilityPercentile,
+            volatilityHistoryBars = regimeVolatilityHistoryBars,
+            minBars = regimeMinBars,
+        )
 }

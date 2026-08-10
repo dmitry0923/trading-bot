@@ -41,7 +41,7 @@ flowchart LR
 ```kotlin
 val prompt = promptRegistry.getTemplate("<name>", version)
 val resp = llmClient.complete(agent = "<name>", ticker = ticker, prompt = prompt,
-    variables = variables, fingerprint = fingerprint?, temperature = T)
+    variables = variables, fingerprint = fingerprint, temperature = T)
 // fallback → детерминированный результат
 // иначе → парсинг JSON → guardrails → log + return
 ```
@@ -128,7 +128,7 @@ val resp = llmClient.complete(agent = "<name>", ticker = ticker, prompt = prompt
 - `quantity <= 0` → HOLD (`GUARDRAIL: ZERO_QUANTITY`);
 - отклонение `targetPrice` от рыночной цены > 3% → скорректировать до рыночной (`GUARDRAIL: PRICE_DEVIATION`).
 
-**Взаимодействие с MarketRegime**: явного класса `MarketRegime` нет — режим определяется неявно через `trend` (UP/DOWN/SIDEWAYS) и `volatilityRegime` (LOW/MEDIUM/HIGH_VOLATILITY), оба передаются в промпт.
+**Взаимодействие с MarketRegime**: LLM-агенты сами по себе не получают `MarketRegime` (LOW/NORMAL/VOLATILE/STRESS) — он вычисляется детерминированно вне LLM-пути: рыночный overlay по RVI (`MarketRegimeService`) и per-ticker режим (`RegimeDetector` → `PerTickerRegime`, направление × волатильность × ликвидность + Crash/Pump) вычисляются в `StrategyService`, управляют выбором стратегий (`StrategySelector`/`StrategyRunner`), блокируют входы при CRASH/PUMP/THIN/EXTREME и урезают размер позиции (`AdaptiveRiskService`). В промпт агентов по-прежнему передаются `trend` (UP/DOWN/SIDEWAYS) и `volatilityRegime` (LOW/MEDIUM/HIGH_VOLATILITY по ATR%) как неявное описание режима (см. 5-ю главу).
 
 **Выход**: `Draft(action, targetPrice, quantity, stopLoss, takeProfit, trailingStop, confidence, reasoning)`.
 
@@ -240,11 +240,15 @@ prompts:
       Текущая цена: {{currentPrice}}
       ...
   conservative:            # <-- ещё версия
-    system: >...
-    user_template: >...
+    system: >              # консервативная: входить при согласии всех сигналов
+      ...
+    user_template: >       # шаблон консервативной версии
+      ...
   aggressive:              # <-- ещё версия
-    system: >...
-    user_template: >...
+    system: >              # агрессивная: допускать вход по одному сигналу
+      ...
+    user_template: >       # шаблон агрессивной версии
+      ...
 ```
 
 ### Версионирование
@@ -288,10 +292,9 @@ prompt.renderUser(variables)     // user-шаблон с переменными
 
 Декор-порядок в коде: `queue { retry { rateLimiter { circuitBreaker { callLlm(...) } } } }`.
 
-Запрос к Kimi:
+Запрос к Kimi (`POST {llm.base-url}/chat/completions`):
 
 ```json
-POST {llm.base-url}/chat/completions
 {
   "model": "kimi-k3",
   "messages": [

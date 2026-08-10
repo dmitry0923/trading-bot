@@ -5,7 +5,10 @@ import com.trading.bot.application.StrategyRunner
 import com.trading.bot.application.strategy.DiscretionaryStrategy
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.domain.risk.PerTickerRegime
+import com.trading.bot.domain.risk.RegimeDetector
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.strategy.StrategyDecision
@@ -57,6 +60,7 @@ import java.time.ZoneId
 @Service
 class StrategyService(
     private val tradingConfig: TradingConfig,
+    private val riskConfig: RiskConfig,
     private val alorClient: AlorClient,
     private val moexClient: MoexClient,
     private val strategyRunner: StrategyRunner,
@@ -240,8 +244,28 @@ class StrategyService(
             return
         }
 
+        // Per-ticker рыночный режим: определяется ДО запуска стратегий. Если режим
+        // блокирует входы (Crash/Pump/низкая ликвидность/экстремальная волатильность) —
+        // тикер пропускается целиком (экономия LLM-вызовов, нет сигнала).
+        val regime: PerTickerRegime =
+            if (riskConfig.perTickerRegimeEnabled) {
+                RegimeDetector.detect(candles, riskConfig.toRegimeDetectionConfig())
+            } else {
+                PerTickerRegime.UNKNOWN
+            }
+        recordRegimeMetrics(ticker, regime)
+        if (regime.blocksEntry) {
+            logger.warn { "Skipping $ticker/$timeframe — regime blocks entry: ${regime.describe()}" }
+            meterRegistry
+                .counter(
+                    "strategy.skipped",
+                    Tags.of("ticker", ticker, "reason", "REGIME_BLOCKED"),
+                ).increment()
+            return
+        }
+
         // Все стратегии запускаются ПАРАЛЛЕЛЬНО; победитель — по максимальной
-        // уверенности. LLM-путь (DiscretionaryStrategy) — одна из реализаций.
+        // взвешенной уверенности. LLM-путь (DiscretionaryStrategy) — одна из реализаций.
         val context =
             StrategyContext(
                 ticker = ticker,
@@ -251,6 +275,7 @@ class StrategyService(
                 cycleId = cycleId,
                 contextPrompt = fb?.contextPrompt,
                 relatedQuote = relatedQuote,
+                regime = regime,
             )
         val result = strategyRunner.runAll(context)
         val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
@@ -263,7 +288,9 @@ class StrategyService(
                 action = result.decision.action,
                 targetPrice = result.decision.targetPrice,
                 confidence = effectiveConfidence,
-                reasoning = result.decision.reasoning + " | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}",
+                reasoning =
+                    result.decision.reasoning +
+                        " | Regime: ${regime.describe()} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}",
                 timeframe = timeframe,
                 cycleId = cycleId,
                 strategyName = result.winnerId,
@@ -321,7 +348,21 @@ class StrategyService(
             ).increment()
         logger.info {
             "Strategy $ticker/$timeframe: ${result.decision.action} @ ${result.decision.targetPrice} " +
-                "via ${result.winnerId} (adaptive conf=$adaptiveConf)"
+                "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime.describe()})"
+        }
+    }
+
+    /**
+     * Метрики per-ticker рыночного режима: уровень (кодированный gauge) и счётчик
+     * блокировок входов по причине.
+     */
+    private fun recordRegimeMetrics(
+        ticker: String,
+        regime: PerTickerRegime,
+    ) {
+        meterRegistry.gauge("market.regime.level", Tags.of("ticker", ticker), regime.encodedLevel())
+        regime.blockReason()?.let { reason ->
+            meterRegistry.counter("market.regime.blocked", Tags.of("ticker", ticker, "reason", reason)).increment()
         }
     }
 

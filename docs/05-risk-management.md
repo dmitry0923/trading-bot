@@ -420,6 +420,9 @@ flowchart TB
 | Адаптивные SL/TP | ✅ реализовано | `AdaptiveRiskService` |
 | Trailing stop | ✅ реализовано | `RiskManagementService` |
 | Пауза по статистике | ✅ реализовано | `AdaptiveRiskService.shouldPauseTrading` |
+| Рыночный режим (RVI overlay) | ✅ реализовано | `MarketRegimeService` / `MarketRegimeClassifier` |
+| Per-ticker режим (RegimeDetector) | ✅ реализовано | `RegimeDetector` → `PerTickerRegime` |
+| Стратегия-селектор | ✅ реализовано | `StrategySelector` / `StrategyRunner` |
 | Emergency stop (endpoint) | 🔜 запланировано | — |
 | Дневной лимит в БД (календарный день) | 🔜 запланировано | — |
 | `RiskBreachedEvent` (event-driven) | 🔜 запланировано | — |
@@ -488,3 +491,120 @@ Score **информационный**: входа не блокирует (ге
 - `GET /api/v1/risk/exposure` — снимок портфеля (см. раздел 7);
 - `GET /api/v1/risk/correlation?tickers=&timeframe=&period=` — полная матрица watchlist
   (heatmap; без `tickers` — `trading.tickers`).
+
+## 5.12. Market Regime → Strategy Selector → Risk (поток режимов)
+
+> **Статус**: реализовано. Два уровня режимов:
+> **(1) рыночный overlay** по индексу волатильности RVI (`MarketRegimeService`,
+> `MarketRegimeClassifier`) и **(2) per-ticker режим** из 10-минутных свечей
+> (`RegimeDetector` → `PerTickerRegime`). Оба влияют на выбор стратегий и на размер
+> позиции; CRASH/PUMP/THIN/EXTREME дополнительно **запрещают новые входы**.
+
+### 5.12.1. Рыночный overlay (RVI) — `MarketRegime`
+
+`MarketRegime` — enum `LOW / NORMAL / VOLATILE / STRESS`. `MarketRegimeClassifier`
+классифицирует текущую волатильность по перцентильному рангу в её историческом
+распределении (перцентиль < p40 → LOW, < p70 → NORMAL, < p90 → VOLATILE, ≥ p90 → STRESS).
+`MarketRegimeService` обновляет режим из RVI (fallback — фьючерсная IV Si), хранит в памяти
+и реализует `MarketRegimeProvider` (внедряется в `FuturesRiskEngine` и `AdaptiveRiskService`).
+
+Влияние на размер позиции (`AdaptiveRiskService.calculateOptimalPositionSize`):
+
+| Режим | Множитель | Эффект |
+|---|---|---|
+| LOW / NORMAL | 1.0 | без изменений |
+| VOLATILE | `regimeVolatileSizeMultiplier` (0.5) | позиция вдвое меньше |
+| STRESS | 0.0 | **новые входы запрещены** (`FuturesRiskEngine` + Kelly-размер = 0) |
+
+Метрики: `risk.market.regime.level` (ordinal), `risk.market.regime.stress` (0/1).
+
+### 5.12.2. Per-ticker режим — `RegimeDetector` → `PerTickerRegime`
+
+В отличие от рыночного overlay (одно значение на весь рынок), per-ticker режим
+считается **для каждого тикера** из последних 200 свечей MINUTE_10 чистой функцией
+`RegimeDetector.detect(candles, RegimeDetectionConfig)` и имеет 4 оси:
+
+| Ось | Тип | Как определяется |
+|---|---|---|
+| `direction` | TREND_UP / TREND_DOWN / RANGE | выравнивание EMA12/EMA26 по окну `regime.direction-window-bars` (10), порог N-2 из N |
+| `volatility` | LOW / NORMAL / HIGH / EXTREME | перцентильный ранг ATR% (как `MarketRegimeClassifier`, но per-ticker, `volatility-history-bars`=50) |
+| `liquidity` | NORMAL / THIN | перцентильный ранг последнего объёма (< p10 → THIN) |
+| `event` | NONE / CRASH / PUMP | движение open→close за `move-window-bars` (6): падение ≥ 2.5% → CRASH, рост ≥ 2.5% → PUMP |
+
+**Fail-safe**: меньше `regime.min-bars` (20) свечей → `PerTickerRegime.UNKNOWN`
+(NORMAL/RANGE, входы не блокируются).
+
+**Блокировка входов** (`blocksEntry`) — при любом из условий: CRASH, PUMP, THIN
+или EXTREME. Множитель размера (`sizeMultiplier`): блок → 0, HIGH → 0.5, иначе 1.0.
+
+### 5.12.3. Strategy Selector — `StrategySelector` / `StrategyRunner`
+
+`StrategySelector` (пакет `com.trading.bot.application`, рядом с `StrategyRunner`)
+задаёт **матрицу совместимости** «стратегия × режим»: `fitScore(strategyId, regime): Double`
+в диапазоне 0..1, где 0 = стратегия несовместима с режимом (не запускается), (0, 1) =
+допустима, но уверенность решений взвешивается вниз.
+
+| Стратегия | TREND (вес) | RANGE (вес) | HIGH-вол | Примечание |
+|---|---|---|---|---|
+| TREND_FOLLOWING | 1.0 | 0.0 | — | чистый трендовый |
+| BREAKOUT | 0.8 | 0.3 | — | склонность к тренду |
+| SCALPING | 0.7 | 0.4 | ×0.7 | внутридневная |
+| DISCRETIONARY | 0.8 | 0.7 | ×0.7 | гибрид |
+| ARBITRAGE | 0.5 | 0.8 | ×0.7 | диапазонный |
+| GRID | 0.0 | 1.0 | — | только range |
+| MEAN_REVERSION | 0.0 | 1.0 | — | только range |
+
+Механика `StrategyRunner.runAll(context)`:
+
+1. `blocksEntry` → HOLD, метрика `strategy.runner.blocked` (цикл стратегий не запускается);
+2. иначе — `eligibleStrategyIds(regime)` (жёсткий фильтр: только стратегии с fit > 0);
+   нет совместимых → HOLD «No strategies compatible with regime»;
+3. параллельный запуск допустимых стратегий, `confidence` каждого решения умножается
+   на `fitScore` (мягкое взвешивание, влияет на выбор победителя);
+4. при фильтрации хотя бы одной стратегии — метрика `strategy.runner.filtered`.
+
+Без режима в контексте (или `per-ticker-regime-enabled=false`) поведение прежнее:
+все стратегии, без взвешивания.
+
+### 5.12.4. Точки интеграции
+
+- **`StrategyService`** — перед запуском стратегий вызывает `RegimeDetector.detect(candles, …)`;
+  при `blocksEntry` — ранний skip тикера (`strategy.skipped{reason=…}`, лог «Regime blocks entry»);
+  режим передаётся в `StrategyContext.regime`, попадает в `reasoning` сигнала и лог победителя;
+  метрики `market.regime.level{ticker}` (gauge, `encodedLevel`) и `market.regime.blocked{reason}`.
+- **`AdaptiveRiskService.calculateOptimalPositionSize`** — итоговый размер умножается на
+  `regimeFactor = marketRegimeFactor × perTickerRegimeFactor`
+  (`perTickerRegimeSizeMultiplier(ticker)` пересчитывает режим из кэша свечей MINUTE_10).
+  Это страховка на случай, если сигнал прошёл стратегический фильтр.
+- **`FuturesRiskEngine`** — блокирует вход при `MarketRegime.STRESS`.
+
+### 5.12.5. Конфигурация (`risk.regime.*`)
+
+| Свойство | Default | Описание |
+|---|---|---|
+| `risk.per-ticker-regime-enabled` | `true` | мастер-выключатель per-ticker режима |
+| `risk.regime.min-bars` | `20` | минимум свечей для классификации (иначе fail-safe) |
+| `risk.regime.direction-window-bars` | `10` | окно выравнивания EMA12/EMA26 |
+| `risk.regime.move-window-bars` | `6` | окно движения для Crash/Pump |
+| `risk.regime.crash-percent` | `2.5` | падение за окно → CRASH |
+| `risk.regime.pump-percent` | `2.5` | рост за окно → PUMP |
+| `risk.regime.low-volume-percentile` | `10` | перцентиль объёма → THIN |
+| `risk.regime.low-volatility-percentile` | `40` | ATR% p-rank → LOW |
+| `risk.regime.normal-volatility-percentile` | `70` | ATR% p-rank → NORMAL |
+| `risk.regime.high-volatility-percentile` | `90` | ATR% p-rank → EXTREME |
+| `risk.regime.volatility-history-bars` | `50` | глубина распределения ATR% |
+
+### 5.12.6. Поток
+
+```mermaid
+flowchart LR
+    C[Свечи MINUTE_10] --> RD[RegimeDetector]
+    C --> MC[MarketRegimeClassifier]
+    RVI[RVI / IV Si] --> MC
+    RD -->|PerTickerRegime| SS[StrategyService]
+    MC -->|MarketRegime| AR[AdaptiveRiskService]
+    SS -->|regime| SRC[StrategyRunner/Selector]
+    SRC -->|фильтр + fit-веса| W[Победитель]
+    AR -->|regimeFactor| SIZE[Kelly-размер]
+    SRC -->|blocked/filtered| METRICS[market.regime.* strategy.runner.*]
+```

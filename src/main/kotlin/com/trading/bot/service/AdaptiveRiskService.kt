@@ -3,6 +3,8 @@ package com.trading.bot.service
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.MarketRegime
 import com.trading.bot.domain.risk.MarketRegimeProvider
+import com.trading.bot.domain.risk.PerTickerRegime
+import com.trading.bot.domain.risk.RegimeDetector
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -174,8 +176,10 @@ class AdaptiveRiskService(
         val drawdownFactor = drawdownScaleMultiplier().coerceAtMost(recoveryReductionFactor())
         size = size.multiply(BigDecimal(drawdownFactor))
 
-        // Market regime: VOLATILE урезает размер, STRESS обнуляет (входы блокирует риск-движок).
-        val regimeFactor =
+        // Market regime: рыночный overlay (RVI: VOLATILE урезает, STRESS обнуляет)
+        // × per-ticker режим (RegimeDetector: HIGH урезает, Crash/Pump/THIN/EXTREME
+        // обнуляет — страховка на случай, если сигнал прошёл стратегический фильтр).
+        val marketRegimeFactor =
             if (riskConfig.marketRegimeEnabled) {
                 when (marketRegimeProvider.currentRegime()) {
                     MarketRegime.VOLATILE -> riskConfig.regimeVolatileSizeMultiplier
@@ -185,6 +189,8 @@ class AdaptiveRiskService(
             } else {
                 1.0
             }
+        val perTickerRegimeFactor = if (riskConfig.perTickerRegimeEnabled) perTickerRegimeSizeMultiplier(ticker) else 1.0
+        val regimeFactor = marketRegimeFactor * perTickerRegimeFactor
         size = size.multiply(BigDecimal(regimeFactor))
 
         val finalSize = size.coerceAtLeast(BigDecimal.ZERO)
@@ -321,6 +327,19 @@ class AdaptiveRiskService(
      * @return последняя цена закрытия или null
      */
     private fun resolvePrice(ticker: String): BigDecimal? = candleCache.getRecentCandles(ticker, "MINUTE_10", 1).lastOrNull()?.closePrice
+
+    /**
+     * Множитель размера позиции по per-ticker рыночному режиму (MINUTE_10).
+     *
+     * @param ticker тикер инструмента
+     * @return [PerTickerRegime.sizeMultiplier] или 1.0 при недостатке данных
+     */
+    private fun perTickerRegimeSizeMultiplier(ticker: String): Double {
+        val candles = candleCache.getRecentCandles(ticker, "MINUTE_10", 200)
+        if (candles.size < riskConfig.regimeMinBars) return 1.0
+        val regime = RegimeDetector.detect(candles, riskConfig.toRegimeDetectionConfig())
+        return regime.sizeMultiplier()
+    }
 
     /**
      * Адаптивный порог уверенности для арбитра по тикеру.

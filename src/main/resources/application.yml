@@ -230,6 +230,13 @@ trading:
   market-data-max-age-ms: ${MARKET_DATA_MAX_AGE_MS:15000}
   candle-stale-buffer-ms: ${CANDLE_STALE_BUFFER_MS:120000}
 
+# Distributed lock (мульти-реплика): включить при запуске нескольких инстансов бота.
+# В single-instance (по умолчанию) лок не используется, Redis не требуется.
+distributed-lock:
+  enabled: ${DISTRIBUTED_LOCK_ENABLED:false}
+  scheduler-ttl-seconds: ${DISTRIBUTED_LOCK_SCHEDULER_TTL:60}
+  position-open-ttl-seconds: ${DISTRIBUTED_LOCK_POSITION_OPEN_TTL:30}
+
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
   max-leverage: ${LEVERAGE_MAX:3.0}

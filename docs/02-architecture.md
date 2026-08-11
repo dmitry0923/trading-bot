@@ -289,9 +289,9 @@ sequenceDiagram
 2. БД как **единый источник правды** для позиций: `openPosition()` должен использовать атомарный `INSERT ... WHERE NOT EXISTS` или `SELECT ... FOR UPDATE` перед открытием.
 3. **Идемпотентность ордеров**: idempotency key `ticker|side|qty|price|type|timestamp` в теле запроса Alor — Alor дедуплицирует повторные отправки.
 4. **Outbox** как единый канал доставки: строка создаётся один раз (одним потребителем), worker переотправляет только PENDING старше 30 c.
-5. Если в будущем понадобится мульти-реплика — ввести distributed lock на Redis (`SET key NX EX`) вокруг открытия позиции (roadmap, раздел 13.2).
+5. **Distributed lock** (реализовано в v2.2, `DistributedLockService`): Redis-лок `SET distributed-lock:<name> <uuid> NX PX ttl` вокруг входа в позицию (`position:<ticker>`) и критических планировщиков (`scheduler:*`, outbox-worker, strategy cycle, poll, reconciles, force close). Включается флагом `distributed-lock.enabled`; в single-instance лок не используется. См. roadmap, раздел 13.7.5.
 
-Текущее состояние: реплики нет (один Spring Boot), but механизмы идемпотентности (outbox, idempotency key, `findByAlorOrderId`) уже заложены.
+Текущее состояние: одна реплика (один Spring Boot), но механизмы идемпотентности (outbox, idempotency key, `findByAlorOrderId`) и distributed lock уже заложены — включение флага `DISTRIBUTED_LOCK_ENABLED=true` позволяет запустить несколько реплик без гонок.
 
 ## 2.7. Ключевые потоки управления
 

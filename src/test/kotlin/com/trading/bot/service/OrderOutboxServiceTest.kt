@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.OrderOutbox
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
+import org.springframework.data.redis.core.StringRedisTemplate
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
@@ -39,7 +41,20 @@ class OrderOutboxServiceTest {
     private val alorConfig = AlorConfig().apply { maxOrderRetries = 3 }
     private val objectMapper = jacksonObjectMapper()
     private val meterRegistry = SimpleMeterRegistry()
-    private val service = OrderOutboxService(outboxRepo, positionRepo, alorClient, alorConfig, objectMapper, meterRegistry)
+    private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
+    private val distributedLockService =
+        DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
+    private val service =
+        OrderOutboxService(
+            outboxRepo,
+            positionRepo,
+            alorClient,
+            alorConfig,
+            objectMapper,
+            meterRegistry,
+            distributedLockService,
+            distributedLockConfig,
+        )
 
     private fun anyUuid(): UUID {
         Mockito.any(UUID::class.java)

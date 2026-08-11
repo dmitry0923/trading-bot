@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.OrderOutbox
@@ -62,6 +63,8 @@ class OrderOutboxService(
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
+    private val distributedLockService: DistributedLockService,
+    private val distributedLockConfig: DistributedLockConfig,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -354,28 +357,33 @@ class OrderOutboxService(
     @Scheduled(fixedDelay = 10000)
     fun processPending() {
         scope.launch {
-            try {
-                // Экспоненциальный backoff + jitter между повторными доставками:
-                // каждая следующая попытка откладывается дольше (LEAST(2^retry * base, max) + jitter).
-                val pending =
-                    outboxRepo.findRetryable(
-                        maxRetries = alorConfig.maxOrderRetries,
-                        backoffBaseSeconds = alorConfig.outboxBackoffBaseSeconds,
-                        backoffMaxSeconds = alorConfig.outboxBackoffMaxSeconds,
-                        jitterSeconds = Random.nextInt(0, 6),
-                    )
-                if (pending.isNotEmpty()) {
-                    logger.info { "Outbox worker: ${pending.size} order(s) to (re)dispatch" }
-                    pending.forEach { outbox ->
-                        try {
-                            dispatch(outbox)
-                        } catch (e: Exception) {
-                            logger.error(e) { "Outbox re-dispatch failed for ${outbox.id}" }
+            distributedLockService.runExclusive(
+                name = "scheduler:outbox-worker",
+                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+            ) {
+                try {
+                    // Экспоненциальный backoff + jitter между повторными доставками:
+                    // каждая следующая попытка откладывается дольше (LEAST(2^retry * base, max) + jitter).
+                    val pending =
+                        outboxRepo.findRetryable(
+                            maxRetries = alorConfig.maxOrderRetries,
+                            backoffBaseSeconds = alorConfig.outboxBackoffBaseSeconds,
+                            backoffMaxSeconds = alorConfig.outboxBackoffMaxSeconds,
+                            jitterSeconds = Random.nextInt(0, 6),
+                        )
+                    if (pending.isNotEmpty()) {
+                        logger.info { "Outbox worker: ${pending.size} order(s) to (re)dispatch" }
+                        pending.forEach { outbox ->
+                            try {
+                                dispatch(outbox)
+                            } catch (e: Exception) {
+                                logger.error(e) { "Outbox re-dispatch failed for ${outbox.id}" }
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    logger.error(e) { "Outbox worker error" }
                 }
-            } catch (e: Exception) {
-                logger.error(e) { "Outbox worker error" }
             }
         }
     }

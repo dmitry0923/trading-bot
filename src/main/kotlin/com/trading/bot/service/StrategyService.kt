@@ -6,6 +6,7 @@ import com.trading.bot.application.advisor.LlmAdvisor
 import com.trading.bot.application.strategy.DiscretionaryStrategy
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.PerTickerRegime
@@ -79,6 +80,8 @@ class StrategyService(
     private val emergencyStopService: EmergencyStopService,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    private val distributedLockService: DistributedLockService,
+    private val distributedLockConfig: DistributedLockConfig,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -95,17 +98,26 @@ class StrategyService(
             meterRegistry.counter("strategy.skipped", Tags.of("reason", "EMERGENCY_STOP")).increment()
             return
         }
-        val cycleId =
-            com.trading.bot.infrastructure.UuidV7
-                .uuidString()
-        logger.info { "=== STRATEGY CYCLE $cycleId ===" }
-        meterRegistry.counter("strategy.cycle").increment()
-        // trace_id = cycleId: единый идентификатор для всего цикла (JSON-логи,
-        // agent_logs, позиции, события). MDC-контекст копируется в coroutine,
-        // поэтому дочерние корутины (включая LLM-вызовы) наследуют trace_id.
-        TraceContext.put(TraceContext.TRACE_ID, cycleId)
-        TraceContext.put(TraceContext.CYCLE_ID, cycleId)
-        scope.launch(TraceContext.mdcContext()) { executeCycle(cycleId) }
+        // Мульти-реплика: стратегический цикл выполняет только лидер (взял distributed lock).
+        // Конкуренция = другая реплика уже работает; сбой Redis = fail-open (цикл всё равно гоняем).
+        scope.launch(TraceContext.mdcContext()) {
+            distributedLockService.runExclusive(
+                name = "scheduler:strategy-cycle",
+                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+            ) {
+                val cycleId =
+                    com.trading.bot.infrastructure.UuidV7
+                        .uuidString()
+                logger.info { "=== STRATEGY CYCLE $cycleId ===" }
+                meterRegistry.counter("strategy.cycle").increment()
+                // trace_id = cycleId: единый идентификатор для всего цикла (JSON-логи,
+                // agent_logs, позиции, события). MDC-контекст копируется в coroutine,
+                // поэтому дочерние корутины (включая LLM-вызовы) наследуют trace_id.
+                TraceContext.put(TraceContext.TRACE_ID, cycleId)
+                TraceContext.put(TraceContext.CYCLE_ID, cycleId)
+                executeCycle(cycleId)
+            }
+        }
         TraceContext.put(TraceContext.TRACE_ID, null)
         TraceContext.put(TraceContext.CYCLE_ID, null)
     }

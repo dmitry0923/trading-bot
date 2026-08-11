@@ -49,7 +49,7 @@ gantt
 | Партиционирование `candles` | TimescaleDB hypertable: чанки по time (1 неделя) + retention 90 дней (раздел 6.4) | ✅ v2.2 |
 | Партиционирование `positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | ✅ v2.2 |
 | Точный контроль SL/TP в лимитных заявках | биржевые stop/take-profit-заявки при открытии позиции (раздел 13.7.4) | ✅ v2.2 |
-| Distributed lock | возможность запуска нескольких инстансов без гонок (раздел 2.6) | 🔜 |
+| Distributed lock | возможность запуска нескольких инстансов без гонок (раздел 2.6) | ✅ v2.2 |
 | Multi-account | поддержка нескольких Alor-портфелей с общим конвейером и персональными лимитами | 🔜 |
 | Backtest: сохранение результатов | таблица `backtest_results` + сравнение итераций | 🔜 |
 | Backtest: out-of-sample | split 80/20, прогон на удержанном хвосте | 🔜 |
@@ -185,6 +185,22 @@ gantt
 
 **Fallback:** при недоступности/отказе выставления (UNCERTAIN/FAILED с исчерпанными ретраями) локальный мониторинг SL/TP/trailing продолжает закрывать позиции как раньше.
 
+### 13.7.5. Distributed lock ✅
+
+**Идея:** разрешить запуск нескольких инстансов бота без гонок. Критические секции выполняет только «лидер» (владелец Redis-ключа), конкуренция исключается атомарным `SET key token NX PX`.
+
+**Реализация:**
+
+| Слой | Изменение |
+|---|---|
+| Redis-лок | `DistributedLockService`: `acquire` = `SET distributed-lock:<name> <uuid> NX PX ttl`, `release` = Lua compare-and-delete (удаляет ключ только своего владельца). TTL гарантирует освобождение при падении реплики; уникальный владелец исключает освобождение чужого прогона |
+| Config | `distributed-lock.*` (`enabled`, `schedulerTtlSeconds`, `positionOpenTtlSeconds`). По умолчанию `enabled=false` — single-instance работает без Redis, `runExclusive` исполняет блок напрямую |
+| Вход в позицию | `DecisionEngine.openPosition` берёт lock `position:<ticker>` (внутри per-ticker mutex) с `failOpenOnError=false`: при конкуренции/недоступности Redis вход пропускается (fail-closed — не открывать без лока) |
+| Планировщики | lock `scheduler:*` (outbox-worker, strategy cycle, poll, reconciles, force close) с `failOpenOnError=true`: конкуренция → работает лидер, сбой Redis → блок всё равно исполняется (fail-open — не пропустить reconcile/close) |
+| Метрики | `distributed.lock.acquired/contended/skipped/error/release.error` с тегом `name` |
+
+**Что НЕ входит:** очередь RabbitMQ и полноценный leader-election-флаг (v2.3+, раздел 13.8). Lock работает в рамках одной БД — позиции и так идемпотентны (idempotencyKey + outbox + стейт-машина), это ещё один барьер против двойного входа.
+
 ## 13.8. Детализация фич v2.3
 
 ### 13.8.1. LLM-агенты в бэктесте
@@ -306,7 +322,7 @@ flowchart LR
 | Переобучение ML | высокая | ложная прибыль | строгая out-of-sample валидация |
 | Регуляторные ограничения | низкая | остановка LIVE | SIMULATION-first, approval-гейт |
 | Утечка секретов | низкая | критично | IAM-аудит, ротация, никаких секретов в git |
-| Бот в одной реплике → SPOF | средняя | простой | distributed lock (v2.3) |
+| Бот в одной реплике → SPOF | средняя | простой | distributed lock (раздел 13.7.5, ✅ v2.2) |
 
 ## 13.15. KPI по версиям
 

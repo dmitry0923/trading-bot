@@ -3,6 +3,7 @@ package com.trading.bot.application.decision
 import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.OrderBuilder
 import com.trading.bot.client.AlorClient
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.RiskVerdict
@@ -11,6 +12,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DistributedLockService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -28,17 +30,20 @@ import java.util.concurrent.ConcurrentHashMap
  * различия инструментов инкапсулированы в [EntryProfile], здесь — общий пайплайн:
  *
  *   1. Per-ticker mutex (сериализация сигналов на один тикер → защита от двойного ордера).
- *   2. [MarketDataGate] (defense in depth: свежие рыночные данные).
- *   3. Цена входа: [AlorClient.getLastPrice] ?: signal.targetPrice.
- *   4. [EntryProfile.riskEngine].canEnter (Да/Нет).
- *   5. [EntryProfile.preSizingChecks] (корреляционные фильтры акций).
- *   6. [EntryProfile.sizePosition] (Kelly / маржа-риск).
- *   7. [EntryProfile.postSizingChecks] (лимиты Gross/Net Exposure).
- *   8. [EntryProfile.buildOrderParams] (SL/TP/маржа/ликвидация).
- *   9. [PortfolioRiskEngine] по [EntryProfile.portfolioMode]:
- *      ENFORCED — BLOCK/SCALE, READ_ONLY — только метрики/логи.
- *   10. [OrderBuilder.recordStrategyExecution] + [ExecutionGateway.placeEntryOrder].
- *   11. [EntryProfile.onOpened] (дневной P&L reset + agent log для акций).
+ *   2. Распределённый лок на тикер (Redis, [DistributedLockService]) — при мульти-реплике
+ *      вход выполняет только одна инстанция; при недоступности Redis вход блокируется
+ *      (fail-closed, чтобы не открыть позицию без лока).
+ *   3. [MarketDataGate] (defense in depth: свежие рыночные данные).
+ *   4. Цена входа: [AlorClient.getLastPrice] ?: signal.targetPrice.
+ *   5. [EntryProfile.riskEngine].canEnter (Да/Нет).
+ *   6. [EntryProfile.preSizingChecks] (корреляционные фильтры акций).
+ *   7. [EntryProfile.sizePosition] (Kelly / маржа-риск).
+ *   8. [EntryProfile.postSizingChecks] (лимиты Gross/Net Exposure).
+ *   9. [EntryProfile.buildOrderParams] (SL/TP/маржа/ликвидация).
+ *   10. [PortfolioRiskEngine] по [EntryProfile.portfolioMode]:
+ *       ENFORCED — BLOCK/SCALE, READ_ONLY — только метрики/логи.
+ *   11. [OrderBuilder.recordStrategyExecution] + [ExecutionGateway.placeEntryOrder].
+ *   12. [EntryProfile.onOpened] (дневной P&L reset + agent log для акций).
  *
  * НЕ зависит от исполнения: размещение ордера приходит через [ExecutionGateway]
  * (обёртка над OrderExecutionEngine) — тесты используют фейки.
@@ -52,6 +57,8 @@ class DecisionEngine(
     private val positionRepo: PositionRepository,
     private val meterRegistry: MeterRegistry,
     private val profiles: List<EntryProfile>,
+    private val distributedLockService: DistributedLockService,
+    private val distributedLockConfig: DistributedLockConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -76,7 +83,20 @@ class DecisionEngine(
                 }
         val lock = entryLocks.computeIfAbsent(signal.ticker) { Mutex() }
         lock.withLock {
-            doOpenPosition(signal, profile, gateway)
+            val acquired =
+                distributedLockService.runExclusive(
+                    name = "position:${signal.ticker}",
+                    ttlSeconds = distributedLockConfig.positionOpenTtlSeconds,
+                    failOpenOnError = false,
+                ) {
+                    doOpenPosition(signal, profile, gateway)
+                }
+            if (!acquired) {
+                logger.info {
+                    "Entry skipped ${signal.ticker}: distributed lock not acquired " +
+                        "(another instance is opening / Redis unavailable)"
+                }
+            }
         }
     }
 

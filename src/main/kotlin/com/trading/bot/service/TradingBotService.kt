@@ -11,6 +11,7 @@ import com.trading.bot.client.WebSocketManager
 import com.trading.bot.client.WsConnectionStatus
 import com.trading.bot.client.WsStream
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.ExitRules
@@ -75,6 +76,8 @@ class TradingBotService(
     private val tradingGate: TradingGate,
     private val marketDataGate: MarketDataGate,
     private val decisionEngine: DecisionEngine,
+    private val distributedLockService: DistributedLockService,
+    private val distributedLockConfig: DistributedLockConfig,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -152,25 +155,30 @@ class TradingBotService(
     @Scheduled(fixedDelayString = "#{@tradingConfig.monitorIntervalMs}")
     fun pollMarketData() {
         scope.launch {
-            val now = Instant.now()
-            val open = positionRepo.findByStatus(PositionStatus.OPEN)
-            open
-                .map { it.ticker }
-                .distinct()
-                .filter { ticker ->
-                    val lastWs = lastWsTickAt[ticker]
-                    lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
-                }.forEach { ticker ->
-                    try {
-                        TraceContext.put(TraceContext.TICKER, ticker)
-                        val price = alorClient.getLastPrice(ticker) ?: return@forEach
-                        marketDataGate.recordRestPollSuccess(ticker)
-                        eventPublisher.publishPriceChanged(ticker, price)
-                    } catch (e: Exception) {
-                        logger.error(e) { "Price poll error $ticker" }
-                        meterRegistry.counter("bot.price.poll.error", Tags.of("ticker", ticker)).increment()
+            distributedLockService.runExclusive(
+                name = "scheduler:poll-market-data",
+                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+            ) {
+                val now = Instant.now()
+                val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                open
+                    .map { it.ticker }
+                    .distinct()
+                    .filter { ticker ->
+                        val lastWs = lastWsTickAt[ticker]
+                        lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
+                    }.forEach { ticker ->
+                        try {
+                            TraceContext.put(TraceContext.TICKER, ticker)
+                            val price = alorClient.getLastPrice(ticker) ?: return@forEach
+                            marketDataGate.recordRestPollSuccess(ticker)
+                            eventPublisher.publishPriceChanged(ticker, price)
+                        } catch (e: Exception) {
+                            logger.error(e) { "Price poll error $ticker" }
+                            meterRegistry.counter("bot.price.poll.error", Tags.of("ticker", ticker)).increment()
+                        }
                     }
-                }
+            }
         }
     }
 
@@ -411,17 +419,22 @@ class TradingBotService(
     @Scheduled(fixedDelay = 15000)
     fun reconcilePendingOrders() {
         scope.launch {
-            try {
-                val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType != InstrumentType.FUTURES }
-                for (pos in open) {
-                    try {
-                        engine.reconcilePosition(pos)
-                    } catch (e: Exception) {
-                        logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
+            distributedLockService.runExclusive(
+                name = "scheduler:reconcile-stocks",
+                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+            ) {
+                try {
+                    val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType != InstrumentType.FUTURES }
+                    for (pos in open) {
+                        try {
+                            engine.reconcilePosition(pos)
+                        } catch (e: Exception) {
+                            logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
+                        }
                     }
+                } catch (e: Exception) {
+                    logger.error(e) { "Stock reconciler error" }
                 }
-            } catch (e: Exception) {
-                logger.error(e) { "Stock reconciler error" }
             }
         }
     }

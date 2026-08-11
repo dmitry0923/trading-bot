@@ -3,6 +3,7 @@ package com.trading.bot.application.decision
 import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.OrderBuilder
 import com.trading.bot.client.AlorClient
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.PortfolioRiskEngine
@@ -18,6 +19,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DistributedLockService
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -28,7 +30,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ValueOperations
 import java.math.BigDecimal
+import java.time.Duration
 
 /**
  * Unit-тесты единого оркестратора входа [DecisionEngine].
@@ -48,6 +53,10 @@ class DecisionEngineTest {
     private val portfolioRiskEngine = Mockito.mock(PortfolioRiskEngine::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val meterRegistry = SimpleMeterRegistry()
+    private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
+    private val lockRedis = Mockito.mock(StringRedisTemplate::class.java)
+    private val lockValueOps = Mockito.mock(ValueOperations::class.java) as ValueOperations<String, String>
+    private val distributedLockService = DistributedLockService(distributedLockConfig, lockRedis, meterRegistry)
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -62,6 +71,7 @@ class DecisionEngineTest {
         gatewayDirection = null
         gatewayPrice = null
         gatewayOpened = null
+        Mockito.`when`(lockRedis.opsForValue()).thenReturn(lockValueOps)
         Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(true)
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("100"))
@@ -91,6 +101,8 @@ class DecisionEngineTest {
             positionRepo,
             meterRegistry,
             listOf(profile),
+            distributedLockService,
+            distributedLockConfig,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -297,6 +309,53 @@ class DecisionEngineTest {
 
         assertEquals(0, gatewayCalls)
         assertNull(gatewayOpened)
+    }
+
+    @Test
+    fun `distributed lock contention skips entry`() {
+        distributedLockConfig.enabled = true
+        Mockito
+            .`when`(
+                lockValueOps.setIfAbsent(
+                    Mockito.any(String::class.java),
+                    Mockito.any(String::class.java),
+                    Mockito.any(Duration::class.java),
+                ),
+            ).thenReturn(false)
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+    }
+
+    @Test
+    fun `distributed lock acquired allows entry`() {
+        distributedLockConfig.enabled = true
+        Mockito
+            .`when`(
+                lockValueOps.setIfAbsent(
+                    Mockito.any(String::class.java),
+                    Mockito.any(String::class.java),
+                    Mockito.any(Duration::class.java),
+                ),
+            ).thenReturn(true)
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
+        assertEquals(5, gatewayQty)
+    }
+
+    @Test
+    fun `distributed lock disabled runs without redis`() {
+        distributedLockConfig.enabled = false
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
     }
 
     private class FakeEntryProfile(

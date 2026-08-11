@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.application.TradingGate
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -31,6 +32,8 @@ class TradingControlService(
     private val tradingHaltService: TradingHaltService,
     private val positionRepo: PositionRepository,
     private val meterRegistry: MeterRegistry,
+    private val distributedLockService: DistributedLockService,
+    private val distributedLockConfig: DistributedLockConfig,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -87,7 +90,14 @@ class TradingControlService(
         val target = runCatching { LocalTime.parse(settings.forceCloseTime) }.getOrNull() ?: return
         if (now.hour == target.hour && now.minute == target.minute) {
             logger.info { "Scheduled force close triggered at ${settings.forceCloseTime}" }
-            scope.launch { forceCloseNow("FORCE_CLOSE_SCHEDULED") }
+            scope.launch {
+                distributedLockService.runExclusive(
+                    name = "scheduler:force-close",
+                    ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+                ) {
+                    forceCloseNow("FORCE_CLOSE_SCHEDULED")
+                }
+            }
         }
     }
 }

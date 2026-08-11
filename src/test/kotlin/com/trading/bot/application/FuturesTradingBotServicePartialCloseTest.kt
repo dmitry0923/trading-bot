@@ -4,6 +4,7 @@ import com.trading.bot.application.decision.DecisionEngine
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.event.PriceChangedEvent
@@ -14,6 +15,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -24,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
+import org.springframework.data.redis.core.StringRedisTemplate
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
@@ -55,6 +58,9 @@ class FuturesTradingBotServicePartialCloseTest {
     private val tradingGate = Mockito.mock(TradingGate::class.java)
     private val decisionEngine = Mockito.mock(DecisionEngine::class.java)
     private val meterRegistry = SimpleMeterRegistry()
+    private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
+    private val distributedLockService =
+        DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
 
     private val service =
         FuturesTradingBotService(
@@ -71,6 +77,8 @@ class FuturesTradingBotServicePartialCloseTest {
             tradeEventService,
             tradingGate,
             decisionEngine,
+            distributedLockService,
+            distributedLockConfig,
             meterRegistry,
         )
 

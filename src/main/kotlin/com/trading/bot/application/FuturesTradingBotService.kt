@@ -4,6 +4,7 @@ import com.trading.bot.application.decision.DecisionEngine
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.event.ExecutionReportEvent
@@ -18,6 +19,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
+import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -66,6 +68,8 @@ class FuturesTradingBotService(
     private val tradeEventService: TradeEventService,
     private val tradingGate: TradingGate,
     private val decisionEngine: DecisionEngine,
+    private val distributedLockService: DistributedLockService,
+    private val distributedLockConfig: DistributedLockConfig,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -203,19 +207,24 @@ class FuturesTradingBotService(
     @Scheduled(fixedDelay = 15000)
     fun reconcilePendingOrders() {
         scope.launch {
-            try {
-                val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
-                for (pos in open) {
-                    try {
-                        TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-                        TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
-                        engine.reconcilePosition(pos)
-                    } catch (e: Exception) {
-                        logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
+            distributedLockService.runExclusive(
+                name = "scheduler:reconcile-futures",
+                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+            ) {
+                try {
+                    val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
+                    for (pos in open) {
+                        try {
+                            TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
+                            TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
+                            engine.reconcilePosition(pos)
+                        } catch (e: Exception) {
+                            logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
+                        }
                     }
+                } catch (e: Exception) {
+                    logger.error(e) { "Futures reconciler error" }
                 }
-            } catch (e: Exception) {
-                logger.error(e) { "Futures reconciler error" }
             }
         }
     }

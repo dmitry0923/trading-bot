@@ -252,6 +252,116 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
         assertEquals(200, get("/api/v1/accounts/$id", adminToken()).statusCode())
     }
 
+    @Test
+    fun `dashboard filters positions and daily pnl by account`() {
+        val accountA = createAccount().get("id").asLong()
+        val accountB = createAccount().get("id").asLong()
+        runBlocking {
+            positionRepository.save(
+                Position(
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("250"),
+                    currentPrice = BigDecimal("275"),
+                    pnl = BigDecimal("250"),
+                    status = PositionStatus.OPEN,
+                    instrumentType = InstrumentType.STOCK,
+                    openedAt = LocalDateTime.now(),
+                    accountId = accountA,
+                ),
+            )
+            positionRepository.save(
+                Position(
+                    ticker = "GAZP",
+                    direction = PositionDirection.LONG,
+                    quantity = 5,
+                    entryPrice = BigDecimal("200"),
+                    closePrice = BigDecimal("170"),
+                    pnl = BigDecimal("-150"),
+                    status = PositionStatus.CLOSED,
+                    instrumentType = InstrumentType.STOCK,
+                    openedAt = LocalDateTime.now(),
+                    closedAt = LocalDateTime.now(),
+                    accountId = accountA,
+                ),
+            )
+            positionRepository.save(
+                Position(
+                    ticker = "VTBR",
+                    direction = PositionDirection.LONG,
+                    quantity = 100,
+                    entryPrice = BigDecimal("50"),
+                    currentPrice = BigDecimal("55"),
+                    pnl = BigDecimal("500"),
+                    status = PositionStatus.OPEN,
+                    instrumentType = InstrumentType.STOCK,
+                    openedAt = LocalDateTime.now(),
+                    accountId = accountB,
+                ),
+            )
+        }
+        dailyRiskSnapshotRepository.upsert(LocalDate.now(), BigDecimal("300.5"), false, BigDecimal.ZERO, accountA)
+
+        val filtered =
+            objectMapper.readTree(get("/api/v1/dashboard?accountId=$accountA", adminToken()).body())
+        assertEquals(accountA, filtered.get("accountId").asLong())
+        assertEquals(1, filtered.get("openPositionsCount").asInt())
+        assertEquals(1, filtered.get("closedTodayCount").asInt())
+        assertEquals(300.5, filtered.get("dailyPnl").asDouble())
+        assertEquals(accountA, filtered.get("openPositions").first().get("accountId").asLong())
+
+        val aggregated = objectMapper.readTree(get("/api/v1/dashboard", adminToken()).body())
+        assertTrue(aggregated.get("accountId").isNull)
+        assertEquals(2, aggregated.get("openPositionsCount").asInt())
+        assertEquals(1, aggregated.get("closedTodayCount").asInt())
+    }
+
+    @Test
+    fun `dashboard with unknown account filter returns 404`() {
+        assertEquals(404, get("/api/v1/dashboard?accountId=424242", adminToken()).statusCode())
+    }
+
+    @Test
+    fun `dashboard stream with account filter sends filtered snapshot`() {
+        val accountId = createAccount().get("id").asLong()
+        runBlocking {
+            positionRepository.save(
+                Position(
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("250"),
+                    status = PositionStatus.OPEN,
+                    instrumentType = InstrumentType.STOCK,
+                    openedAt = LocalDateTime.now(),
+                    accountId = accountId,
+                ),
+            )
+        }
+
+        val request =
+            HttpRequest
+                .newBuilder(URI("$baseUrl/api/v1/dashboard/stream?accountId=$accountId"))
+                .header("Authorization", "Bearer ${adminToken()}")
+                .header("Accept", "text/event-stream")
+                .GET()
+                .build()
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines())
+        try {
+            assertEquals(200, response.statusCode())
+            val lines = response.body().iterator()
+            val dataLine = lines.asSequence().first { it.startsWith("data:") }
+            val snapshot = objectMapper.readTree(dataLine.removePrefix("data:"))
+
+            assertEquals(accountId, snapshot.get("accountId").asLong())
+            assertEquals(1, snapshot.get("openPositionsCount").asInt())
+            assertEquals("SBER", snapshot.get("openPositions").first().get("ticker").asString())
+        } finally {
+            response.body().close()
+        }
+    }
+
     private fun createAccount(): JsonNode =
         objectMapper.readTree(
             postJson(

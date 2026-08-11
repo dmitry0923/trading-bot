@@ -4,6 +4,8 @@ import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -14,6 +16,10 @@ import java.time.LocalDateTime
  *
  * Используется как REST-эндпоинтом `/api/v1/dashboard`, так и SSE-рассылкой
  * [DashboardSseService] (`/api/v1/dashboard/stream`) для real-time обновлений.
+ *
+ * Multi-account (roadmap v2.2): `accountId` фильтрует снимок по аккаунту —
+ * открытые/закрытые сегодня позиции и дневной P&L. `null` (без фильтра) =
+ * агрегированный вид по всем позициям (legacy single-account режим).
  *
  * @property tradingConfig конфигурация торгового ядра
  * @property positionRepository репозиторий позиций
@@ -35,13 +41,29 @@ class DashboardService(
      * Строит снимок дашборда: открытые позиции с live P&L, дневная статистика,
      * paused-тикеры и режим торговли.
      *
+     * @param accountId фильтр по аккаунту; null = агрегированный вид по всем позициям
      * @return сериализуемая карта данных дашборда
      */
-    suspend fun build(): Map<String, Any> {
-        val openPositions = positionRepository.findByStatus(PositionStatus.OPEN)
-        val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
+    suspend fun build(accountId: Long? = null): Map<String, Any?> {
         val todayStart = LocalDate.now().atStartOfDay()
-        val closedToday = positionRepository.findClosedSince(todayStart)
+        val (openPositions, closedToday, dailyPnl) =
+            if (accountId == null) {
+                Triple(
+                    positionRepository.findByStatus(PositionStatus.OPEN),
+                    positionRepository.findClosedSince(todayStart),
+                    riskManagementService.getDailyPnL(),
+                )
+            } else {
+                Triple(
+                    positionRepository.findOpenByAccount(accountId),
+                    positionRepository.findClosedByAccountSince(accountId, todayStart),
+                    // Per-account daily P&L читает daily_risk_snapshot блокирующим
+                    // .block() (синхронный риск state machine) — offload на IO,
+                    // suspend-вызов выполняется на event loop.
+                    withContext(Dispatchers.IO) { riskManagementService.getDailyPnL(accountId) },
+                )
+            }
+        val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
         val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
         val strategiesToday =
             strategyRepository
@@ -52,9 +74,10 @@ class DashboardService(
         val adaptivePaused = tradingConfig.tickers.filter { adaptiveRiskService.shouldPauseTrading(it) }
 
         return mapOf(
+            "accountId" to accountId,
             "tradingMode" to tradingConfig.mode,
             "tickers" to tradingConfig.tickers,
-            "dailyPnl" to riskManagementService.getDailyPnL(),
+            "dailyPnl" to dailyPnl,
             "openPnl" to BigDecimal(openPnl),
             "realizedPnlToday" to BigDecimal(realizedPnlToday),
             "closedTodayCount" to closedToday.size,

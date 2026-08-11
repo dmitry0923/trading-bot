@@ -40,11 +40,13 @@ import com.trading.bot.service.SettingsService
 import com.trading.bot.service.StrategyService
 import com.trading.bot.service.TraceQueryService
 import com.trading.bot.service.TradeAnalysisService
+import com.trading.bot.service.TradingAccountService
 import com.trading.bot.service.TradingBotService
 import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.context.SecurityContextHolder
@@ -99,6 +101,7 @@ class ApiController(
     private val investorService: InvestorService,
     private val clearingService: ClearingService,
     private val profitForecastService: ProfitForecastService,
+    private val tradingAccountService: TradingAccountService,
     private val tradingControlService: TradingControlService,
     private val emergencyStopService: EmergencyStopService,
     private val tradingGate: TradingGate,
@@ -215,12 +218,16 @@ class ApiController(
 
     /**
      * Агрегированная панель для React Dashboard: открытые позиции с live P&L,
-     * дневная статистика, paused-тикеры, режим торговли.
+     * дневная статистика, paused-тикеры, режим торговли. Multi-account (roadmap v2.2):
+     * `accountId` фильтрует позиции и дневной P&L по аккаунту; null = агрегированный вид.
      */
     @GetMapping("/dashboard")
-    suspend fun getDashboard(): Map<String, Any> {
+    suspend fun getDashboard(
+        @RequestParam(required = false) accountId: Long?,
+    ): Map<String, Any?> {
         meterRegistry.counter("api.dashboard").increment()
-        return dashboardService.build()
+        requireAccount(accountId)
+        return dashboardService.build(accountId)
     }
 
     /**
@@ -229,11 +236,39 @@ class ApiController(
      * Подписчик немедленно получает текущий снимок, далее — обновления при
      * событиях домена (позиции, стратегии, исполнение, тики цен). Название
      * события: `dashboard`, данные — JSON (см. [com.trading.bot.service.DashboardService.build]).
+     * `accountId` фильтрует снимок по аккаунту; null = агрегированный вид.
+     *
+     * Намеренно НЕ suspend: suspend-возврат оборачивается `ReactiveTypeHandler`
+     * в собственный `DeferredResult()` без таймаута (дефолт контейнера ~30s),
+     * из-за чего долгоживущее SSE-соединение резалось по `AsyncRequestTimeoutException`
+     * (503), а таймаут [SseEmitter] игнорировался. Обычный возврат идёт через
+     * `ResponseBodyEmitterReturnValueHandler`, который чтит таймаут эмиттера.
      */
     @GetMapping("/dashboard/stream", produces = ["text/event-stream"])
-    fun streamDashboard(): SseEmitter {
+    fun streamDashboard(
+        @RequestParam(required = false) accountId: Long?,
+    ): SseEmitter {
         meterRegistry.counter("api.dashboard.stream").increment()
-        return dashboardSseService.subscribe()
+        requireAccountBlocking(accountId)
+        return dashboardSseService.subscribe(accountId)
+    }
+
+    private suspend fun requireAccount(accountId: Long?) {
+        if (accountId != null && tradingAccountService.findById(accountId) == null) {
+            throw org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND,
+                "account not found: $accountId",
+            )
+        }
+    }
+
+    private fun requireAccountBlocking(accountId: Long?) {
+        if (accountId != null && runBlocking { tradingAccountService.findById(accountId) } == null) {
+            throw org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND,
+                "account not found: $accountId",
+            )
+        }
     }
 
     @GetMapping("/strategies")

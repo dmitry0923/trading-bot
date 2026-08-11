@@ -13,7 +13,7 @@ import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import tools.jackson.databind.ObjectMapper
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -24,6 +24,8 @@ import java.util.concurrent.atomic.AtomicLong
  * - Тики цен дебаунсятся интервалом [minIntervalMs] (2 сек) — WS-котировки могут
  *   приходить чаще, чем имеет смысл обновлять панель.
  * - Каждый подписчик получает поток именованных событий `dashboard` в JSON.
+ * - Multi-account (roadmap v2.2): подписчик может указать [accountId] — снимок
+ *   фильтруется по аккаунту (см. [DashboardService.build]); null = агрегированный вид.
  * - Метрики: dashboard.sse.connections, dashboard.sse.broadcasts, dashboard.sse.send_error.
  *
  * @property dashboardService источник данных панели
@@ -38,8 +40,14 @@ class DashboardSseService(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    /** Активные подключения. Параллельная коллекция с idempotent remove. */
-    private val emitters = ConcurrentHashMap.newKeySet<SseEmitter>()
+    /** Подписчик: SseEmitter + фильтр по аккаунту (null = агрегированный вид). */
+    private data class Subscriber(
+        val emitter: SseEmitter,
+        val accountId: Long?,
+    )
+
+    /** Активные подключения (CopyOnWrite: список редко меняется, чтения на каждый тик). */
+    private val subscribers = CopyOnWriteArrayList<Subscriber>()
 
     /** Время последней рассылки, мс (для троттлинга ценовых тиков). */
     private val lastBroadcastAt = AtomicLong(0L)
@@ -48,18 +56,31 @@ class DashboardSseService(
     private val minIntervalMs = 2_000L
 
     /**
+     * Таймаут SSE-подключения, мс.
+     *
+     * `SseEmitter(0L)` по докам Spring означает «без таймаута», однако на Tomcat
+     * `asyncContext.setTimeout(0)` трактуется как «использовать контейнерный
+     * дефолт» (30с): запрос завершается AsyncRequestTimeoutException → HTTP 503,
+     * и дашборд теряет live-обновления. Поэтому задаём явный длинный таймаут;
+     * «зомби»-подписки (клиент ушёл без закрытия) снимаются при первой же
+     * неудачной рассылке [send].
+     */
+    private val sseTimeoutMs = 3_600_000L
+
+    /**
      * Регистрирует нового подписчика и немедленно отправляет текущий снимок.
      *
+     * @param accountId фильтр по аккаунту; null = агрегированный вид
      * @return [SseEmitter] для эндпоинта `/api/v1/dashboard/stream`
      */
-    fun subscribe(): SseEmitter {
-        val emitter = SseEmitter(0L)
-        emitters.add(emitter)
-        emitter.onCompletion { emitters.remove(emitter) }
-        emitter.onTimeout { emitters.remove(emitter) }
-        emitter.onError { emitters.remove(emitter) }
+    fun subscribe(accountId: Long? = null): SseEmitter {
+        val emitter = SseEmitter(sseTimeoutMs)
+        subscribers.add(Subscriber(emitter, accountId))
+        emitter.onCompletion { subscribers.removeIf { it.emitter === emitter } }
+        emitter.onTimeout { subscribers.removeIf { it.emitter === emitter } }
+        emitter.onError { subscribers.removeIf { it.emitter === emitter } }
         meterRegistry.counter("dashboard.sse.connections").increment()
-        send(emitter)
+        send(emitter, accountId)
         return emitter
     }
 
@@ -97,39 +118,32 @@ class DashboardSseService(
     }
 
     /**
-     * Полная рассылка снимка всем активным подписчикам.
+     * Полная рассылка снимка всем активным подписчикам. Снимок строится один раз
+     * на уникальный фильтр (accountId) и рассылается всем подписчикам этого фильтра.
      *
      * @param reason источник события
      */
     private fun broadcast(reason: String) {
-        val payload =
-            try {
-                objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
-            } catch (e: Exception) {
-                logger.error(e) { "Dashboard payload build failed" }
-                return
-            }
         meterRegistry.counter("dashboard.sse.broadcasts", Tags.of("reason", reason)).increment()
-        emitters.forEach { send(it, payload) }
+        subscribers.groupBy { it.accountId }.forEach { (accountId, group) ->
+            val payload = buildPayload(accountId) ?: return@forEach
+            group.forEach { send(it.emitter, it.accountId, payload) }
+        }
     }
 
     /**
      * Отправляет снимок конкретному подписчику. Некорректный подписчик удаляется.
      *
      * @param emitter подписчик
+     * @param accountId фильтр по аккаунту (null = агрегированный вид)
      * @param payload готовый JSON (если null — строится заново)
      */
     private fun send(
         emitter: SseEmitter,
+        accountId: Long?,
         payload: String? = null,
     ) {
-        val json =
-            payload ?: try {
-                objectMapper.writeValueAsString(runBlocking { dashboardService.build() })
-            } catch (e: Exception) {
-                logger.error(e) { "Dashboard payload build failed" }
-                return
-            }
+        val json = payload ?: buildPayload(accountId) ?: return
         try {
             synchronized(emitter) {
                 emitter.send(SseEmitter.event().name("dashboard").data(json))
@@ -137,7 +151,15 @@ class DashboardSseService(
         } catch (e: Exception) {
             logger.debug(e) { "Dashboard SSE send failed, removing subscriber" }
             meterRegistry.counter("dashboard.sse.send_error").increment()
-            emitters.remove(emitter)
+            subscribers.removeIf { it.emitter === emitter }
         }
     }
+
+    private fun buildPayload(accountId: Long?): String? =
+        try {
+            objectMapper.writeValueAsString(runBlocking { dashboardService.build(accountId) })
+        } catch (e: Exception) {
+            logger.error(e) { "Dashboard payload build failed" }
+            null
+        }
 }

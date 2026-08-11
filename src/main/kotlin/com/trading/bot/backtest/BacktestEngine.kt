@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.PositionDirection
@@ -30,12 +31,16 @@ import java.time.LocalDateTime
  * Лотность позиций берётся из [InstrumentsConfig] (как в live) — размер позиции
  * округляется вниз до целого лота, совпадая с реальным исполнением на бирже.
  *
+ * Параметры прогона по умолчанию (слайс капитала, SL/TP, стартовый капитал,
+ * глубина истории, таймфрейм, warm-up) — из [BacktestConfig] (prefix `bt.*`).
+ *
  * Запуск (проект): ./gradlew bootRun --args="--spring.profiles.active=backtest"
  */
 @Service
 class BacktestEngine(
     private val candleRepo: CandleRepository,
     private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
+    private val backtestConfig: BacktestConfig = BacktestConfig(),
     private val backtestResultRepository: BacktestResultRepository? = null,
     private val objectMapper: ObjectMapper = ObjectMapper(),
     private val meterRegistry: MeterRegistry? = null,
@@ -55,21 +60,21 @@ class BacktestEngine(
      * Прогон бэктеста по тикеру за N дней.
      *
      * @param ticker тикер инструмента
-     * @param days глубина истории в днях
-     * @param timeframe таймфрейм свечей
-     * @param initialCapital стартовый капитал
-     * @param minBarsForSignal минимальное число баров для сигнала
-     * @param slPercent стоп-лосс в % от цены входа (по умолчанию 2%)
-     * @param tpPercent тейк-профит в % от цены входа (по умолчанию 4%)
+     * @param days глубина истории в днях (по умолчанию `bt.days`)
+     * @param timeframe таймфрейм свечей (по умолчанию `bt.timeframe`)
+     * @param initialCapital стартовый капитал (по умолчанию `bt.initial-capital`)
+     * @param minBarsForSignal минимальное число баров для сигнала (по умолчанию `bt.min-bars-for-signal`)
+     * @param slPercent стоп-лосс в долях от цены входа (по умолчанию `bt.sl-percent` / 100)
+     * @param tpPercent тейк-профит в долях от цены входа (по умолчанию `bt.tp-percent` / 100)
      */
     suspend fun run(
         ticker: String,
-        days: Int = 365,
-        timeframe: String = "MINUTE_10",
-        initialCapital: BigDecimal = BigDecimal("100000"),
-        minBarsForSignal: Int = 30,
-        slPercent: Double = 0.02,
-        tpPercent: Double = 0.04,
+        days: Int = backtestConfig.days,
+        timeframe: String = backtestConfig.timeframe,
+        initialCapital: BigDecimal = backtestConfig.initialCapital,
+        minBarsForSignal: Int = backtestConfig.minBarsForSignal,
+        slPercent: Double = backtestConfig.slPercent / 100.0,
+        tpPercent: Double = backtestConfig.tpPercent / 100.0,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -133,10 +138,10 @@ class BacktestEngine(
     fun simulate(
         ticker: String,
         candles: List<Candle>,
-        initialCapital: BigDecimal = BigDecimal("100000"),
-        minBarsForSignal: Int = 30,
-        slPercent: Double = 0.02,
-        tpPercent: Double = 0.04,
+        initialCapital: BigDecimal = backtestConfig.initialCapital,
+        minBarsForSignal: Int = backtestConfig.minBarsForSignal,
+        slPercent: Double = backtestConfig.slPercent / 100.0,
+        tpPercent: Double = backtestConfig.tpPercent / 100.0,
     ): BacktestResult {
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
@@ -250,7 +255,7 @@ class BacktestEngine(
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val lotSize = instrumentsConfig.find(ticker)?.lotSize ?: 1
-        val capitalSlice = cash.multiply(BigDecimal("0.20"))
+        val capitalSlice = cash.multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
         val qty = capitalSlice.divide(price, 0, RoundingMode.DOWN).toInt()
         val lotQty = SimulatedExecution.lotRounded(qty, lotSize)
         if (lotQty <= 0) return null

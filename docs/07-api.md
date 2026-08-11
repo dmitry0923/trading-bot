@@ -523,7 +523,7 @@ Live-снимок аккаунта: AUM, дневной P&L и лимиты, о�
 
 Запускает `BacktestEngine.run(ticker, days)` (см. раздел 11) на исторических свечах из PostgreSQL. Метрика `api.backtest` (тег `ticker`).
 
-**Query**: `days` (default 365). Исполнение синхронное (прогон по свечам, обычно секунды).
+**Query**: `days` (опционально, default из `bt.days` = 365), `loadHistory` (default false). Исполнение синхронное (прогон по свечам, обычно секунды). Параметры по умолчанию — из конфига `bt.*` (`BacktestConfig`, раздел 11.8.1).
 
 **Response 200**:
 ```json
@@ -573,7 +573,7 @@ Live-снимок аккаунта: AUM, дневной P&L и лимиты, о�
 
 Walk-forward валидация стратегии (C-002, раздел 13.7.7): train-окно каждого фолда настраивает SL/TP по сетке, test-окно прогоняется на данных, не участвовавших в настройке. Результат сохраняется в `backtest_results` с OOS-сводкой. Метрика `api.backtest.validate` (тег `ticker`).
 
-**Query**: `days` (default 365), `loadHistory` (default false — загрузить свечи с MOEX ISS), `folds` (default 4, >= 2), `timeframe` (default `MINUTE_10`).
+**Query**: `days` (опционально, default из `bt.days` = 365), `loadHistory` (default false — загрузить свечи с MOEX ISS), `folds` (default 4, >= 2), `timeframe` (опционально, default из `bt.timeframe` = `MINUTE_10`).
 
 **Response 200**:
 ```json

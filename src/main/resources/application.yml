@@ -237,6 +237,17 @@ distributed-lock:
   scheduler-ttl-seconds: ${DISTRIBUTED_LOCK_SCHEDULER_TTL:60}
   position-open-ttl-seconds: ${DISTRIBUTED_LOCK_POSITION_OPEN_TTL:30}
 
+# Backtest (bt.*): параметры прогона по умолчанию (раздел 11).
+# Используются, когда REST-вызов не передаёт query-параметры.
+bt:
+  initial-capital: ${BT_INITIAL_CAPITAL:100000}
+  days: ${BT_DAYS:365}
+  timeframe: ${BT_TIMEFRAME:MINUTE_10}
+  min-bars-for-signal: ${BT_MIN_BARS_FOR_SIGNAL:30}
+  sl-percent: ${BT_SL_PERCENT:2.0}
+  tp-percent: ${BT_TP_PERCENT:4.0}
+  capital-slice: ${BT_CAPITAL_SLICE:0.20}
+
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
   max-leverage: ${LEVERAGE_MAX:3.0}

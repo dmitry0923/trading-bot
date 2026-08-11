@@ -4,6 +4,7 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestValidator
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.RagAnalysis
@@ -97,6 +98,7 @@ class ApiController(
     private val backtestEngine: BacktestEngine,
     private val backtestValidator: BacktestValidator,
     private val backtestResultRepository: BacktestResultRepository,
+    private val backtestConfig: BacktestConfig,
     private val objectMapper: ObjectMapper,
     private val historicalDataLoader: HistoricalDataLoader,
     private val candleRepository: CandleRepository,
@@ -365,7 +367,7 @@ class ApiController(
     @GetMapping("/backtest/{ticker}")
     suspend fun backtest(
         @PathVariable ticker: String,
-        @RequestParam(defaultValue = "365") days: Int,
+        @RequestParam(required = false) days: Int?,
         @RequestParam(defaultValue = "false") loadHistory: Boolean,
     ): Map<String, Any> {
         meterRegistry
@@ -374,10 +376,11 @@ class ApiController(
                 Tags
                     .of("ticker", ticker),
             ).increment()
+        val effectiveDays = days ?: backtestConfig.days
         if (loadHistory) {
-            historicalDataLoader.loadAndSave(ticker, days)
+            historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val result = backtestEngine.run(ticker, days)
+        val result = backtestEngine.run(ticker, effectiveDays)
         return mapOf(
             "ticker" to result.ticker,
             "totalReturn" to result.totalReturn,
@@ -436,10 +439,10 @@ class ApiController(
     @GetMapping("/backtest/{ticker}/validate")
     suspend fun validateBacktest(
         @PathVariable ticker: String,
-        @RequestParam(defaultValue = "365") days: Int,
+        @RequestParam(required = false) days: Int?,
         @RequestParam(defaultValue = "false") loadHistory: Boolean,
         @RequestParam(defaultValue = "4") folds: Int,
-        @RequestParam(defaultValue = "MINUTE_10") timeframe: String,
+        @RequestParam(required = false) timeframe: String?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -447,16 +450,18 @@ class ApiController(
                 Tags
                     .of("ticker", ticker),
             ).increment()
+        val effectiveDays = days ?: backtestConfig.days
+        val effectiveTimeframe = timeframe ?: backtestConfig.timeframe
         if (loadHistory) {
-            historicalDataLoader.loadAndSave(ticker, days)
+            historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val from = LocalDateTime.now().minusDays(days.toLong())
-        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
+        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
+        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
         val result = backtestValidator.validate(ticker, candles, folds = folds)
-        persistValidationResult(ticker, days, timeframe, folds, loadHistory, result)
+        persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
         return mapOf(
             "ticker" to ticker,
-            "timeframe" to timeframe,
+            "timeframe" to effectiveTimeframe,
             "folds" to result.folds.size,
             "consistency" to result.consistency,
             "robust" to result.isRobust(),

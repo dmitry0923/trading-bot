@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.model.entity.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -34,6 +35,14 @@ class BacktestEngineTest {
 
     /** Нисходящий тренд: RSI низкий, MACD hist должен давать BUY на дне. */
     private fun candles(): List<Candle> = (0 until 300).map { i -> candle(300.0 - i * 0.5, i) }
+
+    /** V-образная серия: падение до oversold, затем рост — детерминированный BUY. */
+    private fun trendingCandles(): List<Candle> {
+        val prices =
+            (0 until 100).map { 200.0 - it * 1.0 } +
+                (100 until 300).map { 100.0 + (it - 100) * 0.5 }
+        return prices.mapIndexed { i, price -> candle(price, i) }
+    }
 
     @Test
     fun `simulate produces results on trending data`() {
@@ -164,6 +173,64 @@ class BacktestEngineTest {
         assertFalse(metrics.containsKey("equityCurve"))
         assertFalse(metrics.containsKey("monthlyReturns"))
         assertFalse(metrics.containsKey("tradeReturns"))
+    }
+
+    @Test
+    fun `backtest config exposes default values`() {
+        val config = BacktestConfig()
+        assertEquals(BigDecimal("100000"), config.initialCapital)
+        assertEquals(365, config.days)
+        assertEquals("MINUTE_10", config.timeframe)
+        assertEquals(30, config.minBarsForSignal)
+        assertEquals(2.0, config.slPercent)
+        assertEquals(4.0, config.tpPercent)
+        assertEquals(0.20, config.capitalSlice)
+    }
+
+    @Test
+    fun `initial capital from config scales equity proportionally`() {
+        val base = engine.simulate("SBER", trendingCandles())
+        val big =
+            BacktestEngine(
+                com.trading.bot.repository
+                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        initialCapital = BigDecimal("200000")
+                    },
+            ).simulate("SBER", trendingCandles())
+        assertTrue(base.totalTrades > 0, "fixture must produce trades")
+        val ratio = big.equityCurve.last().toDouble() / base.equityCurve.last().toDouble()
+        assertTrue(ratio in 1.5..2.5, "expected ~2x equity scaling with doubled capital, got $ratio")
+    }
+
+    @Test
+    fun `capital slice from config changes position size`() {
+        val base = engine.simulate("SBER", trendingCandles())
+        val doubled =
+            BacktestEngine(
+                com.trading.bot.repository
+                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        capitalSlice = 0.40
+                    },
+            ).simulate("SBER", trendingCandles())
+        assertTrue(base.totalTrades > 0, "fixture must produce trades")
+        val baseDeviation =
+            base.equityCurve
+                .last()
+                .subtract(BigDecimal("100000"))
+                .abs()
+        val doubledDeviation =
+            doubled.equityCurve
+                .last()
+                .subtract(BigDecimal("100000"))
+                .abs()
+        assertTrue(
+            doubledDeviation > baseDeviation.multiply(BigDecimal("1.5")),
+            "doubling capital slice should scale P&L, base=${base.equityCurve.last()} doubled=${doubled.equityCurve.last()}",
+        )
     }
 
     @Test

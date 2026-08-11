@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -68,6 +69,7 @@ private data class Candidate(
 @Component
 class BacktestValidator(
     private val backtestEngine: BacktestEngine,
+    private val backtestConfig: BacktestConfig = BacktestConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -93,8 +95,8 @@ class BacktestValidator(
         ticker: String,
         candles: List<Candle>,
         folds: Int = 4,
-        initialCapital: BigDecimal = BigDecimal("100000"),
-        minBarsForSignal: Int = 30,
+        initialCapital: BigDecimal = backtestConfig.initialCapital,
+        minBarsForSignal: Int = backtestConfig.minBarsForSignal,
     ): ValidationResult {
         val sorted = candles.sortedBy { it.time }
         if (folds < 2 || sorted.size < minBarsForSignal * (folds + 1)) {

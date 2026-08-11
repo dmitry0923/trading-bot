@@ -361,6 +361,25 @@ class DrawdownProtectionServiceTest {
     }
 
     @Test
+    fun `init loads today daily pnl and limit flag from snapshot on startup`() {
+        Mockito.`when`(snapshotRepo.findByDate(moscowToday)).thenReturn(
+            DailyRiskSnapshot(
+                id = 1,
+                tradeDate = moscowToday,
+                dailyPnl = BigDecimal("-6000"),
+                limitReached = true,
+                maxDrawdownToday = BigDecimal("-6000"),
+            ),
+        )
+
+        val s = service()
+        s.init()
+
+        assertEquals(0, BigDecimal("-6000").compareTo(s.getDailyPnl()))
+        assertTrue(s.isDailyLossLimitReached())
+    }
+
+    @Test
     fun `computeStatus reconciles daily pnl from db including open positions`() =
         runBlocking {
             // закрытая сегодня: -1000 (реализованный); открытая сегодня: -3000 unrealized

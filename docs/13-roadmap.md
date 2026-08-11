@@ -31,7 +31,7 @@ gantt
     Backtest framework               :done, a3, after a2, 2025-07-01
     section v2.2 (краткосрочная)
     Emergency stop endpoint          :v21, 2025-07-01, 2025-09-01
-    Persist daily PnL                :v21b, after v21, 2025-10-01
+    Persist daily PnL                :done, v21b, after v21, 2025-10-01
     section v2.3 (среднесрочная)
     LLM в бэктесте, WebSocket-only   :v22, 2025-10-01, 2026-01-01
     section v2.4 (долгосрочная)
@@ -45,7 +45,7 @@ gantt
 | Фича | Описание | Статус |
 |---|---|---|
 | Emergency stop endpoint | `POST /api/v1/bot/emergency-stop` — закрывает все позиции + запрещает открытие | ✅ |
-| Persist daily PnL | перенос `dailyPnl` из памяти в БД + `/api/v1/risk/daily-pnl-history` (раздел 6.6) | 🔜 |
+| Persist daily PnL | перенос `dailyPnl` из памяти в БД (`daily_risk_snapshot`) + `GET /api/v1/risk/daily-pnl-history` (раздел 6.6) | ✅ |
 | Партиционирование `candles` | TimescaleDB hypertable: чанки по time (1 неделя) + retention 90 дней (раздел 6.4) | ✅ v2.2 |
 | Партиционирование `positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | 🔜 |
 | Точный контроль SL/TP в лимитных заявках | добавлять SL/TP заявки при открытии позиции | 🔜 |
@@ -149,17 +149,15 @@ gantt
 - Авто-стоп (source=AUTO, убыток >10% за час) — не реализован, требует хранения PnL с таймстампами (см. 5.8).
 | Метрики | `bot.emergency_stop{reason}`, alert `EmergencyStop` |
 
-### 13.7.2. Persist daily PnL
+### 13.7.2. Persist daily PnL ✅
 
-**Требования:**
+**Реализовано:**
 
-- Таблица `daily_pnl(trade_date PK, pnl, updated_at)` (раздел 6.6).
-- `updateDailyPnL()` — `INSERT ... ON CONFLICT DO UPDATE`.
-- При старте `RiskManagementService` подгружает P&L за сегодня из БД.
-- Новый endpoint `GET /api/v1/risk/daily-pnl-history?days=30` (график).
-- Сброс лимита — автоматически в 00:00 МСК (новая строка даты).
-
-**Почему это важно:** сейчас при рестарте в течение дня бот «забывает» накопленный убыток и может продолжить торговлю, уже превысив лимит. Это главный риск v2.1.
+- Таблица `daily_risk_snapshot` — одна строка на дату (`UNIQUE (trade_date)`), миграция `004-futures-risk.sql` (раздел 6.6).
+- `DrawdownProtectionService` — upsert снапшота на закрытие позиции и по циклу риск-движка.
+- При старте (`ApplicationReadyEvent`) и при первом касании нового дня подгружается P&L за сегодня из БД — рестарт в течение дня не «забывает» накопленный убыток.
+- Новый endpoint `GET /api/v1/risk/daily-pnl-history?days=30` (график дневных результатов).
+- Сброс лимита — автоматически по календарной дате 00:00 МСК (новая строка даты).
 
 ### 13.7.3. Backtest: сохранение результатов
 

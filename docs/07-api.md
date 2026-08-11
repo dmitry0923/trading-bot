@@ -50,6 +50,7 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | GET | `/api/v1/positions/all` | все позиции | ✅ |
 | GET | `/api/v1/logs` | последние 100 agent-логов | ✅ |
 | GET | `/api/v1/risk/daily-pnl` | текущий дневной P&L | ✅ |
+| GET | `/api/v1/risk/daily-pnl-history?days=30` | история дневных P&L | ✅ |
 | POST | `/api/v1/strategy/trigger` | ручной запуск цикла стратегий | ✅ |
 | POST | `/api/v1/bot/trigger` | ручной запуск бот-цикла | ✅ |
 | GET | `/api/v1/analytics/trade-stats` | статистика сделок за N дней | ✅ |
@@ -189,7 +190,25 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 
 ### GET /api/v1/risk/daily-pnl
 
-**Response 200**: `{"dailyPnl": -1250.0}` (BigDecimal).
+**Response 200**: `{"dailyPnl": -1250.0}` (BigDecimal). Значение из `daily_risk_snapshot` за текущий торговый день (восстанавливается после рестарта).
+
+### GET /api/v1/risk/daily-pnl-history
+
+История дневных P&L из `daily_risk_snapshot` — по одной точке на дату, по возрастанию даты (график дневных результатов).
+
+**Query params**:
+- `days` — глубина истории (1..365, default `30`).
+
+**Response 200**:
+
+```json
+{
+  "points": [
+    { "tradeDate": "2026-08-10", "pnl": 350.5, "limitReached": false },
+    { "tradeDate": "2026-08-11", "pnl": -1250.0, "limitReached": true }
+  ]
+}
+```
 
 ### POST /api/v1/strategy/trigger
 

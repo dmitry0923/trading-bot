@@ -39,6 +39,23 @@ class DailyRiskSnapshotRepository(
             .block()
     }
 
+    /**
+     * История дневных снапшотов за последние [days] дней (включая сегодня), по дате ASC.
+     * Источник данных для `GET /api/v1/risk/daily-pnl-history` (график дневных P&L).
+     */
+    fun findRecent(days: Int): List<DailyRiskSnapshot> {
+        val sinceDate = LocalDate.now().minusDays(days.toLong())
+        val sql = "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate ORDER BY trade_date ASC"
+        return databaseClient
+            .sql(sql)
+            .bind("sinceDate", sinceDate)
+            .map { row, _ -> toDailyRiskSnapshot(row) }
+            .all()
+            .collectList()
+            .block()
+            ?: emptyList()
+    }
+
     fun deleteAll() {
         databaseClient.sql("DELETE FROM daily_risk_snapshot").then().block()
     }

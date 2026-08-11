@@ -18,6 +18,7 @@ import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.repository.StrategyRepository
@@ -90,6 +91,7 @@ class ApiController(
     private val backtestValidator: BacktestValidator,
     private val historicalDataLoader: HistoricalDataLoader,
     private val candleRepository: CandleRepository,
+    private val dailyRiskSnapshotRepository: DailyRiskSnapshotRepository,
     private val dashboardService: DashboardService,
     private val dashboardSseService: DashboardSseService,
     private val investorService: InvestorService,
@@ -256,6 +258,28 @@ class ApiController(
 
     @GetMapping("/risk/daily-pnl")
     fun getDailyPnl() = mapOf("dailyPnl" to riskManagementService.getDailyPnL())
+
+    /**
+     * История дневных P&L из daily_risk_snapshot (roadmap 13.7.2): по одной точке на дату,
+     * по возрастанию даты. Источник для графика дневных результатов и статистики лимитов.
+     *
+     * @param days глубина истории (1..365, default 30)
+     */
+    @GetMapping("/risk/daily-pnl-history")
+    fun getDailyPnlHistory(
+        @RequestParam(defaultValue = "30") days: Int,
+    ): Map<String, Any> {
+        val clamped = days.coerceIn(1, 365)
+        val points =
+            dailyRiskSnapshotRepository.findRecent(clamped).map { snapshot ->
+                mapOf(
+                    "tradeDate" to snapshot.tradeDate.toString(),
+                    "pnl" to snapshot.dailyPnl,
+                    "limitReached" to snapshot.limitReached,
+                )
+            }
+        return mapOf("points" to points)
+    }
 
     /**
      * Multi-Tier Drawdown Protection: AUM, дневной/скользящие (7д, 30д) лимиты в % от AUM,

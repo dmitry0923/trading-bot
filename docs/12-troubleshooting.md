@@ -45,16 +45,14 @@
    - ArbitratorAgent: `agent.arbitrator.parse.error` → HOLD `FALLBACK: PARSE_ERROR`;
    - Technical/Fundamental: NEUTRAL + baseline.
 3. `raw_output` сохраняется в `agent_logs` — можно посмотреть, что именно вернула модель:
-   ```sql
-   -- noinspection SqlNoDataSourceInspection
+   ```text
    SELECT cycle_id, agent_name, raw_output FROM agent_logs WHERE raw_output LIKE '%```%' ORDER BY created_at DESC LIMIT 10;
    ```
 4. Если модель «оборачивает» JSON в ```json ... ``` — парсеры уже делают `.replace("```json","").replace("```","")`.
 
 ### «Ордер висит в PENDING»
 
-```sql
--- noinspection SqlNoDataSourceInspection
+```text
 SELECT id, status, alor_order_id, created_at, error_message FROM order_outbox ORDER BY created_at DESC LIMIT 20;
 ```
 
@@ -103,15 +101,13 @@ Graceful degradation встроен везде:
 Причины:
 
 1. **Мало свечей** — `BacktestEngine` требует ≥ 32 свечей (`minBarsForSignal + 2`), иначе `emptyResult()`:
-   ```sql
-   -- noinspection SqlNoDataSourceInspection
+   ```text
    SELECT count(*) FROM candles WHERE ticker='SBER' AND timeframe='MINUTE_10';
    ```
    Если < 32 — подождите накопления данных или загрузите историю через MOEX ISS (fallback в `loadCandles`).
 2. **Нет сигналов** — RSI/MACD не входили в зоны (RSI<30 с MACD>0 или RSI>70 с MACD<0) → 0 сделок, это валидный результат, но `isPassable=false`.
 3. **Тикер с пробелами данных** — свечи есть, но непокрытый период. Проверьте диапазон:
-   ```sql
-   -- noinspection SqlNoDataSourceInspection
+   ```text
    SELECT min(time), max(time) FROM candles WHERE ticker='SBER' AND timeframe='MINUTE_10';
    ```
 
@@ -123,8 +119,7 @@ Graceful degradation встроен везде:
    ```
    Лог: `Volatility guard: SBER ATR=... > 5.0%, strategy -> HOLD`.
 2. `overrideReason` в `agent_logs`:
-   ```sql
-   -- noinspection SqlNoDataSourceInspection
+   ```text
    SELECT ticker, action, confidence, override_reason FROM agent_logs
    WHERE agent_name='Agent-5-Arbitrator' AND ticker='SBER' ORDER BY created_at DESC LIMIT 5;
    ```
@@ -249,7 +244,7 @@ A: Да, он не ходит в LLM и не размещает ордера. Е
 A: SIMULATION заменяет только исполнение ордеров (фиктивные цены/ордера), но не управление позициями — они пишутся в PostgreSQL. Это позволяет тестировать весь цикл, включая мониторинг и P&L.
 
 **Q: Что значит `dailyPnl <= -50000` в метрике `bot.halted.daily_loss`?**
-A: Сработал дневной лимит убытка: `dailyPnL` в памяти `RiskManagementService` опустился до `-maxDailyLossRub`. Бот переходит в HALT до перезапуска (лимит в БД — roadmap).
+A: Сработал дневной лимит убытка: дневной P&L опустился до `-maxDailyLossRub`. Бот переходит в HALT до конца торгового дня (значение персистится в `daily_risk_snapshot`, сброс — по календарной дате 00:00 МСК, раздел 5.6).
 
 **Q: Как проверить, что event-driven слой работает?**
 A: Метрики `event.published` и `event.handled` по типам. Должны быть близки (потери = рестарт между публикацией и обработкой). Раздел 9.5.
@@ -282,7 +277,7 @@ A: Метрики `event.published` и `event.handled` по типам. Долж
 
 1. Собрать: `kubectl logs`, дамп метрик, `SELECT * FROM order_outbox WHERE status='PENDING'`.
 2. Проверить целостность позиций: `SELECT ticker, status, pnl FROM positions WHERE status='OPEN'`.
-3. Если `dailyPnl` сброшен — учесть при повторном включении (лимит в памяти).
+3. Дневной P&L после рестарта восстанавливается из `daily_risk_snapshot` — при повторном включении лимит не «обнуляется» (раздел 5.6).
 
 ## 12.6. Распределение ответственности (RACI)
 
@@ -302,7 +297,7 @@ R = responsible, A = accountable, C = consulted.
 
 | Ограничение | Раздел | Влияние |
 |---|---|---|
-| Дневной P&L в памяти, сброс при рестарте | 5.6 | рестарт в течение дня сбрасывает лимит — до v2.2 не останавливать бот |
+| Дневной P&L в БД (daily_risk_snapshot) | 5.6 | восстанавливается после рестарта; сброс по календарной дате 00:00 МСК |
 | Emergency stop — нет авто-остановки по убытку | 5.8 | ручной emergency stop доступен; авто-стоп (source=AUTO) — roadmap |
 | Бэктест без LLM | 11.8 | индикаторные сигналы, не LLM-решения |
 | Бэктест: вход по market (с slippage) | 11.3 | limit-входы не используются в цикле |

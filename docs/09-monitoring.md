@@ -440,11 +440,12 @@ API:
 |---|---|
 | Сколько сейчас в позициях? | `bot_position_opened_total - bot_position_closed_total` |
 | Итоговый P&L | `sum(bot_pnl)` |
-| Дневной P&L | `GET /api/v1/risk/daily-pnl` (в памяти) |
+| Дневной P&L | `GET /api/v1/risk/daily-pnl` (из `daily_risk_snapshot`) |
+| Дневной P&L — история | `GET /api/v1/risk/daily-pnl-history?days=30` |
 | Близко ли к лимиту? | gauge-прокси: `bot_halted_daily_loss_total` при срабатывании |
 | Проскальзывание | `increase(trade_slippage_rub_total[24h])` |
 
-> **Ограничение**: дневной P&L хранится в памяти сервиса (раздел 5.6), поэтому в Prometheus он не виден как timeseries. До реализации БД-хранения контролируйте его через REST `GET /api/v1/risk/daily-pnl`.
+> Дневной P&L персистится в `daily_risk_snapshot` (раздел 6.6): в Prometheus он по-прежнему не виден как timeseries, но историю можно вытащить через REST `GET /api/v1/risk/daily-pnl-history`.
 
 ## 9.7. Настройка сборки
 

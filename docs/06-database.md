@@ -238,7 +238,7 @@ databaseChangeLog:
 
 **Пример changeset** (001):
 
-```sql
+```text
 --liquibase formatted sql
 --changeset dmitry:001
 
@@ -303,31 +303,37 @@ candleRepo.findByTickerAndTimeframeAndTimeBetween(
 
 > **Проект**: таблица `backtest_results` для сохранения результатов и сравнения итераций (раздел 11.8).
 
-## 6.6. Проблема дневного P&L и почему его нет в БД
+## 6.6. Дневной P&L в БД
 
-Дневной лимит убытка (`risk.max-daily-loss-rub`) хранится в **памяти** `RiskManagementService.dailyPnL` (раздел 5.6). Это осознанное ограничение текущей версии:
+Дневной лимит убытка (`risk.max-daily-loss-rub`) опирается на дневной P&L, который **персистится в БД** — состояние переживает рестарт пода в течение торгового дня (раздел 5.6).
 
-| Аспект | Сейчас | Целевое |
-|---|---|---|
-| Хранение | поле `dailyPnL` в сервисе | таблица `daily_pnl(date, pnl)` с UNIQUE по дате |
-| Сброс | при перезапуске пода | по календарной дате (00:00 МСК) |
-| Прозрачность | `GET /api/v1/risk/daily-pnl` (в памяти) | тот же endpoint, но из БД |
-| History | нет | график дневных результатов, статистика лимитов |
+| Аспект | Реализация |
+|---|---|
+| Хранение | таблица `daily_risk_snapshot` — одна строка на торговую дату (`UNIQUE (trade_date)`) |
+| Обновление | upsert из `DrawdownProtectionService` (на закрытие позиции и по циклу риск-движка) |
+| Сброс | по календарной дате 00:00 МСК (новый день → новый снапшот) |
+| Восстановление | загрузка сегодняшнего снапшота при старте (`ApplicationReadyEvent`) и при первом касании дня |
+| Прозрачность | `GET /api/v1/risk/daily-pnl` (из БД) |
+| History | `GET /api/v1/risk/daily-pnl-history?days=30` — график дневных результатов, статистика лимитов |
 
-Миграция `004-daily-pnl.sql` (проект):
+DDL (миграция `004-futures-risk.sql`, changeset `dmitry:004`):
 
-```sql
+```text
 --liquibase formatted sql
 --changeset dmitry:004
 
-CREATE TABLE IF NOT EXISTS daily_pnl (
-    trade_date DATE PRIMARY KEY,
-    pnl NUMERIC(19,6) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMP NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS daily_risk_snapshot (
+    id BIGSERIAL PRIMARY KEY,
+    trade_date DATE NOT NULL,
+    daily_pnl NUMERIC(19,6) NOT NULL DEFAULT 0,
+    limit_reached BOOLEAN NOT NULL DEFAULT FALSE,
+    max_drawdown_today NUMERIC(19,6) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_daily_risk_snapshot_date UNIQUE (trade_date)
 );
 ```
 
-Обновление: `INSERT ... ON CONFLICT (trade_date) DO UPDATE SET pnl = daily_pnl.pnl + EXCLUDED.pnl`.
+Обновление: `INSERT ... ON CONFLICT (trade_date) DO UPDATE SET daily_pnl = EXCLUDED.daily_pnl, ...`.
 
 ## 6.7. Транзакционность и консистентность
 
@@ -364,7 +370,7 @@ CREATE TABLE IF NOT EXISTS daily_pnl (
 
 Включение pg_stat_statements:
 
-```sql
+```text
 -- в postgresql.conf
 shared_preload_libraries = 'pg_stat_statements';
 ```

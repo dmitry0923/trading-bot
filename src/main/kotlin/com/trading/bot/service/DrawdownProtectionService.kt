@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -82,6 +83,20 @@ class DrawdownProtectionService(
     private var todayDailyLossReached: Boolean = false
 
     private var lastTradingDate: LocalDate = LocalDate.MIN
+
+    /**
+     * Загрузка дневного состояния из daily_risk_snapshot при старте (ApplicationReadyEvent),
+     * чтобы дневной P&L не «обнулялся» до первого стратегического цикла/закрытия позиции
+     * (см. roadmap 13.7.2: при рестарте в течение дня лимит убытка должен быть восстановлен).
+     */
+    @EventListener(ApplicationReadyEvent::class)
+    fun init() {
+        try {
+            resetDailyStateIfNewDay()
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to load daily risk state at startup" }
+        }
+    }
 
     /**
      * Полный пересчёт Multi-Tier статуса из фактических сделок в БД.

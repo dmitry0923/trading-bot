@@ -21,7 +21,10 @@ interface DailyRiskGuard {
     fun getDailyPnl(accountId: Long? = null): BigDecimal
 
     /** Синхронный учёт P&L закрытой сделки. accountId = null → legacy global. */
-    fun updateDailyPnl(pnl: BigDecimal, accountId: Long? = null)
+    fun updateDailyPnl(
+        pnl: BigDecimal,
+        accountId: Long? = null,
+    )
 
     /** Текущий статус из кэша (консервативно-нейтральный до первого цикла). */
     fun cachedOrNeutral(accountId: Long? = null): DrawdownStatus

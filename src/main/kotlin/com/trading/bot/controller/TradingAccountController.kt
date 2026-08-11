@@ -7,6 +7,8 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.AumProvider
 import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.TradingAccountService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
@@ -21,8 +23,6 @@ import org.springframework.web.server.ResponseStatusException
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * Управление торговыми аккаунтами (multi-account, roadmap v2.2).
@@ -60,12 +60,14 @@ class TradingAccountController(
     suspend fun get(
         @PathVariable id: Long,
     ): Map<String, Any?> {
-        val account = tradingAccountService.findById(id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
-        return summary(account) + mapOf(
-            "openPositions" to positionRepository.findOpenByAccount(id),
-            "openPositionsCount" to positionRepository.findOpenCountByAccount(id),
-        )
+        val account =
+            tradingAccountService.findById(id)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
+        return summary(account) +
+            mapOf(
+                "openPositions" to positionRepository.findOpenByAccount(id),
+                "openPositionsCount" to positionRepository.findOpenCountByAccount(id),
+            )
     }
 
     /**
@@ -76,8 +78,9 @@ class TradingAccountController(
     suspend fun accountDashboard(
         @PathVariable id: Long,
     ): Map<String, Any?> {
-        val account = tradingAccountService.findById(id)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
+        val account =
+            tradingAccountService.findById(id)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
         val openPositions = positionRepository.findOpenByAccount(id)
         val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
         val todayStart = LocalDate.now().atStartOfDay()

@@ -35,6 +35,7 @@ class TradingAccountService(
     private var cachedEnabled: List<TradingAccount>? = null
     private var cacheLoadedAt: Long = 0
     private var rrCounter: Long = 0
+
     @Volatile
     private var rrSetFingerprint: Int = -1
 
@@ -55,8 +56,7 @@ class TradingAccountService(
     suspend fun findById(id: Long): TradingAccount? = repository.findById(id)
 
     @Suppress("unused")
-    suspend fun findByName(name: String): TradingAccount? =
-        repository.findAll().firstOrNull { it.name.equals(name, ignoreCase = true) }
+    suspend fun findByName(name: String): TradingAccount? = repository.findAll().firstOrNull { it.name.equals(name, ignoreCase = true) }
 
     /**
      * Портфель Alor для аккаунта. null (legacy) или неизвестный аккаунт → [AlorConfig.portfolio].
@@ -71,12 +71,10 @@ class TradingAccountService(
         accountId?.let { findById(it)?.maxOpenPositions } ?: riskConfig.maxOpenPositions
 
     /** Персональное переопределение AUM (руб); null → реальный баланс Alor. */
-    suspend fun aumRubOverrideFor(accountId: Long?): BigDecimal? =
-        accountId?.let { findById(it)?.aumRub }
+    suspend fun aumRubOverrideFor(accountId: Long?): BigDecimal? = accountId?.let { findById(it)?.aumRub }
 
     /** Персональный дневной лимит убытка (руб); null → расчёт % от AUM. */
-    suspend fun maxDailyLossRubFor(accountId: Long?): BigDecimal? =
-        accountId?.let { findById(it)?.maxDailyLossRub }
+    suspend fun maxDailyLossRubFor(accountId: Long?): BigDecimal? = accountId?.let { findById(it)?.maxDailyLossRub }
 
     /** Синхронные getters из кэша включённых аккаунтов (для non-suspend hot paths риска). */
 
@@ -88,12 +86,10 @@ class TradingAccountService(
         accountId?.let { id -> cachedEnabled?.firstOrNull { it.id == id }?.maxOpenPositions }
 
     @Suppress("unused")
-    fun cachedAumRubFor(accountId: Long?): BigDecimal? =
-        accountId?.let { id -> cachedEnabled?.firstOrNull { it.id == id }?.aumRub }
+    fun cachedAumRubFor(accountId: Long?): BigDecimal? = accountId?.let { id -> cachedEnabled?.firstOrNull { it.id == id }?.aumRub }
 
     @Suppress("unused")
-    fun cachedPortfolioFor(accountId: Long?): String? =
-        accountId?.let { id -> cachedEnabled?.firstOrNull { it.id == id }?.alorPortfolio }
+    fun cachedPortfolioFor(accountId: Long?): String? = accountId?.let { id -> cachedEnabled?.firstOrNull { it.id == id }?.alorPortfolio }
 
     /**
      * Выбор аккаунта для нового входа: весовой round-robin по включённым аккаунтам

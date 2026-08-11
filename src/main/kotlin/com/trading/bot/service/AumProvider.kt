@@ -72,7 +72,8 @@ class AumProvider(
             cache[k] = CacheEntry(effective, System.currentTimeMillis())
             meterRegistry.gauge(
                 "portfolio.aum",
-                io.micrometer.core.instrument.Tags.of("account", accountId?.toString() ?: "default"),
+                io.micrometer.core.instrument.Tags
+                    .of("account", accountId?.toString() ?: "default"),
                 effective.toDouble(),
             )
             effective
@@ -86,12 +87,12 @@ class AumProvider(
      * Последнее кэшированное значение AUM без сетевых вызовов (для синхронных
      * горячих проверок входа). До первого обновления — конфигурационный депозит.
      */
-    fun latestAum(accountId: Long? = null): BigDecimal =
-        cache[key(accountId)]?.aum ?: riskConfig.maxPositionRub
+    fun latestAum(accountId: Long? = null): BigDecimal = cache[key(accountId)]?.aum ?: riskConfig.maxPositionRub
 
     companion object {
         /** Ключ кэша legacy single-account (accountId = null). */
         private const val NULL_ACCOUNT: Long = -1L
+
         /** TTL кэша баланса Alor, мс. 60с = не дёргать API на каждый тик/проверку. */
         private const val CACHE_TTL_MS = 60_000L
     }

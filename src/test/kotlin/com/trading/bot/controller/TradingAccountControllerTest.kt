@@ -123,8 +123,19 @@ class TradingAccountControllerTest {
     fun `create delegates to service`() {
         val created = account(1L, "A", "PA", weight = 2)
         runBlocking {
-            Mockito.`when`(tradingAccountService.create(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt()))
-                .thenReturn(created)
+            Mockito
+                .`when`(
+                    tradingAccountService.create(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyBoolean(),
+                        Mockito.any(),
+                        Mockito.any(),
+                        Mockito.any(),
+                        Mockito.anyInt(),
+                    ),
+                ).thenReturn(created)
         }
 
         val result =
@@ -133,14 +144,40 @@ class TradingAccountControllerTest {
             }
         assertEquals(1L, result["id"])
         assertEquals(2, result["weight"])
-        runBlocking { Mockito.verify(tradingAccountService).create(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt()) }
+        runBlocking {
+            Mockito
+                .verify(
+                    tradingAccountService,
+                ).create(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.anyInt(),
+                )
+        }
     }
 
     @Test
     fun `update returns 404 for unknown account`() {
         runBlocking {
-            Mockito.`when`(tradingAccountService.update(Mockito.eq(99L), Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyBoolean(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.anyInt()))
-                .thenReturn(null)
+            Mockito
+                .`when`(
+                    tradingAccountService.update(
+                        Mockito.eq(99L),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyBoolean(),
+                        Mockito.any(),
+                        Mockito.any(),
+                        Mockito.any(),
+                        Mockito.anyInt(),
+                    ),
+                ).thenReturn(null)
         }
         try {
             runBlocking {
@@ -209,7 +246,8 @@ class TradingAccountControllerTest {
             )
         runBlocking {
             Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
-            Mockito.`when`(dailyRiskSnapshotRepository.findRecent(Mockito.anyInt(), Mockito.eq(1L)))
+            Mockito
+                .`when`(dailyRiskSnapshotRepository.findRecent(Mockito.anyInt(), Mockito.eq(1L)))
                 .thenReturn(listOf(snapshot))
         }
 
@@ -227,7 +265,8 @@ class TradingAccountControllerTest {
         runBlocking {
             Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
             Mockito.`when`(positionRepository.findOpenByAccount(1L)).thenReturn(listOf(pos))
-            Mockito.`when`(positionRepository.findClosedByAccountSince(Mockito.eq(1L), any<LocalDateTime>()))
+            Mockito
+                .`when`(positionRepository.findClosedByAccountSince(Mockito.eq(1L), any<LocalDateTime>()))
                 .thenReturn(emptyList())
             Mockito.`when`(aumProvider.currentAum(1L)).thenReturn(BigDecimal("1000000"))
             Mockito.`when`(drawdownProtectionService.getDailyPnl(1L)).thenReturn(BigDecimal("300"))

@@ -56,6 +56,7 @@ class DecisionEngineTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val lockRedis = Mockito.mock(StringRedisTemplate::class.java)
+
     @Suppress("UNCHECKED_CAST")
     private val lockValueOps = Mockito.mock(ValueOperations::class.java) as ValueOperations<String, String>
     private val distributedLockService = DistributedLockService(distributedLockConfig, lockRedis, meterRegistry)

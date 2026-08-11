@@ -226,7 +226,10 @@ class DrawdownProtectionService(
      * не должны терять обновления (`todayPnl = todayPnl + pnl` — read-modify-write).
      */
     @Synchronized
-    override fun updateDailyPnl(pnl: BigDecimal, accountId: Long?) {
+    override fun updateDailyPnl(
+        pnl: BigDecimal,
+        accountId: Long?,
+    ) {
         resetDailyStateIfNewDay()
         if (accountId != null) {
             updateAccountDailyPnl(accountId, pnl)
@@ -271,7 +274,17 @@ class DrawdownProtectionService(
         }
         persistDailyState(accountId)
         meterRegistry.gauge("risk.daily.pnl", Tags.of("account", accountId.toString()), newPnl.toDouble())
-        meterRegistry.gauge("risk.daily.limit.reached", Tags.of("account", accountId.toString()), if (accountLossReached[accountId] == true) 1.0 else 0.0)
+        meterRegistry.gauge(
+            "risk.daily.limit.reached",
+            Tags.of("account", accountId.toString()),
+            if (accountLossReached[accountId] ==
+                true
+            ) {
+                1.0
+            } else {
+                0.0
+            },
+        )
     }
 
     private fun loadAccountDailyState(
@@ -317,8 +330,7 @@ class DrawdownProtectionService(
      * Заблокированы ли новые входы (кэш). Покрывает все tier-лимиты и Shadow/Read-only,
      * а также per-account дневной лимит.
      */
-    override fun isEntryBlocked(accountId: Long?): Boolean =
-        cachedOrNeutral().blocking() || isDailyLossLimitReached(accountId)
+    override fun isEntryBlocked(accountId: Long?): Boolean = cachedOrNeutral().blocking() || isDailyLossLimitReached(accountId)
 
     /**
      * Причина блокировки входа (для логов/отказов). Пустая строка — вход разрешён.

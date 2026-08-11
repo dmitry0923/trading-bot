@@ -113,6 +113,7 @@ class StateReconciliationService(
         if (!lastReconcileAtMs.compareAndSet(last, now)) return
         reconcile()
     }
+
     /**
      * Полная сверка: REST-портфель (заявки, позиции, сделки) против локальных позиций.
      *
@@ -247,7 +248,6 @@ class StateReconciliationService(
 
                         else -> {
                             logger.error {
-
                                 "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
                                     "closed on exchange during WS gap -> marking CLOSED"
                             }

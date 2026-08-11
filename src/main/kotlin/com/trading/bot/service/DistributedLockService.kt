@@ -36,7 +36,10 @@ class DistributedLockService(
 ) {
     private val logger = LoggerFactory.getLogger(DistributedLockService::class.java)
 
-    private data class Lock(val name: String, val token: String) {
+    private data class Lock(
+        val name: String,
+        val token: String,
+    ) {
         val key: String get() = KEY_PREFIX + name
     }
 
@@ -50,19 +53,20 @@ class DistributedLockService(
             block()
             return true
         }
-        val lock = try {
-            acquire(name, ttlSeconds)
-        } catch (e: Exception) {
-            logger.error("Distributed lock acquire failed for [$name]", e)
-            meterRegistry.counter(METRIC_ERROR, Tags.of(TAG_NAME, name)).increment()
-            if (failOpenOnError) {
-                logger.warn("Fail-open: running [$name] without lock (Redis unavailable)")
-                block()
-                return true
+        val lock =
+            try {
+                acquire(name, ttlSeconds)
+            } catch (e: Exception) {
+                logger.error("Distributed lock acquire failed for [$name]", e)
+                meterRegistry.counter(METRIC_ERROR, Tags.of(TAG_NAME, name)).increment()
+                if (failOpenOnError) {
+                    logger.warn("Fail-open: running [$name] without lock (Redis unavailable)")
+                    block()
+                    return true
+                }
+                meterRegistry.counter(METRIC_SKIPPED, Tags.of(TAG_NAME, name)).increment()
+                return false
             }
-            meterRegistry.counter(METRIC_SKIPPED, Tags.of(TAG_NAME, name)).increment()
-            return false
-        }
         if (lock == null) {
             meterRegistry.counter(METRIC_CONTENDED, Tags.of(TAG_NAME, name)).increment()
             return false
@@ -81,12 +85,16 @@ class DistributedLockService(
         }
     }
 
-    private suspend fun acquire(name: String, ttlSeconds: Long): Lock? =
+    private suspend fun acquire(
+        name: String,
+        ttlSeconds: Long,
+    ): Lock? =
         BlockingDb.io {
             val token = UUID.randomUUID().toString()
-            val acquired = redisTemplate
-                .opsForValue()
-                .setIfAbsent(KEY_PREFIX + name, token, Duration.ofSeconds(ttlSeconds))
+            val acquired =
+                redisTemplate
+                    .opsForValue()
+                    .setIfAbsent(KEY_PREFIX + name, token, Duration.ofSeconds(ttlSeconds))
             if (acquired == true) Lock(name, token) else null
         }
 
@@ -107,15 +115,16 @@ class DistributedLockService(
         private const val METRIC_RELEASE_ERROR = METRIC_PREFIX + "release.error"
         private const val TAG_NAME = "name"
 
-        private val RELEASE_SCRIPT = DefaultRedisScript<Long>(
-            """
-            if redis.call('get', KEYS[1]) == ARGV[1] then
-                return redis.call('del', KEYS[1])
-            else
-                return 0
-            end
-            """.trimIndent(),
-            Long::class.javaObjectType,
-        )
+        private val RELEASE_SCRIPT =
+            DefaultRedisScript<Long>(
+                """
+                if redis.call('get', KEYS[1]) == ARGV[1] then
+                    return redis.call('del', KEYS[1])
+                else
+                    return 0
+                end
+                """.trimIndent(),
+                Long::class.javaObjectType,
+            )
     }
 }

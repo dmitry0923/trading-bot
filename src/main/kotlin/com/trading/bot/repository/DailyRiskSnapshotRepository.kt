@@ -51,8 +51,7 @@ class DailyRiskSnapshotRepository(
      * История дневных снапшотов за последние [days] дней (включая сегодня), по дате ASC.
      * Источник данных для `GET /api/v1/risk/daily-pnl-history` (график дневных P&L).
      */
-    fun findRecent(days: Int): List<DailyRiskSnapshot> =
-        findRecent(days, accountId = null)
+    fun findRecent(days: Int): List<DailyRiskSnapshot> = findRecent(days, accountId = null)
 
     /**
      * История дневных снапшотов аккаунта (multi-account): accountId = null → legacy

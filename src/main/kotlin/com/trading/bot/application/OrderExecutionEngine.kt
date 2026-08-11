@@ -287,10 +287,11 @@ class OrderExecutionEngine(
     suspend fun attachProtectionOrders(pos: Position) {
         if (!protectionOrdersEnabled) return
         if (pos.status != PositionStatus.OPEN) return
-        val positionId = pos.id ?: run {
-            logger.error { "Cannot attach protection orders for ${pos.ticker}: position has no id" }
-            return
-        }
+        val positionId =
+            pos.id ?: run {
+                logger.error { "Cannot attach protection orders for ${pos.ticker}: position has no id" }
+                return
+            }
         var dirty = false
 
         // SL: эффективный уровень (жёсткий стоп либо trailing, если строже).
@@ -901,7 +902,11 @@ class OrderExecutionEngine(
                     // Порог пройден → снимаем остаток лимитки.
                     val cancelled =
                         try {
-                            alorClient.cancelOrder(outbox.alorOrderId, outbox.idempotencyKey ?: "", portfolio = portfolioResolver(pos.accountId))
+                            alorClient.cancelOrder(
+                                outbox.alorOrderId,
+                                outbox.idempotencyKey ?: "",
+                                portfolio = portfolioResolver(pos.accountId),
+                            )
                         } catch (e: Exception) {
                             logger.error(e) {
                                 "Entry remainder cancel FAILED for ${pos.ticker} " +

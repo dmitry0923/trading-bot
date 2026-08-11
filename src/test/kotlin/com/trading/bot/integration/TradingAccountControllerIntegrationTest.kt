@@ -182,7 +182,14 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
         assertEquals(250.0, body.get("openPnl").asDouble())
         assertEquals(-150.0, body.get("realizedPnlToday").asDouble())
         assertEquals(1, body.get("closedTodayCount").asInt())
-        assertEquals("SBER", body.get("openPositions").first().get("ticker").asString())
+        assertEquals(
+            "SBER",
+            body
+                .get("openPositions")
+                .first()
+                .get("ticker")
+                .asString(),
+        )
     }
 
     @Test
@@ -309,7 +316,14 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
         assertEquals(1, filtered.get("openPositionsCount").asInt())
         assertEquals(1, filtered.get("closedTodayCount").asInt())
         assertEquals(300.5, filtered.get("dailyPnl").asDouble())
-        assertEquals(accountA, filtered.get("openPositions").first().get("accountId").asLong())
+        assertEquals(
+            accountA,
+            filtered
+                .get("openPositions")
+                .first()
+                .get("accountId")
+                .asLong(),
+        )
 
         val aggregated = objectMapper.readTree(get("/api/v1/dashboard", adminToken()).body())
         assertTrue(aggregated.get("accountId").isNull)
@@ -356,7 +370,14 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
 
             assertEquals(accountId, snapshot.get("accountId").asLong())
             assertEquals(1, snapshot.get("openPositionsCount").asInt())
-            assertEquals("SBER", snapshot.get("openPositions").first().get("ticker").asString())
+            assertEquals(
+                "SBER",
+                snapshot
+                    .get("openPositions")
+                    .first()
+                    .get("ticker")
+                    .asString(),
+            )
         } finally {
             response.body().close()
         }

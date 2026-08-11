@@ -125,7 +125,9 @@ class OrderOutboxService(
                     accountId = accountId,
                 ),
             )
-        logger.info { "Outbox order saved: ${outbox.id} $side $qty $ticker ($type) idem=$idempotencyKey pos=$positionId account=$accountId" }
+        logger.info {
+            "Outbox order saved: ${outbox.id} $side $qty $ticker ($type) idem=$idempotencyKey pos=$positionId account=$accountId"
+        }
         meterRegistry.counter("outbox.saved", Tags.of("type", type)).increment()
         return dispatch(outbox)
     }
@@ -254,18 +256,35 @@ class OrderOutboxService(
         return try {
             val orderId =
                 when (type) {
-                    "limit" -> price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
-                    "market" -> alorClient.placeMarketOrder(ticker, side, qty, idempotencyKey, portfolio)
-                    "stop" -> stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
-                    "take-profit" -> stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
-                    "cancel" ->
+                    "limit" -> {
+                        price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                    }
+
+                    "market" -> {
+                        alorClient.placeMarketOrder(ticker, side, qty, idempotencyKey, portfolio)
+                    }
+
+                    "stop" -> {
+                        stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                    }
+
+                    "take-profit" -> {
+                        stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                    }
+
+                    "cancel" -> {
                         when (alorClient.cancelOrder(payload.path("orderId").asString(), idempotencyKey, portfolio)) {
                             // CONFIRMED — заявка снята; REJECTED — «не рабочая» (уже отменена/
                             // исполнена/не найдена) — обе однозначны, ордера больше нет.
                             AlorClient.CancelResult.CONFIRMED, AlorClient.CancelResult.REJECTED -> "cancelled"
+
                             AlorClient.CancelResult.UNCERTAIN -> null
                         }
-                    else -> null
+                    }
+
+                    else -> {
+                        null
+                    }
                 }
             if (orderId != null) {
                 outboxRepo.markSent(id, orderId)

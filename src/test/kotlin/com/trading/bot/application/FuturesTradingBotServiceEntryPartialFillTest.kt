@@ -44,8 +44,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
-import org.springframework.data.redis.core.StringRedisTemplate
 import org.mockito.kotlin.verify
+import org.springframework.data.redis.core.StringRedisTemplate
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -138,7 +138,8 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     @BeforeEach
     fun stubAccount() {
         runBlocking {
-            Mockito.`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
+            Mockito
+                .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
                 .thenReturn(alorConfig.portfolio)
         }
     }

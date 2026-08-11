@@ -4,6 +4,8 @@ import com.trading.bot.model.entity.TradingAccount
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.AumProvider
+import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.TradingAccountService
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.DeleteMapping
@@ -17,17 +19,21 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import java.math.BigDecimal
+import java.time.LocalDate
+import java.time.LocalDateTime
 
 /**
  * Управление торговыми аккаунтами (multi-account, roadmap v2.2).
  *
  * - `GET /api/v1/accounts` — список аккаунтов с числом открытых позиций;
  * - `GET /api/v1/accounts/{id}` — аккаунт + его открытые позиции;
+ * - `GET /api/v1/accounts/{id}/dashboard` — live-снимок аккаунта (AUM, daily P&L,
+ *   лимиты, открытые/закрытые сегодня позиции);
  * - `GET /api/v1/accounts/{id}/daily-pnl` — история дневных P&L аккаунта;
  * - `POST /api/v1/accounts` — создать (ADMIN);
  * - `PUT /api/v1/accounts/{id}` — полная замена (ADMIN): nullable-поля `null` очищают,
  *   непустые — обязательны;
- * - `DELETE /api/v1/accounts/{id}` — удалить (ADMIN), 409 при открытых позициях
+ * - `DELETE /api/v1/accounts/{id}` — удалить (ADMIN), 409 при позициях
  *   или неотправленных outbox-ордерах.
  *
  * Пустая таблица = legacy single-account режим (портфель из AlorConfig.portfolio).
@@ -39,6 +45,8 @@ class TradingAccountController(
     private val positionRepository: PositionRepository,
     private val orderOutboxRepository: OrderOutboxRepository,
     private val dailyRiskSnapshotRepository: DailyRiskSnapshotRepository,
+    private val aumProvider: AumProvider,
+    private val drawdownProtectionService: DrawdownProtectionService,
 ) {
     @GetMapping
     suspend fun list(): List<Map<String, Any?>> =
@@ -55,6 +63,39 @@ class TradingAccountController(
         return summary(account) + mapOf(
             "openPositions" to positionRepository.findOpenByAccount(id),
             "openPositionsCount" to positionRepository.findOpenCountByAccount(id),
+        )
+    }
+
+    /**
+     * Live-снимок аккаунта: AUM, дневной P&L и лимиты, открытые позиции с P&L,
+     * закрытые сегодня. Per-account аналог `/api/v1/dashboard`.
+     */
+    @GetMapping("/{id}/dashboard")
+    suspend fun accountDashboard(
+        @PathVariable id: Long,
+    ): Map<String, Any?> {
+        val account = tradingAccountService.findById(id)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
+        val openPositions = positionRepository.findOpenByAccount(id)
+        val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
+        val todayStart = LocalDate.now().atStartOfDay()
+        val closedToday = positionRepository.findClosedByAccountSince(id, todayStart)
+        val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
+        return mapOf(
+            "account" to summary(account),
+            "portfolio" to account.alorPortfolio,
+            "aum" to aumProvider.currentAum(id),
+            "dailyPnl" to drawdownProtectionService.getDailyPnl(id),
+            "dailyLossLimitReached" to drawdownProtectionService.isDailyLossLimitReached(id),
+            "entryBlocked" to drawdownProtectionService.isEntryBlocked(id),
+            "maxDailyLossRub" to tradingAccountService.maxDailyLossRubFor(id),
+            "maxOpenPositions" to tradingAccountService.maxOpenPositionsFor(id),
+            "openPositions" to openPositions,
+            "openPositionsCount" to openPositions.size,
+            "openPnl" to BigDecimal(openPnl),
+            "realizedPnlToday" to BigDecimal(realizedPnlToday),
+            "closedTodayCount" to closedToday.size,
+            "timestamp" to LocalDateTime.now().toString(),
         )
     }
 

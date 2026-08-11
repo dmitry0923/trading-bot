@@ -67,7 +67,6 @@ class TradingAccountService(
     }
 
     /** Персональный лимит открытых позиций; null → глобальный [RiskConfig.maxOpenPositions]. */
-    @Suppress("unused")
     suspend fun maxOpenPositionsFor(accountId: Long?): Int =
         accountId?.let { findById(it)?.maxOpenPositions } ?: riskConfig.maxOpenPositions
 
@@ -76,7 +75,6 @@ class TradingAccountService(
         accountId?.let { findById(it)?.aumRub }
 
     /** Персональный дневной лимит убытка (руб); null → расчёт % от AUM. */
-    @Suppress("unused")
     suspend fun maxDailyLossRubFor(accountId: Long?): BigDecimal? =
         accountId?.let { findById(it)?.maxDailyLossRub }
 

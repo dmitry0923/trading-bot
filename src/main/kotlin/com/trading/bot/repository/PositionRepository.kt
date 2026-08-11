@@ -197,6 +197,26 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /** Закрытые позиции аккаунта с момента [since] (multi-account; accountId = null → legacy). */
+    suspend fun findClosedByAccountSince(
+        accountId: Long?,
+        since: LocalDateTime,
+    ): List<Position> {
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM positions WHERE status != 'OPEN' AND account_id IS NULL AND closed_at >= :since ORDER BY closed_at DESC"
+            } else {
+                "SELECT * FROM positions WHERE status != 'OPEN' AND account_id = :accountId AND closed_at >= :since ORDER BY closed_at DESC"
+            }
+        val spec = databaseClient.sql(sql).bind("since", since)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     /**
      * Агрегаты по закрытым позициям за ВСЮ историю (без загрузки строк):
      * - [totalRealized] — суммарный реализованный P&L;

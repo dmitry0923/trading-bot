@@ -129,6 +129,8 @@ erDiagram
 
 Индексы: `idx_positions_ticker(ticker)`, `idx_positions_status(status)`, `idx_positions_closed_at(closed_at)`.
 
+> **Реализовано**: партиционирование по `opened_at` (PostgreSQL native partitioning, миграция `019-partition-positions-agent-logs.sql`). PK `(id, opened_at)` — partition key входит в уникальность (требование для партиционированного родителя). Месячные партиции `positions_YYYYMM` + `positions_default`, горячее множество OPEN-позиций живёт в свежих партициях (раздел 6.4).
+
 ### strategies
 
 | Колонка | Тип | NOT NULL | Описание |
@@ -186,6 +188,8 @@ UNIQUE `(ticker, timeframe, time)` — защита от дублей (partition
 | created_at | TIMESTAMP | |
 
 Индексы: `idx_agent_logs_cycle(cycle_id)`, `idx_agent_logs_created_at(created_at)`.
+
+> **Реализовано**: партиционирование по `created_at` (PostgreSQL native partitioning, миграция `019`). PK `(id, created_at)` — partition key входит в уникальность. Месячные партиции `agent_logs_YYYYMM` + `agent_logs_default` — самая быстрорастущая таблица (LLM-логи по каждому циклу) получает pruning по датам, запись идёт только в горячую партицию (раздел 6.4).
 
 ### order_outbox
 
@@ -274,7 +278,13 @@ CREATE INDEX IF NOT EXISTS idx_positions_ticker ON positions(ticker);
 
 **Включение на Yandex Managed PostgreSQL**: расширение управляется НЕ через SQL, а через консоль/CLI/Terraform (`--extensions timescaledb` + shared_preload_libraries `timescaledb`, перезапуск мастера). До включения миграция `012` пропускается с предупреждением, `candles` остаётся обычной таблицей (батч-запись через `saveAll` всё равно убирает деградацию). После включения нужно перезапустить приложение (или выполнить конвертацию вручную).
 
-**Архивация старых данных**: для `agent_logs` — `raw_output` старых циклов можно удалять (аггрегаты остаются в `positions`). Запланировано как @Scheduled job (раздел 13).
+**Партиционирование `positions`/`agent_logs` (PostgreSQL native partitioning)**: миграция `019-partition-positions-agent-logs.sql` переводит обе таблицы на `PARTITION BY RANGE` — `positions` по `opened_at`, `agent_logs` по `created_at`:
+
+- месячные партиции `positions_YYYYMM` / `agent_logs_YYYYMM` (2024-01 .. 2027-12) + `_default` (страховка для строк вне диапазона). PK становится `(id, opened_at)` / `(id, created_at)` — partition key обязан входить в уникальность на родителе; `RETURNING id` и точечные запросы по `id` работают без изменений (index probe по каждой партиции);
+- конвертация выполняется в одном атомарном `DO $$ ... $$`-блоке (одна транзакция): при ошибке всё откатывается, таблицы остаются в исходном состоянии. Работает на любом PostgreSQL ≥ 12 (TimescaleDB не требуется);
+- будущие партиции поддерживает `PartitionMaintenanceService` (раздел 13): при старте приложения гарантируется партиция текущего месяца, `@Scheduled`-задача (раз в 6 часов) создаёт партиции на 3 месяца вперёд. Идемпотентно через `to_regclass`.
+
+**Архивация старых данных**: для `agent_logs` — `raw_output` старых циклов можно удалять (агрегаты остаются в `positions`). Партиционирование упрощает архивацию: устаревшую месячную партицию можно `DETACH`+`DROP` или переложить в холодное хранилище без влияния на горячие данные. Автоматический retention (по аналогии с retention-policy свечей) — кандидат на roadmap (раздел 13).
 
 **Массовая запись свечей**: репозиторий пишет свечи батчами (`CandleRepository.saveAll`, multi-row `INSERT ... ON CONFLICT DO NOTHING`, батчи по 500 строк) вместо паттерна `exists`+`save` на каждую строку — это убирает деградацию записи независимо от СУБД.
 

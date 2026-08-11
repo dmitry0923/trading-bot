@@ -47,7 +47,7 @@ gantt
 | Emergency stop endpoint | `POST /api/v1/bot/emergency-stop` — закрывает все позиции + запрещает открытие | ✅ |
 | Persist daily PnL | перенос `dailyPnl` из памяти в БД (`daily_risk_snapshot`) + `GET /api/v1/risk/daily-pnl-history` (раздел 6.6) | ✅ |
 | Партиционирование `candles` | TimescaleDB hypertable: чанки по time (1 неделя) + retention 90 дней (раздел 6.4) | ✅ v2.2 |
-| Партиционирование `positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | 🔜 |
+| Партиционирование `positions`/`agent_logs` | PostgreSQL native partitioning (раздел 6.4) | ✅ v2.2 |
 | Точный контроль SL/TP в лимитных заявках | добавлять SL/TP заявки при открытии позиции | 🔜 |
 | Distributed lock | возможность запуска нескольких инстансов без гонок (раздел 2.6) | 🔜 |
 | Multi-account | поддержка нескольких Alor-портфелей с общим конвейером и персональными лимитами | 🔜 |

@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Потребляет [WsConnectionEvent] из [WebSocketManager]:
  * - при КАЖДОМ переподключении (CONNECTED любого потока) сверяет открытые заявки,
- *   позиции и сделки через [AlorClient.getOpenOrders]/[getPositions]/[getRecentTrades].
+ *   позиции и сделки через [AlorClient.getOpenOrders]/[AlorClient.getPositions]/[AlorClient.getRecentTrades].
  *   Это закрывает окно потери данных при обрыве WS: бот узнаёт о fill'ах, которых
  *   не видел по WebSocket, и не торгует на «фантомных» позициях.
  * - при DISCONNECTED фиксирует метрику окна рассинхрона (данные уже частично
@@ -124,9 +124,9 @@ class StateReconciliationService(
         val start = System.currentTimeMillis()
         logger.info { "State reconciliation started (orders, positions, trades)" }
 
-        val ordersResult = alorClient.getOpenOrders()
-        val positionsResult = alorClient.getPositions()
-        val tradesResult = alorClient.getRecentTrades()
+        val ordersResult = alorClient.getOpenOrders(portfolio = alorConfig.portfolio)
+        val positionsResult = alorClient.getPositions(alorConfig.portfolio)
+        val tradesResult = alorClient.getRecentTrades(alorConfig.portfolio)
 
         if (
             ordersResult is ReconcileResult.Failed ||

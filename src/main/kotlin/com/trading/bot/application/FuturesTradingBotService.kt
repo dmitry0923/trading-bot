@@ -21,6 +21,7 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.TradeEventService
+import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -70,6 +71,7 @@ class FuturesTradingBotService(
     private val decisionEngine: DecisionEngine,
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
+    private val tradingAccountService: TradingAccountService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -92,6 +94,7 @@ class FuturesTradingBotService(
             onEntryOpened = { eventPublisher.publishPositionOpened(it) },
             onPositionClosed = { eventPublisher.publishPositionClosed(it) },
             protectionOrdersEnabled = alorClient.isLiveMode,
+            portfolioResolver = { accountId -> tradingAccountService.portfolioOf(accountId) },
         )
 
     /** Мониторинг открытых позиций на каждом тике. */

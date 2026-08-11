@@ -93,6 +93,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyString(),
                         Mockito.anyInt(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenReturn("ord-close-${System.nanoTime()}")
             Mockito
@@ -100,6 +101,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                     alorClient.verifyOrder(
                         Mockito.anyString(),
                         Mockito.any(BigDecimal::class.java),
+                        Mockito.anyString(),
                     ),
                 ).thenAnswer { inv -> AlorClient.OrderExecution("FILLED", 1000, inv.getArgument<BigDecimal>(1)) }
         }
@@ -277,6 +279,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyInt(),
+                        Mockito.anyString(),
                         Mockito.anyString(),
                     ),
                 ).thenReturn("ord-si-${System.nanoTime()}")

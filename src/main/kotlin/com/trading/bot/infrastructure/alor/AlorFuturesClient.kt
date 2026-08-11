@@ -78,14 +78,14 @@ class AlorFuturesClient(
     /**
      * Свободные средства портфеля (buying power).
      */
-    suspend fun getPortfolioMoney(): BigDecimal {
+    suspend fun getPortfolioMoney(portfolio: String = alorConfig.portfolio): BigDecimal {
         if (!isLive) return defaultPortfolioMoney
 
         return try {
             val raw: String =
                 webClient
                     .get()
-                    .uri("${alorConfig.apiUrl}/md/v2/Clients/${alorConfig.portfolio}/summaries")
+                    .uri("${alorConfig.apiUrl}/md/v2/Clients/$portfolio/summaries")
                     .header("Authorization", "Bearer ${alorConfig.token}")
                     .retrieve()
                     .bodyToMono(String::class.java)

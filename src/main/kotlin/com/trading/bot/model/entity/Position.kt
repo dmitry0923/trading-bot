@@ -58,4 +58,5 @@ data class Position(
     var openedAt: LocalDateTime = LocalDateTime.now(),
     var closedAt: LocalDateTime? = null,
     var cycleId: String? = null,
+    var accountId: Long? = null,
 )

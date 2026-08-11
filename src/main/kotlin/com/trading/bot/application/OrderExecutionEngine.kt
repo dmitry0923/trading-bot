@@ -100,6 +100,7 @@ class OrderExecutionEngine(
     private val onEntryOpened: (Position) -> Unit = {},
     private val onPositionClosed: (Position) -> Unit = {},
     private val protectionOrdersEnabled: Boolean = false,
+    private val portfolioResolver: suspend (Long?) -> String = { alorConfig.portfolio },
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -122,16 +123,17 @@ class OrderExecutionEngine(
         direction: PositionDirection,
         qty: Int,
         entryPrice: BigDecimal,
+        accountId: Long? = null,
         buildPosition: (orderId: String?, pending: Boolean, fillPrice: BigDecimal, qty: Int) -> Position,
     ): Position? {
         val side = if (direction == PositionDirection.LONG) "buy" else "sell"
-        val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit")
+        val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit", accountId = accountId)
         if (!placed.success || placed.alorOrderId == null) {
             if (placed.uncertain) {
-                // Запрос мог дойти до Alor → создаём позицию в состоянии pendingEntry;
+                // Заявка могла дойти до Alor — создаём позицию в статусе pendingEntry;
                 // факт исполнения подтвердит реконсилятор (State Reconciliation).
                 logger.warn { "Entry for $ticker UNCERTAIN (outbox=${placed.outboxId}); position created as pendingEntry" }
-                val pos = buildPosition(null, true, entryPrice, qty)
+                val pos = buildPosition(null, true, entryPrice, qty).also { it.accountId = accountId }
                 positionRepo.save(pos)
                 meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
             } else {
@@ -142,7 +144,7 @@ class OrderExecutionEngine(
         }
 
         val orderId = placed.alorOrderId
-        val execution = alorClient.verifyOrder(orderId)
+        val execution = alorClient.verifyOrder(orderId, portfolio = portfolioResolver(accountId))
         val fillPrice = execution?.avgPrice ?: entryPrice
         val filledQty = execution?.filledQuantity?.takeIf { it in 1 until qty }
 
@@ -155,13 +157,13 @@ class OrderExecutionEngine(
                 "PARTIAL entry $ticker: filled=$filledQty of $qty (order=$orderId) — " +
                     "pendingEntry until remainder cancelled/filled"
             }
-            val partialPos = buildPosition(orderId, true, fillPrice, filledQty)
+            val partialPos = buildPosition(orderId, true, fillPrice, filledQty).also { it.accountId = accountId }
             positionRepo.save(partialPos)
             meterRegistry.counter("$metricPrefix.entry.partial", Tags.of("ticker", ticker)).increment()
             return null
         }
 
-        val pos = buildPosition(orderId, false, fillPrice, qty)
+        val pos = buildPosition(orderId, false, fillPrice, qty).also { it.accountId = accountId }
         val savedPos = positionRepo.save(pos)
         tradeEventService.recordPositionOpened(savedPos)
         onEntryOpened(savedPos)
@@ -444,7 +446,7 @@ class OrderExecutionEngine(
      */
     private suspend fun checkProtectionFills(pos: Position) {
         pos.slOrderId?.let { id ->
-            val ex = alorClient.verifyOrder(id) ?: return@let
+            val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
             if (isFilledStatus(ex)) {
                 pos.slOrderId = null
                 pos.slOrderPrice = null
@@ -462,7 +464,7 @@ class OrderExecutionEngine(
         }
         pos.tpOrderId?.let { id ->
             if (pos.status != PositionStatus.OPEN) return@let
-            val ex = alorClient.verifyOrder(id) ?: return@let
+            val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
             if (isFilledStatus(ex)) {
                 pos.tpOrderId = null
                 pos.tpOrderPrice = null
@@ -496,7 +498,7 @@ class OrderExecutionEngine(
         if (pos.pendingClose && pos.closeOrderId != null) {
             val positionId = pos.id
             if (positionId != null) {
-                orderOutboxService.placeCancelOrder(positionId, pos.closeOrderId!!)
+                orderOutboxService.placeCancelOrder(positionId, pos.closeOrderId!!, accountId = pos.accountId)
                 logger.info {
                     "Protection $reason closed ${pos.ticker} first — cancelling pending close order ${pos.closeOrderId}"
                 }
@@ -525,13 +527,13 @@ class OrderExecutionEngine(
             } else {
                 val result =
                     try {
-                        alorClient.cancelOrder(oldId, UuidV7.uuidString())
+                        alorClient.cancelOrder(oldId, UuidV7.uuidString(), portfolio = portfolioResolver(pos.accountId))
                     } catch (e: Exception) {
                         logger.warn(e) { "SL replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId) — retry next cycle" }
                         return
                     }
                 if (result == AlorClient.CancelResult.REJECTED) {
-                    val ex = alorClient.verifyOrder(oldId)
+                    val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
                     if (ex != null && isFilledStatus(ex)) {
                         pos.slOrderId = null
                         pos.slOrderPrice = null
@@ -558,13 +560,13 @@ class OrderExecutionEngine(
             } else {
                 val result =
                     try {
-                        alorClient.cancelOrder(oldId, UuidV7.uuidString())
+                        alorClient.cancelOrder(oldId, UuidV7.uuidString(), portfolio = portfolioResolver(pos.accountId))
                     } catch (e: Exception) {
                         logger.warn(e) { "TP replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId) — retry next cycle" }
                         return
                     }
                 if (result == AlorClient.CancelResult.REJECTED) {
-                    val ex = alorClient.verifyOrder(oldId)
+                    val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
                     if (ex != null && isFilledStatus(ex)) {
                         pos.tpOrderId = null
                         pos.tpOrderPrice = null
@@ -598,14 +600,14 @@ class OrderExecutionEngine(
         if (!protectionOrdersEnabled) return
         val positionId = pos.id ?: return
         if (pos.slOrderId != null && skip != "SL") {
-            orderOutboxService.placeCancelOrder(positionId, pos.slOrderId!!)
+            orderOutboxService.placeCancelOrder(positionId, pos.slOrderId!!, accountId = pos.accountId)
             logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=${pos.slOrderId})" }
             pos.slOrderId = null
             pos.slOrderPrice = null
             pos.slPendingReplace = false
         }
         if (pos.tpOrderId != null && skip != "TP") {
-            orderOutboxService.placeCancelOrder(positionId, pos.tpOrderId!!)
+            orderOutboxService.placeCancelOrder(positionId, pos.tpOrderId!!, accountId = pos.accountId)
             logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=${pos.tpOrderId})" }
             pos.tpOrderId = null
             pos.tpOrderPrice = null
@@ -721,7 +723,7 @@ class OrderExecutionEngine(
         reason: String,
     ) {
         val orderId = pos.closeOrderId ?: return
-        val execution = alorClient.verifyOrder(orderId, expectedPrice = expectedPrice)
+        val execution = alorClient.verifyOrder(orderId, expectedPrice = expectedPrice, portfolio = portfolioResolver(pos.accountId))
         if (execution == null) {
             // verifyOrder недоступен → вторичная сверка по qty позиции на бирже:
             // если позиция закрыта/уменьшена, close-ордер исполнился (защита от
@@ -747,7 +749,7 @@ class OrderExecutionEngine(
      * verifyOrder/список заявок не подтверждают (eventual consistency).
      */
     private suspend fun closeConfirmedByPositionDelta(pos: Position): Boolean =
-        when (val result = alorClient.getPositions()) {
+        when (val result = alorClient.getPositions(portfolio = portfolioResolver(pos.accountId))) {
             is AlorClient.ReconcileResult.Failed -> {
                 false
             }
@@ -863,7 +865,7 @@ class OrderExecutionEngine(
         }
         when {
             outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
-                val execution = alorClient.verifyOrder(outbox.alorOrderId) ?: return
+                val execution = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId)) ?: return
                 if (execution.status.contains("reject") || execution.status.contains("cancel")) {
                     abandonEntry(pos, "ENTRY_REJECTED")
                     return
@@ -899,7 +901,7 @@ class OrderExecutionEngine(
                     // Порог пройден → снимаем остаток лимитки.
                     val cancelled =
                         try {
-                            alorClient.cancelOrder(outbox.alorOrderId, outbox.idempotencyKey ?: "")
+                            alorClient.cancelOrder(outbox.alorOrderId, outbox.idempotencyKey ?: "", portfolio = portfolioResolver(pos.accountId))
                         } catch (e: Exception) {
                             logger.error(e) {
                                 "Entry remainder cancel FAILED for ${pos.ticker} " +
@@ -908,7 +910,7 @@ class OrderExecutionEngine(
                             AlorClient.CancelResult.UNCERTAIN
                         }
                     if (cancelled != AlorClient.CancelResult.CONFIRMED) return // отмена не подтверждена → ждём следующего цикла
-                    val finalExec = alorClient.verifyOrder(outbox.alorOrderId)
+                    val finalExec = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId))
                     val finalQty = (finalExec?.filledQuantity ?: cumulative).coerceIn(1, requestedQty)
                     pos.alorOrderId = outbox.alorOrderId
                     pos.pendingEntry = false

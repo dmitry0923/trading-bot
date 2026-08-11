@@ -16,6 +16,8 @@ import java.math.BigDecimal
  * @param currentGo текущее гарантийное обеспечение (для фьючерсов)
  * @param atr средний истинный диапазон в единицах цены (для ATR%-фильтра)
  * @param openPositions текущие открытые позиции
+ * @param accountId аккаунт (multi-account, roadmap v2.2); null = legacy single-account
+ * @param maxOpenPositions персональный лимит открытых позиций аккаунта
  */
 data class EntryRequest(
     val ticker: String,
@@ -26,6 +28,8 @@ data class EntryRequest(
     val currentGo: BigDecimal,
     val atr: BigDecimal? = null,
     val openPositions: List<Position> = emptyList(),
+    val accountId: Long? = null,
+    val maxOpenPositions: Int? = null,
 )
 
 /**

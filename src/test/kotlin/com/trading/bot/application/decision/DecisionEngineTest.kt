@@ -20,6 +20,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -55,8 +56,10 @@ class DecisionEngineTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val lockRedis = Mockito.mock(StringRedisTemplate::class.java)
+    @Suppress("UNCHECKED_CAST")
     private val lockValueOps = Mockito.mock(ValueOperations::class.java) as ValueOperations<String, String>
     private val distributedLockService = DistributedLockService(distributedLockConfig, lockRedis, meterRegistry)
+    private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -83,7 +86,7 @@ class DecisionEngineTest {
     }
 
     private fun gateway(): ExecutionGateway =
-        { _, direction, qty, entryPrice, buildPosition ->
+        { _, direction, qty, entryPrice, _, buildPosition ->
             gatewayCalls++
             gatewayQty = qty
             gatewayDirection = direction
@@ -103,6 +106,7 @@ class DecisionEngineTest {
             listOf(profile),
             distributedLockService,
             distributedLockConfig,
+            tradingAccountService,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -392,6 +396,7 @@ class DecisionEngineTest {
             signal: Signal,
             entryPrice: BigDecimal,
             openPositions: List<Position>,
+            accountId: Long?,
         ): EntryRequest {
             buildEntryRequestCalls++
             return EntryRequest(
@@ -402,6 +407,7 @@ class DecisionEngineTest {
                 portfolioMoney = BigDecimal("100000"),
                 currentGo = BigDecimal.ZERO,
                 openPositions = openPositions,
+                accountId = accountId,
             )
         }
 

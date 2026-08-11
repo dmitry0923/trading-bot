@@ -59,14 +59,16 @@ class FuturesRiskEngine(
         if (!riskConfig.enabled) return reject("RISK_DISABLED")
         if (!leverageConfig.enabled) return reject("LEVERAGE_DISABLED")
         if (!tradingCalendar.isTradingAllowed()) return reject("OUTSIDE_HOURS")
-        if (dailyRiskGuard.isDailyLossLimitReached()) return reject("DAILY_LIMIT")
-        if (dailyRiskGuard.isEntryBlocked()) return reject("DRAWDOWN_PROTECTION")
+        if (dailyRiskGuard.isDailyLossLimitReached(request.accountId)) return reject("DAILY_LIMIT")
+        if (dailyRiskGuard.isEntryBlocked(request.accountId)) return reject("DRAWDOWN_PROTECTION")
         if (volatilityFilter.isVolatilityAnomalous()) return reject("VOLATILITY_INDEX")
         if (riskConfig.marketRegimeEnabled && marketRegimeProvider.currentRegime() == MarketRegime.STRESS) {
             return reject("MARKET_STRESS")
         }
 
-        if (request.openPositions.size >= riskConfig.futuresMaxOpenPositions) return reject("MAX_POSITIONS")
+        if (request.openPositions.size >= (request.maxOpenPositions ?: riskConfig.futuresMaxOpenPositions)) {
+            return reject("MAX_POSITIONS")
+        }
 
         if (!instrumentsConfig.isFutures(request.ticker)) return reject("UNSUPPORTED_INSTRUMENT")
         if (request.entryPrice <= BigDecimal.ZERO ||

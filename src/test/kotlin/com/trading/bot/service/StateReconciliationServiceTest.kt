@@ -79,9 +79,9 @@ class StateReconciliationServiceTest {
         trades: List<AlorClient.ExchangeTrade> = emptyList(),
     ) {
         runBlocking {
-            Mockito.`when`(alorClient.getOpenOrders()).thenReturn(ReconcileResult.Ok(orders))
-            Mockito.`when`(alorClient.getPositions()).thenReturn(ReconcileResult.Ok(positions))
-            Mockito.`when`(alorClient.getRecentTrades()).thenReturn(ReconcileResult.Ok(trades))
+            Mockito.`when`(alorClient.getOpenOrders(Mockito.anyString())).thenReturn(ReconcileResult.Ok(orders))
+            Mockito.`when`(alorClient.getPositions(Mockito.anyString())).thenReturn(ReconcileResult.Ok(positions))
+            Mockito.`when`(alorClient.getRecentTrades(Mockito.anyString())).thenReturn(ReconcileResult.Ok(trades))
         }
     }
 
@@ -164,9 +164,9 @@ class StateReconciliationServiceTest {
     fun `reconciliation is aborted on fetch failure without mutating local state`() {
         stubOpenPositions(openPos("SBER", 10))
         runBlocking {
-            Mockito.`when`(alorClient.getOpenOrders()).thenReturn(ReconcileResult.Ok(emptyList()))
-            Mockito.`when`(alorClient.getPositions()).thenReturn(ReconcileResult.Failed)
-            Mockito.`when`(alorClient.getRecentTrades()).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(alorClient.getOpenOrders(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(alorClient.getPositions(Mockito.anyString())).thenReturn(ReconcileResult.Failed)
+            Mockito.`when`(alorClient.getRecentTrades(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
         }
 
         runBlocking { service.reconcile() }
@@ -201,7 +201,7 @@ class StateReconciliationServiceTest {
 
         runBlocking { service.reconcile() }
 
-        runBlocking { verify(alorClient, never()).getOpenOrders() }
+        runBlocking { verify(alorClient, never()).getOpenOrders(Mockito.anyString()) }
         runBlocking { verify(positionRepo, never()).save(anyPosition()) }
     }
 }

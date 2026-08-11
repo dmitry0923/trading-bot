@@ -13,6 +13,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -59,6 +60,7 @@ class DecisionEngine(
     private val profiles: List<EntryProfile>,
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
+    private val tradingAccountService: TradingAccountService,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -118,9 +120,13 @@ class DecisionEngine(
         val entryPrice = alorClient.getLastPrice(ticker) ?: signal.targetPrice
         val openPositions = positionRepo.findByStatus(PositionStatus.OPEN)
 
+        // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью).
+        // null = legacy single-account (таблица пуста) или все аккаунты переполнены.
+        val accountId = tradingAccountService.selectAccount()
+
         // Риск-этап: Да/Нет (дневной лимит, drawdown, волатильность, дубли,
         // лимиты позиций/секторов, ATR%, STRESS, валидность входных данных).
-        val request = profile.buildEntryRequest(signal, entryPrice, openPositions)
+        val request = profile.buildEntryRequest(signal, entryPrice, openPositions, accountId)
         when (val verdict = profile.riskEngine.canEnter(request)) {
             is RiskVerdict.Rejected -> {
                 logger.warn { "Risk engine rejected $ticker: ${verdict.reason}" }
@@ -221,7 +227,7 @@ class DecisionEngine(
         }
 
         val opened =
-            gateway.placeEntryOrder(ticker, direction, params.quantity, entryPrice) { orderId, pending, fillPrice, qty ->
+            gateway.placeEntryOrder(ticker, direction, params.quantity, entryPrice, accountId) { orderId, pending, fillPrice, qty ->
                 profile.buildPosition(signal, params, orderId, pending, fillPrice, qty)
             }
         if (opened != null) {

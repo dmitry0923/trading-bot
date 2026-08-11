@@ -56,6 +56,7 @@ interface EntryProfile {
         signal: Signal,
         entryPrice: BigDecimal,
         openPositions: List<Position>,
+        accountId: Long?,
     ): EntryRequest
 
     /**

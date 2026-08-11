@@ -40,7 +40,7 @@ class RiskManagementService(
      *
      * @return true, если дневной P&L <= -maxDailyLossPercent% AUM (единый источник)
      */
-    fun isDailyLossLimitReached(): Boolean = drawdownProtection.isDailyLossLimitReached()
+    fun isDailyLossLimitReached(accountId: Long? = null): Boolean = drawdownProtection.isDailyLossLimitReached(accountId)
 
     /**
      * Проверка волатильности: ATR% от цены больше лимита → вход запрещён.
@@ -129,8 +129,11 @@ class RiskManagementService(
      *
      * @param pnl прибыль/убыток сделки
      */
-    fun updateDailyPnL(pnl: BigDecimal) {
-        drawdownProtection.updateDailyPnl(pnl)
+    fun updateDailyPnL(
+        pnl: BigDecimal,
+        accountId: Long? = null,
+    ) {
+        drawdownProtection.updateDailyPnl(pnl, accountId)
     }
 
     /**
@@ -138,5 +141,5 @@ class RiskManagementService(
      *
      * @return накопленный дневной P&L
      */
-    fun getDailyPnL(): BigDecimal = drawdownProtection.getDailyPnl()
+    fun getDailyPnL(accountId: Long? = null): BigDecimal = drawdownProtection.getDailyPnl(accountId)
 }

@@ -47,6 +47,7 @@ data class PositionClosedEvent(
     val reason: String,
     val closedAt: LocalDateTime = LocalDateTime.now(),
     val cycleId: String? = null,
+    val accountId: Long? = null,
 )
 
 data class PositionOpenedEvent(
@@ -57,6 +58,7 @@ data class PositionOpenedEvent(
     val entryPrice: BigDecimal,
     val openedAt: LocalDateTime = LocalDateTime.now(),
     val cycleId: String? = null,
+    val accountId: Long? = null,
 )
 
 /**

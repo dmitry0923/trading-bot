@@ -34,11 +34,13 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
+import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
@@ -82,6 +84,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val distributedLockService =
         DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
+    private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
 
     private val futuresEntryProfile =
         FuturesEntryProfile(
@@ -93,6 +96,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             leverageConfig,
             instrumentsConfig,
             meterRegistry,
+            tradingAccountService,
         )
     private val decisionEngine =
         DecisionEngine(
@@ -105,6 +109,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             listOf(futuresEntryProfile),
             distributedLockService,
             distributedLockConfig,
+            tradingAccountService,
         )
 
     private val service =
@@ -124,10 +129,19 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             decisionEngine,
             distributedLockService,
             distributedLockConfig,
+            tradingAccountService,
             meterRegistry,
         )
 
     private val savedPositions = mutableListOf<Position>()
+
+    @BeforeEach
+    fun stubAccount() {
+        runBlocking {
+            Mockito.`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
+                .thenReturn(alorConfig.portfolio)
+        }
+    }
 
     private fun anyPosition(): Position {
         Mockito.any(Position::class.java)
@@ -244,7 +258,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                 .`when`(alorFuturesClient.getFuturesGO(Mockito.anyString()))
                 .thenReturn(BigDecimal("1000"))
             Mockito
-                .`when`(alorFuturesClient.getPortfolioMoney())
+                .`when`(alorFuturesClient.getPortfolioMoney(Mockito.anyString()))
                 .thenReturn(BigDecimal("100000"))
             Mockito.`when`(leverageConfig.effective()).thenReturn(BigDecimal("2.0"))
             Mockito
@@ -308,6 +322,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                         Mockito.nullable(String::class.java),
                         Mockito.nullable(BigDecimal::class.java),
                         Mockito.nullable(String::class.java),
+                        Mockito.nullable(Long::class.java),
                     ),
                 ).thenReturn(
                     OrderOutboxService.PlaceOrderResult(
@@ -339,7 +354,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                 .`when`(orderOutboxRepo.findLatestByPositionId(1L))
                 .thenReturn(outboxRow)
             Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java)))
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java), Mockito.anyString()))
                 .thenReturn(execution)
             Mockito
                 .`when`(positionRepo.save(anyPosition()))
@@ -365,7 +380,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         stubEntryAllowed()
         runBlocking {
             Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java)))
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java), Mockito.anyString()))
                 .thenReturn(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")))
         }
 
@@ -433,7 +448,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         )
         runBlocking {
             Mockito
-                .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1"))
+                .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1", alorConfig.portfolio))
                 .thenReturn(AlorClient.CancelResult.CONFIRMED)
         }
 
@@ -442,7 +457,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
         assertEquals(2, pos.quantity)
         runBlocking {
-            verify(alorClient, Mockito.timeout(3000)).cancelOrder(eq("ord-entry-1"), eq("idem-1"))
+            verify(alorClient, Mockito.timeout(3000)).cancelOrder(eq("ord-entry-1"), eq("idem-1"), eq(alorConfig.portfolio))
             verify(eventPublisher, Mockito.timeout(3000)).publishPositionOpened(anyPosition())
         }
     }
@@ -462,7 +477,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
         assertTrue(pos.pendingEntry)
         runBlocking {
-            Mockito.verify(alorClient, Mockito.never()).cancelOrder(Mockito.anyString(), Mockito.anyString())
+            Mockito.verify(alorClient, Mockito.never()).cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
             Mockito.verify(eventPublisher, Mockito.never()).publishPositionOpened(anyPosition())
         }
     }
@@ -478,7 +493,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         )
         runBlocking {
             Mockito
-                .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1"))
+                .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1", alorConfig.portfolio))
                 .thenReturn(AlorClient.CancelResult.REJECTED)
         }
 

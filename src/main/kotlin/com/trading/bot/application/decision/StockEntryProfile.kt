@@ -57,16 +57,18 @@ class StockEntryProfile(
         signal: Signal,
         entryPrice: BigDecimal,
         openPositions: List<Position>,
+        accountId: Long?,
     ): EntryRequest =
         EntryRequest(
             ticker = signal.ticker,
             action = signal.action,
             entryPrice = entryPrice,
             direction = signal.direction(),
-            portfolioMoney = aumProvider.currentAum(),
+            portfolioMoney = aumProvider.currentAum(accountId),
             currentGo = BigDecimal.ZERO,
             atr = candleCache.calculateAtr(signal.ticker, "MINUTE_10", 14),
             openPositions = openPositions,
+            accountId = accountId,
         )
 
     override suspend fun preSizingChecks(
@@ -178,7 +180,7 @@ class StockEntryProfile(
         params: OrderParams,
         size: PositionSizeResult,
     ) {
-        risk.updateDailyPnL(BigDecimal.ZERO)
+        risk.updateDailyPnL(BigDecimal.ZERO, opened.accountId)
         agentLogRepo.save(
             AgentLog(
                 cycleId = signal.cycleId,

@@ -18,6 +18,7 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
+import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -57,6 +58,7 @@ class FuturesTradingBotServicePartialCloseTest {
     private val tradeEventService = Mockito.mock(TradeEventService::class.java)
     private val tradingGate = Mockito.mock(TradingGate::class.java)
     private val decisionEngine = Mockito.mock(DecisionEngine::class.java)
+    private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val distributedLockService =
@@ -79,6 +81,7 @@ class FuturesTradingBotServicePartialCloseTest {
             decisionEngine,
             distributedLockService,
             distributedLockConfig,
+            tradingAccountService,
             meterRegistry,
         )
 
@@ -109,6 +112,9 @@ class FuturesTradingBotServicePartialCloseTest {
     private fun stubCommon(pos: Position) {
         runBlocking {
             Mockito
+                .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
+                .thenReturn("D12345")
+            Mockito
                 .`when`(positionRepo.findByStatus(PositionStatus.OPEN))
                 .thenReturn(listOf(pos))
         }
@@ -129,7 +135,7 @@ class FuturesTradingBotServicePartialCloseTest {
         stubCommon(pos)
         runBlocking {
             Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal()))
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()))
                 .thenReturn(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("90100")))
             Mockito
                 .`when`(
@@ -143,6 +149,7 @@ class FuturesTradingBotServicePartialCloseTest {
                         Mockito.anyString(),
                         Mockito.nullable(BigDecimal::class.java),
                         Mockito.nullable(String::class.java),
+                        Mockito.nullable(Long::class.java),
                     ),
                 ).thenAnswer { inv ->
                     val qty = inv.getArgument<Int>(2)
@@ -166,7 +173,7 @@ class FuturesTradingBotServicePartialCloseTest {
         assertNull(pos.closeOrderId)
         runBlocking {
             Mockito.verify(positionRepo, Mockito.timeout(3000)).findByStatus(PositionStatus.OPEN)
-            Mockito.verify(alorClient, Mockito.timeout(3000)).verifyOrder(Mockito.anyString(), anyBigDecimal())
+            Mockito.verify(alorClient, Mockito.timeout(3000)).verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString())
             Mockito
                 .verify(orderOutboxService, Mockito.timeout(3000))
                 .placeOrder(
@@ -179,13 +186,14 @@ class FuturesTradingBotServicePartialCloseTest {
                     Mockito.anyString(),
                     Mockito.nullable(BigDecimal::class.java),
                     Mockito.nullable(String::class.java),
+                    Mockito.nullable(Long::class.java),
                 )
         }
 
         // Фаза 2: следующий SL-тик дозакрывает остаток (qty=1) полностью.
         runBlocking {
             Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal()))
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()))
                 .thenReturn(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("89800")))
         }
         service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("89400")))
@@ -213,7 +221,7 @@ class FuturesTradingBotServicePartialCloseTest {
         stubCommon(pos)
         runBlocking {
             Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal()))
+                .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()))
                 .thenReturn(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 1, avgPrice = BigDecimal("90050")))
         }
 
@@ -233,8 +241,9 @@ class FuturesTradingBotServicePartialCloseTest {
                     Mockito.anyString(),
                     Mockito.nullable(BigDecimal::class.java),
                     Mockito.nullable(String::class.java),
+                    Mockito.nullable(Long::class.java),
                 )
-            Mockito.verify(alorClient, Mockito.timeout(3000)).verifyOrder(eq("ord-inflight"), anyBigDecimal())
+            Mockito.verify(alorClient, Mockito.timeout(3000)).verifyOrder(eq("ord-inflight"), anyBigDecimal(), Mockito.anyString())
         }
         assertEquals(2, pos.quantity)
         assertEquals(0, BigDecimal("50000").compareTo(pos.realizedPnl))

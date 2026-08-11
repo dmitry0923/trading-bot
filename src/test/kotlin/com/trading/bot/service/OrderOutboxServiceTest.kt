@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
@@ -44,6 +45,7 @@ class OrderOutboxServiceTest {
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val distributedLockService =
         DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
+    private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val service =
         OrderOutboxService(
             outboxRepo,
@@ -54,7 +56,15 @@ class OrderOutboxServiceTest {
             meterRegistry,
             distributedLockService,
             distributedLockConfig,
+            tradingAccountService,
         )
+
+    @BeforeEach
+    fun setUp() {
+        runBlocking {
+            Mockito.`when`(tradingAccountService.portfolioOf(Mockito.isNull<Long>())).thenReturn(alorConfig.portfolio)
+        }
+    }
 
     private fun anyUuid(): UUID {
         Mockito.any(UUID::class.java)
@@ -136,27 +146,23 @@ class OrderOutboxServiceTest {
             ).thenReturn(rows)
     }
 
-    private fun openPosition(
-        ticker: String,
-        quantity: Int,
-        pendingClose: Boolean = false,
-    ): Position =
+    private fun openPosition(): Position =
         Position(
             id = 1L,
-            ticker = ticker,
+            ticker = "Si",
             direction = PositionDirection.LONG,
-            quantity = quantity,
+            quantity = 10,
             entryPrice = BigDecimal("100"),
             status = PositionStatus.OPEN,
-            pendingClose = pendingClose,
+            pendingClose = true,
         )
 
     private suspend fun stubCloseReconcilePositions(exchangeQty: Long) {
         Mockito
             .`when`(positionRepo.findById(1L))
-            .thenReturn(openPosition("Si", 10, pendingClose = true))
+            .thenReturn(openPosition())
         Mockito
-            .`when`(alorClient.getPositions())
+            .`when`(alorClient.getPositions(Mockito.anyString()))
             .thenReturn(
                 AlorClient.ReconcileResult.Ok(
                     listOf(AlorClient.ExchangePosition(ticker = "Si", qty = exchangeQty, avgPrice = BigDecimal("100"))),
@@ -168,6 +174,7 @@ class OrderOutboxServiceTest {
         Mockito
             .`when`(
                 alorClient.reconcileOrderByIdempotencyKey(
+                    Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyString(),
@@ -189,6 +196,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyInt(),
                         anyBigDecimal(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenReturn("ord-1")
             stubMarkSentRecording(sentOrders)
@@ -199,7 +207,7 @@ class OrderOutboxServiceTest {
             assertEquals("ord-1", result.alorOrderId)
             Mockito
                 .verify(alorClient, Mockito.never())
-                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
             Mockito
                 .verify(outboxRepo)
                 .markSent(anyUuid(), Mockito.anyString())
@@ -220,6 +228,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyInt(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenReturn("ord-m")
             stubMarkSentRecording(sentOrders)
@@ -235,6 +244,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyInt(),
                     anyBigDecimal(),
+                    Mockito.anyString(),
                     Mockito.anyString(),
                 )
         }
@@ -273,6 +283,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyInt(),
                         anyBigDecimal(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenThrow(RuntimeException("network timeout"))
             stubMarkFailedRecording(failedErrors)
@@ -300,7 +311,7 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .markSent(anyUuid(), Mockito.anyString())
@@ -312,10 +323,11 @@ class OrderOutboxServiceTest {
                     Mockito.anyInt(),
                     anyBigDecimal(),
                     Mockito.anyString(),
+                    Mockito.anyString(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
         }
         assertEquals(listOf("ord-9"), sentOrders)
     }
@@ -331,7 +343,7 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
                 .placeLimitOrder(
@@ -340,10 +352,11 @@ class OrderOutboxServiceTest {
                     Mockito.anyInt(),
                     anyBigDecimal(),
                     Mockito.anyString(),
+                    Mockito.anyString(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }
@@ -364,6 +377,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyInt(),
                         anyBigDecimal(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenAnswer { inv ->
                     usedKeys += inv.getArgument<String>(4)
@@ -381,13 +395,14 @@ class OrderOutboxServiceTest {
                     Mockito.anyInt(),
                     anyBigDecimal(),
                     Mockito.anyString(),
+                    Mockito.anyString(),
                 )
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .markSent(anyUuid(), Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+                .reconcileOrderByIdempotencyKey(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
         }
         assertEquals(listOf("idem-1"), usedKeys)
         assertEquals(listOf("ord-2"), sentOrders)
@@ -420,10 +435,10 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .getPositions()
+                .getPositions(Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .markSent(anyUuid(), Mockito.anyString())
@@ -444,10 +459,10 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .getPositions()
+                .getPositions(Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }
@@ -467,6 +482,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyInt(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenReturn("ord-c3")
             stubMarkSentRecording(sentOrders)
@@ -475,7 +491,7 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .markSent(anyUuid(), Mockito.anyString())
@@ -487,9 +503,9 @@ class OrderOutboxServiceTest {
     fun `reconcile NOT_FOUND with failed positions REST skips re-send as uncertain`() {
         val outbox = outboxRow(retryCount = 1, key = "idem-c4", type = "market", price = null, positionId = 1L, qty = 6)
         runBlocking {
-            Mockito.`when`(positionRepo.findById(1L)).thenReturn(openPosition("Si", 10, pendingClose = true))
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(openPosition())
             Mockito
-                .`when`(alorClient.getPositions())
+                .`when`(alorClient.getPositions(Mockito.anyString()))
                 .thenReturn(AlorClient.ReconcileResult.Failed)
             stubRetryable(listOf(outbox))
             stubReconcile(AlorClient.OrderReconciliation.NotFound)
@@ -498,10 +514,10 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .getPositions()
+                .getPositions(Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }

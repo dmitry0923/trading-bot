@@ -17,6 +17,7 @@ fun interface ExecutionGateway {
         direction: PositionDirection,
         qty: Int,
         entryPrice: BigDecimal,
+        accountId: Long?,
         buildPosition: (orderId: String?, pending: Boolean, fillPrice: BigDecimal, qty: Int) -> Position,
     ): Position?
 }

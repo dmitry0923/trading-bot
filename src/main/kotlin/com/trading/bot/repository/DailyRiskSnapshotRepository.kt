@@ -29,11 +29,19 @@ class DailyRiskSnapshotRepository(
             maxDrawdownToday = row.require("max_drawdown_today", BigDecimal::class.java),
         )
 
-    fun findByDate(tradeDate: LocalDate): DailyRiskSnapshot? {
-        val sql = "SELECT * FROM daily_risk_snapshot WHERE trade_date = :tradeDate"
-        return databaseClient
-            .sql(sql)
-            .bind("tradeDate", tradeDate)
+    fun findByDate(
+        tradeDate: LocalDate,
+        accountId: Long? = null,
+    ): DailyRiskSnapshot? {
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date = :tradeDate AND account_id IS NULL"
+            } else {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date = :tradeDate AND account_id = :accountId"
+            }
+        val spec = databaseClient.sql(sql).bind("tradeDate", tradeDate)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
             .map { row, _ -> toDailyRiskSnapshot(row) }
             .one()
             .block()
@@ -61,30 +69,46 @@ class DailyRiskSnapshotRepository(
     }
 
     /**
-     * Upsert снапшота для торгового дня (одна строка на дату).
+     * Upsert снапшота для торгового дня (одна строка на (дата, account_id)).
      */
     fun upsert(
         tradeDate: LocalDate,
         dailyPnl: BigDecimal,
         limitReached: Boolean,
         maxDrawdownToday: BigDecimal,
+        accountId: Long? = null,
     ) {
         val sql =
-            """
-            INSERT INTO daily_risk_snapshot (trade_date, daily_pnl, limit_reached, max_drawdown_today, updated_at)
-            VALUES (:tradeDate, :dailyPnl, :limitReached, :maxDrawdownToday, NOW())
-            ON CONFLICT (trade_date) DO UPDATE SET
-                daily_pnl = EXCLUDED.daily_pnl,
-                limit_reached = EXCLUDED.limit_reached,
-                max_drawdown_today = EXCLUDED.max_drawdown_today,
-                updated_at = NOW()
-            """.trimIndent()
-        databaseClient
-            .sql(sql)
-            .bind("tradeDate", tradeDate)
-            .bind("dailyPnl", dailyPnl)
-            .bind("limitReached", limitReached)
-            .bind("maxDrawdownToday", maxDrawdownToday)
+            if (accountId == null) {
+                """
+                INSERT INTO daily_risk_snapshot (trade_date, daily_pnl, limit_reached, max_drawdown_today, updated_at)
+                VALUES (:tradeDate, :dailyPnl, :limitReached, :maxDrawdownToday, NOW())
+                ON CONFLICT (trade_date) WHERE account_id IS NULL DO UPDATE SET
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    limit_reached = EXCLUDED.limit_reached,
+                    max_drawdown_today = EXCLUDED.max_drawdown_today,
+                    updated_at = NOW()
+                """.trimIndent()
+            } else {
+                """
+                INSERT INTO daily_risk_snapshot (trade_date, account_id, daily_pnl, limit_reached, max_drawdown_today, updated_at)
+                VALUES (:tradeDate, :accountId, :dailyPnl, :limitReached, :maxDrawdownToday, NOW())
+                ON CONFLICT (trade_date, account_id) DO UPDATE SET
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    limit_reached = EXCLUDED.limit_reached,
+                    max_drawdown_today = EXCLUDED.max_drawdown_today,
+                    updated_at = NOW()
+                """.trimIndent()
+            }
+        val spec =
+            databaseClient
+                .sql(sql)
+                .bind("tradeDate", tradeDate)
+                .bind("dailyPnl", dailyPnl)
+                .bind("limitReached", limitReached)
+                .bind("maxDrawdownToday", maxDrawdownToday)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        finalSpec
             .then()
             .block()
     }

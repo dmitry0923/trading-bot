@@ -78,6 +78,7 @@ class TradingBotService(
     private val decisionEngine: DecisionEngine,
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
+    private val tradingAccountService: TradingAccountService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -98,10 +99,11 @@ class TradingBotService(
             instrumentFilter = { it.instrumentType != InstrumentType.FUTURES },
             metricPrefix = "bot",
             onPositionClosed = { pos ->
-                risk.updateDailyPnL(pos.pnl ?: BigDecimal.ZERO)
+                risk.updateDailyPnL(pos.pnl ?: BigDecimal.ZERO, pos.accountId)
                 meterRegistry.gauge("bot.pnl", Tags.of("ticker", pos.ticker), pos.pnl?.toDouble() ?: 0.0)
             },
             protectionOrdersEnabled = alorClient.isLiveMode,
+            portfolioResolver = { accountId -> tradingAccountService.portfolioOf(accountId) },
         )
 
     /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */

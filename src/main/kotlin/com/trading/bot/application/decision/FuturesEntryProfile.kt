@@ -15,6 +15,7 @@ import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
+import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -43,6 +44,7 @@ class FuturesEntryProfile(
     private val leverageConfig: LeverageConfig,
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
+    private val tradingAccountService: TradingAccountService,
 ) : EntryProfile {
     private val logger = KotlinLogging.logger {}
 
@@ -56,9 +58,10 @@ class FuturesEntryProfile(
         signal: Signal,
         entryPrice: BigDecimal,
         openPositions: List<Position>,
+        accountId: Long?,
     ): EntryRequest {
         val currentGo = alorFuturesClient.getFuturesGO(signal.ticker)
-        val portfolioMoney = alorFuturesClient.getPortfolioMoney()
+        val portfolioMoney = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
         return EntryRequest(
             ticker = signal.ticker,
             action = signal.action,
@@ -67,6 +70,7 @@ class FuturesEntryProfile(
             portfolioMoney = portfolioMoney,
             currentGo = currentGo,
             openPositions = openPositions,
+            accountId = accountId,
         )
     }
 

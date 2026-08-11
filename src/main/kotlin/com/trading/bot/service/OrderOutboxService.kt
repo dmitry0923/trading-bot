@@ -65,6 +65,7 @@ class OrderOutboxService(
     private val meterRegistry: MeterRegistry,
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
+    private val tradingAccountService: TradingAccountService,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -83,6 +84,7 @@ class OrderOutboxService(
      * @param closeReason причина закрытия (для мониторинга/логов)
      * @param stopPrice цена-триггер стоп/тейк-заявки (type="stop"/"take-profit")
      * @param purpose назначение ордера ("entry"/"close"/"sl"/"tp") — фильтр реконсилятора
+     * @param accountId аккаунт (multi-account); null = legacy single-account
      */
     suspend fun placeOrder(
         ticker: String,
@@ -94,6 +96,7 @@ class OrderOutboxService(
         closeReason: String? = null,
         stopPrice: BigDecimal? = null,
         purpose: String? = null,
+        accountId: Long? = null,
     ): PlaceOrderResult {
         // Ключ генерируется один раз на логический ордер — все ретраи идут с ним же.
         val idempotencyKey = UuidV7.uuidString()
@@ -110,6 +113,7 @@ class OrderOutboxService(
                     "closeReason" to closeReason,
                     "stopPrice" to stopPrice?.toPlainString(),
                     "purpose" to purpose,
+                    "accountId" to accountId,
                 ),
             )
         val outbox =
@@ -136,6 +140,7 @@ class OrderOutboxService(
     suspend fun placeCancelOrder(
         positionId: Long,
         orderId: String,
+        accountId: Long? = null,
     ): PlaceOrderResult {
         val idempotencyKey = UuidV7.uuidString()
         val payload =
@@ -147,6 +152,7 @@ class OrderOutboxService(
                     "positionId" to positionId,
                     "purpose" to "cancel",
                     "orderId" to orderId,
+                    "accountId" to accountId,
                 ),
             )
         val outbox =
@@ -182,11 +188,12 @@ class OrderOutboxService(
         val type = payload.path("type").asString("limit")
         val idempotencyKey = outbox.idempotencyKey ?: payload.path("idempotencyKey").asString()
         val isCancel = type == "cancel"
+        val portfolio = resolvePortfolio(payload, outbox)
 
         // STATE RECONCILIATION перед любым ПОВТОРНЫМ запросом.
         // (Отмена — отдельный тип: сверка по idempotencyKey ордера к ней не применима.)
         if (outbox.retryCount > 0 && !isCancel) {
-            when (val reconciled = alorClient.reconcileOrderByIdempotencyKey(idempotencyKey, ticker, side)) {
+            when (val reconciled = alorClient.reconcileOrderByIdempotencyKey(idempotencyKey, ticker, side, portfolio)) {
                 is AlorClient.OrderReconciliation.Found -> {
                     outboxRepo.markSent(id, reconciled.orderNumber)
                     meterRegistry.counter("outbox.reconciled", Tags.of("type", type)).increment()
@@ -208,7 +215,7 @@ class OrderOutboxService(
                 }
 
                 is AlorClient.OrderReconciliation.NotFound -> {
-                    when (closeReconcileByPositionDelta(outbox, ticker, side, qty)) {
+                    when (closeReconcileByPositionDelta(outbox, ticker, side, qty, portfolio)) {
                         CloseReconcile.CONFIRMED -> {
                             // Close-ордер подтверждён по изменению qty позиции на бирже
                             // (квери-API заявок мог отстать / ордер уже исполнился и вышел из open orders).
@@ -245,12 +252,12 @@ class OrderOutboxService(
         return try {
             val orderId =
                 when (type) {
-                    "limit" -> price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey) }
-                    "market" -> alorClient.placeMarketOrder(ticker, side, qty, idempotencyKey)
-                    "stop" -> stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey) }
-                    "take-profit" -> stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey) }
+                    "limit" -> price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                    "market" -> alorClient.placeMarketOrder(ticker, side, qty, idempotencyKey, portfolio)
+                    "stop" -> stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                    "take-profit" -> stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
                     "cancel" ->
-                        when (alorClient.cancelOrder(payload.path("orderId").asString(), idempotencyKey)) {
+                        when (alorClient.cancelOrder(payload.path("orderId").asString(), idempotencyKey, portfolio)) {
                             // CONFIRMED — заявка снята; REJECTED — «не рабочая» (уже отменена/
                             // исполнена/не найдена) — обе однозначны, ордера больше нет.
                             AlorClient.CancelResult.CONFIRMED, AlorClient.CancelResult.REJECTED -> "cancelled"
@@ -305,6 +312,7 @@ class OrderOutboxService(
         ticker: String,
         side: String,
         qty: Int,
+        portfolio: String,
     ): CloseReconcile {
         val positionId = outbox.positionId ?: return CloseReconcile.NOT_EXECUTED
         val pos =
@@ -325,7 +333,7 @@ class OrderOutboxService(
         val delta = if (side == "sell") -qty.toLong() else qty.toLong()
         val expectedSigned = signed + delta
 
-        return when (val result = alorClient.getPositions()) {
+        return when (val result = alorClient.getPositions(portfolio)) {
             is AlorClient.ReconcileResult.Failed -> {
                 // Биржа недоступна — подтвердить нельзя → fail-safe (не переотправляем).
                 logger.warn { "Outbox ${outbox.id}: positions REST failed during close reconcile — skip re-send" }
@@ -348,6 +356,27 @@ class OrderOutboxService(
                 }
             }
         }
+    }
+
+    /**
+     * Портфель Alor для доставки outbox-строки (multi-account):
+     * payload.accountId → accountId позиции (legacy строки до фичи) → конфиг.
+     */
+    private suspend fun resolvePortfolio(
+        payload: tools.jackson.databind.JsonNode,
+        outbox: OrderOutbox,
+    ): String {
+        val accountNode = payload.path("accountId")
+        var accountId: Long? = if (!accountNode.isMissingNode && !accountNode.isNull) accountNode.asLong() else null
+        if (accountId == null && outbox.positionId != null) {
+            accountId =
+                try {
+                    positionRepo.findById(outbox.positionId).accountId
+                } catch (_: Exception) {
+                    null
+                }
+        }
+        return tradingAccountService.portfolioOf(accountId)
     }
 
     /**

@@ -64,6 +64,7 @@ class DrawdownProtectionService(
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
     private val aumProvider: AumProvider,
+    private val tradingAccountService: TradingAccountService,
 ) : DailyRiskGuard {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -83,6 +84,11 @@ class DrawdownProtectionService(
     private var todayDailyLossReached: Boolean = false
 
     private var lastTradingDate: LocalDate = LocalDate.MIN
+
+    // Per-account дневной P&L (multi-account, roadmap v2.2). Ключ — accountId.
+    private val accountPnl: java.util.concurrent.ConcurrentHashMap<Long, BigDecimal> = java.util.concurrent.ConcurrentHashMap()
+    private val accountLossReached: java.util.concurrent.ConcurrentHashMap<Long, Boolean> = java.util.concurrent.ConcurrentHashMap()
+    private val accountLoadedDate: java.util.concurrent.ConcurrentHashMap<Long, LocalDate> = java.util.concurrent.ConcurrentHashMap()
 
     /**
      * Загрузка дневного состояния из daily_risk_snapshot при старте (ApplicationReadyEvent),
@@ -186,7 +192,7 @@ class DrawdownProtectionService(
      * Если кэш ещё не заполнен (старт до первого цикла) — считает консервативно-нейтрально
      * от стартового депозита и синхронного дневного аккумулятора.
      */
-    override fun cachedOrNeutral(): DrawdownStatus {
+    override fun cachedOrNeutral(accountId: Long?): DrawdownStatus {
         cachedStatus?.let { return it }
         val aum = aumProvider.latestAum()
         return DrawdownStatus(
@@ -220,8 +226,12 @@ class DrawdownProtectionService(
      * не должны терять обновления (`todayPnl = todayPnl + pnl` — read-modify-write).
      */
     @Synchronized
-    override fun updateDailyPnl(pnl: BigDecimal) {
+    override fun updateDailyPnl(pnl: BigDecimal, accountId: Long?) {
         resetDailyStateIfNewDay()
+        if (accountId != null) {
+            updateAccountDailyPnl(accountId, pnl)
+            return
+        }
         todayPnl = todayPnl.add(pnl)
         val aum = cachedStatus?.aum ?: aumProvider.latestAum()
         val dailyLimit = effectiveDailyLossLimitRub(aum)
@@ -241,19 +251,74 @@ class DrawdownProtectionService(
     }
 
     /**
+     * Per-account аккумулятор дневного P&L. Персональный лимит:
+     * account.maxDailyLossRub ?: % AUM аккаунта (fallback — глобальный процентный лимит).
+     * Снапшот персистится в daily_risk_snapshot(account_id).
+     */
+    private fun updateAccountDailyPnl(
+        accountId: Long,
+        pnl: BigDecimal,
+    ) {
+        val day = LocalDate.now(moscowZone)
+        loadAccountDailyState(accountId, day)
+        val newPnl = (accountPnl[accountId] ?: BigDecimal.ZERO).add(pnl)
+        accountPnl[accountId] = newPnl
+        val aum = aumProvider.latestAum(accountId)
+        val dailyLimit = effectiveDailyLossLimitRubFor(accountId, aum)
+        if (newPnl <= dailyLimit.negate()) {
+            accountLossReached[accountId] = true
+            logger.error { "DAILY LOSS LIMIT reached (account=$accountId): dailyPnL=$newPnl <= -$dailyLimit" }
+        }
+        persistDailyState(accountId)
+        meterRegistry.gauge("risk.daily.pnl", Tags.of("account", accountId.toString()), newPnl.toDouble())
+        meterRegistry.gauge("risk.daily.limit.reached", Tags.of("account", accountId.toString()), if (accountLossReached[accountId] == true) 1.0 else 0.0)
+    }
+
+    private fun loadAccountDailyState(
+        accountId: Long,
+        day: LocalDate,
+    ) {
+        if (accountLoadedDate[accountId] == day) return
+        val snapshot =
+            try {
+                dailyRiskSnapshotRepo.findByDate(day, accountId)
+            } catch (e: Exception) {
+                logger.warn(e) { "Daily risk snapshot load failed for account=$accountId" }
+                null
+            }
+        accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
+        accountLossReached[accountId] = snapshot?.limitReached ?: false
+        accountLoadedDate[accountId] = day
+    }
+
+    /**
      * Достигнут ли дневной лимит убытка (кэш, без БД).
      */
-    override fun isDailyLossLimitReached(): Boolean = cachedOrNeutral().dailyLimitBreached
+    override fun isDailyLossLimitReached(accountId: Long?): Boolean {
+        if (accountId == null) return cachedOrNeutral().dailyLimitBreached
+        val day = LocalDate.now(moscowZone)
+        if (accountLoadedDate[accountId] != day) return false
+        return (accountLossReached[accountId] ?: false) || cachedOrNeutral().dailyLimitBreached
+    }
 
     /**
      * Текущий дневной P&L (кэш, без БД).
      */
-    override fun getDailyPnl(): BigDecimal = cachedOrNeutral().dailyPnlRub
+    override fun getDailyPnl(accountId: Long?): BigDecimal {
+        if (accountId == null) return cachedOrNeutral().dailyPnlRub
+        val day = LocalDate.now(moscowZone)
+        if (accountLoadedDate[accountId] != day) {
+            loadAccountDailyState(accountId, day)
+        }
+        return accountPnl[accountId] ?: BigDecimal.ZERO
+    }
 
     /**
-     * Заблокированы ли новые входы (кэш). Покрывает все tier-лимиты и Shadow/Read-only.
+     * Заблокированы ли новые входы (кэш). Покрывает все tier-лимиты и Shadow/Read-only,
+     * а также per-account дневной лимит.
      */
-    override fun isEntryBlocked(): Boolean = cachedOrNeutral().blocking()
+    override fun isEntryBlocked(accountId: Long?): Boolean =
+        cachedOrNeutral().blocking() || isDailyLossLimitReached(accountId)
 
     /**
      * Причина блокировки входа (для логов/отказов). Пустая строка — вход разрешён.
@@ -459,6 +524,31 @@ class DrawdownProtectionService(
         } catch (e: Exception) {
             logger.warn(e) { "Failed to persist daily risk snapshot" }
         }
+    }
+
+    private fun persistDailyState(accountId: Long) {
+        try {
+            dailyRiskSnapshotRepo.upsert(
+                LocalDate.now(moscowZone),
+                accountPnl[accountId] ?: BigDecimal.ZERO,
+                accountLossReached[accountId] ?: false,
+                (accountPnl[accountId] ?: BigDecimal.ZERO).coerceAtMost(BigDecimal.ZERO),
+                accountId,
+            )
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to persist daily risk snapshot for account=$accountId" }
+        }
+    }
+
+    /**
+     * Персональный дневной лимит аккаунта: account.maxDailyLossRub, иначе % AUM аккаунта.
+     */
+    private fun effectiveDailyLossLimitRubFor(
+        accountId: Long,
+        aum: BigDecimal,
+    ): BigDecimal {
+        val override = tradingAccountService.cachedMaxDailyLossRubFor(accountId)
+        return override ?: effectiveDailyLossLimitRub(aum)
     }
 
     private fun recordMetrics(status: DrawdownStatus) {

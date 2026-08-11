@@ -47,15 +47,16 @@ class StockRiskEngine(
         if (!riskConfig.enabled) return reject("RISK_DISABLED")
         if (!leverageConfig.enabled) return reject("LEVERAGE_DISABLED")
         if (!tradingCalendar.isTradingAllowed()) return reject("OUTSIDE_HOURS")
-        if (dailyRiskGuard.isDailyLossLimitReached()) return reject("DAILY_LIMIT")
-        if (dailyRiskGuard.isEntryBlocked()) return reject("DRAWDOWN_PROTECTION")
+        if (dailyRiskGuard.isDailyLossLimitReached(request.accountId)) return reject("DAILY_LIMIT")
+        if (dailyRiskGuard.isEntryBlocked(request.accountId)) return reject("DRAWDOWN_PROTECTION")
         if (volatilityFilter.isVolatilityAnomalous()) return reject("VOLATILITY_INDEX")
 
         if (request.entryPrice <= BigDecimal.ZERO || request.portfolioMoney <= BigDecimal.ZERO) {
             return reject("INVALID_INPUT")
         }
         if (request.openPositions.any { it.ticker == request.ticker }) return reject("DUPLICATE_POSITION")
-        if (request.openPositions.size >= riskConfig.maxOpenPositions) return reject("MAX_POSITIONS")
+        val maxOpen = request.maxOpenPositions ?: riskConfig.maxOpenPositions
+        if (request.openPositions.size >= maxOpen) return reject("MAX_POSITIONS")
         if (exceedsSectorExposure(request.ticker, request.openPositions)) return reject("SECTOR_EXPOSURE")
         if (isVolatilityTooHigh(request.atr, request.entryPrice)) return reject("VOLATILITY_GUARD")
 

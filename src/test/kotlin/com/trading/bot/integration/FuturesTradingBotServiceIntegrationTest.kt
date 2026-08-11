@@ -98,6 +98,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyInt(),
                         anyBigDecimal(),
                         Mockito.anyString(),
+                        Mockito.anyString(),
                     ),
                 ).thenReturn("ord-limit-1")
             Mockito
@@ -106,6 +107,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyInt(),
+                        Mockito.anyString(),
                         Mockito.anyString(),
                     ),
                 ).thenReturn("ord-market-1")
@@ -164,8 +166,9 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             Mockito
                 .`when`(
                     alorClient.verifyOrder(
-                        "ord-market-1",
-                        BigDecimal("91986"),
+                        Mockito.anyString(),
+                        Mockito.any(BigDecimal::class.java),
+                        Mockito.anyString(),
                     ),
                 ).thenReturn(AlorClient.OrderExecution("FILLED", 1, BigDecimal("91986")))
         }

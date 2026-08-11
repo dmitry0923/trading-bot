@@ -97,8 +97,12 @@ class AlorWebSocketClient(
     /**
      * Поток отчётов об исполнении. Переподключение встроено; при реконнекте
      * публикуется событие в [WebSocketManager] → State Reconciliation.
+     *
+     * Multi-account (roadmap v2.2): [portfolio] — портфель Alor, на который
+     * подписываемся. Для каждого включённого аккаунта создаётся отдельная
+     * подписка; потоки объединяются у потребителя ([com.trading.bot.service.TradingBotService]).
      */
-    fun subscribeToOrders(): Flow<ExecutionReport> =
+    fun subscribeToOrders(portfolio: String = alorConfig.portfolio): Flow<ExecutionReport> =
         callbackFlow {
             var cancelled = false
 
@@ -135,7 +139,7 @@ class AlorWebSocketClient(
                                                 "opcode" to "OrdersGetAndSubscribeV2",
                                                 "guid" to UuidV7.uuidString(),
                                                 "token" to alorConfig.token,
-                                                "portfolio" to alorConfig.portfolio,
+                                                "portfolio" to portfolio,
                                                 "exchange" to alorConfig.exchange,
                                                 "format" to "Simple",
                                             ),

@@ -40,10 +40,10 @@ class DailyLossCircuitBreaker(
      */
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
-        drawdownProtection.updateDailyPnl(event.pnl)
-        if (drawdownProtection.isDailyLossLimitReached()) {
+        drawdownProtection.updateDailyPnl(event.pnl, event.accountId)
+        if (drawdownProtection.isDailyLossLimitReached(event.accountId)) {
             logger.error {
-                "Daily loss limit reached (dailyPnL=${drawdownProtection.getDailyPnl()} ₽). " +
+                "Daily loss limit reached (dailyPnL=${drawdownProtection.getDailyPnl(event.accountId)} ₽). " +
                     "Trading halted. No new entries until next day."
             }
             eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT"))

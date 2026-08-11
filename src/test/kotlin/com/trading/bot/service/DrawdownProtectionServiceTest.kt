@@ -44,6 +44,7 @@ class DrawdownProtectionServiceTest {
             instrumentsConfig,
             SimpleMeterRegistry(),
             aumProvider,
+            Mockito.mock(TradingAccountService::class.java),
         )
     }
 

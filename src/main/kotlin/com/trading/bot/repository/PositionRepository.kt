@@ -56,6 +56,7 @@ class PositionRepository(
             openedAt = row.require("opened_at", LocalDateTime::class.java),
             closedAt = row.get("closed_at", LocalDateTime::class.java),
             cycleId = row.get("cycle_id", String::class.java),
+            accountId = row.get("account_id", Long::class.javaObjectType),
         )
 
     suspend fun findByStatus(status: PositionStatus): List<Position> {
@@ -73,6 +74,23 @@ class PositionRepository(
         val sql = "SELECT COUNT(*) AS cnt FROM positions WHERE status = 'OPEN'"
         return databaseClient
             .sql(sql)
+            .map { row, _ -> row.get("cnt", Long::class.javaObjectType)?.toInt() ?: 0 }
+            .one()
+            .awaitSingleOrNull()
+            ?: 0
+    }
+
+    /** Количество открытых позиций аккаунта (multi-account); accountId = null → legacy без привязки. */
+    suspend fun findOpenCountByAccount(accountId: Long?): Int {
+        val sql =
+            if (accountId == null) {
+                "SELECT COUNT(*) AS cnt FROM positions WHERE status = 'OPEN' AND account_id IS NULL"
+            } else {
+                "SELECT COUNT(*) AS cnt FROM positions WHERE status = 'OPEN' AND account_id = :accountId"
+            }
+        val spec = databaseClient.sql(sql)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
             .map { row, _ -> row.get("cnt", Long::class.javaObjectType)?.toInt() ?: 0 }
             .one()
             .awaitSingleOrNull()
@@ -251,6 +269,7 @@ class PositionRepository(
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
             .bindOrNull("cycleId", position.cycleId)
+            .bindOrNull("accountId", position.accountId)
 
     private suspend fun insert(position: Position): Position {
         val sql =
@@ -259,12 +278,12 @@ class PositionRepository(
                 stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
                 liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
                 alor_order_id, close_order_id, sl_order_id, tp_order_id, sl_order_price, tp_order_price,
-                sl_pending_replace, tp_pending_replace, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id)
+                sl_pending_replace, tp_pending_replace, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id, account_id)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
                 :alorOrderId, :closeOrderId, :slOrderId, :tpOrderId, :slOrderPrice, :tpOrderPrice,
-                :slPendingReplace, :tpPendingReplace, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId)
+                :slPendingReplace, :tpPendingReplace, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId, :accountId)
             RETURNING id
             """.trimIndent()
         val id =
@@ -292,7 +311,8 @@ class PositionRepository(
                 sl_order_price = :slOrderPrice, tp_order_price = :tpOrderPrice,
                 sl_pending_replace = :slPendingReplace, tp_pending_replace = :tpPendingReplace,
                 pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
-                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId
+                close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId,
+                account_id = :accountId
             WHERE id = :id
             """.trimIndent()
         databaseClient

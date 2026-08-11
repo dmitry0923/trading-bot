@@ -38,6 +38,7 @@ class TradingEventPublisher(
                 direction = position.direction,
                 entryPrice = position.entryPrice,
                 cycleId = position.cycleId,
+                accountId = position.accountId,
             ),
         )
     }
@@ -50,6 +51,7 @@ class TradingEventPublisher(
                 pnl = position.pnl ?: BigDecimal.ZERO,
                 reason = position.closeReason ?: "CLOSED",
                 cycleId = position.cycleId,
+                accountId = position.accountId,
             ),
         )
     }

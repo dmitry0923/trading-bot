@@ -150,13 +150,14 @@ class AlorClient(
         qty: Int,
         price: BigDecimal,
         idempotencyKey: String,
+        portfolio: String = alorConfig.portfolio,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
         val start = System.currentTimeMillis()
         return try {
             val body =
                 mapOf(
-                    "portfolio" to alorConfig.portfolio,
+                    "portfolio" to portfolio,
                     "ticker" to ticker,
                     "exchange" to alorConfig.exchange,
                     "side" to side,
@@ -223,6 +224,7 @@ class AlorClient(
         side: String,
         qty: Int,
         idempotencyKey: String,
+        portfolio: String = alorConfig.portfolio,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
         val snapshot = getMarketSnapshot(ticker) ?: return null
@@ -240,7 +242,7 @@ class AlorClient(
                 "sell" -> snapshot.bid ?: snapshot.currentPrice
                 else -> snapshot.currentPrice
             }
-        val orderId = placeLimitOrder(ticker, side, qty, price, idempotencyKey)
+        val orderId = placeLimitOrder(ticker, side, qty, price, idempotencyKey, portfolio)
         if (orderId != null) {
             meterRegistry.counter("alor.order.placed", Tags.of("type", "market", "status", "OK")).increment()
         }
@@ -261,7 +263,8 @@ class AlorClient(
         qty: Int,
         stopPrice: BigDecimal,
         idempotencyKey: String,
-    ): String? = placeConditionalOrder("stop", ticker, side, qty, stopPrice, idempotencyKey)
+        portfolio: String = alorConfig.portfolio,
+    ): String? = placeConditionalOrder("stop", ticker, side, qty, stopPrice, idempotencyKey, portfolio)
 
     /**
      * Тейк-профит-заявка (type="take-profit"): срабатывает при пересечении ценой
@@ -274,7 +277,8 @@ class AlorClient(
         qty: Int,
         stopPrice: BigDecimal,
         idempotencyKey: String,
-    ): String? = placeConditionalOrder("take-profit", ticker, side, qty, stopPrice, idempotencyKey)
+        portfolio: String = alorConfig.portfolio,
+    ): String? = placeConditionalOrder("take-profit", ticker, side, qty, stopPrice, idempotencyKey, portfolio)
 
     /**
      * Условная (стоп/тейк) заявка через единый endpoint `actions/limit` —
@@ -288,13 +292,14 @@ class AlorClient(
         qty: Int,
         stopPrice: BigDecimal,
         idempotencyKey: String,
+        portfolio: String,
     ): String? {
         if (!isLive) return "sim-$type-$ticker-$idempotencyKey"
         val start = System.currentTimeMillis()
         return try {
             val body =
                 mapOf(
-                    "portfolio" to alorConfig.portfolio,
+                    "portfolio" to portfolio,
                     "ticker" to ticker,
                     "exchange" to alorConfig.exchange,
                     "side" to side,
@@ -375,12 +380,13 @@ class AlorClient(
     suspend fun cancelOrder(
         orderId: String,
         idempotencyKey: String,
+        portfolio: String = alorConfig.portfolio,
     ): CancelResult {
         if (!isLive) return CancelResult.CONFIRMED
         return try {
             val body =
                 mapOf(
-                    "portfolio" to alorConfig.portfolio,
+                    "portfolio" to portfolio,
                     "exchange" to alorConfig.exchange,
                     "orderId" to orderId,
                     "id" to idempotencyKey,
@@ -433,10 +439,11 @@ class AlorClient(
         idempotencyKey: String,
         ticker: String,
         side: String,
+        portfolio: String = alorConfig.portfolio,
     ): OrderReconciliation {
         if (!isLive || idempotencyKey.isBlank()) return OrderReconciliation.NotFound
         return try {
-            val orders = fetchOrdersJson()
+            val orders = fetchOrdersJson(portfolio)
             for (order in orders) {
                 if (order.path("id").asString() != idempotencyKey) continue
                 val orderTicker = order.path("ticker").asString()
@@ -476,6 +483,7 @@ class AlorClient(
     suspend fun verifyOrder(
         orderId: String,
         expectedPrice: BigDecimal? = null,
+        portfolio: String = alorConfig.portfolio,
     ): OrderExecution? {
         if (!isLive) return null
         val start = System.currentTimeMillis()
@@ -484,7 +492,7 @@ class AlorClient(
                 resilient {
                     webClient
                         .get()
-                        .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/$orderId?portfolio=${alorConfig.portfolio}")
+                        .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/$orderId?portfolio=$portfolio")
                         .header("Authorization", "Bearer ${getActualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
@@ -567,10 +575,10 @@ class AlorClient(
      * ошибке REST — сверка не должна ронять бота и не должна выдавать «пусто»
      * за отсутствие заявок.
      */
-    suspend fun getOpenOrders(): ReconcileResult<ExchangeOrder> {
+    suspend fun getOpenOrders(portfolio: String = alorConfig.portfolio): ReconcileResult<ExchangeOrder> {
         if (!isLive) return ReconcileResult.Ok(emptyList())
         return try {
-            val arr = fetchOrdersJson()
+            val arr = fetchOrdersJson(portfolio)
             val items =
                 arr.mapNotNull { o ->
                     val orderId =
@@ -607,7 +615,7 @@ class AlorClient(
     /**
      * Текущие позиции портфеля (State Reconciliation). [ReconcileResult.Failed] при ошибке.
      */
-    suspend fun getPositions(): ReconcileResult<ExchangePosition> {
+    suspend fun getPositions(portfolio: String = alorConfig.portfolio): ReconcileResult<ExchangePosition> {
         if (!isLive) return ReconcileResult.Ok(emptyList())
         return try {
             val raw: String =
@@ -616,7 +624,7 @@ class AlorClient(
                         .get()
                         .uri(
                             "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/portfolios" +
-                                "/${alorConfig.portfolio}/positions",
+                                "/$portfolio/positions",
                         ).header("Authorization", "Bearer ${getActualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
@@ -659,7 +667,7 @@ class AlorClient(
     /**
      * Сделки портфеля за текущую сессию (State Reconciliation). [ReconcileResult.Failed] при ошибке.
      */
-    suspend fun getRecentTrades(): ReconcileResult<ExchangeTrade> {
+    suspend fun getRecentTrades(portfolio: String = alorConfig.portfolio): ReconcileResult<ExchangeTrade> {
         if (!isLive) return ReconcileResult.Ok(emptyList())
         return try {
             val raw: String =
@@ -668,7 +676,7 @@ class AlorClient(
                         .get()
                         .uri(
                             "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/portfolios" +
-                                "/${alorConfig.portfolio}/trades",
+                                "/$portfolio/trades",
                         ).header("Authorization", "Bearer ${getActualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
@@ -758,14 +766,14 @@ class AlorClient(
      * попытку) → Retry с exponential backoff + jitter (снаружи). Конфиг — application.yml
      * (resilience4j.retry.instances.alor / ratelimiter.instances.alor).
      */
-    private suspend fun fetchOrdersJson(): tools.jackson.databind.JsonNode {
+    private suspend fun fetchOrdersJson(portfolio: String): tools.jackson.databind.JsonNode {
         val raw: String =
             resilient {
                 webClient
                     .get()
                     .uri(
                         "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
-                            "?portfolio=${alorConfig.portfolio}&includeOrders=true",
+                            "?portfolio=$portfolio&includeOrders=true",
                     ).header("Authorization", "Bearer ${getActualToken()}")
                     .retrieve()
                     .bodyToMono(String::class.java)

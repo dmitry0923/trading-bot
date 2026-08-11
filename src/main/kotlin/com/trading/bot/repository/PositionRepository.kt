@@ -97,6 +97,23 @@ class PositionRepository(
             ?: 0
     }
 
+    /** Открытые позиции аккаунта (multi-account); accountId = null → legacy без привязки. */
+    suspend fun findOpenByAccount(accountId: Long?): List<Position> {
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM positions WHERE status = 'OPEN' AND account_id IS NULL ORDER BY opened_at DESC"
+            } else {
+                "SELECT * FROM positions WHERE status = 'OPEN' AND account_id = :accountId ORDER BY opened_at DESC"
+            }
+        val spec = databaseClient.sql(sql)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     suspend fun findById(id: Long): Position {
         val sql = "SELECT * FROM positions WHERE id = :id"
         return databaseClient

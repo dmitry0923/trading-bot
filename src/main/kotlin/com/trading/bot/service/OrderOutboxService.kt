@@ -122,9 +122,10 @@ class OrderOutboxService(
                     payloadJson = payload,
                     idempotencyKey = idempotencyKey,
                     positionId = positionId,
+                    accountId = accountId,
                 ),
             )
-        logger.info { "Outbox order saved: ${outbox.id} $side $qty $ticker ($type) idem=$idempotencyKey pos=$positionId" }
+        logger.info { "Outbox order saved: ${outbox.id} $side $qty $ticker ($type) idem=$idempotencyKey pos=$positionId account=$accountId" }
         meterRegistry.counter("outbox.saved", Tags.of("type", type)).increment()
         return dispatch(outbox)
     }
@@ -161,9 +162,10 @@ class OrderOutboxService(
                     payloadJson = payload,
                     idempotencyKey = idempotencyKey,
                     positionId = positionId,
+                    accountId = accountId,
                 ),
             )
-        logger.info { "Outbox cancel saved: ${outbox.id} order=$orderId pos=$positionId" }
+        logger.info { "Outbox cancel saved: ${outbox.id} order=$orderId pos=$positionId account=$accountId" }
         return dispatch(outbox)
     }
 
@@ -360,14 +362,18 @@ class OrderOutboxService(
 
     /**
      * Портфель Alor для доставки outbox-строки (multi-account):
-     * payload.accountId → accountId позиции (legacy строки до фичи) → конфиг.
+     * колонка account_id → payload.accountId (строки до персиста колонки) →
+     * accountId позиции (legacy строки до фичи) → конфиг.
      */
     private suspend fun resolvePortfolio(
         payload: tools.jackson.databind.JsonNode,
         outbox: OrderOutbox,
     ): String {
-        val accountNode = payload.path("accountId")
-        var accountId: Long? = if (!accountNode.isMissingNode && !accountNode.isNull) accountNode.asLong() else null
+        var accountId = outbox.accountId
+        if (accountId == null) {
+            val accountNode = payload.path("accountId")
+            if (!accountNode.isMissingNode && !accountNode.isNull) accountId = accountNode.asLong()
+        }
         if (accountId == null && outbox.positionId != null) {
             accountId =
                 try {

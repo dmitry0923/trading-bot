@@ -24,6 +24,8 @@ enum class OutboxStatus {
  * State Reconciliation (поиск ордера на бирже по [idempotencyKey]).
  *
  * [positionId] связывает ордер с позицией — для сверки и стейт-машины входов/закрытий.
+ * [accountId] фиксирует аккаунт (multi-account) в колонке `order_outbox.account_id`,
+ * чтобы доставка маршрутизировалась в его портфель даже после рестарта (legacy — null).
  */
 data class OrderOutbox(
     val id: UUID? = null,
@@ -33,6 +35,7 @@ data class OrderOutbox(
     val idempotencyKey: String? = null,
     val retryCount: Int = 0,
     val positionId: Long? = null,
+    val accountId: Long? = null,
     val createdAt: LocalDateTime = LocalDateTime.now(),
     val processedAt: LocalDateTime? = null,
     val errorMessage: String? = null,

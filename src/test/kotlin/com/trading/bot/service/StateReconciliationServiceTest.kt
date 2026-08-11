@@ -37,6 +37,7 @@ class StateReconciliationServiceTest {
     private val alorConfig = AlorConfig().apply { wsReconcileOnReconnect = true }
     private val eventPublisher = Mockito.mock(TradingEventPublisher::class.java)
     private val meterRegistry = SimpleMeterRegistry()
+    private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
 
     private val service =
         StateReconciliationService(
@@ -47,11 +48,15 @@ class StateReconciliationServiceTest {
             alorConfig,
             eventPublisher,
             meterRegistry,
+            tradingAccountService,
         )
 
     @BeforeEach
     fun reset() {
-        Mockito.reset(webSocketManager, alorClient, positionRepo, eventPublisher)
+        Mockito.reset(webSocketManager, alorClient, positionRepo, eventPublisher, tradingAccountService)
+        runBlocking {
+            Mockito.`when`(tradingAccountService.findEnabled()).thenReturn(emptyList())
+        }
     }
 
     private fun anyPosition(): Position {
@@ -66,7 +71,7 @@ class StateReconciliationServiceTest {
 
     private fun stubOpenPositions(vararg positions: Position) {
         runBlocking {
-            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(positions.toList())
+            Mockito.`when`(positionRepo.findOpenByAccount(null)).thenReturn(positions.toList())
             Mockito
                 .`when`(positionRepo.save(anyPosition()))
                 .thenAnswer { inv -> inv.getArgument<Position>(0) }

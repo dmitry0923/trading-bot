@@ -30,6 +30,7 @@ class OrderOutboxRepository(
             idempotencyKey = row.get("idempotency_key", String::class.java),
             retryCount = row.get("retry_count", Int::class.javaObjectType) ?: 0,
             positionId = row.get("position_id", Long::class.javaObjectType),
+            accountId = row.get("account_id", Long::class.javaObjectType),
             createdAt = row.require("created_at", LocalDateTime::class.java),
             processedAt = row.get("processed_at", LocalDateTime::class.java),
             errorMessage = row.get("error_message", String::class.java),
@@ -40,9 +41,9 @@ class OrderOutboxRepository(
         val sql =
             """
             INSERT INTO order_outbox (id, payload, status, alor_order_id, idempotency_key, retry_count,
-                position_id, created_at, processed_at, error_message)
+                position_id, account_id, created_at, processed_at, error_message)
             VALUES (:id, CAST(:payload AS jsonb), :status, :alorOrderId, :idempotencyKey, :retryCount,
-                :positionId, :createdAt, :processedAt, :errorMessage)
+                :positionId, :accountId, :createdAt, :processedAt, :errorMessage)
             """.trimIndent()
         try {
             databaseClient
@@ -54,6 +55,7 @@ class OrderOutboxRepository(
                 .bindOrNull("idempotencyKey", outbox.idempotencyKey)
                 .bind("retryCount", outbox.retryCount)
                 .bindOrNull("positionId", outbox.positionId)
+                .bindOrNull("accountId", outbox.accountId)
                 .bind("createdAt", outbox.createdAt)
                 .bindOrNull("processedAt", outbox.processedAt)
                 .bindOrNull("errorMessage", outbox.errorMessage)

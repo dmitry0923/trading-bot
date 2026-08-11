@@ -33,6 +33,7 @@ import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
@@ -106,6 +107,33 @@ class TradingBotService(
             portfolioResolver = { accountId -> tradingAccountService.portfolioOf(accountId) },
         )
 
+    /**
+     * WS-подписки на исполнения (multi-account, roadmap v2.2): по одному потоку
+     * на портфель каждого включённого аккаунта + legacy конфиг-портфель (для
+     * позиций с account_id = NULL). Потоки коллекционируются конкурентно.
+     * Добавление аккаунта через API применяется при следующем рестарте бота
+     * (доставка ордеров такого аккаунта всё равно работает через outbox).
+     */
+    private suspend fun subscribeAllOrderStreams() {
+        val portfolios = mutableListOf(alorConfig.portfolio)
+        for (account in tradingAccountService.findEnabled()) {
+            if (account.alorPortfolio !in portfolios) portfolios += account.alorPortfolio
+        }
+        coroutineScope {
+            for (portfolio in portfolios) {
+                launch {
+                    alorWsClient.subscribeToOrders(portfolio).collect { report ->
+                        try {
+                            eventPublisher.publishExecutionReport(report)
+                        } catch (e: Exception) {
+                            logger.error(e) { "WS execution processing error for order ${report.orderId} (portfolio=$portfolio)" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */
     private val lastWsTickAt = ConcurrentHashMap<String, Instant>()
 
@@ -114,13 +142,7 @@ class TradingBotService(
 
     init {
         scope.launch {
-            alorWsClient.subscribeToOrders().collect { report ->
-                try {
-                    eventPublisher.publishExecutionReport(report)
-                } catch (e: Exception) {
-                    logger.error(e) { "WS execution processing error for order ${report.orderId}" }
-                }
-            }
+            subscribeAllOrderStreams()
         }
         if (tradingConfig.wsQuotesEnabled) {
             scope.launch {

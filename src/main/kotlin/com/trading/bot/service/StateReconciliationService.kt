@@ -67,6 +67,7 @@ class StateReconciliationService(
     private val alorConfig: AlorConfig,
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
+    private val tradingAccountService: TradingAccountService,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -112,9 +113,14 @@ class StateReconciliationService(
         if (!lastReconcileAtMs.compareAndSet(last, now)) return
         reconcile()
     }
-
     /**
      * Полная сверка: REST-портфель (заявки, позиции, сделки) против локальных позиций.
+     *
+     * Multi-account (roadmap v2.2): сверяется каждый портфель отдельно — конфиг-портфель
+     * (legacy, accountId = null) и портфель каждого включённого аккаунта. При совпадении
+     * портфелей они сверяют свои локальные наборы позиций (account_id = null vs аккаунта).
+     * Сбой REST одного портфеля НЕ трогает его локальный стейт (fail-safe), остальные
+     * портфели сверяются независимо.
      */
     suspend fun reconcile() {
         if (tradingConfig.mode != "LIVE") {
@@ -122,11 +128,55 @@ class StateReconciliationService(
             return
         }
         val start = System.currentTimeMillis()
-        logger.info { "State reconciliation started (orders, positions, trades)" }
+        val units = reconcileUnits()
+        logger.info { "State reconciliation started (${units.size} portfolio(s): ${units.joinToString { it.portfolio }})" }
 
-        val ordersResult = alorClient.getOpenOrders(portfolio = alorConfig.portfolio)
-        val positionsResult = alorClient.getPositions(alorConfig.portfolio)
-        val tradesResult = alorClient.getRecentTrades(alorConfig.portfolio)
+        var closed = 0
+        var adjusted = 0
+        var unknown = 0
+        var halted = false
+        for (unit in units) {
+            val outcome = reconcilePortfolio(unit)
+            closed += outcome.closed
+            adjusted += outcome.adjusted
+            unknown += outcome.unknown
+            halted = halted || outcome.halted
+        }
+
+        if (halted) {
+            eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "STATE_DESYNC"))
+        }
+
+        meterRegistry
+            .timer("alor.reconcile.duration")
+            .record(System.currentTimeMillis() - start, TimeUnit.MILLISECONDS)
+        meterRegistry
+            .counter("alor.reconcile.run", Tags.of("closed", "$closed", "adjusted", "$adjusted", "unknown", "$unknown"))
+            .increment()
+        logger.info {
+            "State reconciliation finished: phantom=$closed qtyAdjusted=$adjusted unknownExchange=$unknown " +
+                "in ${System.currentTimeMillis() - start}ms"
+        }
+    }
+
+    /**
+     * Единицы сверки (multi-account): legacy конфиг-портфель (accountId = null) +
+     * портфель каждого включённого аккаунта. Дубли портфелей не схлопываются —
+     * каждый сверяет свой набор локальных позиций.
+     */
+    private suspend fun reconcileUnits(): List<ReconcileUnit> {
+        val units = mutableListOf(ReconcileUnit(portfolio = alorConfig.portfolio, accountId = null))
+        for (account in tradingAccountService.findEnabled()) {
+            units += ReconcileUnit(portfolio = account.alorPortfolio, accountId = account.id)
+        }
+        return units
+    }
+
+    private suspend fun reconcilePortfolio(unit: ReconcileUnit): ReconcileOutcome {
+        val portfolio = unit.portfolio
+        val ordersResult = alorClient.getOpenOrders(portfolio = portfolio)
+        val positionsResult = alorClient.getPositions(portfolio)
+        val tradesResult = alorClient.getRecentTrades(portfolio)
 
         if (
             ordersResult is ReconcileResult.Failed ||
@@ -134,14 +184,14 @@ class StateReconciliationService(
             tradesResult is ReconcileResult.Failed
         ) {
             logger.error {
-                "State reconciliation ABORTED: REST fetch failed " +
+                "State reconciliation ABORTED for portfolio '$portfolio': REST fetch failed " +
                     "(orders=${ordersResult is ReconcileResult.Failed}, " +
                     "positions=${positionsResult is ReconcileResult.Failed}, " +
                     "trades=${tradesResult is ReconcileResult.Failed}); " +
                     "no local state mutated (fail-safe)"
             }
             meterRegistry.counter("alor.reconcile.aborted", Tags.of("reason", "FETCH_FAILED")).increment()
-            return
+            return ReconcileOutcome()
         }
 
         val orders = (ordersResult as ReconcileResult.Ok).items
@@ -156,7 +206,7 @@ class StateReconciliationService(
             positions
                 .filter { it.qty != 0L }
                 .associate { it.ticker.uppercase() to it.qty }
-        val localOpen = positionRepo.findByStatus(PositionStatus.OPEN)
+        val localOpen = positionRepo.findOpenByAccount(unit.accountId)
 
         var closed = 0
         var adjusted = 0
@@ -197,6 +247,7 @@ class StateReconciliationService(
 
                         else -> {
                             logger.error {
+
                                 "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
                                     "closed on exchange during WS gap -> marking CLOSED"
                             }
@@ -244,27 +295,14 @@ class StateReconciliationService(
         for ((key, qty) in exchangeQtyByTicker) {
             if (key in localKeys) continue
             logger.error {
-                "Reconcile: UNKNOWN exchange position $key qty=$qty (not tracked locally) — " +
+                "Reconcile portfolio '$portfolio': UNKNOWN exchange position $key qty=$qty (not tracked locally) — " +
                     "manual intervention required (bot may double-open)"
             }
             meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "UNKNOWN_POSITION", "ticker", key)).increment()
             unknown++
         }
 
-        if (closed > 0 || unknown > 0) {
-            eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "STATE_DESYNC"))
-        }
-
-        meterRegistry
-            .timer("alor.reconcile.duration")
-            .record(System.currentTimeMillis() - start, TimeUnit.MILLISECONDS)
-        meterRegistry
-            .counter("alor.reconcile.run", Tags.of("closed", "$closed", "adjusted", "$adjusted", "unknown", "$unknown"))
-            .increment()
-        logger.info {
-            "State reconciliation finished: phantom=$closed qtyAdjusted=$adjusted unknownExchange=$unknown " +
-                "orders=${orders.size} positions=${positions.size} trades=${trades.size} in ${System.currentTimeMillis() - start}ms"
-        }
+        return ReconcileOutcome(closed = closed, adjusted = adjusted, unknown = unknown, halted = closed > 0 || unknown > 0)
     }
 
     /**
@@ -301,4 +339,18 @@ class StateReconciliationService(
     private companion object {
         const val RECONCILE_DEBOUNCE_MS = 5_000L
     }
+
+    /** Портфель + аккаунт для отдельной сверки (accountId = null → legacy). */
+    private data class ReconcileUnit(
+        val portfolio: String,
+        val accountId: Long?,
+    )
+
+    /** Итог сверки одного портфеля. */
+    private data class ReconcileOutcome(
+        val closed: Int = 0,
+        val adjusted: Int = 0,
+        val unknown: Int = 0,
+        val halted: Boolean = false,
+    )
 }

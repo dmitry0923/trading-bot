@@ -319,7 +319,7 @@ candleRepo.findByTickerAndTimeframeAndTimeBetween(
 
 | Аспект | Реализация |
 |---|---|
-| Хранение | таблица `daily_risk_snapshot` — одна строка на торговую дату (`UNIQUE (trade_date)`) |
+| Хранение | таблица `daily_risk_snapshot` — одна строка на торговую дату; multi-account (миграция `021`): уникальность `(trade_date, account_id)` + частичный индекс `(trade_date) WHERE account_id IS NULL` для legacy global-строк |
 | Обновление | upsert из `DrawdownProtectionService` (на закрытие позиции и по циклу риск-движка) |
 | Сброс | по календарной дате 00:00 МСК (новый день → новый снапшот) |
 | Восстановление | загрузка сегодняшнего снапшота при старте (`ApplicationReadyEvent`) и при первом касании дня |
@@ -344,6 +344,22 @@ CREATE TABLE IF NOT EXISTS daily_risk_snapshot (
 ```
 
 Обновление: `INSERT ... ON CONFLICT (trade_date) DO UPDATE SET daily_pnl = EXCLUDED.daily_pnl, ...`.
+
+### 6.6.1. Multi-account: реестр аккаунтов и `account_id` (миграция `021`)
+
+Реестр портфелей `trading_accounts` — строки с персональными переопределениями лимитов (NULL = дефолт из `RiskConfig`/AUM):
+
+| Колонка | Назначение |
+|---|---|
+| `alor_portfolio` | портфель Alor для маршрутизации ордеров (как `AlorConfig.portfolio`) |
+| `exchange` | биржа (default `MOEX`) |
+| `enabled` | участвует ли аккаунт в распределении сигналов |
+| `aum_rub` | переопределение депозита (NULL = реальный баланс Alor) |
+| `max_open_positions` | персональный лимит открытых позиций (NULL = `RiskConfig.maxOpenPositions`) |
+| `max_daily_loss_rub` | персональный дневной лимит убытка (NULL = % от AUM) |
+| `weight` | относительный вес при весовом round-robin распределении сигналов |
+
+`account_id` (FK на `trading_accounts`) добавлен на `positions` (маршрутизация ордеров и отчёты), `order_outbox` (доставка в нужный портфель) и `daily_risk_snapshot` (персональный снапшот лимита). Пустая таблица `trading_accounts` = legacy single-account режим: позиции/ордера без `account_id`, портфель из конфига — поведение идентично до-мультиаккаунтной версии.
 
 ## 6.7. Транзакционность и консистентность
 

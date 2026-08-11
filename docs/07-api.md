@@ -1,6 +1,6 @@
 # 7. API интерфейс
 
-Все REST-endpoints находятся в `ApiController` (`/api/v1`). Корень `@CrossOrigin(origins = ["*"])`. Ответы — JSON.
+REST-endpoints находятся в `ApiController` (`/api/v1`) и `TradingAccountController` (`/api/v1/accounts`, multi-account, roadmap v2.2). Корень `@CrossOrigin(origins = ["*"])`. Ответы — JSON.
 
 > **Авторизация**: self-issued JWT (Spring Security resource server). Все `/api/v1/*` требуют `Authorization: Bearer <accessToken>`; роли: `ADMIN` (полный доступ), `ANALYTICS` (только чтение). Публичны только `/actuator/health` и `/api/v1/auth/login`. Endpoint'ы `/actuator/prometheus` закрыты отдельным Bearer-токеном `METRICS_SCRAPE_TOKEN` (см. `ScrapeTokenFilter`).
 
@@ -51,6 +51,15 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | GET | `/api/v1/logs` | последние 100 agent-логов | ✅ |
 | GET | `/api/v1/risk/daily-pnl` | текущий дневной P&L | ✅ |
 | GET | `/api/v1/risk/daily-pnl-history?days=30` | история дневных P&L | ✅ |
+| GET | `/api/v1/dashboard` | агрегированный дашборд (`?accountId=` — фильтр по аккаунту) | ✅ |
+| GET | `/api/v1/dashboard/stream` | real-time дашборд (SSE, `?accountId=` — фильтр) | ✅ |
+| GET | `/api/v1/accounts` | реестр торговых аккаунтов | ✅ |
+| POST | `/api/v1/accounts` | создать аккаунт (ADMIN) | ✅ |
+| GET | `/api/v1/accounts/{id}` | аккаунт + его открытые позиции | ✅ |
+| PUT | `/api/v1/accounts/{id}` | полная замена аккаунта (ADMIN) | ✅ |
+| DELETE | `/api/v1/accounts/{id}` | удалить аккаунт (ADMIN, 409 при FK) | ✅ |
+| GET | `/api/v1/accounts/{id}/dashboard` | live-снимок аккаунта | ✅ |
+| GET | `/api/v1/accounts/{id}/daily-pnl?days=30` | история дневных P&L аккаунта | ✅ |
 | POST | `/api/v1/strategy/trigger` | ручной запуск цикла стратегий | ✅ |
 | POST | `/api/v1/bot/trigger` | ручной запуск бот-цикла | ✅ |
 | GET | `/api/v1/analytics/trade-stats` | статистика сделок за N дней | ✅ |
@@ -203,6 +212,169 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 
 ```json
 {
+  "points": [
+    { "tradeDate": "2026-08-10", "pnl": 350.5, "limitReached": false },
+    { "tradeDate": "2026-08-11", "pnl": -1250.0, "limitReached": true }
+  ]
+}
+```
+
+### GET /api/v1/dashboard
+
+Агрегированный снимок дашборда для React-панели: открытые позиции с live P&L, дневная статистика, paused-тикеры, режим торговли (см. `DashboardService.build`).
+
+**Query params**:
+- `accountId` — фильтр по аккаунту (multi-account, roadmap v2.2): позиции, закрытые сегодня и дневной P&L берутся только этого аккаунта; `null` (по умолчанию) = агрегированный вид по всем аккаунтам. При неизвестном `accountId` → **404**.
+
+**Response 200** (пример, `accountId` установлен):
+
+```json
+{
+  "accountId": 3,
+  "tradingMode": "SIMULATION",
+  "tickers": ["SBER", "GAZP"],
+  "dailyPnl": 300.5,
+  "openPnl": 250.0,
+  "realizedPnlToday": -150.0,
+  "closedTodayCount": 1,
+  "openPositionsCount": 1,
+  "openPositions": [
+    {
+      "id": 7,
+      "ticker": "SBER",
+      "direction": "LONG",
+      "quantity": 10,
+      "entryPrice": 250.0,
+      "currentPrice": 275.0,
+      "pnl": 250.0,
+      "status": "OPEN",
+      "accountId": 3
+    }
+  ],
+  "pausedTickers": [],
+  "adaptiveParams": {}
+}
+```
+
+### GET /api/v1/dashboard/stream
+
+Real-time поток дашборда (Server-Sent Events, `text/event-stream`). Подписчик немедленно получает текущий снимок (событие `dashboard`, данные — JSON как в `/api/v1/dashboard`), далее — обновления при событиях домена (позиции, стратегии, исполнение, тики цен, троттлинг 2 с).
+
+**Query params**:
+- `accountId` — фильтр снимка по аккаунту; `null` = агрегированный вид. При неизвестном `accountId` → **404**.
+
+```bash
+curl -N -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/v1/dashboard/stream?accountId=3"
+# event: dashboard
+# data: {"accountId":3,"openPositionsCount":1,"dailyPnl":300.5,...}
+```
+
+> Подключение держится открытым (таймаут `SseEmitter` 1 ч; на Tomcat suspend-возврат оборачивался в `DeferredResult()` без таймаута → резался по `AsyncRequestTimeoutException` через 30 с, поэтому контроллер намеренно не-suspend). «Зомби»-подписки снимаются при первой неудачной рассылке.
+
+### GET /api/v1/accounts
+
+Список аккаунтов с числом открытых позиций.
+
+**Response 200**:
+
+```json
+[
+  {
+    "id": 1,
+    "name": "Alpha",
+    "alorPortfolio": "P1000",
+    "exchange": "MOEX",
+    "enabled": true,
+    "aumRub": 1000000.0,
+    "maxOpenPositions": 3,
+    "maxDailyLossRub": 20000.0,
+    "weight": 2,
+    "createdAt": "2026-08-11T10:00:00",
+    "updatedAt": "2026-08-11T10:00:00",
+    "openPositions": 1
+  }
+]
+```
+
+Пустая таблица = legacy single-account режим (портфель из `AlorConfig.portfolio`, позиции без `account_id`).
+
+### POST /api/v1/accounts
+
+Создать аккаунт (ADMIN). Тело — `TradingAccountRequest`:
+
+```json
+{
+  "name": "Beta",
+  "alorPortfolio": "P2000",
+  "exchange": "MOEX",
+  "enabled": true,
+  "aumRub": 1500000.0,
+  "maxOpenPositions": 5,
+  "maxDailyLossRub": 30000.0,
+  "weight": 1
+}
+```
+
+Поля-лимиты (`aumRub`, `maxOpenPositions`, `maxDailyLossRub`) необязательны: `null` = дефолт из `RiskConfig`/AUM. `exchange`/`enabled`/`weight` имеют серверные дефолты. Валидация: `name`/`alorPortfolio` непустые, `weight >= 1`, `maxOpenPositions >= 0`, `aumRub > 0` — иначе **400**.
+
+**Response 201**: созданный аккаунт (как в списке, без `openPositions`).
+
+### GET /api/v1/accounts/{id}
+
+Аккаунт + его открытые позиции. **404** при неизвестном `id`.
+
+**Response 200**: объект аккаунта (как в списке) + `openPositions` (массив позиций) и `openPositionsCount`.
+
+### PUT /api/v1/accounts/{id}
+
+Полная замена аккаунта (ADMIN). Тело как у POST; `name`/`alorPortfolio`/`exchange`/`enabled`/`weight` обязательны, `aumRub`/`maxOpenPositions`/`maxDailyLossRub` — `null` очищает персональный лимит. **404** при неизвестном `id`.
+
+### DELETE /api/v1/accounts/{id}
+
+Удалить аккаунт (ADMIN). **409** при открытых/закрытых позициях (FK `fk_positions_account`, история сохраняется) или неотправленных outbox-ордерах. **404** при неизвестном `id`.
+
+**Response 200**: `{"deleted": true, "id": 1}`.
+
+### GET /api/v1/accounts/{id}/dashboard
+
+Live-снимок аккаунта: AUM, дневной P&L и лимиты, открытые позиции с P&L, закрытые сегодня. Per-account аналог `/api/v1/dashboard`.
+
+**Query params**: нет.
+
+**Response 200**:
+
+```json
+{
+  "account": { "id": 1, "name": "Alpha", "alorPortfolio": "P1000", "...": "" },
+  "portfolio": "P1000",
+  "aum": 1000000.0,
+  "dailyPnl": -1250.0,
+  "dailyLossLimitReached": true,
+  "entryBlocked": true,
+  "maxDailyLossRub": 20000.0,
+  "maxOpenPositions": 3,
+  "openPositions": [],
+  "openPositionsCount": 0,
+  "openPnl": 0.0,
+  "realizedPnlToday": -1250.0,
+  "closedTodayCount": 1,
+  "timestamp": "2026-08-11T15:00:00"
+}
+```
+
+### GET /api/v1/accounts/{id}/daily-pnl
+
+История дневных P&L аккаунта из `daily_risk_snapshot` (по одной точке на дату, по возрастанию).
+
+**Query params**:
+- `days` — глубина истории (1..365, default `30`).
+
+**Response 200**:
+
+```json
+{
+  "accountId": 1,
   "points": [
     { "tradeDate": "2026-08-10", "pnl": 350.5, "limitReached": false },
     { "tradeDate": "2026-08-11", "pnl": -1250.0, "limitReached": true }

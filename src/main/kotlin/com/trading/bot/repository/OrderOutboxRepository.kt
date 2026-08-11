@@ -130,18 +130,62 @@ class OrderOutboxRepository(
 
     /**
      * Последняя outbox-запись для позиции (для сверки входов/закрытий).
+     *
+     * @param purpose назначение ордера ("entry"/"close"/"sl"/"tp") — фильтр по
+     *   `payload->>'purpose'`. У позиции несколько outbox-строк (вход, защитные
+     *   заявки SL/TP, закрытие) — без фильтра последняя строка неоднозначна.
      */
-    suspend fun findLatestByPositionId(positionId: Long): OrderOutbox? {
+    suspend fun findLatestByPositionId(
+        positionId: Long,
+        purpose: String? = null,
+    ): OrderOutbox? {
+        val sql =
+            if (purpose == null) {
+                """
+                SELECT * FROM order_outbox
+                WHERE payload->>'positionId' = :positionId
+                ORDER BY created_at DESC
+                LIMIT 1
+                """.trimIndent()
+            } else {
+                """
+                SELECT * FROM order_outbox
+                WHERE payload->>'positionId' = :positionId AND payload->>'purpose' = :purpose
+                ORDER BY created_at DESC
+                LIMIT 1
+                """.trimIndent()
+            }
+        val spec = databaseClient.sql(sql).bind("positionId", positionId.toString())
+        return spec
+            .let { if (purpose != null) it.bind("purpose", purpose) else it }
+            .map { row, _ -> toOrderOutbox(row) }
+            .one()
+            .awaitSingleOrNull()
+    }
+
+    /**
+     * Подтверждённая (SENT) отмена защитной заявки по orderId. Используется, чтобы
+     * не пере-армировать отменённый SL/TP и не выставлять дубликат, пока отмена
+     * UNCERTAIN (старый ордер ещё может быть живым на бирже).
+     */
+    suspend fun findLatestConfirmedCancel(
+        positionId: Long,
+        alorOrderId: String,
+    ): OrderOutbox? {
         val sql =
             """
             SELECT * FROM order_outbox
             WHERE payload->>'positionId' = :positionId
+              AND payload->>'purpose' = 'cancel'
+              AND payload->>'orderId' = :orderId
+              AND status = 'SENT'
             ORDER BY created_at DESC
             LIMIT 1
             """.trimIndent()
         return databaseClient
             .sql(sql)
             .bind("positionId", positionId.toString())
+            .bind("orderId", alorOrderId)
             .map { row, _ -> toOrderOutbox(row) }
             .one()
             .awaitSingleOrNull()

@@ -88,6 +88,9 @@ class AlorClient(
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
+    /** LIVE-режим (публичное окно [isLive]) — используется для гейта биржевых SL/TP-заявок. */
+    val isLiveMode: Boolean get() = isLive
+
     suspend fun getMarketSnapshot(ticker: String): MarketSnapshot? {
         if (!isLive) {
             return MarketSnapshot(
@@ -245,21 +248,135 @@ class AlorClient(
     }
 
     /**
-     * Отмена заявки с обязательным idempotency key (POST /orders/actions/cancel).
+     * Стоп-заявка (type="stop"): срабатывает при пересечении ценой [stopPrice]
+     * (LONG: вниз, SHORT: вверх), после чего исполняется по рынку. Используется
+     * как биржевой stop-loss при открытии позиции (roadmap v2.2).
      *
-     * Используется для остатка лимитного входа после частичного исполнения
-     * (см. resolveEntryViaOutbox): лимитка снимается, позиция фиксируется на
-     * фактическом объёме — биржа не «до-исполнит» остаток без ведома бота.
+     * Тот же контракт доставки, что и [placeLimitOrder]: idempotencyKey обязателен,
+     * null при определённом отказе, исключение при UNCERTAIN.
+     */
+    suspend fun placeStopOrder(
+        ticker: String,
+        side: String,
+        qty: Int,
+        stopPrice: BigDecimal,
+        idempotencyKey: String,
+    ): String? = placeConditionalOrder("stop", ticker, side, qty, stopPrice, idempotencyKey)
+
+    /**
+     * Тейк-профит-заявка (type="take-profit"): срабатывает при пересечении ценой
+     * [stopPrice] в прибыль (LONG: вверх, SHORT: вниз), исполняется по рынку.
+     * Биржевой take-profit при открытии позиции.
+     */
+    suspend fun placeTakeProfitOrder(
+        ticker: String,
+        side: String,
+        qty: Int,
+        stopPrice: BigDecimal,
+        idempotencyKey: String,
+    ): String? = placeConditionalOrder("take-profit", ticker, side, qty, stopPrice, idempotencyKey)
+
+    /**
+     * Условная (стоп/тейк) заявка через единый endpoint `actions/limit` —
+     * тип задаётся полем `type` в теле запроса (Alor ModelForOrders).
+     * `stopEndUnixTime`=0 — действует до конца торговой сессии.
+     */
+    private suspend fun placeConditionalOrder(
+        type: String,
+        ticker: String,
+        side: String,
+        qty: Int,
+        stopPrice: BigDecimal,
+        idempotencyKey: String,
+    ): String? {
+        if (!isLive) return "sim-$type-$ticker-$idempotencyKey"
+        val start = System.currentTimeMillis()
+        return try {
+            val body =
+                mapOf(
+                    "portfolio" to alorConfig.portfolio,
+                    "ticker" to ticker,
+                    "exchange" to alorConfig.exchange,
+                    "side" to side,
+                    "type" to type,
+                    "quantity" to qty,
+                    "stopPrice" to stopPrice.toPlainString(),
+                    "stopEndUnixTime" to 0,
+                    "id" to idempotencyKey,
+                )
+            val raw: String =
+                resilient {
+                    webClient
+                        .post()
+                        .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/limit")
+                        .header("Authorization", "Bearer ${getActualToken()}")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(objectMapper.writeValueAsString(body))
+                        .retrieve()
+                        .bodyToMono(String::class.java)
+                        .timeout(Duration.ofSeconds(10))
+                        .awaitSingle()
+                }
+            recordLatency("placeConditionalOrder", start)
+            val orderNumber =
+                objectMapper
+                    .readTree(raw)
+                    .path("orderNumber")
+                    .asString()
+                    .ifBlank { null }
+            if (orderNumber != null) {
+                meterRegistry.counter("alor.order.placed", Tags.of("type", type, "status", "OK")).increment()
+                logger.info { "Conditional order placed type=$type $side $qty $ticker @ $stopPrice -> $orderNumber (idem=$idempotencyKey)" }
+            }
+            orderNumber
+        } catch (e: WebClientResponseException) {
+            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", type)).increment()
+            if (isDefinitiveRejection(e)) {
+                logger.error(e) { "$type order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
+                null
+            } else {
+                logger.error(e) { "placeConditionalOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
+                throw e
+            }
+        } catch (_: RequestNotPermitted) {
+            logger.warn { "$type order $ticker NOT sent (rate limit) — will retry on next outbox cycle" }
+            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "RATE_LIMIT")).increment()
+            null
+        } catch (_: CallNotPermittedException) {
+            logger.warn { "$type order $ticker NOT sent (circuit breaker open) — will retry on next outbox cycle" }
+            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "CIRCUIT_OPEN")).increment()
+            null
+        } catch (e: Exception) {
+            logger.error(e) { "placeConditionalOrder failed for $ticker after retries — delivery UNCERTAIN" }
+            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", type)).increment()
+            throw e
+        }
+    }
+
+    /**
+     * Результат отмены заявки.
      *
-     * @return true при успешной отмене; false при определённом отказе биржи (4xx);
-     *   при сетевом сбое/таймауте/5xx после исчерпания ретраев — бросает исключение
-     *   (верхний слой пометит операцию UNCERTAIN и повторит на следующем цикле).
+     * - [CONFIRMED]: биржа подтвердила отмену (200) — заявки на бирже больше нет;
+     * - [REJECTED]: определённый отказ (4xx, кроме 429) — заявка не «рабочая»
+     *   (не найдена / уже отменена / уже исполнена);
+     * - [UNCERTAIN]: состояние неизвестно (сеть/таймаут/5xx/429/лимит/разрыв CB) —
+     *   отмена могла и не дойти, повторять на следующем цикле.
+     */
+    enum class CancelResult {
+        CONFIRMED,
+        REJECTED,
+        UNCERTAIN,
+    }
+
+    /**
+     * Отмена заявки по orderId. Идемпотентный ключ передаётся в поле "id"
+     * (защита от двойной отмены при повторах). Возвращает [CancelResult].
      */
     suspend fun cancelOrder(
         orderId: String,
         idempotencyKey: String,
-    ): Boolean {
-        if (!isLive) return true
+    ): CancelResult {
+        if (!isLive) return CancelResult.CONFIRMED
         return try {
             val body =
                 mapOf(
@@ -282,12 +399,12 @@ class AlorClient(
             }
             meterRegistry.counter("alor.order.cancelled", Tags.of("type", "limit")).increment()
             logger.info { "Order cancelled $orderId (idem=$idempotencyKey)" }
-            true
+            CancelResult.CONFIRMED
         } catch (e: WebClientResponseException) {
             meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
             if (isDefinitiveRejection(e)) {
                 logger.warn(e) { "Order cancel REJECTED $orderId (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
-                false
+                CancelResult.REJECTED
             } else {
                 logger.error(e) { "Order cancel failed for $orderId after retries (${e.statusCode.value()}) — UNCERTAIN" }
                 throw e
@@ -295,11 +412,11 @@ class AlorClient(
         } catch (_: RequestNotPermitted) {
             logger.warn { "Order cancel NOT sent for $orderId (rate limit) — will retry on next outbox cycle" }
             meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
-            false
+            CancelResult.UNCERTAIN
         } catch (_: CallNotPermittedException) {
             logger.warn { "Order cancel NOT sent for $orderId (circuit breaker open) — will retry on next outbox cycle" }
             meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
-            false
+            CancelResult.UNCERTAIN
         } catch (e: Exception) {
             logger.error(e) { "Order cancel failed for $orderId after retries — UNCERTAIN" }
             meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()

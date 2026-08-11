@@ -40,6 +40,43 @@ object ExitRules {
     }
 
     /**
+     * Эффективный уровень биржевого стоп-лосса: жёсткий [Position.stopLoss] либо
+     * трейлинг-стоп [Position.trailingStopPrice], если он «строже» (для LONG — выше,
+     * для SHORT — ниже). Стоп-заявка на бирже выставляется именно на этот уровень.
+     */
+    fun effectiveSl(pos: Position): BigDecimal? {
+        val hard = pos.stopLoss ?: return null
+        val trailing = pos.trailingStopPrice ?: return hard
+        return when (pos.direction) {
+            PositionDirection.LONG -> if (trailing > hard) trailing else hard
+            PositionDirection.SHORT -> if (trailing < hard) trailing else hard
+        }
+    }
+
+    /**
+     * Покрывает ли биржевая стоп-заявка [effectiveSl] (уровень заявки актуален).
+     * Если да — локальный мониторинг НЕ закрывает позицию по SL/trailing
+     * сам (биржа сделает это при пересечении), иначе — двойное закрытие.
+     */
+    fun exchangeSlCovers(pos: Position): Boolean {
+        if (pos.slOrderId == null) return false
+        val level = pos.slOrderPrice ?: return false
+        val effSl = effectiveSl(pos) ?: return false
+        return level.compareTo(effSl) == 0
+    }
+
+    /**
+     * Покрывает ли биржевая тейк-заявка [Position.takeProfit] (уровень актуален).
+     * Если да — локальный мониторинг НЕ закрывает по TP сам.
+     */
+    fun exchangeTpCovers(pos: Position): Boolean {
+        if (pos.tpOrderId == null) return false
+        val level = pos.tpOrderPrice ?: return false
+        val tp = pos.takeProfit ?: return false
+        return level.compareTo(tp) == 0
+    }
+
+    /**
      * Цена стоп-лосса по проценту от цены входа (акции).
      */
     fun calcSL(

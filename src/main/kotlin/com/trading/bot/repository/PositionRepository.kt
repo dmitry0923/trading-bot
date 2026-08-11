@@ -43,6 +43,12 @@ class PositionRepository(
             status = enumValueOf(row.require("status", String::class.java)),
             alorOrderId = row.get("alor_order_id", String::class.java),
             closeOrderId = row.get("close_order_id", String::class.java),
+            slOrderId = row.get("sl_order_id", String::class.java),
+            tpOrderId = row.get("tp_order_id", String::class.java),
+            slOrderPrice = row.get("sl_order_price", BigDecimal::class.java),
+            tpOrderPrice = row.get("tp_order_price", BigDecimal::class.java),
+            slPendingReplace = row.get("sl_pending_replace", Boolean::class.javaObjectType) ?: false,
+            tpPendingReplace = row.get("tp_pending_replace", Boolean::class.javaObjectType) ?: false,
             pendingClose = row.get("pending_close", Boolean::class.javaObjectType) ?: false,
             pendingEntry = row.get("pending_entry", Boolean::class.javaObjectType) ?: false,
             realizedPnl = row.get("realized_pnl", BigDecimal::class.java) ?: BigDecimal.ZERO,
@@ -98,6 +104,26 @@ class PositionRepository(
         return databaseClient
             .sql(sql)
             .bind("closeOrderId", closeOrderId)
+            .map { row, _ -> toPosition(row) }
+            .one()
+            .awaitSingleOrNull()
+    }
+
+    suspend fun findBySlOrderId(slOrderId: String): Position? {
+        val sql = "SELECT * FROM positions WHERE sl_order_id = :slOrderId"
+        return databaseClient
+            .sql(sql)
+            .bind("slOrderId", slOrderId)
+            .map { row, _ -> toPosition(row) }
+            .one()
+            .awaitSingleOrNull()
+    }
+
+    suspend fun findByTpOrderId(tpOrderId: String): Position? {
+        val sql = "SELECT * FROM positions WHERE tp_order_id = :tpOrderId"
+        return databaseClient
+            .sql(sql)
+            .bind("tpOrderId", tpOrderId)
             .map { row, _ -> toPosition(row) }
             .one()
             .awaitSingleOrNull()
@@ -212,6 +238,12 @@ class PositionRepository(
             .bind("status", position.status.name)
             .bindOrNull("alorOrderId", position.alorOrderId)
             .bindOrNull("closeOrderId", position.closeOrderId)
+            .bindOrNull("slOrderId", position.slOrderId)
+            .bindOrNull("tpOrderId", position.tpOrderId)
+            .bindOrNull("slOrderPrice", position.slOrderPrice)
+            .bindOrNull("tpOrderPrice", position.tpOrderPrice)
+            .bind("slPendingReplace", position.slPendingReplace)
+            .bind("tpPendingReplace", position.tpPendingReplace)
             .bind("pendingClose", position.pendingClose)
             .bind("pendingEntry", position.pendingEntry)
             .bind("realizedPnl", position.realizedPnl)
@@ -226,11 +258,13 @@ class PositionRepository(
             INSERT INTO positions (ticker, direction, quantity, entry_price, current_price, close_price,
                 stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
                 liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
-                alor_order_id, close_order_id, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id)
+                alor_order_id, close_order_id, sl_order_id, tp_order_id, sl_order_price, tp_order_price,
+                sl_pending_replace, tp_pending_replace, pending_close, pending_entry, realized_pnl, close_reason, opened_at, closed_at, cycle_id)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
-                :alorOrderId, :closeOrderId, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId)
+                :alorOrderId, :closeOrderId, :slOrderId, :tpOrderId, :slOrderPrice, :tpOrderPrice,
+                :slPendingReplace, :tpPendingReplace, :pendingClose, :pendingEntry, :realizedPnl, :closeReason, :openedAt, :closedAt, :cycleId)
             RETURNING id
             """.trimIndent()
         val id =
@@ -254,6 +288,9 @@ class PositionRepository(
                 variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
                 trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
                 alor_order_id = :alorOrderId, close_order_id = :closeOrderId,
+                sl_order_id = :slOrderId, tp_order_id = :tpOrderId,
+                sl_order_price = :slOrderPrice, tp_order_price = :tpOrderPrice,
+                sl_pending_replace = :slPendingReplace, tp_pending_replace = :tpPendingReplace,
                 pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
                 close_reason = :closeReason, opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId
             WHERE id = :id

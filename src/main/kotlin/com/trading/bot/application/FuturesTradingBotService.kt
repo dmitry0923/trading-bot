@@ -87,6 +87,7 @@ class FuturesTradingBotService(
             metricPrefix = "futures",
             onEntryOpened = { eventPublisher.publishPositionOpened(it) },
             onPositionClosed = { eventPublisher.publishPositionClosed(it) },
+            protectionOrdersEnabled = alorClient.isLiveMode,
         )
 
     /** Мониторинг открытых позиций на каждом тике. */

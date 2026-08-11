@@ -18,6 +18,10 @@ import java.time.LocalDateTime
  *   уменьшает [quantity] (дозакрытие остатка следующей итерацией).
  * - [realizedPnl] — накопленный реализованный P&L по уже закрытым частям
  *   (partial fills); итоговый [pnl] при полном закрытии = realizedPnl + остаток.
+ * - [slOrderId] / [tpOrderId] — биржевые защитные заявки (stop/take-profit), выставленные
+ *   при открытии позиции (roadmap v2.2 «Точный контроль SL/TP»); [slOrderPrice] /
+ *   [tpOrderPrice] — уровень заявки для детекции перевыставления, [slPendingReplace] /
+ *   [tpPendingReplace] — перевыставление в полёте (отмена старой ещё не подтверждена).
  */
 data class Position(
     val id: Long? = null,
@@ -41,6 +45,12 @@ data class Position(
     var status: PositionStatus = PositionStatus.OPEN,
     var alorOrderId: String? = null,
     var closeOrderId: String? = null,
+    var slOrderId: String? = null,
+    var tpOrderId: String? = null,
+    var slOrderPrice: BigDecimal? = null,
+    var tpOrderPrice: BigDecimal? = null,
+    var slPendingReplace: Boolean = false,
+    var tpPendingReplace: Boolean = false,
     var pendingClose: Boolean = false,
     var pendingEntry: Boolean = false,
     var realizedPnl: BigDecimal = BigDecimal.ZERO,

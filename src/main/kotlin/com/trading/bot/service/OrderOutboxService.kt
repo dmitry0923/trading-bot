@@ -78,6 +78,8 @@ class OrderOutboxService(
      *
      * @param positionId id позиции для стейт-машины входа/закрытия (null — нет позиции)
      * @param closeReason причина закрытия (для мониторинга/логов)
+     * @param stopPrice цена-триггер стоп/тейк-заявки (type="stop"/"take-profit")
+     * @param purpose назначение ордера ("entry"/"close"/"sl"/"tp") — фильтр реконсилятора
      */
     suspend fun placeOrder(
         ticker: String,
@@ -87,6 +89,8 @@ class OrderOutboxService(
         type: String,
         positionId: Long? = null,
         closeReason: String? = null,
+        stopPrice: BigDecimal? = null,
+        purpose: String? = null,
     ): PlaceOrderResult {
         // Ключ генерируется один раз на логический ордер — все ретраи идут с ним же.
         val idempotencyKey = UuidV7.uuidString()
@@ -101,6 +105,8 @@ class OrderOutboxService(
                     "idempotencyKey" to idempotencyKey,
                     "positionId" to positionId,
                     "closeReason" to closeReason,
+                    "stopPrice" to stopPrice?.toPlainString(),
+                    "purpose" to purpose,
                 ),
             )
         val outbox =
@@ -116,6 +122,42 @@ class OrderOutboxService(
         return dispatch(outbox)
     }
 
+    /**
+     * Гарантированная отмена биржевой заявки (защитные SL/TP при закрытии позиции,
+     * снятие старой заявки при перевыставлении) — тоже через outbox, чтобы отмена
+     * дошла даже после падения бота.
+     *
+     * @param positionId id позиции (для фильтрации строк реконсилятором)
+     * @param orderId биржевой orderId отменяемой заявки
+     */
+    suspend fun placeCancelOrder(
+        positionId: Long,
+        orderId: String,
+    ): PlaceOrderResult {
+        val idempotencyKey = UuidV7.uuidString()
+        val payload =
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "ticker" to "",
+                    "type" to "cancel",
+                    "idempotencyKey" to idempotencyKey,
+                    "positionId" to positionId,
+                    "purpose" to "cancel",
+                    "orderId" to orderId,
+                ),
+            )
+        val outbox =
+            outboxRepo.save(
+                OrderOutbox(
+                    payloadJson = payload,
+                    idempotencyKey = idempotencyKey,
+                    positionId = positionId,
+                ),
+            )
+        logger.info { "Outbox cancel saved: ${outbox.id} order=$orderId pos=$positionId" }
+        return dispatch(outbox)
+    }
+
     private suspend fun dispatch(outbox: OrderOutbox): PlaceOrderResult {
         val id = checkNotNull(outbox.id) { "Outbox row without id cannot be dispatched" }
         val payload = objectMapper.readTree(outbox.payloadJson)
@@ -128,11 +170,19 @@ class OrderOutboxService(
                 .asString()
                 .takeIf { it.isNotBlank() && it != "null" }
                 ?.toBigDecimal()
+        val stopPrice =
+            payload
+                .path("stopPrice")
+                .asString()
+                .takeIf { it.isNotBlank() && it != "null" }
+                ?.toBigDecimal()
         val type = payload.path("type").asString("limit")
         val idempotencyKey = outbox.idempotencyKey ?: payload.path("idempotencyKey").asString()
+        val isCancel = type == "cancel"
 
         // STATE RECONCILIATION перед любым ПОВТОРНЫМ запросом.
-        if (outbox.retryCount > 0) {
+        // (Отмена — отдельный тип: сверка по idempotencyKey ордера к ней не применима.)
+        if (outbox.retryCount > 0 && !isCancel) {
             when (val reconciled = alorClient.reconcileOrderByIdempotencyKey(idempotencyKey, ticker, side)) {
                 is AlorClient.OrderReconciliation.Found -> {
                     outboxRepo.markSent(id, reconciled.orderNumber)
@@ -194,6 +244,15 @@ class OrderOutboxService(
                 when (type) {
                     "limit" -> price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey) }
                     "market" -> alorClient.placeMarketOrder(ticker, side, qty, idempotencyKey)
+                    "stop" -> stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey) }
+                    "take-profit" -> stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey) }
+                    "cancel" ->
+                        when (alorClient.cancelOrder(payload.path("orderId").asString(), idempotencyKey)) {
+                            // CONFIRMED — заявка снята; REJECTED — «не рабочая» (уже отменена/
+                            // исполнена/не найдена) — обе однозначны, ордера больше нет.
+                            AlorClient.CancelResult.CONFIRMED, AlorClient.CancelResult.REJECTED -> "cancelled"
+                            AlorClient.CancelResult.UNCERTAIN -> null
+                        }
                     else -> null
                 }
             if (orderId != null) {

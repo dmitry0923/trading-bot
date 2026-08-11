@@ -98,6 +98,7 @@ class TradingBotService(
                 risk.updateDailyPnL(pos.pnl ?: BigDecimal.ZERO)
                 meterRegistry.gauge("bot.pnl", Tags.of("ticker", pos.ticker), pos.pnl?.toDouble() ?: 0.0)
             },
+            protectionOrdersEnabled = alorClient.isLiveMode,
         )
 
     /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */
@@ -235,15 +236,15 @@ class TradingBotService(
                     pos.pnl = pnl
                     updatePositionPnlGauge(pos.ticker, pnl.toDouble())
 
-                    if (ExitRules.shouldCloseBySL(pos, price)) {
+                    if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
                         engine.closePosition(pos, price, "STOP_LOSS")
                         return@forEach
                     }
-                    if (ExitRules.shouldCloseByTP(pos, price)) {
+                    if (!ExitRules.exchangeTpCovers(pos) && ExitRules.shouldCloseByTP(pos, price)) {
                         engine.closePosition(pos, price, "TAKE_PROFIT")
                         return@forEach
                     }
-                    if (ExitRules.shouldCloseByTrailing(pos, price)) {
+                    if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseByTrailing(pos, price)) {
                         engine.closePosition(pos, price, "TRAILING_STOP")
                         return@forEach
                     }
@@ -287,6 +288,8 @@ class TradingBotService(
                     positionRepo.save(pos)
                     if (slUpdated || tpUpdated) {
                         tradeEventService.recordPositionUpdated(pos)
+                        // Сдвиг SL/TP стратегией → синхронизация биржевых защитных заявок.
+                        engine.onProtectionLevelsChanged(pos)
                     }
                 }
             } catch (e: Exception) {

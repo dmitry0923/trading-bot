@@ -296,6 +296,8 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                         Mockito.anyString(),
                         Mockito.nullable(Long::class.java),
                         Mockito.nullable(String::class.java),
+                        Mockito.nullable(BigDecimal::class.java),
+                        Mockito.nullable(String::class.java),
                     ),
                 ).thenReturn(
                     OrderOutboxService.PlaceOrderResult(
@@ -422,7 +424,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         runBlocking {
             Mockito
                 .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1"))
-                .thenReturn(true)
+                .thenReturn(AlorClient.CancelResult.CONFIRMED)
         }
 
         service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("92000")))
@@ -467,7 +469,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         runBlocking {
             Mockito
                 .`when`(alorClient.cancelOrder("ord-entry-1", "idem-1"))
-                .thenReturn(false)
+                .thenReturn(AlorClient.CancelResult.REJECTED)
         }
 
         service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("92000")))

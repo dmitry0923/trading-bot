@@ -85,15 +85,17 @@ class FuturesPositionMonitor(
             }
 
             // 2. SL / TP / trailing
-            if (ExitRules.shouldCloseBySL(pos, price)) {
+            // Живая биржевая заявка покрывает уровень — закрывает сама биржа,
+            // иначе локальный мониторинг продублирует закрытие (двойной ордер).
+            if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
                 engine.closePosition(pos, price, "STOP_LOSS")
                 continue
             }
-            if (ExitRules.shouldCloseByTP(pos, price)) {
+            if (!ExitRules.exchangeTpCovers(pos) && ExitRules.shouldCloseByTP(pos, price)) {
                 engine.closePosition(pos, price, "TAKE_PROFIT")
                 continue
             }
-            if (ExitRules.shouldCloseByTrailing(pos, price)) {
+            if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseByTrailing(pos, price)) {
                 engine.closePosition(pos, price, "TRAILING_STOP")
                 continue
             }
@@ -106,6 +108,9 @@ class FuturesPositionMonitor(
                 instrumentsConfig.pointValue(pos.ticker),
             )
             positionRepo.save(pos)
+            // Сдвиг SL-уровня (trailing) → биржевая защитная заявка перевыставляется
+            // (отмена старой + новая на текущем уровне), пока не синхронизированы.
+            engine.onProtectionLevelsChanged(pos)
         }
     }
 }

@@ -37,3 +37,5 @@ databaseChangeLog:
       file: db/changelog/changes/018-strategy-name.sql
   - include:
       file: db/changelog/changes/019-partition-positions-agent-logs.sql
+  - include:
+      file: db/changelog/changes/020-protection-orders.sql

@@ -133,6 +133,8 @@ class FuturesTradingBotServicePartialCloseTest {
                         Mockito.anyString(),
                         Mockito.anyLong(),
                         Mockito.anyString(),
+                        Mockito.nullable(BigDecimal::class.java),
+                        Mockito.nullable(String::class.java),
                     ),
                 ).thenAnswer { inv ->
                     val qty = inv.getArgument<Int>(2)
@@ -167,6 +169,8 @@ class FuturesTradingBotServicePartialCloseTest {
                     Mockito.anyString(),
                     Mockito.anyLong(),
                     Mockito.anyString(),
+                    Mockito.nullable(BigDecimal::class.java),
+                    Mockito.nullable(String::class.java),
                 )
         }
 
@@ -219,6 +223,8 @@ class FuturesTradingBotServicePartialCloseTest {
                     Mockito.anyString(),
                     Mockito.anyLong(),
                     Mockito.anyString(),
+                    Mockito.nullable(BigDecimal::class.java),
+                    Mockito.nullable(String::class.java),
                 )
             Mockito.verify(alorClient, Mockito.timeout(3000)).verifyOrder(eq("ord-inflight"), anyBigDecimal())
         }

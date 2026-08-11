@@ -114,6 +114,20 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /**
+     * Все позиции аккаунта (включая закрытые). FK fk_positions_account ссылается на
+     * trading_accounts без ON DELETE CASCADE — удаление аккаунта с любой позицией
+     * нарушает целостность, поэтому блокируется на уровне API.
+     */
+    suspend fun countByAccount(accountId: Long): Int =
+        databaseClient
+            .sql("SELECT COUNT(*) AS cnt FROM positions WHERE account_id = :accountId")
+            .bind("accountId", accountId)
+            .map { row, _ -> row.get("cnt", Long::class.javaObjectType)?.toInt() ?: 0 }
+            .one()
+            .awaitSingleOrNull()
+            ?: 0
+
     suspend fun findById(id: Long): Position {
         val sql = "SELECT * FROM positions WHERE id = :id"
         return databaseClient

@@ -1,6 +1,8 @@
 package com.trading.bot.controller
 
 import com.trading.bot.model.entity.TradingAccount
+import com.trading.bot.repository.DailyRiskSnapshotRepository
+import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.TradingAccountService
 import org.springframework.http.HttpStatus
@@ -11,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import java.math.BigDecimal
@@ -20,10 +23,12 @@ import java.math.BigDecimal
  *
  * - `GET /api/v1/accounts` — список аккаунтов с числом открытых позиций;
  * - `GET /api/v1/accounts/{id}` — аккаунт + его открытые позиции;
+ * - `GET /api/v1/accounts/{id}/daily-pnl` — история дневных P&L аккаунта;
  * - `POST /api/v1/accounts` — создать (ADMIN);
  * - `PUT /api/v1/accounts/{id}` — полная замена (ADMIN): nullable-поля `null` очищают,
  *   непустые — обязательны;
- * - `DELETE /api/v1/accounts/{id}` — удалить (ADMIN), 409 при открытых позициях.
+ * - `DELETE /api/v1/accounts/{id}` — удалить (ADMIN), 409 при открытых позициях
+ *   или неотправленных outbox-ордерах.
  *
  * Пустая таблица = legacy single-account режим (портфель из AlorConfig.portfolio).
  */
@@ -32,6 +37,8 @@ import java.math.BigDecimal
 class TradingAccountController(
     private val tradingAccountService: TradingAccountService,
     private val positionRepository: PositionRepository,
+    private val orderOutboxRepository: OrderOutboxRepository,
+    private val dailyRiskSnapshotRepository: DailyRiskSnapshotRepository,
 ) {
     @GetMapping
     suspend fun list(): List<Map<String, Any?>> =
@@ -49,6 +56,29 @@ class TradingAccountController(
             "openPositions" to positionRepository.findOpenByAccount(id),
             "openPositionsCount" to positionRepository.findOpenCountByAccount(id),
         )
+    }
+
+    /**
+     * История дневных P&L аккаунта из daily_risk_snapshot (по одной точке на дату,
+     * по возрастанию). Источник графика дневных результатов конкретного аккаунта.
+     */
+    @GetMapping("/{id}/daily-pnl")
+    suspend fun dailyPnlHistory(
+        @PathVariable id: Long,
+        @RequestParam(defaultValue = "30") days: Int,
+    ): Map<String, Any> {
+        tradingAccountService.findById(id)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
+        val clamped = days.coerceIn(1, 365)
+        val points =
+            dailyRiskSnapshotRepository.findRecent(clamped, id).map { snapshot ->
+                mapOf(
+                    "tradeDate" to snapshot.tradeDate.toString(),
+                    "pnl" to snapshot.dailyPnl,
+                    "limitReached" to snapshot.limitReached,
+                )
+            }
+        return mapOf("accountId" to id, "points" to points)
     }
 
     @PostMapping
@@ -101,11 +131,19 @@ class TradingAccountController(
     ): Map<String, Any> {
         tradingAccountService.findById(id)
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
-        val open = positionRepository.findOpenCountByAccount(id)
-        if (open > 0) {
+        val positions = positionRepository.countByAccount(id)
+        if (positions > 0) {
             throw ResponseStatusException(
                 HttpStatus.CONFLICT,
-                "cannot delete account $id: $open open position(s); close positions first",
+                "cannot delete account $id: $positions position(s) reference it (FK fk_positions_account); " +
+                    "history must be preserved",
+            )
+        }
+        val pendingOutbox = orderOutboxRepository.countPendingByAccount(id)
+        if (pendingOutbox > 0) {
+            throw ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "cannot delete account $id: $pendingOutbox undelivered outbox order(s); let them settle or fail first",
             )
         }
         tradingAccountService.delete(id)

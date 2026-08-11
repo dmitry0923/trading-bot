@@ -51,12 +51,27 @@ class DailyRiskSnapshotRepository(
      * История дневных снапшотов за последние [days] дней (включая сегодня), по дате ASC.
      * Источник данных для `GET /api/v1/risk/daily-pnl-history` (график дневных P&L).
      */
-    fun findRecent(days: Int): List<DailyRiskSnapshot> {
+    fun findRecent(days: Int): List<DailyRiskSnapshot> =
+        findRecent(days, accountId = null)
+
+    /**
+     * История дневных снапшотов аккаунта (multi-account): accountId = null → legacy
+     * (account_id IS NULL). Источник `GET /api/v1/accounts/{id}/daily-pnl`.
+     */
+    fun findRecent(
+        days: Int,
+        accountId: Long?,
+    ): List<DailyRiskSnapshot> {
         val sinceDate = LocalDate.now().minusDays(days.toLong())
-        val sql = "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate ORDER BY trade_date ASC"
-        return databaseClient
-            .sql(sql)
-            .bind("sinceDate", sinceDate)
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate AND account_id IS NULL ORDER BY trade_date ASC"
+            } else {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate AND account_id = :accountId ORDER BY trade_date ASC"
+            }
+        val spec = databaseClient.sql(sql).bind("sinceDate", sinceDate)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
             .map { row, _ -> toDailyRiskSnapshot(row) }
             .all()
             .collectList()

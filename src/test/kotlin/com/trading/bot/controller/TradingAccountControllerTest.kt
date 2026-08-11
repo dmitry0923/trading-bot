@@ -4,6 +4,8 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.model.entity.TradingAccount
+import com.trading.bot.repository.DailyRiskSnapshotRepository
+import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.TradingAccountService
 import kotlinx.coroutines.runBlocking
@@ -17,16 +19,24 @@ import java.math.BigDecimal
 
 /**
  * Unit-тесты [TradingAccountController]: CRUD аккаунтов, валидация и защита
- * удаления аккаунта с открытыми позициями.
+ * удаления аккаунта с открытыми позициями / неотправленными outbox-ордерами.
  */
 class TradingAccountControllerTest {
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val positionRepository = Mockito.mock(PositionRepository::class.java)
-    private val controller = TradingAccountController(tradingAccountService, positionRepository)
+    private val orderOutboxRepository = Mockito.mock(OrderOutboxRepository::class.java)
+    private val dailyRiskSnapshotRepository = Mockito.mock(DailyRiskSnapshotRepository::class.java)
+    private val controller =
+        TradingAccountController(
+            tradingAccountService,
+            positionRepository,
+            orderOutboxRepository,
+            dailyRiskSnapshotRepository,
+        )
 
     @BeforeEach
     fun reset() {
-        Mockito.reset(tradingAccountService, positionRepository)
+        Mockito.reset(tradingAccountService, positionRepository, orderOutboxRepository, dailyRiskSnapshotRepository)
     }
 
     @Test
@@ -128,10 +138,10 @@ class TradingAccountControllerTest {
     }
 
     @Test
-    fun `delete rejects account with open positions`() {
+    fun `delete rejects account with any referencing positions`() {
         runBlocking {
             Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
-            Mockito.`when`(positionRepository.findOpenCountByAccount(1L)).thenReturn(2)
+            Mockito.`when`(positionRepository.countByAccount(1L)).thenReturn(5)
         }
         try {
             runBlocking { controller.delete(1L) }
@@ -143,16 +153,57 @@ class TradingAccountControllerTest {
     }
 
     @Test
-    fun `delete removes account when no open positions`() {
+    fun `delete rejects account with undelivered outbox orders`() {
         runBlocking {
             Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
-            Mockito.`when`(positionRepository.findOpenCountByAccount(1L)).thenReturn(0)
+            Mockito.`when`(positionRepository.countByAccount(1L)).thenReturn(0)
+            Mockito.`when`(orderOutboxRepository.countPendingByAccount(1L)).thenReturn(3)
+        }
+        try {
+            runBlocking { controller.delete(1L) }
+            assertTrue(false, "expected ResponseStatusException")
+        } catch (e: ResponseStatusException) {
+            assertEquals(409, e.statusCode.value())
+        }
+        runBlocking { Mockito.verify(tradingAccountService, Mockito.never()).delete(Mockito.anyLong()) }
+    }
+
+    @Test
+    fun `delete removes account when no positions and no pending outbox`() {
+        runBlocking {
+            Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
+            Mockito.`when`(positionRepository.countByAccount(1L)).thenReturn(0)
+            Mockito.`when`(orderOutboxRepository.countPendingByAccount(1L)).thenReturn(0)
             Mockito.`when`(tradingAccountService.delete(1L)).thenReturn(true)
         }
 
         val result = runBlocking { controller.delete(1L) }
         assertEquals(true, result["deleted"])
         runBlocking { Mockito.verify(tradingAccountService).delete(1L) }
+    }
+
+    @Test
+    fun `daily pnl history returns per-account points`() {
+        val snapshot =
+            com.trading.bot.model.entity.DailyRiskSnapshot(
+                id = 1L,
+                tradeDate = java.time.LocalDate.of(2026, 8, 10),
+                dailyPnl = BigDecimal("1500"),
+                limitReached = false,
+                maxDrawdownToday = BigDecimal.ZERO,
+            )
+        runBlocking {
+            Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
+            Mockito.`when`(dailyRiskSnapshotRepository.findRecent(Mockito.anyInt(), Mockito.eq(1L)))
+                .thenReturn(listOf(snapshot))
+        }
+
+        val result = runBlocking { controller.dailyPnlHistory(1L, 30) }
+        assertEquals(1L, result["accountId"])
+        assertEquals(1, (result["points"] as List<*>).size)
+        runBlocking {
+            Mockito.verify(dailyRiskSnapshotRepository).findRecent(30, 1L)
+        }
     }
 
     private fun account(

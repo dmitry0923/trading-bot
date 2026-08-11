@@ -94,6 +94,23 @@ class OrderOutboxRepository(
     }
 
     /**
+     * Строки аккаунта, ещё не доставленные на биржу (PENDING/FAILED с неисчерпанным
+     * retry). Ненулевое значение блокирует удаление аккаунта (FK fk_outbox_account).
+     */
+    suspend fun countPendingByAccount(accountId: Long): Int =
+        databaseClient
+            .sql(
+                """
+                SELECT COUNT(*) AS cnt FROM order_outbox
+                WHERE account_id = :accountId AND status IN ('PENDING', 'FAILED')
+                """.trimIndent(),
+            ).bind("accountId", accountId)
+            .map { row, _ -> row.get("cnt", Long::class.javaObjectType)?.toInt() ?: 0 }
+            .one()
+            .awaitSingleOrNull()
+            ?: 0
+
+    /**
      * Строки для (повторной) доставки:
      * - PENDING старше cutoff (краш между save и dispatch, либо после рестарта);
      * - FAILED с retry_count < maxRetries, ожидающие экспоненциальный backoff:

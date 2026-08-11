@@ -41,3 +41,5 @@ databaseChangeLog:
       file: db/changelog/changes/020-protection-orders.sql
   - include:
       file: db/changelog/changes/021-multi-account.sql
+  - include:
+      file: db/changelog/changes/022-backtest-results.sql

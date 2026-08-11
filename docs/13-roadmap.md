@@ -51,8 +51,8 @@ gantt
 | Точный контроль SL/TP в лимитных заявках | биржевые stop/take-profit-заявки при открытии позиции (раздел 13.7.4) | ✅ v2.2 |
 | Distributed lock | возможность запуска нескольких инстансов без гонок (раздел 2.6) | ✅ v2.2 |
 | Multi-account | поддержка нескольких Alor-портфелей с общим конвейером и персональными лимитами | ✅ |
-| Backtest: сохранение результатов | таблица `backtest_results` + сравнение итераций | 🔜 |
-| Backtest: out-of-sample | split 80/20, прогон на удержанном хвосте | 🔜 |
+| Backtest: сохранение результатов | таблица `backtest_results` + сравнение итераций | ✅ |
+| Backtest: out-of-sample | walk-forward (train → tune SL/TP → OOS), защита от переобучения | ✅ |
 
 ### v2.3 — Среднесрочные
 
@@ -87,7 +87,7 @@ gantt
 
 | Миля | Критерий готовности |
 |---|---|
-| M1 (v2.2) | Emergency stop ✅ + persist daily PnL 🔜, тесты зелёные, документация обновлена |
+| M1 (v2.2) | Emergency stop ✅ + persist daily PnL ✅, тесты зелёные, документация обновлена |
 | M2 (v2.3) | LLM-бэктест проходит критерии по ≥ 5 тикерам; WebSocket-only стабилен 1 неделю SIMULATION |
 | M3 (v2.4) | ML-модель выигрывает у базовой LLM-версии на out-of-sample выборке |
 | M4 (v2.5) | Cross-exchange сигналы без ложных арбитражных входов |
@@ -159,12 +159,16 @@ gantt
 - Новый endpoint `GET /api/v1/risk/daily-pnl-history?days=30` (график дневных результатов).
 - Сброс лимита — автоматически по календарной дате 00:00 МСК (новая строка даты).
 
-### 13.7.3. Backtest: сохранение результатов
+### 13.7.3. Backtest: сохранение результатов ✅
 
-- Таблица `backtest_results(id, ticker, params jsonb, metrics jsonb, created_at)`.
-- `BacktestEngine.run` пишет результат после прогона.
-- Endpoint `GET /api/v1/backtest/results?ticker=` — сравнение итераций.
-- Уведомление `bt_pass_total{result=PASS}` в метриках.
+**Реализовано:**
+
+- Таблица `backtest_results(id, ticker, params jsonb, metrics jsonb, oos jsonb, created_at)` + индекс `(ticker, created_at DESC)` (миграция `022-backtest-results.sql`).
+- `BacktestEngine.run` пишет результат после прогона (best-effort: сбой записи не роняет прогон; пустые прогоны с 0 сделок не сохраняются).
+- `GET /api/v1/backtest/results?ticker=&limit=` — сравнение итераций (последние по времени, `limit` 1..100, params/metrics/oos отдаются распарсеным JSON).
+- Метрика `bt_pass_total{result=PASS|REJECT}` — результат каждой итерации.
+- `BacktestResult.metrics()` — компактная карта метрик для персиста (без equityCurve/monthlyReturns/tradeReturns).
+- Walk-forward валидация `GET /api/v1/backtest/{ticker}/validate` также сохраняет прогон с OOS-сводкой (consistency/robust/oosTrades/oosReturn/oosSharpe/oosSortino/oosProfitFactor) — см. 13.7.7.
 
 ### 13.7.4. Точный контроль SL/TP в лимитных заявках ✅
 
@@ -224,6 +228,19 @@ gantt
 - `GET /api/v1/dashboard?accountId=` / `GET /api/v1/dashboard/stream?accountId=` — фильтрация общего дашборда (404 при неизвестном аккаунте).
 
 **Тесты:** `TradingAccountServiceTest` (legacy/round-robin/portfolio), `TradingAccountControllerIntegrationTest` (accounts CRUD, per-account dashboard и SSE-фильтр на Testcontainers), `DashboardServiceTest` (агрегированный vs per-account снимок).
+
+### 13.7.7. Backtest: out-of-sample ✅
+
+**Идея:** оценка стратегии на данных, не участвовавших в настройке — защита от переобучения на in-sample бэктесте (раздел 11.5, требование C-002). Вместо простого split 80/20 реализован walk-forward (скользящие фолды).
+
+**Реализация (`BacktestValidator`):**
+
+- Свечи делятся на последовательные фолды; для каждого фолда — in-sample (train) окно с подбором SL/TP по сетке `(1%,2%)/(2%,4%)/(3%,6%)` (максимум PF при ≥30 сделок, при равенстве — Sharpe), затем прогон на out-of-sample (test) окне, не участвовавшем в настройке.
+- Агрегация OOS-сделок всех фолдов → сводная кривая капитала и метрики.
+- `ValidationResult.isRobust()`: OOS Sharpe > 0.5, OOS PF > 1.1, ≥60% прибыльных фолдов, ≥100 OOS-сделок. Проваливается при переобучении и при тонком распределении сделок.
+- Эндпоинт `GET /api/v1/backtest/{ticker}/validate?days=&folds=&timeframe=` возвращает consistency/robust/OOS-метрики и сохраняет прогон с OOS-сводкой в `backtest_results` (13.7.3).
+
+**Тесты:** `BacktestValidatorTest`, OOS-персист в `BacktestResultPersistenceIntegrationTest`.
 
 ## 13.8. Детализация фич v2.3
 

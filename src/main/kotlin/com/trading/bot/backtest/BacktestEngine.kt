@@ -4,10 +4,14 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
+import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
@@ -20,6 +24,8 @@ import java.time.LocalDateTime
  * - Симулирует исполнение: комиссия 0.05% на оборот, проскальзывание 0.1% (market)
  * - Проверяет SL/TP по внутрисвечному диапазону (high/low)
  * - Считает метрики: Sharpe, MaxDD, PF, win rate
+ * - Сохраняет результат в `backtest_results` (roadmap v2.2, 13.7.3) и инкрементирует
+ *   `bt_pass_total{result=PASS|REJECT}` для сравнения итераций стратегии.
  *
  * Лотность позиций берётся из [InstrumentsConfig] (как в live) — размер позиции
  * округляется вниз до целого лота, совпадая с реальным исполнением на бирже.
@@ -30,6 +36,9 @@ import java.time.LocalDateTime
 class BacktestEngine(
     private val candleRepo: CandleRepository,
     private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
+    private val backtestResultRepository: BacktestResultRepository? = null,
+    private val objectMapper: ObjectMapper = ObjectMapper(),
+    private val meterRegistry: MeterRegistry? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -69,7 +78,49 @@ class BacktestEngine(
             return emptyResult(ticker)
         }
         logger.info { "Backtest $ticker: ${candles.size} candles loaded" }
-        return simulate(ticker, candles, initialCapital, minBarsForSignal, slPercent, tpPercent)
+        val result = simulate(ticker, candles, initialCapital, minBarsForSignal, slPercent, tpPercent)
+        persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
+        return result
+    }
+
+    /**
+     * Сохранение результата прогона в `backtest_results` (roadmap v2.2, 13.7.3)
+     * и метрика `bt_pass_total{result=PASS|REJECT}`. Пустые прогоны (0 сделок)
+     * не сохраняются, чтобы не засорять историю сравнения итераций.
+     */
+    private suspend fun persistResult(
+        ticker: String,
+        result: BacktestResult,
+        days: Int,
+        timeframe: String,
+        initialCapital: BigDecimal,
+        minBarsForSignal: Int,
+        slPercent: Double,
+        tpPercent: Double,
+    ) {
+        if (result.totalTrades == 0) return
+        meterRegistry?.counter("bt_pass_total", "result", if (result.isPassable()) "PASS" else "REJECT")?.increment()
+        val params =
+            mapOf(
+                "days" to days,
+                "timeframe" to timeframe,
+                "initialCapital" to initialCapital,
+                "minBarsForSignal" to minBarsForSignal,
+                "slPercent" to slPercent,
+                "tpPercent" to tpPercent,
+            )
+        try {
+            backtestResultRepository?.save(
+                BacktestResultEntity(
+                    ticker = ticker,
+                    params = objectMapper.writeValueAsString(params),
+                    metrics = objectMapper.writeValueAsString(result.metrics()),
+                ),
+            )
+        } catch (e: Exception) {
+            // Персист результата — best-effort: сбой записи не должен ронять прогон.
+            logger.warn(e) { "Backtest $ticker: failed to persist result" }
+        }
     }
 
     /**

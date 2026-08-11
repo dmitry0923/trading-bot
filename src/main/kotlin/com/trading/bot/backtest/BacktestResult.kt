@@ -39,6 +39,27 @@ data class BacktestResult(
             maxDrawdown < 0.15 &&
             profitFactor > 1.3 &&
             totalTrades >= 200
+
+    /**
+     * Компактное представление метрик для персиста в `backtest_results`
+     * (roadmap v2.2, 13.7.3): без equityCurve/monthlyReturns/tradeReturns.
+     */
+    fun metrics(): Map<String, Any> =
+        mapOf(
+            "totalReturn" to totalReturn,
+            "sharpeRatio" to sharpeRatio,
+            "sortinoRatio" to sortinoRatio,
+            "maxDrawdown" to maxDrawdown,
+            "winRate" to winRate,
+            "profitFactor" to profitFactor,
+            "totalTrades" to totalTrades,
+            "avgHoldBars" to avgHoldBars,
+            "expectancy" to expectancy,
+            "winLossRatio" to winLossRatio,
+            "avgTrade" to avgTrade,
+            "recoveryFactor" to recoveryFactor,
+            "passable" to isPassable(),
+        )
 }
 
 object BacktestMetrics {

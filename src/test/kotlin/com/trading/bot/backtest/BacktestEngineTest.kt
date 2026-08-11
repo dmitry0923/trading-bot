@@ -134,6 +134,39 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `metrics map is compact and excludes heavy series`() {
+        val result =
+            BacktestResult(
+                ticker = "SBER",
+                totalReturn = 0.30,
+                sharpeRatio = 1.5,
+                sortinoRatio = 1.8,
+                maxDrawdown = 0.10,
+                winRate = 0.55,
+                profitFactor = 1.8,
+                totalTrades = 250,
+                avgHoldBars = 3.0,
+                equityCurve = listOf(BigDecimal("100000"), BigDecimal("110000")),
+                monthlyReturns = mapOf("2026-07" to 0.05),
+                tradeReturns = listOf(100.0, -50.0),
+                expectancy = 120.0,
+                winLossRatio = 1.4,
+                avgTrade = 100.0,
+                recoveryFactor = 3.0,
+            )
+
+        val metrics = result.metrics()
+
+        assertEquals(13, metrics.size)
+        assertEquals(1.5, metrics["sharpeRatio"])
+        assertEquals(250, metrics["totalTrades"])
+        assertEquals(true, metrics["passable"])
+        assertFalse(metrics.containsKey("equityCurve"))
+        assertFalse(metrics.containsKey("monthlyReturns"))
+        assertFalse(metrics.containsKey("tradeReturns"))
+    }
+
+    @Test
     fun `commission and slippage constants`() {
         assertEquals(BigDecimal("0.0005"), SimulatedExecution.COMMISSION_RATE)
         assertEquals(BigDecimal("0.001"), SimulatedExecution.MARKET_SLIPPAGE_RATE)

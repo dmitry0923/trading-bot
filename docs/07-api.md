@@ -69,6 +69,8 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | GET | `/api/v1/analytics/time-pattern/{ticker}` | win rate по часам | ✅ |
 | GET | `/api/v1/analytics/health` | health аналитики | ✅ |
 | GET | `/api/v1/backtest/{ticker}` | бэктест тикера за N дней | ✅ |
+| GET | `/api/v1/backtest/results` | история прогонов бэктеста (сравнение итераций) | ✅ |
+| GET | `/api/v1/backtest/{ticker}/validate` | walk-forward валидация (OOS) | ✅ |
 | GET | `/api/v1/risk/exposure` | live-снимок портфельного риска (Correlation Engine) | ✅ |
 | GET | `/api/v1/risk/correlation` | корреляционная матрица watchlist (heatmap) | ✅ |
 | POST | `/api/v1/bot/emergency-stop` | аварийная остановка | ✅ |
@@ -540,6 +542,57 @@ Live-снимок аккаунта: AUM, дневной P&L и лимиты, о�
 ```
 
 При недостатке свечей (< 32) возвращаются нулевые метрики, `totalTrades = 0`.
+
+### GET /api/v1/backtest/results?ticker=&limit=20
+
+История прогонов бэктеста по тикеру (roadmap v2.2, раздел 13.7.3) — сравнение итераций стратегии. Append-only, по убыванию времени (`created_at DESC`). Метрика `api.backtest.results` (тег `ticker`).
+
+**Query**:
+- `ticker` (обязательно) — тикер инструмента;
+- `limit` (default 20, диапазон 1..100) — сколько последних прогонов вернуть.
+
+**Response 200**:
+```json
+{
+  "ticker": "SBER",
+  "results": [
+    {
+      "id": 42,
+      "params": { "days": 365, "timeframe": "MINUTE_10", "initialCapital": 100000, "minBarsForSignal": 30, "slPercent": 0.02, "tpPercent": 0.04 },
+      "metrics": { "totalReturn": 0.1234, "sharpeRatio": 1.41, "maxDrawdown": 0.081, "winRate": 0.54, "profitFactor": 1.87, "totalTrades": 152, "passable": true },
+      "oos": null,
+      "createdAt": "2026-08-10T18:04:11"
+    }
+  ]
+}
+```
+
+`params` — параметры прогона; `metrics` — метрики результата (включая `passable`); `oos` — walk-forward OOS-сводка (не null для прогонов из `/backtest/{ticker}/validate`). Каждый прогон движка инкрементирует метрику `bt_pass_total{result=PASS|REJECT}` (раздел 09).
+
+### GET /api/v1/backtest/{ticker}/validate?days=365&folds=4
+
+Walk-forward валидация стратегии (C-002, раздел 13.7.7): train-окно каждого фолда настраивает SL/TP по сетке, test-окно прогоняется на данных, не участвовавших в настройке. Результат сохраняется в `backtest_results` с OOS-сводкой. Метрика `api.backtest.validate` (тег `ticker`).
+
+**Query**: `days` (default 365), `loadHistory` (default false — загрузить свечи с MOEX ISS), `folds` (default 4, >= 2), `timeframe` (default `MINUTE_10`).
+
+**Response 200**:
+```json
+{
+  "ticker": "SBER",
+  "timeframe": "MINUTE_10",
+  "folds": 4,
+  "consistency": 0.75,
+  "robust": true,
+  "oosTrades": 148,
+  "oosReturn": 0.09,
+  "oosSharpe": 0.9,
+  "oosSortino": 1.1,
+  "oosProfitFactor": 1.4,
+  "timestamp": "2026-08-10T18:04:11"
+}
+```
+
+`robust` = OOS Sharpe > 0.5, OOS PF > 1.1, >= 60% прибыльных фолдов, >= 100 OOS-сделок (иначе `false`).
 
 ### POST /api/v1/bot/emergency-stop
 

@@ -1,6 +1,6 @@
 # 11. Backtest Framework
 
-> **Статус**: бэктест **реализован** в кодовой базе (`com.trading.bot.backtest`). REST-endpoint `GET /api/v1/backtest/{ticker}?days=365` доступен в работающем приложении, 6 unit-тестов в `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` проходят в сборке.
+> **Статус**: бэктест **реализован** в кодовой базе (`com.trading.bot.backtest`). REST-endpoint `GET /api/v1/backtest/{ticker}?days=365` доступен в работающем приложении, unit-тесты в `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` проходят в сборке.
 
 ## 11.1. Назначение и цель
 
@@ -54,7 +54,7 @@ com.trading.bot.backtest
 ├── BacktestEngine.kt        # @Service: run() + simulate() + signalAt() + PositionSim
 ├── SimulatedExecution.kt    # object: комиссия, slippage, лотность, hitStopOrTarget
 ├── BacktestResult.kt        # data class + BacktestMetrics (Sharpe/MDD/PF/win rate)
-└── src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt  # 6 тестов
+└── src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt  # 9 тестов
 ```
 
 Связь с REST: `ApiController` инжектит `BacktestEngine` и вызывает `run(ticker, days)`.
@@ -325,16 +325,19 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 
 ## 11.7. Тесты
 
-Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 6 тестов (нет Spring-контекста, чистые unit-тесты):
+Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 9 тестов (нет Spring-контекста, чистые unit-тесты):
 
 | Тест | Что проверяет |
 |---|---|
-| `signalAt_bullishPattern_returnsBuy` | RSI < 30 + MACD гистограмма > 0 → BUY |
-| `signalAt_bearishPattern_returnsSell` | RSI > 70 + MACD гистограмма < 0 → SELL |
-| `signalAt_insufficientBars_returnsHold` | окно < 30 баров → HOLD |
-| `simulate_empty_returnsZeroMetrics` | пустой список свечей → нулевые метрики |
-| `simulate_producesTrades` | на сгенерированной серии свечей появляются сделки и equity curve |
-| `simulate_noTradesWhenNoSignal` | серия без сигналов → 0 сделок, totalReturn = 0 |
+| `simulate produces results on trending data` | прогон на нисходящем тренде: сделки, equity curve, метрики конечны |
+| `sharpe ratio is zero for flat returns` | Sharpe = 0 при нулевых доходностях |
+| `max drawdown is computed correctly` | расчёт MDD на серии эквити (пик → минимум) |
+| `acceptance criteria reject weak results` | слабый результат → `isPassable() = false` |
+| `acceptance criteria pass strong results` | сильный результат → `isPassable() = true` |
+| `backtest metrics include risk and quality ratios` | Sortino, Expectancy, WinLoss, RecoveryFactor, AvgTrade |
+| `metrics map is compact and excludes heavy series` | `metrics()` — 13 полей, без `equityCurve`/`monthlyReturns`/`tradeReturns` |
+| `commission and slippage constants` | комиссия 0.05%, проскальзывание 0.1% |
+| `lot rounding is down to whole lots of instrument` | округление до целых лотов (SBER=10, VTBR=1000) |
 
 Запуск:
 
@@ -348,12 +351,11 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 
 1. **Нет LLM-агентов** — сигналы чисто индикаторные. Интеграция с конвейером (tech→fund→strategy→contrarian→arbitrator) — отдельная задача.
 2. **Нет `avgHoldBars` и `monthlyReturns`** — заглушки, расчёт по месяцам отложен.
-3. **Нет таблицы `backtest_results`** — результат не сохраняется в БД, только в ответе HTTP. Персистентность для сравнения итераций — roadmap.
-4. **Нет отдельного Spring-профиля `backtest`** — запуск через REST. Профиль (автозапуск по `--bt.tickers`, запись в БД, отчёт в консоль) — roadmap.
-5. **Нет out-of-sample валидации** — прогон на 100% данных без удержанного хвоста. Split 80/20 — roadmap.
-6. **Нет распределения по тикерам** — один вызов = один тикер; панельный прогон не реализован.
-7. **Константы захардкожены** — 20% слайс капитала, 2%/4% SL/TP, `initialCapital = 100000`. Вынос в конфиг (`bt.*`) — roadmap.
-8. **Внутрисвечное исполнение SL/TP** — по уровню без уточнения «цена открытия следующей свечи» для limit-ордеров: вход всегда по открытию `t+1` через `marketFill`, лимитные входы не используются в цикле (функция `limitFill` готова, но в `simulate` не задействована).
+3. **Out-of-sample — детерминированно** — OOS покрыт walk-forward `BacktestValidator` (`/api/v1/backtest/{ticker}/validate`, раздел 13.7.7); LLM/ML-подход — roadmap.
+4. **Нет отдельного Spring-профиля `backtest`** — запуск через REST. Профиль (автозапуск по `--bt.tickers`, отчёт в консоль) — roadmap. Персист результатов в `backtest_results` реализован (разделы 13.7.3, 7.2).
+5. **Нет распределения по тикерам** — один вызов = один тикер; панельный прогон не реализован.
+6. **Константы захардкожены** — 20% слайс капитала, 2%/4% SL/TP, `initialCapital = 100000`. Вынос в конфиг (`bt.*`) — roadmap.
+7. **Внутрисвечное исполнение SL/TP** — по уровню без уточнения «цена открытия следующей свечи» для limit-ордеров: вход всегда по открытию `t+1` через `marketFill`, лимитные входы не используются в цикле (функция `limitFill` готова, но в `simulate` не задействована).
 
 ### Проектный запуск (целевое, раздел 11.9)
 

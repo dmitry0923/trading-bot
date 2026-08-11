@@ -11,11 +11,13 @@ import com.trading.bot.model.dto.RagAnalyzeRequest
 import com.trading.bot.model.dto.RagTraceRequest
 import com.trading.bot.model.dto.TimePattern
 import com.trading.bot.model.dto.TradeStats
+import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.BlindSpotEntity
 import com.trading.bot.model.entity.BotSettings
 import com.trading.bot.model.entity.StrategyAdjustment
 import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.AgentLogRepository
+import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.DailyRiskSnapshotRepository
@@ -59,6 +61,7 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -93,6 +96,8 @@ class ApiController(
     private val tradeEventRepository: TradeEventRepository,
     private val backtestEngine: BacktestEngine,
     private val backtestValidator: BacktestValidator,
+    private val backtestResultRepository: BacktestResultRepository,
+    private val objectMapper: ObjectMapper,
     private val historicalDataLoader: HistoricalDataLoader,
     private val candleRepository: CandleRepository,
     private val dailyRiskSnapshotRepository: DailyRiskSnapshotRepository,
@@ -110,6 +115,10 @@ class ApiController(
     private val traceQueryService: TraceQueryService,
     private val meterRegistry: MeterRegistry,
 ) {
+    private val logger =
+        io.github.oshai.kotlinlogging.KotlinLogging
+            .logger {}
+
     @GetMapping("/settings")
     fun getSettings(): BotSettings = settingsService.getSettings()
 
@@ -387,8 +396,42 @@ class ApiController(
     }
 
     /**
+     * История прогонов бэктеста по тикеру (roadmap v2.2, 13.7.3) — сравнение
+     * итераций стратегии: параметры прогона, метрики результата и (если был
+     * walk-forward) OOS-сводка. Append-only, по убыванию времени.
+     */
+    @GetMapping("/backtest/results")
+    suspend fun backtestResults(
+        @RequestParam ticker: String,
+        @RequestParam(defaultValue = "20") limit: Int,
+    ): Map<String, Any> {
+        meterRegistry
+            .counter(
+                "api.backtest.results",
+                Tags
+                    .of("ticker", ticker),
+            ).increment()
+        val clamped = limit.coerceIn(1, 100)
+        val records = backtestResultRepository.findRecent(ticker, clamped)
+        return mapOf(
+            "ticker" to ticker,
+            "results" to
+                records.map { r ->
+                    mapOf(
+                        "id" to r.id,
+                        "params" to objectMapper.readTree(r.params),
+                        "metrics" to objectMapper.readTree(r.metrics),
+                        "oos" to r.oos?.let { objectMapper.readTree(it) },
+                        "createdAt" to r.createdAt.toString(),
+                    )
+                },
+        )
+    }
+
+    /**
      * Walk-forward валидация стратегии (C-002): OOS-метрики по фолдам и оценка
-     * устойчивости (защита от переобучения на in-sample бэктесте).
+     * устойчивости (защита от переобучения на in-sample бэктесте). Результат
+     * сохраняется в `backtest_results` (13.7.3) с OOS-сводкой для сравнения итераций.
      */
     @GetMapping("/backtest/{ticker}/validate")
     suspend fun validateBacktest(
@@ -410,6 +453,7 @@ class ApiController(
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
         val result = backtestValidator.validate(ticker, candles, folds = folds)
+        persistValidationResult(ticker, days, timeframe, folds, loadHistory, result)
         return mapOf(
             "ticker" to ticker,
             "timeframe" to timeframe,
@@ -423,6 +467,48 @@ class ApiController(
             "oosProfitFactor" to result.aggregateOutOfSample.profitFactor,
             "timestamp" to LocalDateTime.now().toString(),
         )
+    }
+
+    private suspend fun persistValidationResult(
+        ticker: String,
+        days: Int,
+        timeframe: String,
+        folds: Int,
+        loadHistory: Boolean,
+        result: com.trading.bot.backtest.ValidationResult,
+    ) {
+        try {
+            backtestResultRepository.save(
+                BacktestResultEntity(
+                    ticker = ticker,
+                    params =
+                        objectMapper.writeValueAsString(
+                            mapOf(
+                                "days" to days,
+                                "timeframe" to timeframe,
+                                "folds" to folds,
+                                "loadHistory" to loadHistory,
+                            ),
+                        ),
+                    metrics = objectMapper.writeValueAsString(result.aggregateOutOfSample.metrics()),
+                    oos =
+                        objectMapper.writeValueAsString(
+                            mapOf(
+                                "consistency" to result.consistency,
+                                "robust" to result.isRobust(),
+                                "oosTrades" to result.aggregateOutOfSample.totalTrades,
+                                "oosReturn" to result.aggregateOutOfSample.totalReturn,
+                                "oosSharpe" to result.aggregateOutOfSample.sharpeRatio,
+                                "oosSortino" to result.aggregateOutOfSample.sortinoRatio,
+                                "oosProfitFactor" to result.aggregateOutOfSample.profitFactor,
+                            ),
+                        ),
+                ),
+            )
+        } catch (e: Exception) {
+            // Персист — best-effort: сбой записи не должен ронять валидацию.
+            logger.error(e) { "Failed to persist backtest validation result for $ticker" }
+        }
     }
 
     @GetMapping("/analytics/trade-stats")

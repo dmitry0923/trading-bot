@@ -311,7 +311,7 @@ candleRepo.findByTickerAndTimeframeAndTimeBetween(
 | Непрерывность | пробелы допустимы (обработка по порядку времени) | `sortedBy { it.time }` |
 | Лотность | `quantity` совместим с позициями | `lotRounded` вниз |
 
-> **Проект**: таблица `backtest_results` для сохранения результатов и сравнения итераций (раздел 11.8).
+> **Реализовано** (миграция `022-backtest-results.sql`): таблица `backtest_results(id, ticker, params jsonb, metrics jsonb, oos jsonb, created_at)` + индекс `(ticker, created_at DESC)` — история прогонов и сравнение итераций (раздел 13.7.3). Движок пишет результат best-effort; `/backtest/{ticker}/validate` дополняет запись OOS-сводкой.
 
 ## 6.6. Дневной P&L в БД
 

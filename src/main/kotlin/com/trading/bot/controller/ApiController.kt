@@ -44,6 +44,8 @@ import com.trading.bot.service.TradingBotService
 import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.GetMapping
@@ -266,17 +268,21 @@ class ApiController(
      * @param days глубина истории (1..365, default 30)
      */
     @GetMapping("/risk/daily-pnl-history")
-    fun getDailyPnlHistory(
+    suspend fun getDailyPnlHistory(
         @RequestParam(defaultValue = "30") days: Int,
     ): Map<String, Any> {
         val clamped = days.coerceIn(1, 365)
+        // DailyRiskSnapshotRepository — блокирующий (Mono.block): offload на IO,
+        // suspend-контроллер выполняется на event loop (иначе IllegalStateException).
         val points =
-            dailyRiskSnapshotRepository.findRecent(clamped).map { snapshot ->
-                mapOf(
-                    "tradeDate" to snapshot.tradeDate.toString(),
-                    "pnl" to snapshot.dailyPnl,
-                    "limitReached" to snapshot.limitReached,
-                )
+            withContext(Dispatchers.IO) {
+                dailyRiskSnapshotRepository.findRecent(clamped).map { snapshot ->
+                    mapOf(
+                        "tradeDate" to snapshot.tradeDate.toString(),
+                        "pnl" to snapshot.dailyPnl,
+                        "limitReached" to snapshot.limitReached,
+                    )
+                }
             }
         return mapOf("points" to points)
     }

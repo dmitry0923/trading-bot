@@ -21,6 +21,8 @@ import org.springframework.web.server.ResponseStatusException
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Управление торговыми аккаунтами (multi-account, roadmap v2.2).
@@ -81,13 +83,23 @@ class TradingAccountController(
         val todayStart = LocalDate.now().atStartOfDay()
         val closedToday = positionRepository.findClosedByAccountSince(id, todayStart)
         val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
+        // DailyRiskSnapshotRepository — блокирующий (Mono.block) репозиторий для синхронного
+        // риск state machine: offload на IO, т.к. suspend-контроллер выполняется на event loop.
+        val (dailyPnl, dailyLossLimitReached, entryBlocked) =
+            withContext(Dispatchers.IO) {
+                Triple(
+                    drawdownProtectionService.getDailyPnl(id),
+                    drawdownProtectionService.isDailyLossLimitReached(id),
+                    drawdownProtectionService.isEntryBlocked(id),
+                )
+            }
         return mapOf(
             "account" to summary(account),
             "portfolio" to account.alorPortfolio,
             "aum" to aumProvider.currentAum(id),
-            "dailyPnl" to drawdownProtectionService.getDailyPnl(id),
-            "dailyLossLimitReached" to drawdownProtectionService.isDailyLossLimitReached(id),
-            "entryBlocked" to drawdownProtectionService.isEntryBlocked(id),
+            "dailyPnl" to dailyPnl,
+            "dailyLossLimitReached" to dailyLossLimitReached,
+            "entryBlocked" to entryBlocked,
             "maxDailyLossRub" to tradingAccountService.maxDailyLossRubFor(id),
             "maxOpenPositions" to tradingAccountService.maxOpenPositionsFor(id),
             "openPositions" to openPositions,
@@ -112,12 +124,14 @@ class TradingAccountController(
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
         val clamped = days.coerceIn(1, 365)
         val points =
-            dailyRiskSnapshotRepository.findRecent(clamped, id).map { snapshot ->
-                mapOf(
-                    "tradeDate" to snapshot.tradeDate.toString(),
-                    "pnl" to snapshot.dailyPnl,
-                    "limitReached" to snapshot.limitReached,
-                )
+            withContext(Dispatchers.IO) {
+                dailyRiskSnapshotRepository.findRecent(clamped, id).map { snapshot ->
+                    mapOf(
+                        "tradeDate" to snapshot.tradeDate.toString(),
+                        "pnl" to snapshot.dailyPnl,
+                        "limitReached" to snapshot.limitReached,
+                    )
+                }
             }
         return mapOf("accountId" to id, "points" to points)
     }

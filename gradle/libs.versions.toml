@@ -27,6 +27,7 @@ resilience4jSpringBoot4 = { module = "io.github.resilience4j:resilience4j-spring
 resilience4jKotlin = { module = "io.github.resilience4j:resilience4j-kotlin", version.ref = "resilience4j" }
 testcontainersJunitJupiter = { module = "org.testcontainers:testcontainers-junit-jupiter", version.ref = "testcontainers" }
 testcontainersPostgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testcontainers" }
+testcontainersRabbitmq = { module = "org.testcontainers:testcontainers-rabbitmq", version.ref = "testcontainers" }
 testcontainers = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 mockitoKotlin = { module = "org.mockito.kotlin:mockito-kotlin", version.ref = "mockitoKotlin" }
 archunitJunit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }

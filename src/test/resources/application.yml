@@ -4,6 +4,17 @@ app:
     # стратегический цикл, поллинг котировок и outbox-воркер не должны
     # ходить во внешние сервисы во время тестов.
     enabled: false
+  outbox:
+    rabbitmq:
+      # По умолчанию RabbitMQ-транспорт выключен (брокер не требуется).
+      # Интеграционный тест RabbitMqTransportIntegrationTest включает его
+      # вручную через @DynamicPropertySource + RabbitMQContainer.
+      enabled: false
+      exchange: trading.outbox
+      queue: trading.outbox.orders
+      routing-key: order
+      dlx: trading.outbox.dlx
+      dlq: trading.outbox.orders.dlq
 
 management:
   endpoints:

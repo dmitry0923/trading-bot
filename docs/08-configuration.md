@@ -40,6 +40,21 @@ spring:
     host: ${REDIS_HOST:localhost}
     port: ${REDIS_PORT:6379}
     timeout: 5s
+  rabbitmq:                        # опционально: RabbitMQ-транспорт outbox (раздел 13.8.4)
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+app:
+  outbox:
+    rabbitmq:                      # вкл/выкл + топология; disabled = поведение прежнее
+      enabled: ${OUTBOX_RABBITMQ_ENABLED:false}
+      exchange: ${OUTBOX_RABBITMQ_EXCHANGE:trading.outbox}
+      queue: ${OUTBOX_RABBITMQ_QUEUE:trading.outbox.orders}
+      routing-key: ${OUTBOX_RABBITMQ_ROUTING_KEY:order}
+      dlx: ${OUTBOX_RABBITMQ_DLX:trading.outbox.dlx}
+      dlq: ${OUTBOX_RABBITMQ_DLQ:trading.outbox.orders.dlq}
 
 alor:                              # брокер Alor
   api-url: ${ALOR_API_URL:https://api.alor.ru}
@@ -223,6 +238,16 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `LOCKBOX_SECRET_ID` | `` | да (при Lockbox) | ID секрета | `e6q...` |
 | `LOCKBOX_IAM_TOKEN` | `` | | IAM-токен для Lockbox API | `t1.9e...` |
 | `LOCKBOX_SA_KEY_JSON` | `` | | ключ сервисного аккаунта (fallback к IAM) | `{"id":...}` |
+| `OUTBOX_RABBITMQ_ENABLED` | `false` | | включать RabbitMQ-транспорт outbox (раздел 13.8.4) | `true` |
+| `RABBITMQ_HOST` | `localhost` | да (при OUTBOX_RABBITMQ_ENABLED) | хост RabbitMQ | `rabbitmq` |
+| `RABBITMQ_PORT` | `5672` | | порт AMQP | `5672` |
+| `RABBITMQ_USER` | `guest` | | пользователь RabbitMQ | `trader` |
+| `RABBITMQ_PASSWORD` | `guest` | | пароль RabbitMQ | `s3cr3t` |
+| `OUTBOX_RABBITMQ_EXCHANGE` | `trading.outbox` | | exchange для публикации outbox-строк | `trading.outbox` |
+| `OUTBOX_RABBITMQ_QUEUE` | `trading.outbox.orders` | | очередь ордеров | `trading.outbox.orders` |
+| `OUTBOX_RABBITMQ_ROUTING_KEY` | `order` | | routing key публикации | `order` |
+| `OUTBOX_RABBITMQ_DLX` | `trading.outbox.dlx` | | dead-letter exchange | `trading.outbox.dlx` |
+| `OUTBOX_RABBITMQ_DLQ` | `trading.outbox.orders.dlq` | | очередь парковки неудачных доставок | `trading.outbox.orders.dlq` |
 
 ## 8.3. .env для local development
 
@@ -237,6 +262,13 @@ DB_PASS=change-me-local-db-pass
 # Redis
 REDIS_HOST=localhost
 REDIS_PORT=6379
+
+# RabbitMQ (опционально, профиль docker compose: rabbitmq; раздел 13.8.4)
+OUTBOX_RABBITMQ_ENABLED=false
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
 
 # Alor (заполнить для LIVE)
 ALOR_API_URL=https://api.alor.ru

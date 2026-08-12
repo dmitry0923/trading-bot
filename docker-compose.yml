@@ -48,6 +48,27 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
 
+  # Опциональный RabbitMQ — только для outbox-транспорта (roadmap v2.3).
+  # Запуск: docker compose --profile rabbitmq up -d rabbitmq
+  # Тогда в .env задайте OUTBOX_RABBITMQ_ENABLED=true.
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: trading-bot-rabbitmq
+    profiles: ["rabbitmq"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build: .
     container_name: trading-bot-app
@@ -64,6 +85,11 @@ services:
       DB_PASS: ${DB_PASS:?DB_PASS is required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      OUTBOX_RABBITMQ_ENABLED: ${OUTBOX_RABBITMQ_ENABLED:-false}
       ALOR_API_URL: https://api.alor.ru
       ALOR_WS_URL: wss://api.alor.ru/ws
       ALOR_TOKEN: ${ALOR_TOKEN:-}
@@ -157,3 +183,4 @@ volumes:
   minio_data:
   prometheus_data:
   grafana_data:
+  rabbitmq_data:

@@ -6,6 +6,7 @@ import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.OrderOutbox
+import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
@@ -51,6 +52,12 @@ import kotlin.random.Random
  *   [PlaceOrderResult.uncertain] сигнализирует, что запрос мог дойти до биржи
  *   (сетевой сбой/таймаут) — верхний слой не должен создавать дублирующий ордер.
  *
+ * Транспорт RabbitMQ (roadmap v2.3, раздел 13.8):
+ * - После сохранения строки [OrderOutboxPublisher] best-effort публикует её id
+ *   в очередь; потребитель [OutboxOrderConsumer] диспетчирует PENDING-строки через
+ *   [redispatchById]. Сбой очереди не теряет ордер: DB-worker — фолбэк,
+ *   источник истины — БД-строка (гарантии доставки не зависят от RabbitMQ).
+ *
  * Связь с позициями:
  * - `positionId` сохраняется в payload — реконсилятор позиций находит строку outbox
  *   по позиции и завершает стейт-машину входа/закрытия.
@@ -66,6 +73,7 @@ class OrderOutboxService(
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
     private val tradingAccountService: TradingAccountService,
+    private val outboxPublisher: OrderOutboxPublisher,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -129,6 +137,7 @@ class OrderOutboxService(
             "Outbox order saved: ${outbox.id} $side $qty $ticker ($type) idem=$idempotencyKey pos=$positionId account=$accountId"
         }
         meterRegistry.counter("outbox.saved", Tags.of("type", type)).increment()
+        outbox.id?.let(outboxPublisher::publish)
         return dispatch(outbox)
     }
 
@@ -168,7 +177,37 @@ class OrderOutboxService(
                 ),
             )
         logger.info { "Outbox cancel saved: ${outbox.id} order=$orderId pos=$positionId account=$accountId" }
+        outbox.id?.let(outboxPublisher::publish)
         return dispatch(outbox)
+    }
+
+    /**
+     * Точка входа потребителя RabbitMQ: диспетчирует строку по id
+     * ([OutboxOrderConsumer]). Диспетчируются только PENDING-строки (ещё не
+     * доставлены inline/воркером); SENT подтверждается (idempotent), FAILED
+     * НЕ переотправляется сразу — этим занимается DB-worker с backoff+reconciliation.
+     */
+    suspend fun redispatchById(outboxId: UUID): PlaceOrderResult {
+        val outbox =
+            outboxRepo.findById(outboxId)
+                ?: return PlaceOrderResult(outboxId, null, success = false)
+        return when (outbox.status) {
+            OutboxStatus.PENDING -> {
+                dispatch(outbox)
+            }
+
+            OutboxStatus.SENT -> {
+                logger.info { "Outbox ${outbox.id} already SENT (${outbox.alorOrderId}) — rabbit skip" }
+                PlaceOrderResult(outboxId, outbox.alorOrderId, success = true)
+            }
+
+            OutboxStatus.FAILED -> {
+                // Доставка уже пробовалась (retryCount incremented): повторные попытки —
+                // прерогатива DB-worker'а с backoff и State Reconciliation.
+                logger.info { "Outbox ${outbox.id} FAILED (attempt ${outbox.retryCount}) — rabbit skip, DB worker retries" }
+                PlaceOrderResult(outboxId, null, success = false)
+            }
+        }
     }
 
     private suspend fun dispatch(outbox: OrderOutbox): PlaceOrderResult {

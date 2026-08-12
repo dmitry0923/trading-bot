@@ -44,6 +44,23 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 5s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+# Outbox transport (roadmap v2.3, раздел 13.8). Выключен по умолчанию:
+# RabbitMQ не обязателен — inline-доставка + DB-worker (фолбэк) работают без него.
+app:
+  outbox:
+    rabbitmq:
+      enabled: ${OUTBOX_RABBITMQ_ENABLED:false}
+      exchange: ${OUTBOX_RABBITMQ_EXCHANGE:trading.outbox}
+      queue: ${OUTBOX_RABBITMQ_QUEUE:trading.outbox.orders}
+      routing-key: ${OUTBOX_RABBITMQ_ROUTING_KEY:order}
+      dlx: ${OUTBOX_RABBITMQ_DLX:trading.outbox.dlx}
+      dlq: ${OUTBOX_RABBITMQ_DLQ:trading.outbox.orders.dlq}
 
 alor:
   api-url: ${ALOR_API_URL:https://api.alor.ru}

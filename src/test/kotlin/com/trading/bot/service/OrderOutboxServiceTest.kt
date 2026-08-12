@@ -46,6 +46,7 @@ class OrderOutboxServiceTest {
     private val distributedLockService =
         DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
+    private val outboxPublisher = Mockito.mock(OrderOutboxPublisher::class.java)
     private val service =
         OrderOutboxService(
             outboxRepo,
@@ -57,6 +58,7 @@ class OrderOutboxServiceTest {
             distributedLockService,
             distributedLockConfig,
             tradingAccountService,
+            outboxPublisher,
         )
 
     @BeforeEach
@@ -519,6 +521,140 @@ class OrderOutboxServiceTest {
                 .verify(alorClient, Mockito.never())
                 .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `placeOrder publishes outbox id after save`() {
+        val outboxId = UUID.randomUUID()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-1")
+            stubMarkSentRecording(mutableListOf())
+
+            service.placeOrder("Si", "buy", 1, BigDecimal("92000"), "limit")
+
+            Mockito.verify(outboxPublisher).publish(outboxId)
+        }
+    }
+
+    @Test
+    fun `rabbit redispatch on PENDING sends and marks sent`() {
+        val outbox =
+            outboxRow(retryCount = 0, key = "idem-rabbit", type = "limit", price = "92000")
+                .copy(status = OutboxStatus.PENDING)
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-rabbit")
+            stubMarkSentRecording(sentOrders)
+
+            val result = service.redispatchById(checkNotNull(outbox.id))
+
+            assertTrue(result.success)
+            assertEquals("ord-rabbit", result.alorOrderId)
+            Mockito
+                .verify(alorClient)
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+        }
+        assertEquals(listOf("ord-rabbit"), sentOrders)
+    }
+
+    @Test
+    fun `rabbit redispatch on SENT acks without re-sending`() {
+        val outbox =
+            outboxRow(retryCount = 1, key = "idem-rabbit2", type = "limit", price = "92000")
+                .copy(status = OutboxStatus.SENT, alorOrderId = "ord-existing")
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
+
+            val result = service.redispatchById(checkNotNull(outbox.id))
+
+            assertTrue(result.success)
+            assertEquals("ord-existing", result.alorOrderId)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `rabbit redispatch on FAILED skips - DB worker owns retries`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-rabbit3", type = "limit", price = "92000")
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
+
+            val result = service.redispatchById(checkNotNull(outbox.id))
+
+            assertFalse(result.success)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `rabbit redispatch on missing row returns failure`() {
+        val missingId = UUID.randomUUID()
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(missingId)).thenReturn(null)
+
+            val result = service.redispatchById(missingId)
+
+            assertFalse(result.success)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
         }
     }
 }

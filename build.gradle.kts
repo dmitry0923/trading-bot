@@ -39,6 +39,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-aspectj")
     implementation("org.springframework.boot:spring-boot-starter-jackson")
+    implementation("org.springframework.boot:spring-boot-starter-amqp")
 
     implementation("io.micrometer:micrometer-core")
     implementation("io.micrometer:micrometer-registry-prometheus")
@@ -71,6 +72,7 @@ dependencies {
     testImplementation(libs.mockitoKotlin)
     testImplementation(libs.testcontainersJunitJupiter)
     testImplementation(libs.testcontainersPostgresql)
+    testImplementation(libs.testcontainersRabbitmq)
     testImplementation(libs.testcontainers)
     testImplementation(libs.archunitJunit5)
 

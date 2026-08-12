@@ -63,7 +63,7 @@ gantt
 | Backtest: конфиг `bt.*` | вынос констант 20%/2%/4% и `initialCapital` из кода | ✅ (раздел 11.8.1) |
 | WebSocket-only исполнение | полный переход на WS для market-data и ордеров, REST — только fallback | |
 | Уменьшение LLM-латентности | параллельные вызовы агентов, дельта-промпты | |
-| Очередь (RabbitMQ) для outbox | буферизация ордеров и логов, гарантия доставки | |
+| Очередь (RabbitMQ) для outbox | RabbitMQ — дополнительный канал доставки outbox-строк (publisher → очередь → консьюмер через `redispatchById`), DB-worker остаётся фолбэком | ✅ (раздел 13.8.4) |
 
 ### v2.4 — ML-агенты
 
@@ -282,6 +282,58 @@ flowchart LR
 (распределение: `passShare`, `avgTotalReturn`, `medianTotalReturn`, `min`/`max`, `totalTrades`).
 Дефолты параметров берутся из конфига `bt.*` (11.8.1). Результаты персистятся в
 `backtest_results`, метрика `api.backtest.panel`. См. раздел 11.6.1.
+
+### 13.8.4. Очередь (RabbitMQ) для outbox (реализовано)
+
+**Функция — дополнительный канал доставки** outbox-строк (не замена): при сохранении ордера
+помимо inline-dispatch `OrderOutboxPublisher` публикует id строки в RabbitMQ, консьюмер
+`OutboxOrderConsumer` диспетчирует его через тот же `OrderOutboxService.redispatchById`
+(единый диспетчер → те же гарантии идемпотентности, что и у inline/DB-worker). Источник
+истины — строка в БД: RabbitMQ не является обязательным компонентом, DB-worker остаётся
+фолбэком, гарантии «никакого double execution» не меняются.
+
+Схема:
+
+```mermaid
+flowchart LR
+    S[placeOrder / placeCancelOrder] -->|save PENDING| DB[(order_outbox)]
+    S --> P[OrderOutboxPublisher] -->|best-effort id| EX[(exchange)]
+    EX --> Q[queue]
+    Q --> C[OutboxOrderConsumer]
+    C --> R[redispatchById]
+    R -->|PENDING → dispatch| AL[AlorClient]
+    R -->|SENT/FAILED| DB
+    DB -->|findRetryable| W[DB-worker] --> AL
+    C -->|reject после bounded retry| DLX[(dlx)] --> DLQ[dlq парковка]
+```
+
+Детали реализации:
+
+| Аспект | Решение |
+|---|---|
+| Топология | `exchange` (Direct) + `queue` (durable, `x-dead-letter-exchange = dlx`) + `dlq`; биндинг по `routingKey` |
+| Ack | **AUTO** — контейнер подтверждает после нормального возврата, отклоняет при исключении |
+| Retry | stateless, 3 попытки (backoff 1s → 2s → 10s), после исчерпания `RejectAndDontRequeueRecoverer` → DLQ |
+| Идемпотентность | консьюмер не исполняет ордер сам — вызывает `redispatchById` (PENDING → dispatch, SENT → ack, FAILED → ack без переотправки) |
+| Ошибки | невалидный body / сбой диспетчера → bounded retry → DLQ; строка в БД остаётся за DB-worker'ом |
+| Publisher | best-effort: сбой публикации проглатывается (inline-dispatch не зависит от Rabbit) |
+| Включение | `app.outbox.rabbitmq.enabled=true` + `spring.rabbitmq.*`; выключено по умолчанию (поведение прежнее) |
+| Метрики | `outbox.published`, `outbox.publish_failed`, `outbox.consumed{outcome}`, `outbox.consumed_failed`, `outbox.consumed_invalid` |
+
+**Ключевые решения:**
+
+- **AUTO вместо MANUAL**: при ручном ack контейнер НЕ отклоняет сообщение после исчерпания
+  ретраев (отклонение требует `AmqpRejectAndDontRequeueException` с `rejectManual=true`),
+  поэтому poison-сообщение застревало бы unacked и не попадало в DLQ.
+- **Без `Boolean`-возврата в listener**: в Spring AMQP 4.x `Boolean`-возврат трактуется как
+  reply-пакет, а не ack-сигнал → двойной ack (`unknown delivery tag`) и повторная обработка
+  заакенных сообщений.
+- **Консьюмер условен**: бин создаётся только при `app.outbox.rabbitmq.enabled=true`
+  (одно условие с фабрикой контейнера).
+
+**Тесты:** `RabbitMqTransportIntegrationTest` (полный путь против Postgres + RabbitMQ:
+publish → consume → SENT; already-SENT не переотправляется; invalid → DLQ),
+`OrderOutboxPublisherTest`, `OutboxOrderConsumerTest`, хуки в `OrderOutboxServiceTest`.
 
 ## 13.9. Метрики зрелости продукта
 

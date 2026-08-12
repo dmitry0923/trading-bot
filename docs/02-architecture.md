@@ -275,7 +275,44 @@ sequenceDiagram
     M->>M: risk.updateDailyPnL(pnl)
 ```
 
-## 2.6. Singleton constraint: почему бот в 1 реплике
+## 2.6. RabbitMQ-транспорт outbox (roadmap v2.3, раздел 13.8.4)
+
+**Функция — дополнительный канал доставки**, не замена: при сохранении ордера
+`OrderOutboxService` (placeOrder/placeCancelOrder) помимо синхронного inline-dispatch
+вызывает `OrderOutboxPublisher`, который best-effort публикует id строки в очередь.
+`OutboxOrderConsumer` забирает сообщение и диспетчирует через тот же
+`OrderOutboxService.redispatchById` (PENDING → dispatch, SENT → ack, FAILED → ack без
+переотправки) — единый диспетчер, гарантии идемпотентности не меняются. DB-worker
+(`processPending`) остаётся фолбэком; источник истины — строка в `order_outbox`.
+
+```mermaid
+sequenceDiagram
+    participant S as OrderOutboxService
+    participant P as OrderOutboxPublisher
+    participant MQ as RabbitMQ (exchange→queue→dlq)
+    participant C as OutboxOrderConsumer
+    participant AC as AlorClient
+    participant DB as PostgreSQL
+
+    S->>DB: INSERT order_outbox (PENDING)
+    S->>AC: inline dispatch (fast-path)
+    S->>P: publish(id) — best-effort
+    P->>MQ: convertAndSend(id)
+    MQ-->>C: onOrderMessage(id)
+    C->>DB: redispatchById(id)
+    DB-->>C: PENDING (или SENT/FAILED)
+    C->>AC: dispatch (тот же код, что inline)
+    C->>DB: UPDATE order_outbox (SENT/FAILED)
+    Note over MQ,C: сбой → bounded retry (3×) → reject → DLQ
+    Note over DB,C: PENDING в БД всё равно обработает DB-worker
+```
+
+Включение: `app.outbox.rabbitmq.enabled=true` (+ `spring.rabbitmq.*`). Выключено по
+умолчанию — поведение идентично до-RabbitMQ. Ack — AUTO (контейнер сам подтверждает/
+отклоняет), `defaultRequeueRejected=false` → poison-сообщения паркуются в DLQ. См.
+подробности и обоснование в разделе 13.8.4.
+
+## 2.7. Singleton constraint: почему бот в 1 реплике
 
 **Проблема**: бот принимает торговые решения и исполняет ордера. Две реплики = два независимых мозга, которые могут:
 
@@ -293,7 +330,7 @@ sequenceDiagram
 
 Текущее состояние: одна реплика (один Spring Boot), но механизмы идемпотентности (outbox, idempotency key, `findByAlorOrderId`) и distributed lock уже заложены — включение флага `DISTRIBUTED_LOCK_ENABLED=true` позволяет запустить несколько реплик без гонок.
 
-## 2.7. Ключевые потоки управления
+## 2.8. Ключевые потоки управления
 
 ```mermaid
 flowchart TB

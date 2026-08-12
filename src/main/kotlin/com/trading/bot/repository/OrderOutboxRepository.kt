@@ -89,6 +89,17 @@ class OrderOutboxRepository(
             .awaitSingleOrNull()
     }
 
+    /**
+     * Строка по id (загрузка потребителем RabbitMQ по опубликованному id).
+     */
+    suspend fun findById(id: UUID): OrderOutbox? =
+        databaseClient
+            .sql("SELECT * FROM order_outbox WHERE id = :id")
+            .bind("id", id)
+            .map { row, _ -> toOrderOutbox(row) }
+            .one()
+            .awaitSingleOrNull()
+
     suspend fun deleteAll() {
         databaseClient.sql("DELETE FROM order_outbox").then().awaitSingleOrNull()
     }

@@ -70,6 +70,7 @@ gantt
 - Замена/дополнение части LLM-инференса ML-моделями (CatBoost/LightGBM) для задач, где нужна скорость и стабильность: скрининг кандидатов, оценка вероятности удержания тренда.
 - Retraining pipeline: собранные через `agent_logs` и сделки данные → features → обучение на CI.
 - ✅ **Шаг 1 (датасет-экспорт)**: `GET /api/v1/ml/dataset` (CSV) + `/dataset/stats`, признаки на входе из candles + макро + `agent_logs` + слепые зоны, флаг `ml.enabled` (раздел 13.11).
+- ✅ **Шаг 1.5 (исторические макро-снапшоты)**: `macro_snapshots` + `MacroSnapshotCollector`, макро в датасете берутся на момент входа (`macro_source=SNAPSHOT`), lookahead-утечка устранена (раздел 13.11.2).
 
 ### v2.5 — Расширение горизонтов
 
@@ -463,6 +464,34 @@ publish → consume → SENT; already-SENT не переотправляется
 **Метрики**: `ml.dataset.export` (counter, mode), `ml.dataset.export.rows/skipped/positions`
 (gauges). Конфиг: `ml.enabled`, `ml.dataset.timeframe`, `ml.dataset.lookback-bars`,
 `ml.dataset.max-rows`.
+
+### 13.11.2. Исторические макро-снапшоты (реализовано)
+
+Устраняет задокументированный риск 13.11.1: макро-признаки в обучающей строке
+теперь соответствуют моменту ВХОДА в позицию (без lookahead-утечки), а не моменту
+экспорта.
+
+**Схема**:
+
+1. `MacroSnapshotCollector` (`@Scheduled`, период `macro.snapshot-interval-ms`)
+   раз в N минут берёт `MacroContextService.fetch()` и сохраняет слепок в
+   `macro_snapshots` (`captured_at`, `cbr_rate`, `brent_price`, `usd_rub`).
+   Работает только при `macro.snapshot-enabled=true`; ошибки сбора не роняют бота.
+2. `MlDatasetService.export` одной выборкой `findBetween` загружает снапшоты на
+   всё окно позиций (от `min(openedAt) - 1 день` до `max(openedAt)`) и для каждой
+   строки бинарным поиском берёт **последний снапшот с `captured_at <= openedAt`**
+   (снапшоты после входа не используются — граница lookahead).
+3. Если снапшота на момент входа нет (исторические сделки до включения
+   коллектора) — фолбэк на текущий контекст. Источник фиксируется новой колонкой
+   `macro_source`: `SNAPSHOT` | `CURRENT` (всего в CSV теперь 29 колонок).
+
+**Ограничение**: снапшоты собираются «вперёд» — сделки, закрытые до включения
+коллектора, остаются с `macro_source=CURRENT`. Для датасета с полным историческим
+макро нужно включить коллектор заранее (`MACRO_SNAPSHOT_ENABLED=true`).
+
+**Метрики**: `macro.snapshot.saved` / `macro.snapshot.collect.error` (counters),
+`ml.dataset.macro.source` (counter, tag `source=SNAPSHOT|CURRENT`). Конфиг:
+`macro.snapshot-enabled`, `macro.snapshot-interval-ms`.
 
 ## 13.12. Детализация v2.5 (Cross-exchange)
 

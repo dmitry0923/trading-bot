@@ -6,10 +6,12 @@ import com.trading.bot.model.dto.MlDatasetExport
 import com.trading.bot.model.dto.MlDatasetRow
 import com.trading.bot.model.dto.positionDurationMinutes
 import com.trading.bot.model.entity.AgentLog
+import com.trading.bot.model.entity.MacroSnapshot
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.MacroSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -26,6 +28,11 @@ import java.time.LocalDateTime
  * `candles` ([MlFeatureExtractor]) + решение LLM-стратега из `agent_logs`
  * (по `cycleId`) + макро-контекст + признак слепой зоны тикера на час входа.
  *
+ * Макро-признаки берутся из исторических снапшотов ([MacroSnapshotRepository],
+ * раздел 13.11.2): для строки используется последний снапшот с `captured_at <=
+ * openedAt` (без lookahead). Если снапшота на момент входа нет — фолбэк на
+ * текущий контекст ([MacroContextService.fetch], колонка `macro_source=CURRENT`).
+ *
  * Выключен ([MlConfig.enabled]=false) — экспорт возвращается в режиме DISABLED,
  * БД не читается (паттерн RAG: раздел 13.18).
  */
@@ -36,6 +43,7 @@ class MlDatasetService(
     private val candleRepository: CandleRepository,
     private val agentLogRepository: AgentLogRepository,
     private val blindSpotRepository: BlindSpotRepository,
+    private val macroSnapshotRepository: MacroSnapshotRepository,
     private val macroContextService: MacroContextService,
     private val meterRegistry: MeterRegistry,
 ) {
@@ -66,7 +74,7 @@ class MlDatasetService(
 
         val limit = (maxRows ?: mlConfig.dataset.maxRows).coerceIn(1, MAX_ROWS_HARD_LIMIT)
         val closed = positionRepository.findClosed(ticker, since)
-        val macro = macroContextService.fetch()
+        val snapshots = loadSnapshotsFor(closed)
         val blindSpotsByTicker = blindSpotRepository.findByIsActiveTrue().groupBy { it.ticker }
         val timeframe = mlConfig.dataset.timeframe
         val lookbackBars = mlConfig.dataset.lookbackBars
@@ -74,6 +82,7 @@ class MlDatasetService(
 
         val rows = mutableListOf<MlDatasetRow>()
         var skipped = 0
+        var currentMacro: MacroContextService.MacroContext? = null
         for (position in closed) {
             if (rows.size >= limit) break
             val features = entryFeatures(position, timeframe, lookbackBars, barMinutes)
@@ -81,12 +90,22 @@ class MlDatasetService(
                 skipped++
                 continue
             }
+            val snapshot = latestSnapshotAtOrBefore(snapshots, position.openedAt)
+            val macro =
+                if (snapshot != null) {
+                    MacroContextService.MacroContext(snapshot.cbrRate, snapshot.brentPrice, snapshot.usdRub)
+                } else {
+                    currentMacro ?: macroContextService.fetch().also { currentMacro = it }
+                }
+            val macroSource = if (snapshot != null) MACRO_SOURCE_SNAPSHOT else MACRO_SOURCE_CURRENT
+            meterRegistry.counter("ml.dataset.macro.source", Tags.of("source", macroSource)).increment()
             val strategyLog = position.cycleId?.let { agentLogRepository.findStrategyDecision(it) }
             rows +=
                 buildRow(
                     position = position,
                     features = features,
                     macro = macro,
+                    macroSource = macroSource,
                     strategyLog = strategyLog,
                     inBlindSpot = inBlindSpotHour(blindSpotsByTicker[position.ticker], position),
                 )
@@ -156,10 +175,31 @@ class MlDatasetService(
         return MlFeatureExtractor.extract(candles, lookbackBars)
     }
 
+    /** Снапшоты макро на всё окно позиций (одна выборка, ASC по captured_at). */
+    private suspend fun loadSnapshotsFor(positions: List<Position>): List<MacroSnapshot> {
+        if (positions.isEmpty()) return emptyList()
+        val from = positions.minOf { it.openedAt }.minusDays(SNAPSHOT_LOOKBACK_DAYS)
+        val to = positions.maxOf { it.openedAt }
+        return macroSnapshotRepository.findBetween(from, to)
+    }
+
+    /** Последний снапшот с captured_at <= [time] (бинарный поиск по ASC-списку). */
+    private fun latestSnapshotAtOrBefore(
+        snapshots: List<MacroSnapshot>,
+        time: LocalDateTime,
+    ): MacroSnapshot? {
+        if (snapshots.isEmpty()) return null
+        val index = snapshots.binarySearchBy(time) { it.capturedAt }
+        if (index >= 0) return snapshots[index]
+        val insertion = -index - 1
+        return if (insertion == 0) null else snapshots[insertion - 1]
+    }
+
     private fun buildRow(
         position: Position,
         features: MlFeatureExtractor.Features,
         macro: MacroContextService.MacroContext,
+        macroSource: String,
         strategyLog: AgentLog?,
         inBlindSpot: Boolean,
     ): MlDatasetRow {
@@ -192,6 +232,7 @@ class MlDatasetService(
             cbrRate = macro.cbrRate,
             brentPrice = macro.brentPrice,
             usdRub = macro.usdRub,
+            macroSource = macroSource,
             strategyAction = strategyLog?.action,
             strategyConfidence = strategyLog?.confidence,
             inBlindSpotHour = if (inBlindSpot) 1 else 0,
@@ -220,5 +261,8 @@ class MlDatasetService(
     private companion object {
         const val MAX_ROWS_HARD_LIMIT = 50_000
         const val LOOKBACK_WARMUP_BARS = 30
+        const val MACRO_SOURCE_SNAPSHOT = "SNAPSHOT"
+        const val MACRO_SOURCE_CURRENT = "CURRENT"
+        const val SNAPSHOT_LOOKBACK_DAYS = 1L
     }
 }

@@ -6,10 +6,12 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.model.entity.BlindSpotEntity
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.model.entity.MacroSnapshot
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.MacroSnapshotRepository
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -29,6 +31,7 @@ class MlDatasetServiceTest {
     private val candleRepository = Mockito.mock(CandleRepository::class.java)
     private val agentLogRepository = Mockito.mock(AgentLogRepository::class.java)
     private val blindSpotRepository = Mockito.mock(BlindSpotRepository::class.java)
+    private val macroSnapshotRepository = Mockito.mock(MacroSnapshotRepository::class.java)
     private val macroContextService = Mockito.mock(MacroContextService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
@@ -39,13 +42,21 @@ class MlDatasetServiceTest {
             candleRepository,
             agentLogRepository,
             blindSpotRepository,
+            macroSnapshotRepository,
             macroContextService,
             meterRegistry,
         )
 
     @BeforeEach
     fun reset() {
-        Mockito.reset(positionRepository, candleRepository, agentLogRepository, blindSpotRepository, macroContextService)
+        Mockito.reset(
+            positionRepository,
+            candleRepository,
+            agentLogRepository,
+            blindSpotRepository,
+            macroSnapshotRepository,
+            macroContextService,
+        )
     }
 
     @Test
@@ -79,6 +90,18 @@ class MlDatasetServiceTest {
                     ),
                 )
             Mockito
+                .`when`(macroSnapshotRepository.findBetween(any(), any()))
+                .thenReturn(
+                    listOf(
+                        MacroSnapshot(
+                            capturedAt = openedAt.minusHours(1),
+                            cbrRate = BigDecimal("16"),
+                            brentPrice = BigDecimal("75"),
+                            usdRub = BigDecimal("90"),
+                        ),
+                    ),
+                )
+            Mockito
                 .`when`(
                     macroContextService.fetch(),
                 ).thenReturn(
@@ -102,6 +125,7 @@ class MlDatasetServiceTest {
         assertEquals(0.85, win.strategyConfidence!!, 1e-9)
         assertEquals(1, win.inBlindSpotHour)
         assertEquals(16.0, win.cbrRate.toDouble(), 0.0)
+        assertEquals("SNAPSHOT", win.macroSource)
         assertTrue(win.rsi14 > 0.0)
 
         val loss = export.rows[1]
@@ -110,6 +134,11 @@ class MlDatasetServiceTest {
         assertNull(loss.strategyAction)
         assertNull(loss.strategyConfidence)
         assertEquals(0, loss.inBlindSpotHour)
+        assertEquals("SNAPSHOT", loss.macroSource)
+
+        runBlocking {
+            Mockito.verify(macroContextService, Mockito.never()).fetch()
+        }
     }
 
     @Test
@@ -126,6 +155,7 @@ class MlDatasetServiceTest {
                 .thenReturn(candles(60, openedAt))
                 .thenReturn(candles(15, openedAt.plusDays(1)))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
             Mockito
                 .`when`(
                     macroContextService.fetch(),
@@ -137,6 +167,7 @@ class MlDatasetServiceTest {
         assertEquals(1, export.rows.size)
         assertEquals(1, export.skippedInsufficientData)
         assertEquals(1L, export.rows[0].positionId)
+        assertEquals("CURRENT", export.rows[0].macroSource)
     }
 
     @Test
@@ -152,6 +183,7 @@ class MlDatasetServiceTest {
                 .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, openedAt))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
             Mockito
                 .`when`(
                     macroContextService.fetch(),
@@ -162,6 +194,51 @@ class MlDatasetServiceTest {
 
         assertEquals(1, export.rows.size)
         assertEquals(1L, export.rows[0].positionId)
+    }
+
+    @Test
+    fun `export uses only snapshots captured at or before entry no lookahead`() {
+        config.enabled = true
+        config.dataset.maxRows = 10
+        val openedAt = LocalDateTime.of(2026, 2, 1, 14, 0)
+        val p1 = position(1L, "SBER", PositionDirection.LONG, openedAt, pnl = 100.0, cycleId = null)
+        val p2 = position(2L, "SBER", PositionDirection.LONG, openedAt.plusHours(2), pnl = -50.0, cycleId = null)
+
+        runBlocking {
+            Mockito.`when`(positionRepository.findClosed(null, null)).thenReturn(listOf(p1, p2))
+            Mockito
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .thenReturn(candles(60, openedAt))
+                .thenReturn(candles(60, openedAt.plusHours(2)))
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            // Снапшоты строго ПОСЛЕ входа p1 (14:00): для p1 они недоступны (lookahead), для p2 (16:00) доступны.
+            Mockito
+                .`when`(macroSnapshotRepository.findBetween(any(), any()))
+                .thenReturn(
+                    listOf(
+                        MacroSnapshot(capturedAt = openedAt.plusMinutes(30), cbrRate = BigDecimal("16"), brentPrice = BigDecimal("75"), usdRub = BigDecimal("90")),
+                        MacroSnapshot(capturedAt = openedAt.plusMinutes(90), cbrRate = BigDecimal("17"), brentPrice = BigDecimal("80"), usdRub = BigDecimal("95")),
+                    ),
+                )
+            Mockito
+                .`when`(
+                    macroContextService.fetch(),
+                ).thenReturn(MacroContextService.MacroContext(BigDecimal("16"), BigDecimal("75"), BigDecimal("90")))
+        }
+
+        val export = runBlocking { service.export() }
+
+        assertEquals(2, export.rows.size)
+        val noLookahead = export.rows[0]
+        assertEquals(1L, noLookahead.positionId)
+        assertEquals("CURRENT", noLookahead.macroSource)
+        assertEquals(16.0, noLookahead.cbrRate.toDouble(), 0.0)
+
+        val withSnapshot = export.rows[1]
+        assertEquals(2L, withSnapshot.positionId)
+        assertEquals("SNAPSHOT", withSnapshot.macroSource)
+        assertEquals(17.0, withSnapshot.cbrRate.toDouble(), 0.0)
+        assertEquals(95.0, withSnapshot.usdRub.toDouble(), 0.0)
     }
 
     @Test

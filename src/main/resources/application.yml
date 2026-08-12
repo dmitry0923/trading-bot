@@ -91,6 +91,8 @@ macro:
   brent-price: ${BRENT_PRICE:75.0}
   usd-rub: ${USD_RUB:90.0}
   usd-rub-ticker: USD000UTSTOM
+  snapshot-enabled: ${MACRO_SNAPSHOT_ENABLED:false}    # исторические снапшоты макро для ML-датасета (13.11.2)
+  snapshot-interval-ms: ${MACRO_SNAPSHOT_INTERVAL_MS:900000}
 
 llm:
   provider: ${LLM_PROVIDER:ROUTER_AI}

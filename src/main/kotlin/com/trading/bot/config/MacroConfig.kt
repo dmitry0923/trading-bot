@@ -11,6 +11,8 @@ import java.math.BigDecimal
  * @property brentPrice цена Brent, $
  * @property usdRub курс USD/RUB
  * @property usdRubTicker тикер пары USD/RUB на MOEX для live-обновления
+ * @property snapshotEnabled периодический сбор исторических макро-снапшотов (13.11.2)
+ * @property snapshotIntervalMs период сбора снапшотов, мс
  */
 @Component
 @ConfigurationProperties(prefix = "macro")
@@ -19,4 +21,6 @@ class MacroConfig {
     var brentPrice: BigDecimal = BigDecimal("75.0")
     var usdRub: BigDecimal = BigDecimal("90.0")
     var usdRubTicker: String = "USD000UTSTOM"
+    var snapshotEnabled: Boolean = false
+    var snapshotIntervalMs: Long = 15 * 60 * 1000L
 }

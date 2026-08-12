@@ -71,6 +71,7 @@ gantt
 - Retraining pipeline: собранные через `agent_logs` и сделки данные → features → обучение на CI.
 - ✅ **Шаг 1 (датасет-экспорт)**: `GET /api/v1/ml/dataset` (CSV) + `/dataset/stats`, признаки на входе из candles + макро + `agent_logs` + слепые зоны, флаг `ml.enabled` (раздел 13.11).
 - ✅ **Шаг 1.5 (исторические макро-снапшоты)**: `macro_snapshots` + `MacroSnapshotCollector`, макро в датасете берутся на момент входа (`macro_source=SNAPSHOT`), lookahead-утечка устранена (раздел 13.11.2).
+- ✅ **Шаг 2 (обучение на CI)**: `ml/` пайплайн (CatBoost/LightGBM, temporal OOS 20%, метрика M3 — profit factor на OOS vs LLM-baseline), GitHub Actions `ml-train.yml` + pytest-тесты (раздел 13.11.3).
 
 ### v2.5 — Расширение горизонтов
 
@@ -492,6 +493,55 @@ publish → consume → SENT; already-SENT не переотправляется
 **Метрики**: `macro.snapshot.saved` / `macro.snapshot.collect.error` (counters),
 `ml.dataset.macro.source` (counter, tag `source=SNAPSHOT|CURRENT`). Конфиг:
 `macro.snapshot-enabled`, `macro.snapshot-interval-ms`.
+
+### 13.11.3. Шаг 2: обучение на CI (реализовано)
+
+Обучающий пайплайн в `ml/` (Python 3.11, градиентный бустинг), запускаемый
+GitHub Actions (`ml-train.yml`). Потребляет CSV-экспорт `GET /api/v1/ml/dataset`
+и обучает бинарный классификатор исхода позиции (цель `win`).
+
+**Дизайн (принципы борьбы с lookahead/переобучением):**
+
+| Аспект | Решение |
+|---|---|
+| OOS-выборка | **Temporal split** — последние 20% сделок по `opened_at` (без случайного сплита, который «заглядывает в будущее»); на train-части дополнительно отрезается хвост 10% как validation для early stopping |
+| Модель | CatBoost (default, артефакт `model.cbm`) или LightGBM (`--model lightgbm`, `model.txt`); `auto_class_weights=Balanced`, `early_stopping` |
+| Признаки | 15 числовых (индикаторы + макро + `strategy_confidence` + `hour_of_day` + `in_blind_spot_hour`) + 2 категориальных (`strategy_action`, `direction`); пропуски обрабатываются нативно; мета-колонки (id/даты/цены/P&L/`macro_source`) в модель НЕ подаются |
+| Воспроизводимость | `--seed` (default 42); отчёт пишет версию модели, сплит и признаки |
+| Данные | защита от дрейфа схемы: требуются все 29 колонок `CSV_HEADER`; аборт при < `--min-rows` (50), пустом датасете или одном классе в train |
+
+**Оценка (отчёт `eval_report.json` + `training.log`):**
+
+- Классические метрики на OOS: accuracy/precision/recall/f1/ROC-AUC/log-loss;
+- Стратифицированная 5-fold CV (ROC-AUC) на train-части;
+- **Метрика M3 (profit factor на OOS)**: `all_trades` (все сделки) vs
+  `llm_baseline` (только строки, где стратег сказал BUY/SELL) vs
+  `ml_selected` (прогноз `p >= --threshold`, default 0.5);
+  `m3.ml_beats_llm_pf` / `ml_beats_all_pf` — результат сравнения.
+- `feature_importance.tsv` — ранжирование признаков (контроль дрейфа).
+
+**Артефакты** (upload-artifact, retention 30 дней): `model.cbm|model.txt`,
+`eval_report.json`, `feature_importance.tsv`, `training.log`.
+
+**CI (`ml-train.yml`)**: `workflow_dispatch` (ручной запуск) + еженедельный
+`schedule` (пн 05:00 UTC). Датасет скачивается через API: `POST /auth/login`
+(секреты `ML_API_BASE/USERNAME/PASSWORD`) → Bearer → `/api/v1/ml/dataset`;
+либо прямая ссылка через input `dataset_url`. Секреты и `ml.enabled=true`
+обязательны (иначе эндпоинт экспорта отдаёт 404).
+
+**Тесты**: `ml/tests/test_train.py` (pytest, smoke на синтетическом датасете:
+успешный прогон + артефакты, отказ на пустом/малом датасете, дрейф схемы).
+Проверяются в CI (джоба `ml-training`, лёгкий набор: lightgbm без catboost).
+
+**Ограничения (задокументированные)**:
+
+- Метрика PF считается по фактическому P&L позиций датасета; «LLM-baseline» —
+  эвристика (строки со `strategy_action ∈ {BUY, SELL}`), а не отдельный прогон
+  LLM-конвейера.
+- `hour_of_day` подаётся сырым числом (циклическое преобразование sin/cos —
+  будущее улучшение).
+- Качество модели ограничено историей сделок: при < 50 строках пайплайн
+  абортится (сигнал — копить данные через коллектор макро-снапшотов).
 
 ## 13.12. Детализация v2.5 (Cross-exchange)
 

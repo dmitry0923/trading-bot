@@ -48,3 +48,12 @@ org/
 about.html
 plugin.properties
 
+# ML пайплайн (roadmap v2.4, шаг 2)
+ml/.venv/
+ml/**/__pycache__/
+ml/artifacts/
+ml-artifacts/
+dataset.csv
+*.cbm
+ml/*.cbm
+

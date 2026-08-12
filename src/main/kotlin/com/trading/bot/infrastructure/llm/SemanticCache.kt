@@ -89,12 +89,20 @@ class SemanticCache(
      */
     fun genericFingerprint(vararg components: Any?): String = components.joinToString(":") { it?.toString() ?: "NA" }
 
+    /**
+     * Ключ кэша. `namespace` изолирует область значений (например "backtest"):
+     * бэктест не читает/не пишет live-кэш, иначе исторический бар мог бы получить
+     * «будущий» ответ (look-ahead bias) и наоборот — live мог бы получить
+     * бэктест-ответ по похожему отпечатку.
+     */
     fun key(
         agent: String,
         ticker: String,
         fingerprint: String,
+        namespace: String? = null,
     ): String {
-        val raw = "$agent:$ticker:$fingerprint"
+        val ns = if (namespace.isNullOrBlank()) "" else ":$namespace"
+        val raw = "$agent:$ticker$ns:$fingerprint"
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
         return prefix + digest.joinToString("") { "%02x".format(it) }
     }
@@ -103,12 +111,13 @@ class SemanticCache(
         agent: String,
         ticker: String,
         fingerprint: String,
+        namespace: String? = null,
     ): LlmResponse? {
         if (!llmConfig.semanticCacheEnabled) {
             meterRegistry.counter("llm.cache.miss", Tags.of("agent", agent)).increment()
             return null
         }
-        val key = key(agent, ticker, fingerprint)
+        val key = key(agent, ticker, fingerprint, namespace)
         return try {
             redisTemplate.opsForValue().get(key)?.let { json ->
                 objectMapper.readValue(json, LlmResponse::class.java).copy(fromCache = true).also {
@@ -131,9 +140,10 @@ class SemanticCache(
         ticker: String,
         fingerprint: String,
         response: LlmResponse,
+        namespace: String? = null,
     ) {
         if (!llmConfig.semanticCacheEnabled || response.isFallback) return
-        val key = key(agent, ticker, fingerprint)
+        val key = key(agent, ticker, fingerprint, namespace)
         try {
             redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(response), ttl)
             logger.debug { "Semantic cache PUT $agent:$ticker ttl=${ttl.seconds}s" }

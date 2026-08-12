@@ -264,6 +264,13 @@ bt:
   sl-percent: ${BT_SL_PERCENT:2.0}
   tp-percent: ${BT_TP_PERCENT:4.0}
   capital-slice: ${BT_CAPITAL_SLICE:0.20}
+  # LLM-агенты в бэктесте (roadmap 13.8.1): по умолчанию выключены.
+  # Включаются профилем `backtest` (application-backtest.yml) или переменной BT_AGENT_ENABLED=true.
+  agent:
+    enabled: ${BT_AGENT_ENABLED:false}
+    sample-every: ${BT_AGENT_SAMPLE_EVERY:20}
+    temperature: ${BT_AGENT_TEMPERATURE:0.0}
+    cache-namespace: ${BT_AGENT_CACHE_NAMESPACE:backtest}
 
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}

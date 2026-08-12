@@ -244,7 +244,7 @@ gantt
 
 ## 13.8. Детализация фич v2.3
 
-### 13.8.1. LLM-агенты в бэктесте
+### 13.8.1. LLM-агенты в бэктесте (реализовано)
 
 Заменить `signalAt()` (детерминированный RSI/MACD) на конвейер агентов:
 
@@ -260,14 +260,23 @@ flowchart LR
     AR -->|Final| SIM[SimulatedExecution]
 ```
 
-Проблемы, которые надо решить:
+Реализация: `BacktestSignalGenerator` (интерфейс, suspend `signal`) с двумя
+компонентами — `DeterministicBacktestSignalGenerator` (индикаторный RSI/MACD,
+выбран по умолчанию: `bt.agent.enabled=false`) и `AgentBacktestSignalGenerator`
+(конвейер агентов: `bt.agent.enabled=true`). `BacktestEngine.simulate` и
+`BacktestValidator.validate` стали suspend. Всё по конфигу `bt.agent.*`
+(11.8.1), агентный режим включается профилем `backtest`
+(`application-backtest.yml`). Детали и таблица решений:
 
 | Проблема | Решение |
 |---|---|
-| Стоимость: 10 тикеров × 365 дней × 6 агентов | сэмплирование: сигнал каждые N баров, параллельные вызовы |
-| Латентность | кэш LLM-ответов по fingerprint бара |
-| Детерминированность | `temperature=0`, стабильный seed |
-| Тайм-ауты | resilience4j конфиг для backtest-профиля |
+| Стоимость: 10 тикеров × 365 дней × 6 агентов | сэмплирование: сигнал каждые N баров (`bt.agent.sample-every`), tech+fund параллельно (`coroutineScope`/`async`) |
+| Латентность | кэш LLM-ответов по fingerprint бара + изолированный namespace (`bt.agent.cache-namespace`) |
+| Детерминированность | `bt.agent.temperature=0.0`, все агенты с детерминированными fallback (работают без API-ключа) |
+| Тайм-ауты | resilience4j конфиг (`resilience4j.circuitbreaker.instances.llm`) |
+
+Тесты: `AgentBacktestSignalGeneratorTest` (warm-up/сэмплинг/полная цепочка —
+25 backtest-тестов зелёные).
 
 ### 13.8.2. WebSocket-only исполнение
 

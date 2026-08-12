@@ -2,7 +2,6 @@ package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
-import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.BacktestResultEntity
@@ -16,12 +15,15 @@ import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
+import java.util.UUID
 
 /**
  * Движок бэктеста.
  *
  * - Загружает исторические свечи (10-мин, MOEX ISS) из БД
- * - Проходит по свечам, генерируя сигналы индикаторами (RSI/MACD/Bollinger)
+ * - Проходит по свечам, генерируя сигналы через [BacktestSignalGenerator]:
+ *   по умолчанию детерминированная эвристика RSI/MACD, при `bt.agent.enabled=true`
+ *   — конвейер LLM-агентов (roadmap 13.8.1, профиль `backtest`)
  * - Симулирует исполнение: комиссия 0.05% на оборот, проскальзывание 0.1% (market)
  * - Проверяет SL/TP по внутрисвечному диапазону (high/low)
  * - Считает метрики: Sharpe, MaxDD, PF, win rate
@@ -44,6 +46,7 @@ class BacktestEngine(
     private val backtestResultRepository: BacktestResultRepository? = null,
     private val objectMapper: ObjectMapper = ObjectMapper(),
     private val meterRegistry: MeterRegistry? = null,
+    private val signalGenerator: BacktestSignalGenerator = DeterministicBacktestSignalGenerator(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -135,7 +138,7 @@ class BacktestEngine(
      * При закрытии cash += exit*qty - commission_exit (тело возвращается автоматически).
      * PnL сделки включает обе комиссии.
      */
-    fun simulate(
+    suspend fun simulate(
         ticker: String,
         candles: List<Candle>,
         initialCapital: BigDecimal = backtestConfig.initialCapital,
@@ -146,6 +149,7 @@ class BacktestEngine(
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
         val tradeReturns = ArrayList<Double>()
+        val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
 
         var position: PositionSim? = null
         val sorted = candles.sortedBy { it.time }
@@ -171,7 +175,7 @@ class BacktestEngine(
                 }
             }
 
-            val signal = signalAt(sorted, i - 1, minBarsForSignal)
+            val signal = signalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
             if (signal == StrategyAction.HOLD || signal == StrategyAction.CLOSE) {
                 // Удержание: фиксируем equity по текущей цене закрытия
                 equityCurve.add(equityAt(cash, position, current.closePrice))
@@ -314,25 +318,8 @@ class BacktestEngine(
     }
 
     /**
-     * Сигнал на основе индикаторов (RSI + MACD + Bollinger).
-     * Возвращает BUY/SELL/HOLD.
+     * Пустой результат прогона (недостаточно данных / нет сделок).
      */
-    fun signalAt(
-        candles: List<Candle>,
-        index: Int,
-        minBars: Int,
-    ): StrategyAction {
-        val window = candles.subList(0, index + 1)
-        if (window.size < minBars) return StrategyAction.HOLD
-        val ind = IndicatorCalculator.calculate(window) ?: return StrategyAction.HOLD
-
-        return when {
-            ind.rsi < 30 && ind.macdHistogram > 0 -> StrategyAction.BUY
-            ind.rsi > 70 && ind.macdHistogram < 0 -> StrategyAction.SELL
-            else -> StrategyAction.HOLD
-        }
-    }
-
     private fun emptyResult(ticker: String): BacktestResult =
         BacktestResult(
             ticker = ticker,

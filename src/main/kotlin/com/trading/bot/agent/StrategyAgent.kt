@@ -58,6 +58,8 @@ class StrategyAgent(
      * @param cycleId идентификатор торгового цикла
      * @param adaptiveThreshold адаптивный порог уверенности (из AdaptiveRiskService)
      * @param version версия LLM-шаблона промпта
+     * @param temperature температура генерации (live-путь 0.15, бэктест — 0.0)
+     * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
      * @return черновик стратегии (Draft)
      */
     suspend fun formulate(
@@ -68,6 +70,8 @@ class StrategyAgent(
         cycleId: String,
         adaptiveThreshold: Double = 0.5,
         version: String = PromptRegistry.DEFAULT_VERSION,
+        temperature: Double = 0.15,
+        cacheNamespace: String? = null,
     ): Draft {
         val start = System.currentTimeMillis()
 
@@ -114,7 +118,8 @@ class StrategyAgent(
                 prompt = prompt,
                 variables = variables,
                 fingerprint = fingerprint,
-                temperature = 0.15,
+                temperature = temperature,
+                cacheNamespace = cacheNamespace,
             )
         if (resp.isFallback) {
             logger.info { "LLM unavailable for $ticker, HOLD" }

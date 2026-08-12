@@ -2,6 +2,7 @@ package com.trading.bot.backtest
 
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.CandleRepository
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -66,7 +67,7 @@ class RealDataBacktestFixtureTest {
     @Test
     fun `backtest on real MOEX data produces valid results`() {
         val candles = loadCandles()
-        val result = engine.simulate("SBER", candles)
+        val result = runBlocking { engine.simulate("SBER", candles) }
 
         assertTrue(result.equityCurve.isNotEmpty(), "equityCurve must not be empty on real data")
         assertTrue(result.totalTrades > 0, "expected trades on 10k real candles, got ${result.totalTrades}")

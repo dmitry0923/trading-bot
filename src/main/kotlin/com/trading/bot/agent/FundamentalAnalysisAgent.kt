@@ -39,12 +39,16 @@ class FundamentalAnalysisAgent(
      * @param ticker тикер инструмента
      * @param cycleId идентификатор торгового цикла
      * @param version версия LLM-шаблона промпта
+     * @param temperature температура генерации (live-путь 0.1, бэктест — 0.0)
+     * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
      * @return отчёт с заключением, уверенностью и обоснованием
      */
     suspend fun analyze(
         ticker: String,
         cycleId: String,
         version: String = PromptRegistry.DEFAULT_VERSION,
+        temperature: Double = 0.1,
+        cacheNamespace: String? = null,
     ): FundamentalReport {
         val start = System.currentTimeMillis()
         val macro = macroContextService.fetch()
@@ -73,7 +77,8 @@ class FundamentalAnalysisAgent(
                 prompt = prompt,
                 variables = variables,
                 fingerprint = fingerprint,
-                temperature = 0.1,
+                temperature = temperature,
+                cacheNamespace = cacheNamespace,
             )
 
         val report =

@@ -67,6 +67,8 @@ class ArbitratorAgent(
      *                     с другим версией промпта не должен получать кэшированный ответ
      *                     контрольной руки — иначе эксперимент бессмыслен)
      * @param version версия LLM-шаблона промпта
+     * @param temperature температура генерации (live-путь 0.1, бэктест — 0.0)
+     * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
      * @return финальное решение (Final)
      */
     suspend fun adjudicate(
@@ -80,6 +82,8 @@ class ArbitratorAgent(
         adaptiveConfidence: Double = 0.60,
         version: String = PromptRegistry.DEFAULT_VERSION,
         bypassCache: Boolean = false,
+        temperature: Double = 0.1,
+        cacheNamespace: String? = null,
     ): Final =
         coroutineScope {
             val start = System.currentTimeMillis()
@@ -165,7 +169,8 @@ class ArbitratorAgent(
                     prompt = prompt,
                     variables = variables,
                     fingerprint = fingerprint,
-                    temperature = 0.1,
+                    temperature = temperature,
+                    cacheNamespace = cacheNamespace,
                 )
 
             val dec =

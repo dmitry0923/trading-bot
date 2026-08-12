@@ -51,6 +51,8 @@ class ContrarianAgent(
      * @param snapshot текущий рыночный снапшот
      * @param cycleId идентификатор торгового цикла
      * @param version версия LLM-шаблона промпта
+     * @param temperature температура генерации (live-путь 0.1, бэктест — 0.0)
+     * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
      * @return отчёт о валидности, уровне риска и критике
      */
     suspend fun challenge(
@@ -60,6 +62,8 @@ class ContrarianAgent(
         snapshot: MarketSnapshot,
         cycleId: String,
         version: String = PromptRegistry.DEFAULT_VERSION,
+        temperature: Double = 0.1,
+        cacheNamespace: String? = null,
     ): ChallengeReport {
         val start = System.currentTimeMillis()
 
@@ -108,7 +112,8 @@ class ContrarianAgent(
                 prompt = prompt,
                 variables = variables,
                 fingerprint = fingerprint,
-                temperature = 0.1,
+                temperature = temperature,
+                cacheNamespace = cacheNamespace,
             )
 
         val report =

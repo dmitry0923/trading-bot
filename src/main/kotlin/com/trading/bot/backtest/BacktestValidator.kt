@@ -91,7 +91,7 @@ class BacktestValidator(
      * @param minBarsForSignal минимальное число баров для сигнала
      * @return [ValidationResult]; при недостатке данных — пустой (не robust)
      */
-    fun validate(
+    suspend fun validate(
         ticker: String,
         candles: List<Candle>,
         folds: Int = 4,
@@ -140,7 +140,7 @@ class BacktestValidator(
      * Подбор (SL, TP) на in-sample окне: максимизирует Profit Factor при
      * достаточном числе сделок, при равенстве — по Sharpe.
      */
-    private fun tuneParams(
+    private suspend fun tuneParams(
         ticker: String,
         train: List<Candle>,
         initialCapital: BigDecimal,

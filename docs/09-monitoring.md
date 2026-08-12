@@ -399,6 +399,8 @@ sum(increase(event_published[1h])) by (type)
 | `bt.total_trades` | Gauge | tag `ticker` — сделки последнего прогона |
 | `bt.sharpe` / `bt.max_drawdown` / `bt.profit_factor` | Gauge | tag `ticker` |
 | `bt_pass_total` | Counter | tag `result` (PASS/REJECT) — итог каждого прогона/валидации, сравнение итераций |
+| `backtest.agent.evaluations` | Counter | tag `agent` — LLM-вызовы агентного генератора сигналов (11.8.1) |
+| `backtest.agent.signal` | Counter | tag `signal` (BUY/SELL/HOLD) — сигналы агентного режима |
 
 PromQL:
 

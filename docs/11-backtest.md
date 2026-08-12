@@ -403,12 +403,49 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
 `BacktestValidator.validate` (initialCapital, minBarsForSignal) и в эндпоинтах
 `ApiController` (дефолты `days`/`timeframe`).
 
+### Конфигурация `bt.agent.*` (реализовано, раздел 13.8.1)
+
+Агентный режим генерации сигналов выключается/включается конфигом `bt.agent.*`
+(`BacktestAgentConfig`, `@ConfigurationProperties(prefix = "bt.agent")`). Режимы
+выбираются условно через `@ConditionalOnProperty` — агентный компонент
+`AgentBacktestSignalGenerator` существует только при `bt.agent.enabled=true`,
+иначе создаётся `DeterministicBacktestSignalGenerator` (индикаторный RSI/MACD):
+
+| Ключ | Env | По умолчанию | Назначение |
+|---|---|---|---|
+| `bt.agent.enabled` | `BT_AGENT_ENABLED` | `false` | агентный конвейер (false = индикаторный режим) |
+| `bt.agent.sample-every` | `BT_AGENT_SAMPLE_EVERY` | `20` | сигнал каждые N баров (warm-up первые `bt.min-bars-for-signal` баров — HOLD) |
+| `bt.agent.temperature` | `BT_AGENT_TEMPERATURE` | `0.0` | температура LLM (детерминированность) |
+| `bt.agent.cache-namespace` | `BT_AGENT_CACHE_NAMESPACE` | `backtest` | изоляция semantic cache от live-кэша |
+
+Профиль `backtest` (`application-backtest.yml`) задаёт `bt.agent.enabled=true` —
+это же значение принимает `KIMI_API_KEY`: если ключ пуст, все агенты мгновенно
+дают детерминированные fallback (INSUFFICIENT_DATA/NEUTRAL/HOLD), бэктест не падает.
+
+### Поток агентного сигнала (11.8.2)
+
+`AgentBacktestSignalGenerator.signal(ticker, candles, index, minBars, cycleId)`:
+warm-up (index < minBars) и несэмплируемые бары возвращают `HOLD` без вызовов агентов;
+на сэмплируемом баре `TechnicalAnalysisAgent` и `FundamentalAnalysisAgent` считаются
+параллельно (`coroutineScope`/`async`), затем `StrategyAgent` → `ContrarianAgent` →
+`ArbitratorAgent` — конвейер возвращает `Final` (аналог `DiscretionaryStrategy`).
+Все агенты вызываются с `temperature=bt.agent.temperature` и
+`cacheNamespace=bt.agent.cache-namespace` (изолированный кэш — защита от look-ahead
+и загрязнения live-кэша). Метрики: `backtest.agent.evaluations` (Counter, tag
+`agent`) и `backtest.agent.signal` (Counter, tag `signal`). Обвязка движка:
+`BacktestEngine.simulate`/`BacktestValidator.validate` стали suspend, цикл
+использует `signalGenerator.signal(...)` вместо детерминированного `signalAt()`.
+
 Честный список того, чего в текущей реализации **нет** (важно не путать с дизайном из исходного раздела):
 
-1. **Нет LLM-агентов** — сигналы чисто индикаторные. Интеграция с конвейером (tech→fund→strategy→contrarian→arbitrator) — отдельная задача.
+1. ~~**Нет LLM-агентов**~~ — реализовано: конвейер tech→fund→strategy→contrarian→arbitrator
+   в агентном режиме `bt.agent.enabled=true` (11.8.1), по умолчанию — индикаторный режим.
 2. **Нет `avgHoldBars` и `monthlyReturns`** — заглушки, расчёт по месяцам отложен.
 3. **Out-of-sample — детерминированно** — OOS покрыт walk-forward `BacktestValidator` (`/api/v1/backtest/{ticker}/validate`, раздел 13.7.7); LLM/ML-подход — roadmap.
-4. **Нет отдельного Spring-профиля `backtest`** — запуск через REST. Профиль (автозапуск по `--bt.tickers`, отчёт в консоль) — roadmap. Персист результатов в `backtest_results` реализован (разделы 13.7.3, 7.2).
+4. **Нет отдельного Spring-профиля `backtest`** — профиль-конфиг `application-backtest.yml`
+   создан (включает `bt.agent.enabled=true`, 11.8.1), но автозапуска по `--bt.tickers`
+   (отдельный `BacktestApplication` с отчётом в консоль) ещё нет. Запуск — через REST.
+   Персист результатов в `backtest_results` реализован (разделы 13.7.3, 7.2).
 5. ~~**Нет распределения по тикерам**~~ — реализовано: панельный прогон `/api/v1/backtest/panel` (11.6.1). Один вызов = несколько тикеров с итоговой сводкой. Фронт: `BacktestPage.tsx`.
 6. ~~**Константы захардкожены** — 20% слайс капитала, 2%/4% SL/TP, `initialCapital = 100000`~~. Вынесено в конфиг `bt.*` (11.8.1).
 7. **Внутрисвечное исполнение SL/TP** — по уровню без уточнения «цена открытия следующей свечи» для limit-ордеров: вход всегда по открытию `t+1` через `marketFill`, лимитные входы не используются в цикле (функция `limitFill` готова, но в `simulate` не задействована).

@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.model.entity.Candle
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -39,7 +40,7 @@ class BacktestValidatorTest {
 
     @Test
     fun `insufficient candles produce empty non-robust result`() {
-        val result = validator.validate("SBER", emptyList(), folds = 4)
+        val result = runBlocking { validator.validate("SBER", emptyList(), folds = 4) }
         assertTrue(result.folds.isEmpty())
         assertFalse(result.isRobust())
         assertEquals(0.0, result.consistency)
@@ -51,8 +52,11 @@ class BacktestValidatorTest {
 
     @Test
     fun `validation produces per-fold and aggregate out-of-sample results`() {
-        whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any())).thenReturn(result())
-        val result = validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
+        val result =
+            runBlocking {
+                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any())).thenReturn(result())
+                validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
+            }
         assertEquals(3, result.folds.size)
         assertEquals(OOS_TRADES, result.folds[0].outOfSample.totalTrades)
         // 3 фолда x 3 OOS-сделки

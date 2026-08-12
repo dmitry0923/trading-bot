@@ -45,6 +45,8 @@ class TechnicalAnalysisAgent(
      * @param snapshot текущий рыночный снапшот
      * @param cycleId идентификатор торгового цикла
      * @param version версия LLM-шаблона промпта
+     * @param temperature температура генерации (live-путь 0.1, бэктест — 0.0)
+     * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
      * @return отчёт с трендом, индикаторами и заключением
      */
     suspend fun analyze(
@@ -53,6 +55,8 @@ class TechnicalAnalysisAgent(
         snapshot: MarketSnapshot,
         cycleId: String,
         version: String = PromptRegistry.DEFAULT_VERSION,
+        temperature: Double = 0.1,
+        cacheNamespace: String? = null,
     ): TechnicalReport {
         val start = System.currentTimeMillis()
         val indicators =
@@ -125,7 +129,8 @@ class TechnicalAnalysisAgent(
                 prompt = prompt,
                 variables = variables,
                 fingerprint = fingerprint,
-                temperature = 0.1,
+                temperature = temperature,
+                cacheNamespace = cacheNamespace,
             )
 
         if (resp.isFallback) {

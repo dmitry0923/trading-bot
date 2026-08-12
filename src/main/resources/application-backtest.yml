@@ -1,0 +1,10 @@
+# LLM-агенты в бэктесте (roadmap 13.8.1).
+# Запуск: --spring.profiles.active=backtest
+#
+# Включает конвейер живых агентов (tech → fund → strategy → contrarian → arbitrator)
+# для генерации сигналов в прогоне. Детерминизм обеспечивается temperature=0.0,
+# semantic cache изолирован namespace'ом bt.agent.cache-namespace (защита от
+# look-ahead bias и загрязнения live-кэша), сэмплирование — каждые 20 баров.
+bt:
+  agent:
+    enabled: true

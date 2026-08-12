@@ -89,6 +89,7 @@ class ResilientLlmClient(
      * @param variables   переменные для рендера {{var}}
      * @param fingerprint семантический отпечаток рынка (null — кэш отключён для этого вызова)
      * @param temperature температура генерации
+     * @param cacheNamespace изолирует semantic cache (например "backtest"); null — общий (live) кэш
      */
     suspend fun complete(
         agent: String,
@@ -97,6 +98,7 @@ class ResilientLlmClient(
         variables: Map<String, Any>,
         fingerprint: String? = null,
         temperature: Double = llmConfig.temperature,
+        cacheNamespace: String? = null,
     ): LlmResponse {
         val endpoint = resolveEndpoint()
 
@@ -110,7 +112,7 @@ class ResilientLlmClient(
         // поэтому каждый JSON-лог и трейс привязаны к конкретному агенту и циклу.
         return TraceContext.withMdc(mapOf(TraceContext.AGENT to agent)) {
             if (fingerprint != null) {
-                semanticCache.get(agent, ticker, fingerprint)?.let { return@withMdc it }
+                semanticCache.get(agent, ticker, fingerprint, cacheNamespace)?.let { return@withMdc it }
             }
 
             val system = prompt.renderSystem(variables)
@@ -131,7 +133,7 @@ class ResilientLlmClient(
                 response.copy(storageKey = persistTrace(agent, ticker, fingerprint, system, user, response, endpoint))
 
             if (fingerprint != null && !finalResponse.isFallback) {
-                semanticCache.put(agent, ticker, fingerprint, finalResponse)
+                semanticCache.put(agent, ticker, fingerprint, finalResponse, cacheNamespace)
             }
             finalResponse
         }

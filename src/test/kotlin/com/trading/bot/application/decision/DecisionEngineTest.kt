@@ -20,6 +20,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
@@ -61,6 +62,7 @@ class DecisionEngineTest {
     private val lockValueOps = Mockito.mock(ValueOperations::class.java) as ValueOperations<String, String>
     private val distributedLockService = DistributedLockService(distributedLockConfig, lockRedis, meterRegistry)
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
+    private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -75,9 +77,11 @@ class DecisionEngineTest {
         gatewayDirection = null
         gatewayPrice = null
         gatewayOpened = null
+        Mockito.reset(mlEntryFilter)
         Mockito.`when`(lockRedis.opsForValue()).thenReturn(lockValueOps)
         Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(true)
         runBlocking {
+            Mockito.`when`(mlEntryFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("100"))
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
@@ -108,6 +112,7 @@ class DecisionEngineTest {
             distributedLockService,
             distributedLockConfig,
             tradingAccountService,
+            mlEntryFilter,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -173,6 +178,34 @@ class DecisionEngineTest {
 
         assertEquals(0, gatewayCalls)
         assertEquals(1.0, rejectMetric("limit hit"))
+    }
+
+    @Test
+    fun `ml filter rejection blocks entry after risk approval`() {
+        val profile = FakeEntryProfile(riskVerdict = RiskVerdict.Allowed)
+        runBlocking {
+            Mockito.`when`(mlEntryFilter.shouldBlock(any())).thenReturn("ML filter: win probability 0.3 below threshold 0.5")
+        }
+
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("ML_FILTER"))
+        runBlocking {
+            Mockito.verify(mlEntryFilter).shouldBlock(any())
+        }
+    }
+
+    @Test
+    fun `ml filter pass-through when filter allows`() {
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
+        assertEquals(PositionDirection.LONG, gatewayDirection)
     }
 
     @Test

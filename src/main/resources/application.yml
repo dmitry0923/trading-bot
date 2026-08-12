@@ -152,6 +152,7 @@ rag:
 # dataset.* — настройки экспорта обучающего датасета (positions + candles + agent_logs).
 # model.* — путь к обученной модели CatBoost (инференс, раздел 13.11.4).
 # screening.* — настройки ML-скрининга кандидатов (раздел 13.11.4).
+# filter.* — ML-фильтр входа в торговый цикл (раздел 13.11.5).
 ml:
   enabled: ${ML_ENABLED:false}
   dataset:
@@ -162,6 +163,9 @@ ml:
     path: ${ML_MODEL_PATH:ml/model.cbm}
   screening:
     top-n: ${ML_SCREENING_TOP_N:5}
+  filter:
+    enabled: ${ML_FILTER_ENABLED:false}
+    threshold: ${ML_FILTER_THRESHOLD:0.5}
 
 resilience4j:
   circuitbreaker:

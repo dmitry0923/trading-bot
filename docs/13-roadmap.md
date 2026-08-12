@@ -73,6 +73,7 @@ gantt
 - ✅ **Шаг 1.5 (исторические макро-снапшоты)**: `macro_snapshots` + `MacroSnapshotCollector`, макро в датасете берутся на момент входа (`macro_source=SNAPSHOT`), lookahead-утечка устранена (раздел 13.11.2).
 - ✅ **Шаг 2 (обучение на CI)**: `ml/` пайплайн (CatBoost/LightGBM, temporal OOS 20%, метрика M3 — profit factor на OOS vs LLM-baseline), GitHub Actions `ml-train.yml` + pytest-тесты (раздел 13.11.3).
 - ✅ **Шаг 3 (инференс и скрининг)**: загрузка обученной CatBoost-модели (`.cbm`) в бэкенд + `GET /api/v1/ml/screen` — ранжирование тикеров по вероятности выигрышного исхода (раздел 13.11.4).
+- ✅ **ML-фильтр входа** (доп. шаг): прогноз модели как гейт входа в торговый цикл (`DecisionEngine`), `ml.filter.enabled`/`ml.filter.threshold`, fail-closed при недоступной модели (раздел 13.11.5).
 
 ### v2.5 — Расширение горизонтов
 
@@ -590,6 +591,34 @@ inBlindSpotHour/hourOfDay) и `skipped`.
 `ml.model-path`) и включить `ml.enabled=true` — скрининг начнёт отдавать
 результаты без пересборки.
 
+### 13.11.5. ML-фильтр входа в торговый цикл (реализовано)
+
+Интеграция обученной модели в реальный торговый цикл: прогноз CatBoost как гейт
+входа. `DecisionEngine` после risk-вердикта `Allowed` вызывает `MlEntryFilter`:
+если вероятность выигрышного исхода для сигнала ниже порога — вход отклоняется
+(метрика `${profile.metricPrefix}.risk.reject`, reason=`ML_FILTER`).
+
+**Признаки** строятся на текущий момент (`MlFeatureResolver`), как на вход в
+позицию: свечи + последний макро-снапшот без lookahead (фолбэк на текущий
+контекст) + слепая зона на текущий час. В отличие от скрининга, используются
+реальные `strategy_action`/`strategy_confidence` из сигнала (LLM-стратег уже
+отработал).
+
+**Конфиг**: `ml.filter.enabled` (default false), `ml.filter.threshold` (0.5).
+Отдельный флаг от `ml.enabled`: включение модуля (например, для экспорта
+датасета) само по себе не гейтит входы.
+
+**Политика отказов**: при выключенном фильтре — pass-through; при включённом
+фильтре и недоступной модели или недостатке данных — вход БЛОКИРУЕТСЯ
+(fail-closed: оператор явно включил фильтр, вход без ML-оценки недопустим).
+
+**Метрики**: `ml.entry.filter` (counter, tags `ticker`,
+`result=PASS|REJECT|FAIL_CLOSED`), плюс `${profile.metricPrefix}.risk.reject`
+(reason=`ML_FILTER`).
+
+**Ограничение**: фильтр применяется к живым входам (`DecisionEngine`);
+`BacktestEngine` пока не использует модель (оценка влияния на бэктест —
+отдельная задача).
 
 ## 13.12. Детализация v2.5 (Cross-exchange)
 

@@ -85,6 +85,9 @@ ml:                                # ML-модуль (roadmap v2.4, раздел
     path: ${ML_MODEL_PATH:ml/model.cbm}              # файл обученной CatBoost-модели (13.11.3)
   screening:
     top-n: ${ML_SCREENING_TOP_N:5}                   # число лучших тикеров в скрининге (13.11.4)
+  filter:
+    enabled: ${ML_FILTER_ENABLED:false}              # ML-фильтр входа в торговый цикл (13.11.5)
+    threshold: ${ML_FILTER_THRESHOLD:0.5}            # мин. вероятность выигрыша для входа
 
 llm:
   api-key: ${KIMI_API_KEY:}        # если пуст — все LLM-вызовы мгновенно fallback (NO_API_KEY)
@@ -267,6 +270,8 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `ML_DATASET_MAX_ROWS` | `5000` | | лимит строк экспорта | `5000` |
 | `ML_MODEL_PATH` | `ml/model.cbm` | | путь к файлу обученной CatBoost-модели (13.11.3); нет файла → скрининг 503 | `ml/model.cbm` |
 | `ML_SCREENING_TOP_N` | `5` | | число лучших тикеров-кандидатов в скрининге (13.11.4) | `5` |
+| `ML_FILTER_ENABLED` | `false` | | ML-фильтр входа в торговый цикл: прогноз модели < порога → вход отклоняется (13.11.5) | `true` |
+| `ML_FILTER_THRESHOLD` | `0.5` | | минимальная вероятность выигрышного исхода для входа (13.11.5) | `0.55` |
 | `OUTBOX_RABBITMQ_DLX` | `trading.outbox.dlx` | | dead-letter exchange | `trading.outbox.dlx` |
 | `OUTBOX_RABBITMQ_DLQ` | `trading.outbox.orders.dlq` | | очередь парковки неудачных доставок | `trading.outbox.orders.dlq` |
 

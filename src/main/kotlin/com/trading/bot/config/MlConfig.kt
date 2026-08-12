@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component
  * - [dataset] — настройки экспорта обучающего датасета (positions + candles + agent_logs).
  * - [model] — путь к файлу обученной модели CatBoost (.cbm, см. раздел 13.11.3).
  * - [screening] — настройки ML-скрининга кандидатов (раздел 13.11.4).
+ * - [filter] — ML-фильтр входа в торговый цикл (раздел 13.11.5).
  */
 @Component
 @ConfigurationProperties(prefix = "ml")
@@ -19,6 +20,7 @@ class MlConfig {
     var dataset: Dataset = Dataset()
     var model: Model = Model()
     var screening: Screening = Screening()
+    var filter: Filter = Filter()
 
     class Dataset {
         /** Таймфрейм свечей для признаков (должен совпадать с режимом торговли). */
@@ -42,5 +44,19 @@ class MlConfig {
     class Screening {
         /** Число лучших тикеров-кандидатов по умолчанию (GET /api/v1/ml/screen). */
         var topN: Int = 5
+    }
+
+    class Filter {
+        /**
+         * Включить ML-фильтр входа в торговый цикл (раздел 13.11.5).
+         * При `true` и `ml.enabled=true` вход в позицию (DecisionEngine) требует
+         * прогноз модели >= [threshold]; при недоступной модели вход блокируется
+         * (fail-closed). Отдельный флаг от [MlConfig.enabled]: включение модуля
+         * (например, только для экспорта датасета) само по себе не гейтит входы.
+         */
+        var enabled: Boolean = false
+
+        /** Минимальная вероятность выигрышного исхода для входа (0..1). */
+        var threshold: Double = 0.5
     }
 }

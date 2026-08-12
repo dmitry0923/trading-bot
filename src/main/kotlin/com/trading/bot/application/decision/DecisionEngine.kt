@@ -13,6 +13,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -37,14 +38,16 @@ import java.util.concurrent.ConcurrentHashMap
  *   3. [MarketDataGate] (defense in depth: свежие рыночные данные).
  *   4. Цена входа: [AlorClient.getLastPrice] ?: signal.targetPrice.
  *   5. [EntryProfile.riskEngine].canEnter (Да/Нет).
- *   6. [EntryProfile.preSizingChecks] (корреляционные фильтры акций).
- *   7. [EntryProfile.sizePosition] (Kelly / маржа-риск).
- *   8. [EntryProfile.postSizingChecks] (лимиты Gross/Net Exposure).
- *   9. [EntryProfile.buildOrderParams] (SL/TP/маржа/ликвидация).
- *   10. [PortfolioRiskEngine] по [EntryProfile.portfolioMode]:
+ *   6. ML-фильтр входа ([MlEntryFilter], roadmap 13.11.5): прогноз модели < порога —
+ *      отказ (pass-through при выключенном фильтре).
+ *   7. [EntryProfile.preSizingChecks] (корреляционные фильтры акций).
+ *   8. [EntryProfile.sizePosition] (Kelly / маржа-риск).
+ *   9. [EntryProfile.postSizingChecks] (лимиты Gross/Net Exposure).
+ *   10. [EntryProfile.buildOrderParams] (SL/TP/маржа/ликвидация).
+ *   11. [PortfolioRiskEngine] по [EntryProfile.portfolioMode]:
  *       ENFORCED — BLOCK/SCALE, READ_ONLY — только метрики/логи.
- *   11. [OrderBuilder.recordStrategyExecution] + [ExecutionGateway.placeEntryOrder].
- *   12. [EntryProfile.onOpened] (дневной P&L reset + agent log для акций).
+ *   12. [OrderBuilder.recordStrategyExecution] + [ExecutionGateway.placeEntryOrder].
+ *   13. [EntryProfile.onOpened] (дневной P&L reset + agent log для акций).
  *
  * НЕ зависит от исполнения: размещение ордера приходит через [ExecutionGateway]
  * (обёртка над OrderExecutionEngine) — тесты используют фейки.
@@ -61,6 +64,7 @@ class DecisionEngine(
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
     private val tradingAccountService: TradingAccountService,
+    private val mlEntryFilter: MlEntryFilter,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -137,6 +141,16 @@ class DecisionEngine(
             }
 
             RiskVerdict.Allowed -> {}
+        }
+
+        // ML-фильтр входа (13.11.5): прогноз модели < порога → отказ. Выключен —
+        // pass-through. Fail-closed при включённом фильтре и недоступной модели.
+        mlEntryFilter.shouldBlock(signal)?.let { reason ->
+            logger.warn { "ML filter rejected $ticker: $reason" }
+            meterRegistry
+                .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "ML_FILTER"))
+                .increment()
+            return
         }
 
         profile.preSizingChecks(ticker, openPositions)?.let { reason ->

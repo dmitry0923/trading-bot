@@ -288,6 +288,9 @@ bt:
   sl-percent: ${BT_SL_PERCENT:2.0}
   tp-percent: ${BT_TP_PERCENT:4.0}
   capital-slice: ${BT_CAPITAL_SLICE:0.20}
+  # ML-фильтр входа в бэктесте (roadmap 13.11.6): признаки на момент бара,
+  # confidence=null. Требует доступной модели; не влияет на live-гейт ml.filter.enabled.
+  ml-filter-enabled: ${BT_ML_FILTER_ENABLED:false}
   # LLM-агенты в бэктесте (roadmap 13.8.1): по умолчанию выключены.
   # Включаются профилем `backtest` (application-backtest.yml) или переменной BT_AGENT_ENABLED=true.
   agent:

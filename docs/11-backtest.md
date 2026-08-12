@@ -372,6 +372,9 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
 | `backtest config exposes default values` | `BacktestConfig()` дефолты совпадают с `bt.*` (100000/365/MINUTE_10/30/2.0/4.0/0.20) |
 | `initial capital from config scales equity proportionally` | `bt.initial-capital` 200000 масштабирует эквити ~2x |
 | `capital slice from config changes position size` | `bt.capital-slice` 0.40 масштабирует P&L vs 0.20 |
+| `ml filter blocks all entries when enabled and model rejects` | `bt.ml-filter-enabled` + вероятность < порога → 0 сделок, `bt_ml_blocked_total` растёт |
+| `ml filter pass-through keeps trades when model allows` | вероятность ≥ порога → сделки не блокируются |
+| `ml filter is not consulted when bt flag disabled` | при `bt.ml-filter-enabled=false` фильтр не вызывается |
 
 `PanelBacktestSummarizerTest` — 3 теста агрегации распределения (пустой список, доля PASS + средняя доходность, медиана при чётном количестве).
 
@@ -398,6 +401,7 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
 | `bt.sl-percent` | `BT_SL_PERCENT` | `2.0` | стоп-лосс, % от цены входа |
 | `bt.tp-percent` | `BT_TP_PERCENT` | `4.0` | тейк-профит, % от цены входа |
 | `bt.capital-slice` | `BT_CAPITAL_SLICE` | `0.20` | доля капитала на одну позицию |
+| `bt.ml-filter-enabled` | `BT_ML_FILTER_ENABLED` | `false` | ML-фильтр входа в бэктесте (раздел 13.11.6); не влияет на live-гейт |
 
 Значения применяются в `BacktestEngine.run/simulate` (дефолты параметров),
 `BacktestValidator.validate` (initialCapital, minBarsForSignal) и в эндпоинтах
@@ -421,6 +425,18 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
 Профиль `backtest` (`application-backtest.yml`) задаёт `bt.agent.enabled=true` —
 это же значение принимает `KIMI_API_KEY`: если ключ пуст, все агенты мгновенно
 дают детерминированные fallback (INSUFFICIENT_DATA/NEUTRAL/HOLD), бэктест не падает.
+
+### ML-фильтр входа в бэктесте (реализовано, раздел 13.11.6)
+
+При `bt.ml-filter-enabled=true` (`BT_ML_FILTER_ENABLED`) `BacktestEngine` гейтит
+входы тем же `MlEntryFilter`, что и live (`DecisionEngine`), для консистентности
+live/бэктест. Признаки строятся на момент бара (`at = current.time`),
+`strategy_confidence=null` (детерминированный генератор не даёт уверенности).
+Глобальные флаги `ml.enabled`/`ml.filter.enabled` при этом игнорируются
+(изолированный прогон), но модель должна быть доступна: при `ml.enabled=false`
+или отсутствующем файле входы блокируются (fail-closed). Блокировки считаются в
+метрику `bt_ml_blocked_total{ticker}` и не создают сделок (пустой прогон = 0
+сделок).
 
 ### Поток агентного сигнала (11.8.2)
 

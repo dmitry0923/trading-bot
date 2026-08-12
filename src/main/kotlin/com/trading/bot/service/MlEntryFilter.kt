@@ -22,8 +22,15 @@ import java.time.LocalDateTime
  * `strategy_confidence = signal.confidence`) — в отличие от скрининга, где
  * стратег ещё не отработал.
  *
+ * Ядро [shouldBlock] параметризовано временем `at` и флагом `requireEnabled`,
+ * поэтому тот же фильтр используется и в бэктесте (раздел 13.11.6): признаки
+ * строятся на исторический момент бара, а включение фильтра управляется
+ * отдельным флагом `bt.ml-filter-enabled` без влияния на live-гейт.
+ *
  * Политика отказов:
- * - `ml.enabled=false` или `ml.filter.enabled=false` — фильтр выключен (pass-through);
+ * - фильтр выключен — pass-through (`requireEnabled=true` и `ml.enabled=false`
+ *   или `ml.filter.enabled=false`; `requireEnabled=false` — принудительное
+ *   включение, используется только бэктестом);
  * - фильтр включён, модель недоступна — БЛОК (fail-closed: оператор явно включил
  *   фильтр, вход без ML-оценки недопустим);
  * - фильтр включён, данных свечей недостаточно — БЛОК (fail-closed, причина в логе);
@@ -41,43 +48,64 @@ class MlEntryFilter(
     /**
      * @return причина блокировки входа или null, если вход разрешён
      */
-    suspend fun shouldBlock(signal: Signal): String? {
-        if (!mlConfig.enabled || !mlConfig.filter.enabled) return null
-        if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return null
+    suspend fun shouldBlock(signal: Signal): String? =
+        shouldBlock(
+            ticker = signal.ticker,
+            action = signal.action,
+            confidence = signal.confidence,
+            at = LocalDateTime.now(),
+        )
+
+    /**
+     * Ядро фильтра. Признаки строятся на момент `at` (live — сейчас, бэктест —
+     * время бара). [requireEnabled]=false форсирует включение фильтра независимо
+     * от `ml.enabled`/`ml.filter.enabled` (используется бэктестом, раздел 13.11.6);
+     * модель при этом всё равно должна быть доступна (fail-closed).
+     */
+    suspend fun shouldBlock(
+        ticker: String,
+        action: StrategyAction,
+        confidence: Double?,
+        at: LocalDateTime,
+        requireEnabled: Boolean = true,
+    ): String? {
+        if (requireEnabled && (!mlConfig.enabled || !mlConfig.filter.enabled)) return null
+        if (action != StrategyAction.BUY && action != StrategyAction.SELL) return null
 
         val model = mlModelProvider.model
         if (!model.available) {
-            return blocked(signal, "ML model unavailable (${model.unavailableReason})")
+            return blocked(ticker, action, "ML model unavailable (${model.unavailableReason})")
         }
 
-        val direction = if (signal.action == StrategyAction.BUY) "LONG" else "SHORT"
+        val direction = if (action == StrategyAction.BUY) "LONG" else "SHORT"
         val vector =
             mlFeatureResolver.resolve(
-                ticker = signal.ticker,
-                at = LocalDateTime.now(),
-                strategyAction = signal.action.name,
-                strategyConfidence = signal.confidence,
+                ticker = ticker,
+                at = at,
+                strategyAction = action.name,
+                strategyConfidence = confidence,
                 direction = direction,
-            ) ?: return blocked(signal, "insufficient candle data for ML features")
+            ) ?: return blocked(ticker, action, "insufficient candle data for ML features")
 
         val probability = model.probability(vector.numericFeatures(), vector.categoricalFeatures())
         val threshold = mlConfig.filter.threshold
         if (probability < threshold) {
-            meterRegistry.counter("ml.entry.filter", Tags.of("ticker", signal.ticker, "result", "REJECT")).increment()
+            meterRegistry.counter("ml.entry.filter", Tags.of("ticker", ticker, "result", "REJECT")).increment()
             val reason = "win probability ${fmt(probability)} below threshold $threshold"
-            logger.warn { "ML filter rejected ${signal.ticker} ${signal.action}: $reason" }
+            logger.warn { "ML filter rejected $ticker $action: $reason" }
             return "ML filter: $reason"
         }
-        meterRegistry.counter("ml.entry.filter", Tags.of("ticker", signal.ticker, "result", "PASS")).increment()
+        meterRegistry.counter("ml.entry.filter", Tags.of("ticker", ticker, "result", "PASS")).increment()
         return null
     }
 
     private fun blocked(
-        signal: Signal,
+        ticker: String,
+        action: StrategyAction,
         reason: String,
     ): String {
-        meterRegistry.counter("ml.entry.filter", Tags.of("ticker", signal.ticker, "result", "FAIL_CLOSED")).increment()
-        logger.warn { "ML filter blocked ${signal.ticker} ${signal.action}: $reason" }
+        meterRegistry.counter("ml.entry.filter", Tags.of("ticker", ticker, "result", "FAIL_CLOSED")).increment()
+        logger.warn { "ML filter blocked $ticker $action: $reason" }
         return "ML filter: $reason"
     }
 

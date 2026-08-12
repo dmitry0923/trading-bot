@@ -111,3 +111,12 @@ python ml/train.py \
 блокируется (fail-closed). Признаки для фильтра строятся с реальным решением
 стратега (`strategy_action`/`strategy_confidence` из сигнала), в отличие от
 скрининга (`""`/NaN).
+
+## ML-фильтр в бэктесте (раздел 13.11.6)
+
+`BacktestEngine` гейтит входы тем же `MlEntryFilter` при `bt.ml-filter-enabled=true`
+(default false, env `BT_ML_FILTER_ENABLED`) — консистентность live/бэктест.
+Признаки строятся на момент бара (без lookahead), `strategy_confidence=null`
+(детерминированный генератор не даёт уверенности — отдельная категория).
+Флаг бэктеста не влияет на live-гейт (`ml.filter.enabled`); модель должна быть
+доступна — при `ml.enabled=false`/отсутствии файла входы блокируются (fail-closed).

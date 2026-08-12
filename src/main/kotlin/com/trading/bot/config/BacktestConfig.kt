@@ -18,6 +18,10 @@ import java.math.BigDecimal
  * @property slPercent стоп-лосс в процентах от цены входа (например 2.0 = 2%).
  * @property tpPercent тейк-профит в процентах от цены входа (например 4.0 = 4%).
  * @property capitalSlice доля текущего капитала на одну позицию (0.20 = 20%).
+ * @property mlFilterEnabled применять ML-фильтр входа (раздел 13.11.6) в бэктесте.
+ *   При `true` бэктест прогоняет модель на входе каждого бара (требуется
+ *   доступная модель, иначе — fail-closed: входы блокируются). Не влияет на
+ *   live-гейт (`ml.filter.enabled`).
  */
 @Component
 @ConfigurationProperties(prefix = "bt")
@@ -29,4 +33,5 @@ class BacktestConfig {
     var slPercent: Double = 2.0
     var tpPercent: Double = 4.0
     var capitalSlice: Double = 0.20
+    var mlFilterEnabled: Boolean = false
 }

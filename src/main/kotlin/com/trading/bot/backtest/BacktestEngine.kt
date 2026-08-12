@@ -8,6 +8,7 @@ import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.service.MlEntryFilter
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
@@ -26,6 +27,9 @@ import java.util.UUID
  *   — конвейер LLM-агентов (roadmap 13.8.1, профиль `backtest`)
  * - Симулирует исполнение: комиссия 0.05% на оборот, проскальзывание 0.1% (market)
  * - Проверяет SL/TP по внутрисвечному диапазону (high/low)
+ * - При `bt.ml-filter-enabled=true` гейтит входы ML-фильтром ([MlEntryFilter],
+ *   roadmap 13.11.6): признаки на момент бара, confidence=null; блокировки
+ *   считаются в метрику `bt_ml_blocked_total{ticker}` (live-гейт не затрагивается)
  * - Считает метрики: Sharpe, MaxDD, PF, win rate
  * - Сохраняет результат в `backtest_results` (roadmap v2.2, 13.7.3) и инкрементирует
  *   `bt_pass_total{result=PASS|REJECT}` для сравнения итераций стратегии.
@@ -47,6 +51,7 @@ class BacktestEngine(
     private val objectMapper: ObjectMapper = ObjectMapper(),
     private val meterRegistry: MeterRegistry? = null,
     private val signalGenerator: BacktestSignalGenerator = DeterministicBacktestSignalGenerator(),
+    private val mlEntryFilter: MlEntryFilter? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -150,6 +155,7 @@ class BacktestEngine(
         val equityCurve = ArrayList<BigDecimal>()
         val tradeReturns = ArrayList<Double>()
         val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
+        var mlBlockedCount = 0
 
         var position: PositionSim? = null
         val sorted = candles.sortedBy { it.time }
@@ -183,6 +189,25 @@ class BacktestEngine(
             }
 
             val curPos = position
+            val entering = curPos == null || isOpposite(curPos.direction, signal)
+            if (entering && backtestConfig.mlFilterEnabled && mlEntryFilter != null) {
+                // ML-фильтр входа (раздел 13.11.6): признаки на момент бара, confidence
+                // у детерминированного генератора отсутствует → null (отдельная категория).
+                val blockReason = mlEntryFilter.shouldBlock(ticker, signal, null, current.time, requireEnabled = false)
+                if (blockReason != null) {
+                    mlBlockedCount++
+                    logger.debug { "Backtest $ticker: ML filter blocked entry at ${current.time}: $blockReason" }
+                    meterRegistry?.counter("bt_ml_blocked_total", "ticker", ticker)?.increment()
+                    if (curPos != null) {
+                        // Сигнал инверсии, но встречный вход отклонён фильтром → закрыть текущую позицию
+                        cash = closePosition(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, cash, equityCurve, tradeReturns)
+                        position = null
+                    }
+                    equityCurve.add(equityAt(cash, position, current.closePrice))
+                    continue
+                }
+            }
+
             if (curPos != null) {
                 // Инверсия сигнала: закрыть текущую позицию и открыть встречную
                 val opposite = if (signal == StrategyAction.BUY) PositionDirection.SHORT else PositionDirection.LONG
@@ -217,11 +242,19 @@ class BacktestEngine(
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
                 "MDD=${String.format("%.2f%%", result.maxDrawdown * 100)}, PF=${String.format("%.2f", result.profitFactor)}, " +
                 "win=${String.format("%.2f%%", result.winRate * 100)}, expectancy=${String.format("%.2f", result.expectancy)}, " +
-                "W/L=${String.format("%.2f", result.winLossRatio)}, trades=${result.totalTrades} " +
+                "W/L=${String.format("%.2f", result.winLossRatio)}, trades=${result.totalTrades}, " +
+                "mlBlocked=$mlBlockedCount " +
                 "-> ${if (result.isPassable()) "PASS" else "REJECT"}"
         }
         return result
     }
+
+    private fun isOpposite(
+        direction: PositionDirection,
+        signal: StrategyAction,
+    ): Boolean =
+        (signal == StrategyAction.BUY && direction == PositionDirection.SHORT) ||
+            (signal == StrategyAction.SELL && direction == PositionDirection.LONG)
 
     /**
      * Учёт открытия позиции: комиссия входа списывается, номинал остаётся в кэше

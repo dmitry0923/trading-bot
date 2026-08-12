@@ -420,6 +420,7 @@ sum(increase(event_published[1h])) by (type)
 | `bt_pass_total` | Counter | tag `result` (PASS/REJECT) — итог каждого прогона/валидации, сравнение итераций |
 | `backtest.agent.evaluations` | Counter | tag `agent` — LLM-вызовы агентного генератора сигналов (11.8.1) |
 | `backtest.agent.signal` | Counter | tag `signal` (BUY/SELL/HOLD) — сигналы агентного режима |
+| `bt_ml_blocked_total` | Counter | tag `ticker` — входы, отклонённые ML-фильтром за прогон (раздел 13.11.6) |
 
 PromQL:
 

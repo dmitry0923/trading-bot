@@ -1,13 +1,22 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.config.MlConfig
+import com.trading.bot.domain.ml.MlFeatureVector
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.service.MlEntryFilter
+import com.trading.bot.service.MlFeatureResolver
+import com.trading.bot.service.ml.MlModel
+import com.trading.bot.service.ml.MlModelProvider
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -186,6 +195,7 @@ class BacktestEngineTest {
         assertEquals(2.0, config.slPercent)
         assertEquals(4.0, config.tpPercent)
         assertEquals(0.20, config.capitalSlice)
+        assertFalse(config.mlFilterEnabled)
     }
 
     @Test
@@ -243,6 +253,110 @@ class BacktestEngineTest {
         assertEquals(BigDecimal("0.0005"), SimulatedExecution.COMMISSION_RATE)
         assertEquals(BigDecimal("0.001"), SimulatedExecution.MARKET_SLIPPAGE_RATE)
     }
+
+    @Test
+    fun `ml filter blocks all entries when enabled and model rejects`() {
+        val modelProvider = Mockito.mock(MlModelProvider::class.java)
+        val featureResolver = Mockito.mock(MlFeatureResolver::class.java)
+        val meterRegistry = SimpleMeterRegistry()
+        val mlEntryFilter = MlEntryFilter(MlConfig(), modelProvider, featureResolver, meterRegistry)
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(BtRecordingModel(0.3))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), anyOrNull(), any())).thenReturn(btVector())
+        }
+        val filteredEngine =
+            BacktestEngine(
+                com.trading.bot.repository
+                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mlFilterEnabled = true
+                    },
+                mlEntryFilter = mlEntryFilter,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertEquals(0, result.totalTrades, "ML-фильтр должен блокировать все входы")
+        val blocked = meterRegistry.counter("bt_ml_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    @Test
+    fun `ml filter pass-through keeps trades when model allows`() {
+        val modelProvider = Mockito.mock(MlModelProvider::class.java)
+        val featureResolver = Mockito.mock(MlFeatureResolver::class.java)
+        val mlEntryFilter = MlEntryFilter(MlConfig(), modelProvider, featureResolver, SimpleMeterRegistry())
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(BtRecordingModel(0.9))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), anyOrNull(), any())).thenReturn(btVector())
+        }
+        val filteredEngine =
+            BacktestEngine(
+                com.trading.bot.repository
+                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mlFilterEnabled = true
+                    },
+                mlEntryFilter = mlEntryFilter,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertTrue(result.totalTrades > 0, "pass-through фильтра не должен блокировать сделки")
+    }
+
+    @Test
+    fun `ml filter is not consulted when bt flag disabled`() {
+        val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
+        val engineWithoutFlag =
+            BacktestEngine(
+                com.trading.bot.repository
+                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                mlEntryFilter = mlEntryFilter,
+            )
+
+        runBlocking { engineWithoutFlag.simulate("SBER", trendingCandles()) }
+
+        runBlocking {
+            Mockito.verify(mlEntryFilter, Mockito.never()).shouldBlock(any(), any(), anyOrNull(), any(), any())
+        }
+    }
+
+    private class BtRecordingModel(
+        private val probability: Double,
+    ) : MlModel {
+        override val available: Boolean = true
+        override val unavailableReason: String? = null
+
+        override fun probability(
+            numeric: FloatArray,
+            categorical: Array<String>,
+        ): Double = probability
+    }
+
+    private fun btVector(): MlFeatureVector =
+        MlFeatureVector(
+            rsi14 = 50.0,
+            atrPercent = 1.0,
+            macdHistogramPercent = 0.0,
+            bbPercentB = 50.0,
+            emaSlopePercent = 0.0,
+            volatility20Percent = 1.0,
+            return3 = 0.0,
+            return10 = 0.0,
+            return20 = 0.0,
+            cbrRate = 16.0,
+            brentPrice = 75.0,
+            usdRub = 90.0,
+            strategyConfidence = 0.8,
+            inBlindSpotHour = 0,
+            hourOfDay = 14,
+            strategyAction = "BUY",
+            direction = "LONG",
+        )
 
     @Test
     fun `lot rounding is down to whole lots of instrument`() {

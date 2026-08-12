@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import java.math.BigDecimal
+import java.time.LocalDateTime
 
 class MlEntryFilterTest {
     private val config = MlConfig()
@@ -67,6 +68,38 @@ class MlEntryFilterTest {
 
         runBlocking {
             Mockito.verify(featureResolver, Mockito.never()).resolve(any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `core method default respects enabled flags`() {
+        config.enabled = false
+        config.filter.enabled = false
+
+        val reason = runBlocking { filter.shouldBlock("SBER", StrategyAction.BUY, 0.8, LocalDateTime.now()) }
+
+        assertNull(reason)
+        runBlocking {
+            Mockito.verify(featureResolver, Mockito.never()).resolve(any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `backtest override runs filter even when global filter disabled`() {
+        config.enabled = false
+        config.filter.enabled = false
+        val at = LocalDateTime.of(2026, 8, 12, 14, 0)
+        val model = RecordingModel(0.9)
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(model)
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), any(), any())).thenReturn(vector())
+        }
+
+        val reason = runBlocking { filter.shouldBlock("SBER", StrategyAction.BUY, 0.8, at, requireEnabled = false) }
+
+        assertNull(reason)
+        runBlocking {
+            Mockito.verify(featureResolver).resolve("SBER", at, "BUY", 0.8, "LONG")
         }
     }
 

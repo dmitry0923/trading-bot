@@ -216,8 +216,18 @@ class MlDatasetServiceTest {
                 .`when`(macroSnapshotRepository.findBetween(any(), any()))
                 .thenReturn(
                     listOf(
-                        MacroSnapshot(capturedAt = openedAt.plusMinutes(30), cbrRate = BigDecimal("16"), brentPrice = BigDecimal("75"), usdRub = BigDecimal("90")),
-                        MacroSnapshot(capturedAt = openedAt.plusMinutes(90), cbrRate = BigDecimal("17"), brentPrice = BigDecimal("80"), usdRub = BigDecimal("95")),
+                        MacroSnapshot(
+                            capturedAt = openedAt.plusMinutes(30),
+                            cbrRate = BigDecimal("16"),
+                            brentPrice = BigDecimal("75"),
+                            usdRub = BigDecimal("90"),
+                        ),
+                        MacroSnapshot(
+                            capturedAt = openedAt.plusMinutes(90),
+                            cbrRate = BigDecimal("17"),
+                            brentPrice = BigDecimal("80"),
+                            usdRub = BigDecimal("95"),
+                        ),
                     ),
                 )
             Mockito

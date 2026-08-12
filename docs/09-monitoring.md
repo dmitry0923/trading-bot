@@ -147,6 +147,9 @@ histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
 | `ml.dataset.export.rows` | Gauge | — | строки в последнем экспорте |
 | `ml.dataset.export.skipped` | Gauge | — | позиции без данных свечей (пропущены) |
 | `ml.dataset.export.positions` | Gauge | — | всего закрытых позиций в последнем экспорте |
+| `ml.screening` | Counter | `status` | вызовы скрининга (OK) |
+| `ml.screening.candidates` | Gauge | — | кандидатов в последнем скрининге |
+| `ml.screening.skipped` | Gauge | — | тикеры без данных свечей (пропущены) |
 
 
 #### Outbox

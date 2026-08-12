@@ -814,3 +814,23 @@ curl -H "$AUTH" "http://localhost:8080/api/v1/backtest/SBER?days=365"
 # Метрики (отдельный Bearer-токен Prometheus)
 curl -H "Authorization: Bearer $METRICS_SCRAPE_TOKEN" http://localhost:8080/actuator/prometheus | grep -E "llm_|bot_|strategy_"
 ```
+
+## 7.6. ML (roadmap v2.4, раздел 13.11)
+
+Гейт `ml.enabled`: при `false` все эндпоинты возвращают 404. Требуют аутентификации (GET — любая роль).
+
+| Метод | Path | Назначение |
+|---|---|---|
+| GET | `/api/v1/ml/dataset?since=&ticker=&maxRows=` | CSV-датасет по закрытым позициям (обучение, 13.11.1) |
+| GET | `/api/v1/ml/dataset/stats?since=&ticker=` | статистика качества данных |
+| GET | `/api/v1/ml/screen?tickers=SBER,GAZP&topN=5` | ML-скрининг: ранжирование тикеров по вероятности выигрышного исхода (13.11.4) |
+
+**GET /api/v1/ml/screen** — признаки на текущий момент (свечи + последний макро-снапшот + слепая зона на час), модель прогоняется в обоих направлениях, для тикера остаётся лучшее; результат отсортирован по убыванию вероятности.
+
+```bash
+# Вход → токен (см. 7.5), затем:
+curl -H "$AUTH" "http://localhost:8080/api/v1/ml/screen?tickers=SBER,GAZP&topN=3"
+# → 200 {"mode":"OK","topN":3,"candidates":[{"ticker":"SBER","direction":"LONG","probability":0.85,...}],...}
+```
+
+Коды: 404 (ml выключен), 400 (пустой `tickers`), 503 (модель недоступна: нет/битый `ml.model-path`).

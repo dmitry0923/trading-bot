@@ -72,6 +72,7 @@ gantt
 - ✅ **Шаг 1 (датасет-экспорт)**: `GET /api/v1/ml/dataset` (CSV) + `/dataset/stats`, признаки на входе из candles + макро + `agent_logs` + слепые зоны, флаг `ml.enabled` (раздел 13.11).
 - ✅ **Шаг 1.5 (исторические макро-снапшоты)**: `macro_snapshots` + `MacroSnapshotCollector`, макро в датасете берутся на момент входа (`macro_source=SNAPSHOT`), lookahead-утечка устранена (раздел 13.11.2).
 - ✅ **Шаг 2 (обучение на CI)**: `ml/` пайплайн (CatBoost/LightGBM, temporal OOS 20%, метрика M3 — profit factor на OOS vs LLM-baseline), GitHub Actions `ml-train.yml` + pytest-тесты (раздел 13.11.3).
+- ✅ **Шаг 3 (инференс и скрининг)**: загрузка обученной CatBoost-модели (`.cbm`) в бэкенд + `GET /api/v1/ml/screen` — ранжирование тикеров по вероятности выигрышного исхода (раздел 13.11.4).
 
 ### v2.5 — Расширение горизонтов
 
@@ -542,6 +543,53 @@ GitHub Actions (`ml-train.yml`). Потребляет CSV-экспорт `GET /a
   будущее улучшение).
 - Качество модели ограничено историей сделок: при < 50 строках пайплайн
   абортится (сигнал — копить данные через коллектор макро-снапшотов).
+
+### 13.11.4. Шаг 3: инференс и скрининг кандидатов (реализовано)
+
+Загрузка обученной модели CatBoost (артефакт 13.11.3, `model.cbm`) в бэкенд и
+скрининг кандидатов: ранжирование тикеров по вероятности выигрышного исхода.
+
+**Зависимость**: `ai.catboost:catboost-prediction:1.2.8` (JVM-инференс, нативные
+библиотеки включены для Windows/Linux/macOS).
+
+**Порядок признаков фиксируется дважды**: `ml/train.py` (`NUMERIC_FEATURES` +
+`CATEGORICAL_FEATURES`) и `MlFeatureVector` (`numericFeatures()` /
+`categoricalFeatures()`) — 15 числовых + 2 категориальных. Несовпадение порядка
+даёт «мусорные» предсказания без ошибки, поэтому порядок покрыт юнит-тестом
+(`MlFeatureVectorTest`).
+
+**Инференс** (`service/ml/`):
+
+- `MlModel` — интерфейс (`probability(numeric, categorical)` → 0..1);
+- `CatBoostMlModel` — обёртка над `CatBoostModel.loadModel(path)` + сигмоида
+  (raw score CatBoost — лог-ит, вероятность получается сигмоидой);
+- `MlModelProvider` — ленивая загрузка при первом обращении, кэширование;
+  **graceful degradation**: при `ml.enabled=false` или отсутствующем/битом файле
+  подставляется `NoopMlModel` — бот не падает, скрининг отвечает 503.
+
+**Скрининг** (`GET /api/v1/ml/screen?tickers=SBER,GAZP&topN=5`):
+
+- Признаки считаются на ТЕКУЩИЙ момент как на вход в позицию: свечи
+  (`MlFeatureExtractor`), последний макро-снапшот `captured_at <= now`
+  (без lookahead, фолбэк на текущий контекст), слепая зона на текущий час;
+- Решение стратега на момент скрининга ещё не принято: `strategy_action=""`,
+  `strategy_confidence=NaN` (отдельная категория/пропуск, как в обучении);
+- Модель прогоняется в **обоих** направлениях (LONG/SHORT), для тикера остаётся
+  лучшее; результат сортируется по вероятности убывания и ограничивается topN;
+- Тикеры без 30+ свечей пропускаются в `skipped`.
+
+**Коды ответа**: `ml.enabled=false` → 404; модель недоступна → 503; пустой
+`tickers` → 400; успех → 200 с `candidates` (ticker/direction/probability/
+inBlindSpotHour/hourOfDay) и `skipped`.
+
+**Метрики**: `ml.screening` (counter, `status=OK`), `ml.screening.candidates`
+(gauge), `ml.screening.skipped` (gauge). Конфиг: `ml.model.path` (default
+`ml/model.cbm`), `ml.screening.top-n` (default 5).
+
+**Промоушн**: положить `model.cbm` по пути `ML_MODEL_PATH` (env-оверрайд
+`ml.model-path`) и включить `ml.enabled=true` — скрининг начнёт отдавать
+результаты без пересборки.
+
 
 ## 13.12. Детализация v2.5 (Cross-exchange)
 

@@ -1,4 +1,4 @@
-# ML пайплайн (roadmap v2.4, шаг 2 — обучение на CI)
+# ML пайплайн (roadmap v2.4 — обучение на CI + инференс)
 
 Python-пайплайн обучения модели исхода позиции. Потребляет CSV-датасет,
 экспортированный ботом (`GET /api/v1/ml/dataset`, 29 колонок по
@@ -81,3 +81,22 @@ python ml/train.py \
   (input `dataset_url`). Артефакты — `upload-artifact` (30 дней).
 - `ci.yml` (джоба `ml-training`) — pytest-тесты `ml/tests/test_train.py` на
   лёгком наборе (lightgbm без catboost) при каждом push/PR.
+
+## Инференс в бэкенде (раздел 13.11.4)
+
+Бот загружает `model.cbm` через `ai.catboost:catboost-prediction:1.2.8`
+(`ml.model-path`, default `ml/model.cbm`) и ранжирует тикеры эндпоинтом
+`GET /api/v1/ml/screen?tickers=SBER,GAZP&topN=5`.
+
+**Порядок признаков фиксируется дважды** — в `NUMERIC_FEATURES`/`CATEGORICAL_FEATURES`
+(здесь) и в `MlFeatureVector` (Kotlin). При изменении списка признаков в `train.py`
+обязательно синхронизируйте `MlFeatureVector.numericFeatures()`/`categoricalFeatures()`
+(порядок покрыт юнит-тестом `MlFeatureVectorTest`).
+
+На скрининге решение стратега ещё не принято: `strategy_action=""`,
+`strategy_confidence=NaN` — те же кодировки, что модель видела при обучении
+(пустая строка — отдельная категория). Модель прогоняется в обоих направлениях,
+для тикера остаётся лучшее.
+
+Промоушн: положить артефакт по `ML_MODEL_PATH` и включить `ml.enabled=true`
+(иначе `/screen` отдаёт 404, а при отсутствии файла — 503).

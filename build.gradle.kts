@@ -56,6 +56,8 @@ dependencies {
     implementation(libs.resilience4jSpringBoot4)
     implementation(libs.resilience4jKotlin)
 
+    implementation(libs.catboostPrediction)
+
     implementation(libs.jjwtApi)
     runtimeOnly(libs.jjwtImpl)
     runtimeOnly(libs.jjwtJackson)

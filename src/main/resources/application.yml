@@ -150,12 +150,18 @@ rag:
 # ML-агенты (roadmap v2.4, раздел 13.11). ml.enabled — мастер-флаг модуля (промоушн
 # после out-of-sample валидации); при false эндпоинты экспорта датасета недоступны.
 # dataset.* — настройки экспорта обучающего датасета (positions + candles + agent_logs).
+# model.* — путь к обученной модели CatBoost (инференс, раздел 13.11.4).
+# screening.* — настройки ML-скрининга кандидатов (раздел 13.11.4).
 ml:
   enabled: ${ML_ENABLED:false}
   dataset:
     timeframe: ${ML_DATASET_TIMEFRAME:MINUTE_10}
     lookback-bars: ${ML_DATASET_LOOKBACK_BARS:30}
     max-rows: ${ML_DATASET_MAX_ROWS:5000}
+  model:
+    path: ${ML_MODEL_PATH:ml/model.cbm}
+  screening:
+    top-n: ${ML_SCREENING_TOP_N:5}
 
 resilience4j:
   circuitbreaker:

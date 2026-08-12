@@ -150,7 +150,10 @@ histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
 | `ml.screening` | Counter | `status` | вызовы скрининга (OK) |
 | `ml.screening.candidates` | Gauge | — | кандидатов в последнем скрининге |
 | `ml.screening.skipped` | Gauge | — | тикеры без данных свечей (пропущены) |
-| `ml.entry.filter` | Counter | `ticker`, `result` | решения ML-фильтра входа (PASS/REJECT/FAIL_CLOSED, раздел 13.11.5) |
+| `ml.trend.forecast` | Counter | `status` | вызовы прогноза удержания тренда (OK, раздел 13.11.7) |
+| `ml.trend.candidates` | Gauge | — | кандидатов в последнем прогнозе тренда |
+| `ml.trend.skipped` | Gauge | — | тикеры без данных свечей (пропущены) |
+| `ml.entry.filter` | Counter | `ticker`, `result` | решения ML-фильтра входа (PASS/REJECT/FAIL_CLOSED, раздел 13.11.5; тренд-гейт — раздел 13.11.7) |
 
 
 #### Outbox

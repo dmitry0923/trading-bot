@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.MlConfig
+import com.trading.bot.domain.ml.MlTrendScore
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.service.ml.MlModelProvider
@@ -34,7 +35,10 @@ import java.time.LocalDateTime
  * - фильтр включён, модель недоступна — БЛОК (fail-closed: оператор явно включил
  *   фильтр, вход без ML-оценки недопустим);
  * - фильтр включён, данных свечей недостаточно — БЛОК (fail-closed, причина в логе);
- * - `probability < threshold` — БЛОК (result=REJECT).
+ * - `probability < threshold` — БЛОК (result=REJECT);
+ * - при `ml.filter.trend-gate-enabled=true`: оценка удержания тренда
+ *   ([MlTrendScore]) ниже `ml.filter.trend-min-score` — БЛОК (result=REJECT,
+ *   раздел 13.11.7).
  */
 @Service
 class MlEntryFilter(
@@ -95,6 +99,20 @@ class MlEntryFilter(
             logger.warn { "ML filter rejected $ticker $action: $reason" }
             return "ML filter: $reason"
         }
+
+        // Опциональный тренд-гейт (раздел 13.11.7): вход требует и оценку удержания
+        // тренда (модель + детерминированная сила тренда по индикаторам).
+        if (mlConfig.filter.trendGateEnabled) {
+            val trendScore = MlTrendScore.score(vector, probability)
+            val minScore = mlConfig.filter.trendMinScore
+            if (trendScore < minScore) {
+                meterRegistry.counter("ml.entry.filter", Tags.of("ticker", ticker, "result", "REJECT")).increment()
+                val reason = "trend score ${fmt(trendScore)} below gate $minScore"
+                logger.warn { "ML filter rejected $ticker $action: $reason" }
+                return "ML filter: $reason"
+            }
+        }
+
         meterRegistry.counter("ml.entry.filter", Tags.of("ticker", ticker, "result", "PASS")).increment()
         return null
     }

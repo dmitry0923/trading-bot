@@ -176,6 +176,57 @@ class MlEntryFilterTest {
         assertEquals(0.8f, model.calls.first().first[12])
     }
 
+    @Test
+    fun `trend gate blocks when trend score below min`() {
+        config.enabled = true
+        config.filter.enabled = true
+        config.filter.trendGateEnabled = true
+        config.filter.trendMinScore = 0.8
+        // Вектор с нейтральными индикаторами: trendScore = 0.6 * 0.9 + 0.4 * 0.5 = 0.74 < 0.8.
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(RecordingModel(0.9))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), any(), any())).thenReturn(vector())
+        }
+
+        val reason = runBlocking { filter.shouldBlock(signal()) }
+
+        assertTrue(reason != null)
+        assertTrue(reason!!.contains("trend score"))
+        assertEquals(1.0, filterResultCount("REJECT"))
+    }
+
+    @Test
+    fun `trend gate passes when trend score above min`() {
+        config.enabled = true
+        config.filter.enabled = true
+        config.filter.trendGateEnabled = true
+        config.filter.trendMinScore = 0.7
+        // trendScore = 0.74 >= 0.7.
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(RecordingModel(0.9))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), any(), any())).thenReturn(vector())
+        }
+
+        assertNull(runBlocking { filter.shouldBlock(signal()) })
+        assertEquals(1.0, filterResultCount("PASS"))
+    }
+
+    @Test
+    fun `trend gate is not applied when disabled`() {
+        config.enabled = true
+        config.filter.enabled = true
+        config.filter.trendGateEnabled = false
+        config.filter.trendMinScore = 0.9
+        // Вероятность 0.5 проходит порог 0.5, гейт выключен — PASS даже при низком trendScore (0.5).
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(RecordingModel(0.5))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), any(), any())).thenReturn(vector())
+        }
+
+        assertNull(runBlocking { filter.shouldBlock(signal()) })
+        assertEquals(1.0, filterResultCount("PASS"))
+    }
+
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
         Signal(
             ticker = "SBER",

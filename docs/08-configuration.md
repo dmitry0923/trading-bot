@@ -85,9 +85,14 @@ ml:                                # ML-модуль (roadmap v2.4, раздел
     path: ${ML_MODEL_PATH:ml/model.cbm}              # файл обученной CatBoost-модели (13.11.3)
   screening:
     top-n: ${ML_SCREENING_TOP_N:5}                   # число лучших тикеров в скрининге (13.11.4)
+  trend:
+    horizon-bars: ${ML_TREND_HORIZON_BARS:6}         # горизонт прогноза тренда в барах (13.11.7)
+    top-n: ${ML_TREND_TOP_N:5}                       # число лучших тикеров в прогнозе тренда (13.11.7)
   filter:
     enabled: ${ML_FILTER_ENABLED:false}              # ML-фильтр входа в торговый цикл (13.11.5)
     threshold: ${ML_FILTER_THRESHOLD:0.5}            # мин. вероятность выигрыша для входа
+    trend-gate-enabled: ${ML_FILTER_TREND_GATE_ENABLED:false}  # тренд-гейт входа (13.11.7)
+    trend-min-score: ${ML_FILTER_TREND_MIN_SCORE:0.5}          # мин. оценка удержания тренда (13.11.7)
 
 llm:
   api-key: ${KIMI_API_KEY:}        # если пуст — все LLM-вызовы мгновенно fallback (NO_API_KEY)
@@ -270,7 +275,11 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `ML_DATASET_MAX_ROWS` | `5000` | | лимит строк экспорта | `5000` |
 | `ML_MODEL_PATH` | `ml/model.cbm` | | путь к файлу обученной CatBoost-модели (13.11.3); нет файла → скрининг 503 | `ml/model.cbm` |
 | `ML_SCREENING_TOP_N` | `5` | | число лучших тикеров-кандидатов в скрининге (13.11.4) | `5` |
+| `ML_TREND_HORIZON_BARS` | `6` | | горизонт прогноза удержания тренда в барах (интерпретация оценки, 13.11.7) | `6` |
+| `ML_TREND_TOP_N` | `5` | | число лучших тикеров в прогнозе тренда (13.11.7) | `5` |
 | `ML_FILTER_ENABLED` | `false` | | ML-фильтр входа в торговый цикл: прогноз модели < порога → вход отклоняется (13.11.5) | `true` |
+| `ML_FILTER_TREND_GATE_ENABLED` | `false` | | тренд-гейт входа: вход требует оценку удержания тренда >= `ML_FILTER_TREND_MIN_SCORE` (13.11.7) | `true` |
+| `ML_FILTER_TREND_MIN_SCORE` | `0.5` | | мин. оценка удержания тренда для входа при включённом тренд-гейте (13.11.7) | `0.6` |
 | `ML_FILTER_THRESHOLD` | `0.5` | | минимальная вероятность выигрышного исхода для входа (13.11.5) | `0.55` |
 | `OUTBOX_RABBITMQ_DLX` | `trading.outbox.dlx` | | dead-letter exchange | `trading.outbox.dlx` |
 | `OUTBOX_RABBITMQ_DLQ` | `trading.outbox.orders.dlq` | | очередь парковки неудачных доставок | `trading.outbox.orders.dlq` |

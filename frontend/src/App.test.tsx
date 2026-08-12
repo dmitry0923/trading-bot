@@ -91,6 +91,44 @@ const EXPOSURE = {
 
 const CORR_MATRIX = { SBER: { SBER: 1, GAZP: -0.3 }, GAZP: { SBER: -0.3, GAZP: 1 } };
 
+const BACKTEST_SINGLE = {
+  ticker: 'SBER',
+  totalReturn: 0.1234,
+  sharpeRatio: 1.41,
+  maxDrawdown: 0.081,
+  winRate: 0.5421,
+  profitFactor: 1.87,
+  totalTrades: 152,
+  passable: true,
+  equityCurve: [100000, 100320.5, 101005.7],
+  timestamp: '2026-01-01T00:00:00Z'
+};
+
+const PANEL = {
+  tickers: ['SBER', 'GAZP', 'LKOH'],
+  days: 365,
+  timeframe: 'MINUTE_10',
+  initialCapital: 100000,
+  slPercent: 0.02,
+  tpPercent: 0.04,
+  minBarsForSignal: 30,
+  results: [
+    { ticker: 'SBER', totalReturn: 0.1234, sharpeRatio: 1.41, sortinoRatio: 1.6, maxDrawdown: 0.081, winRate: 0.5421, profitFactor: 1.87, totalTrades: 152, passable: true },
+    { ticker: 'GAZP', totalReturn: 0.05, sharpeRatio: 0.9, sortinoRatio: 1.0, maxDrawdown: 0.12, winRate: 0.48, profitFactor: 1.2, totalTrades: 90, passable: false },
+    { ticker: 'LKOH', totalReturn: -0.02, sharpeRatio: 0.3, sortinoRatio: 0.4, maxDrawdown: 0.09, winRate: 0.45, profitFactor: 0.9, totalTrades: 70, passable: false }
+  ],
+  summary: {
+    tickerCount: 3,
+    passCount: 1,
+    passShare: 0.3333,
+    avgTotalReturn: 0.0511,
+    medianTotalReturn: 0.05,
+    minTotalReturn: -0.02,
+    maxTotalReturn: 0.1234,
+    totalTrades: 312
+  }
+};
+
 let currentUser = { username: 'tester', roles: ['ROLE_ADMIN'] };
 let userAuthed = true;
 
@@ -112,6 +150,8 @@ const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => 
   if (url.includes('/api/v1/risk/drawdown')) return json(DRAWDOWN);
   if (url.includes('/api/v1/risk/exposure')) return json(EXPOSURE);
   if (url.includes('/api/v1/risk/correlation')) return json(CORR_MATRIX);
+  if (url.includes('/api/v1/backtest/panel')) return json(PANEL);
+  if (url.includes('/api/v1/backtest/')) return json(BACKTEST_SINGLE);
   return json({});
 });
 
@@ -191,5 +231,26 @@ describe('App', () => {
     expect(screen.getByText('35')).toBeInTheDocument();
     expect(await screen.findByText('Watchlist correlation heatmap')).toBeInTheDocument();
     expect(screen.getAllByText('-0.30').length).toBe(2);
+  });
+
+  it('runs a single backtest and shows metrics with PASS status', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Backtest' }));
+    await user.click(await screen.findByRole('button', { name: 'Run Backtest' }));
+    expect(await screen.findByText('12.34%')).toBeInTheDocument();
+    expect(screen.getByText('152')).toBeInTheDocument();
+    expect(screen.getByText('PASS')).toBeInTheDocument();
+  });
+
+  it('runs a panel backtest and shows distribution table', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole('button', { name: 'Backtest' }));
+    await user.click(await screen.findByRole('button', { name: 'Run Panel' }));
+    expect(await screen.findByText('1/3 (33.33%)')).toBeInTheDocument();
+    expect(screen.getByText('GAZP')).toBeInTheDocument();
+    expect(screen.getByText('LKOH')).toBeInTheDocument();
+    expect(screen.getAllByText('REJECT').length).toBe(2);
   });
 });

@@ -4,18 +4,15 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.dto.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.github.resilience4j.circuitbreaker.CallNotPermittedException
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.kotlin.circuitbreaker.decorateSuspendFunction
 import io.github.resilience4j.kotlin.ratelimiter.decorateSuspendFunction
 import io.github.resilience4j.kotlin.retry.decorateSuspendFunction
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry
-import io.github.resilience4j.ratelimiter.RequestNotPermitted
 import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
-import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
@@ -27,12 +24,13 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 
 /**
- * REST-клиент Alor.
+ * REST-клиент Alor (quotes, reconciliation) + делегирование доставки ордеров.
  *
- * - Авторизация: Bearer token с автообновлением через refreshToken
- * - WebClient с таймаутом 10s
- * - Resilience4j: Retry (exponential backoff + jitter) + RateLimiter
+ * - Авторизация: Bearer token через [AlorTokenProvider] (общий для всех транспортов).
+ * - WebClient с таймаутом 10s; Resilience4j: Retry + RateLimiter + CircuitBreaker
  *   (инстанс "alor" в application.yml), защита от 429/сетевых сбоев.
+ * - Размещение/отмена ордеров делегируются в [OrderTransport] (roadmap 13.8.2):
+ *   [RoutedOrderTransport] шлёт по WebSocket primary, по REST — fallback.
  * - Idempotency Key: уникальный `idempotencyKey` для КАЖДОГО POST-ордера.
  *   Ключ генерируется ОДИН раз на логический ордер (в [com.trading.bot.service.OrderOutboxService])
  *   и передаётся в Alor как "id" — Alor дедуплицирует повторные доставки.
@@ -49,6 +47,8 @@ class AlorClient(
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
+    private val tokenProvider: AlorTokenProvider,
+    private val orderTransport: RoutedOrderTransport,
     private val retryRegistry: RetryRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
@@ -83,9 +83,6 @@ class AlorClient(
         data object Unknown : OrderReconciliation
     }
 
-    private var accessToken: String = ""
-    private var tokenExpiresAt: Instant = Instant.EPOCH
-
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
     /** LIVE-режим (публичное окно [isLive]) — используется для гейта биржевых SL/TP-заявок. */
@@ -108,7 +105,7 @@ class AlorClient(
                     webClient
                         .get()
                         .uri("${alorConfig.apiUrl}/md/v2/Securities/${alorConfig.exchange}/$ticker/quotes")
-                        .header("Authorization", "Bearer ${getActualToken()}")
+                        .header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
@@ -135,7 +132,7 @@ class AlorClient(
     suspend fun getLastPrice(ticker: String): BigDecimal? = getMarketSnapshot(ticker)?.currentPrice
 
     /**
-     * Плейс лимитного ордера с обязательным idempotency key.
+     * Плейс лимитного ордера с обязательным idempotency key (делегирование в [OrderTransport]).
      *
      * @param idempotencyKey уникальный клиентский id ордера (генерируется один раз
      *   на логический ордер в OrderOutboxService). Все повторные доставки/ретраи
@@ -151,69 +148,7 @@ class AlorClient(
         price: BigDecimal,
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
-    ): String? {
-        if (!isLive) return "sim-$ticker-$idempotencyKey"
-        val start = System.currentTimeMillis()
-        return try {
-            val body =
-                mapOf(
-                    "portfolio" to portfolio,
-                    "ticker" to ticker,
-                    "exchange" to alorConfig.exchange,
-                    "side" to side,
-                    "type" to "limit",
-                    "quantity" to qty,
-                    "price" to price.toPlainString(),
-                    "id" to idempotencyKey,
-                )
-            val raw: String =
-                resilient {
-                    webClient
-                        .post()
-                        .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/limit")
-                        .header("Authorization", "Bearer ${getActualToken()}")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .bodyValue(objectMapper.writeValueAsString(body))
-                        .retrieve()
-                        .bodyToMono(String::class.java)
-                        .timeout(Duration.ofSeconds(10))
-                        .awaitSingle()
-                }
-            recordLatency("placeLimitOrder", start)
-            val orderNumber =
-                objectMapper
-                    .readTree(raw)
-                    .path("orderNumber")
-                    .asString()
-                    .ifBlank { null }
-            if (orderNumber != null) {
-                meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
-                logger.info { "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$idempotencyKey)" }
-            }
-            orderNumber
-        } catch (e: WebClientResponseException) {
-            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
-            if (isDefinitiveRejection(e)) {
-                logger.error(e) { "Limit order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
-                null
-            } else {
-                logger.error(e) { "placeLimitOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
-                throw e
-            }
-        } catch (_: RequestNotPermitted) {
-            logger.warn { "Limit order $ticker NOT sent (rate limit) — will retry on next outbox cycle" }
-            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "RATE_LIMIT")).increment()
-            null
-        } catch (_: CallNotPermittedException) {
-            logger.warn { "Limit order $ticker NOT sent (circuit breaker open) — will retry on next outbox cycle" }
-            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "CIRCUIT_OPEN")).increment()
-            null
-        } catch (e: Exception) {
-            logger.error(e) { "placeLimitOrder failed for $ticker after retries — delivery UNCERTAIN" }
-            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
-            throw e
-        }
-    }
+    ): String? = orderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio)
 
     /**
      * Маркет-ордер (через лимитный по лучшему ask/bid). Запрещён при спреде > 0.5% (slippage control).
@@ -281,8 +216,7 @@ class AlorClient(
     ): String? = placeConditionalOrder("take-profit", ticker, side, qty, stopPrice, idempotencyKey, portfolio)
 
     /**
-     * Условная (стоп/тейк) заявка через единый endpoint `actions/limit` —
-     * тип задаётся полем `type` в теле запроса (Alor ModelForOrders).
+     * Условная (стоп/тейк) заявка (делегирование в [OrderTransport]).
      * `stopEndUnixTime`=0 — действует до конца торговой сессии.
      */
     private suspend fun placeConditionalOrder(
@@ -293,142 +227,22 @@ class AlorClient(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
-    ): String? {
-        if (!isLive) return "sim-$type-$ticker-$idempotencyKey"
-        val start = System.currentTimeMillis()
-        return try {
-            val body =
-                mapOf(
-                    "portfolio" to portfolio,
-                    "ticker" to ticker,
-                    "exchange" to alorConfig.exchange,
-                    "side" to side,
-                    "type" to type,
-                    "quantity" to qty,
-                    "stopPrice" to stopPrice.toPlainString(),
-                    "stopEndUnixTime" to 0,
-                    "id" to idempotencyKey,
-                )
-            val raw: String =
-                resilient {
-                    webClient
-                        .post()
-                        .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/limit")
-                        .header("Authorization", "Bearer ${getActualToken()}")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .bodyValue(objectMapper.writeValueAsString(body))
-                        .retrieve()
-                        .bodyToMono(String::class.java)
-                        .timeout(Duration.ofSeconds(10))
-                        .awaitSingle()
-                }
-            recordLatency("placeConditionalOrder", start)
-            val orderNumber =
-                objectMapper
-                    .readTree(raw)
-                    .path("orderNumber")
-                    .asString()
-                    .ifBlank { null }
-            if (orderNumber != null) {
-                meterRegistry.counter("alor.order.placed", Tags.of("type", type, "status", "OK")).increment()
-                logger.info { "Conditional order placed type=$type $side $qty $ticker @ $stopPrice -> $orderNumber (idem=$idempotencyKey)" }
-            }
-            orderNumber
-        } catch (e: WebClientResponseException) {
-            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", type)).increment()
-            if (isDefinitiveRejection(e)) {
-                logger.error(e) { "$type order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
-                null
-            } else {
-                logger.error(e) { "placeConditionalOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
-                throw e
-            }
-        } catch (_: RequestNotPermitted) {
-            logger.warn { "$type order $ticker NOT sent (rate limit) — will retry on next outbox cycle" }
-            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "RATE_LIMIT")).increment()
-            null
-        } catch (_: CallNotPermittedException) {
-            logger.warn { "$type order $ticker NOT sent (circuit breaker open) — will retry on next outbox cycle" }
-            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "CIRCUIT_OPEN")).increment()
-            null
-        } catch (e: Exception) {
-            logger.error(e) { "placeConditionalOrder failed for $ticker after retries — delivery UNCERTAIN" }
-            meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", type)).increment()
-            throw e
-        }
-    }
+    ): String? = orderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio)
 
     /**
-     * Результат отмены заявки.
-     *
-     * - [CONFIRMED]: биржа подтвердила отмену (200) — заявки на бирже больше нет;
-     * - [REJECTED]: определённый отказ (4xx, кроме 429) — заявка не «рабочая»
-     *   (не найдена / уже отменена / уже исполнена);
-     * - [UNCERTAIN]: состояние неизвестно (сеть/таймаут/5xx/429/лимит/разрыв CB) —
-     *   отмена могла и не дойти, повторять на следующем цикле.
+     * Результат отмены заявки (см. [CancelResult]).
      */
-    enum class CancelResult {
-        CONFIRMED,
-        REJECTED,
-        UNCERTAIN,
-    }
+    typealias CancelResult = com.trading.bot.client.CancelResult
 
     /**
-     * Отмена заявки по orderId. Идемпотентный ключ передаётся в поле "id"
-     * (защита от двойной отмены при повторах). Возвращает [CancelResult].
+     * Отмена заявки по orderId (делегирование в [OrderTransport]). Идемпотентный
+     * ключ передаётся в поле "id" (защита от двойной отмены при повторах).
      */
     suspend fun cancelOrder(
         orderId: String,
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
-    ): CancelResult {
-        if (!isLive) return CancelResult.CONFIRMED
-        return try {
-            val body =
-                mapOf(
-                    "portfolio" to portfolio,
-                    "exchange" to alorConfig.exchange,
-                    "orderId" to orderId,
-                    "id" to idempotencyKey,
-                )
-            resilient {
-                webClient
-                    .post()
-                    .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/actions/cancel")
-                    .header("Authorization", "Bearer ${getActualToken()}")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(objectMapper.writeValueAsString(body))
-                    .retrieve()
-                    .bodyToMono(String::class.java)
-                    .timeout(Duration.ofSeconds(10))
-                    .awaitSingle()
-            }
-            meterRegistry.counter("alor.order.cancelled", Tags.of("type", "limit")).increment()
-            logger.info { "Order cancelled $orderId (idem=$idempotencyKey)" }
-            CancelResult.CONFIRMED
-        } catch (e: WebClientResponseException) {
-            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
-            if (isDefinitiveRejection(e)) {
-                logger.warn(e) { "Order cancel REJECTED $orderId (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
-                CancelResult.REJECTED
-            } else {
-                logger.error(e) { "Order cancel failed for $orderId after retries (${e.statusCode.value()}) — UNCERTAIN" }
-                throw e
-            }
-        } catch (_: RequestNotPermitted) {
-            logger.warn { "Order cancel NOT sent for $orderId (rate limit) — will retry on next outbox cycle" }
-            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
-            CancelResult.UNCERTAIN
-        } catch (_: CallNotPermittedException) {
-            logger.warn { "Order cancel NOT sent for $orderId (circuit breaker open) — will retry on next outbox cycle" }
-            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
-            CancelResult.UNCERTAIN
-        } catch (e: Exception) {
-            logger.error(e) { "Order cancel failed for $orderId after retries — UNCERTAIN" }
-            meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
-            throw e
-        }
-    }
+    ): CancelResult = orderTransport.cancel(orderId, idempotencyKey, portfolio)
 
     /**
      * State Reconciliation: ищет на бирже реальный ордер по idempotency key
@@ -493,7 +307,7 @@ class AlorClient(
                     webClient
                         .get()
                         .uri("${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders/$orderId?portfolio=$portfolio")
-                        .header("Authorization", "Bearer ${getActualToken()}")
+                        .header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
@@ -625,7 +439,7 @@ class AlorClient(
                         .uri(
                             "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/portfolios" +
                                 "/$portfolio/positions",
-                        ).header("Authorization", "Bearer ${getActualToken()}")
+                        ).header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
@@ -677,7 +491,7 @@ class AlorClient(
                         .uri(
                             "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/portfolios" +
                                 "/$portfolio/trades",
-                        ).header("Authorization", "Bearer ${getActualToken()}")
+                        ).header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                         .retrieve()
                         .bodyToMono(String::class.java)
                         .timeout(Duration.ofSeconds(10))
@@ -774,7 +588,7 @@ class AlorClient(
                     .uri(
                         "${alorConfig.apiUrl}/commandapi/warptrans/TRADE/v2/client/orders" +
                             "?portfolio=$portfolio&includeOrders=true",
-                    ).header("Authorization", "Bearer ${getActualToken()}")
+                    ).header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                     .retrieve()
                     .bodyToMono(String::class.java)
                     .timeout(Duration.ofSeconds(10))
@@ -811,37 +625,5 @@ class AlorClient(
         meterRegistry
             .timer("alor.api.latency", Tags.of("operation", operation))
             .record(System.currentTimeMillis() - startMs, TimeUnit.MILLISECONDS)
-    }
-
-    private suspend fun getActualToken(): String {
-        if (Instant.now().isBefore(tokenExpiresAt.minusSeconds(60)) && accessToken.isNotBlank()) {
-            return accessToken
-        }
-        if (accessToken.isBlank()) accessToken = alorConfig.token
-        if (alorConfig.refreshToken.isBlank()) return accessToken
-
-        return try {
-            val body = mapOf("refreshToken" to alorConfig.refreshToken)
-            val raw: String =
-                webClient
-                    .post()
-                    .uri("${alorConfig.apiUrl}/oauth/token")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(objectMapper.writeValueAsString(body))
-                    .retrieve()
-                    .bodyToMono(String::class.java)
-                    .timeout(Duration.ofSeconds(5))
-                    .awaitSingle()
-
-            val j = objectMapper.readTree(raw)
-            accessToken = j.path("accessToken").asString(accessToken)
-            val expiresIn = j.path("expiresIn").asLong(3600)
-            tokenExpiresAt = Instant.now().plusSeconds(expiresIn)
-            logger.info { "Alor access token refreshed (expires in ${expiresIn}s)" }
-            accessToken
-        } catch (e: Exception) {
-            logger.warn(e) { "Token refresh failed, using existing token" }
-            accessToken
-        }
     }
 }

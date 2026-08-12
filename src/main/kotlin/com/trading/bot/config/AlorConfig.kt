@@ -21,6 +21,9 @@ import org.springframework.stereotype.Component
  * @property wsHeartbeatIntervalMs период heartbeat-ping, мс
  * @property wsHeartbeatTimeoutMs таймаут «тихого» соединения (watchdog), мс
  * @property wsStaleMessageAgeMs максимальный возраст сообщения в очереди обработки, мс
+ * @property wsOrdersEnabled доставлять ордера по WebSocket (primary), REST — fallback
+ *   (roadmap 13.8.2); выключено по умолчанию
+ * @property wsOrderTimeoutMs таймаут ожидания подтверждения WS-команды, мс
  */
 @Component
 @ConfigurationProperties(prefix = "alor")
@@ -39,6 +42,8 @@ class AlorConfig {
     var wsHeartbeatIntervalMs: Long = 30_000
     var wsHeartbeatTimeoutMs: Long = 45_000
     var wsStaleMessageAgeMs: Long = 5_000
+    var wsOrdersEnabled: Boolean = false
+    var wsOrderTimeoutMs: Long = 10_000
     var entryPartialFillCancelAfterMs: Long = 30_000
     var outboxBackoffBaseSeconds: Int = 10
     var outboxBackoffMaxSeconds: Int = 120

@@ -63,6 +63,8 @@ alor:                              # брокер Alor
   refresh-token: ${ALOR_REFRESH_TOKEN:}
   portfolio: ${ALOR_PORTFOLIO:D12345}
   exchange: ${ALOR_EXCHANGE:MOEX}
+  ws-orders-enabled: ${ALOR_WS_ORDERS_ENABLED:false}  # WS-primary ордеров (13.8.2)
+  ws-order-timeout-ms: ${ALOR_WS_ORDERS_TIMEOUT_MS:10000}
 
 moex:
   base-url: https://iss.moex.com/iss
@@ -212,6 +214,8 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `ALOR_REFRESH_TOKEN` | `` | нет | refresh token Alor | `r.eyJ...` |
 | `ALOR_PORTFOLIO` | `D12345` | да (для LIVE) | номер портфеля | `D12345` |
 | `ALOR_EXCHANGE` | `MOEX` | | биржа | `MOEX` |
+| `ALOR_WS_ORDERS_ENABLED` | `false` | | WS-primary доставка ордеров, REST — fallback (раздел 13.8.2) | `true` |
+| `ALOR_WS_ORDERS_TIMEOUT_MS` | `10000` | | таймаут подтверждения WS-команды, мс | `10000` |
 | `KIMI_API_KEY` | `` | да (для LLM) | API-ключ Kimi | `sk-...` |
 | `KIMI_BASE_URL` | `https://api.moonshot.cn/v1` | | базовый URL LLM | `https://api.moonshot.cn/v1` |
 | `KIMI_MODEL` | `kimi-k3` | | модель | `kimi-k3` |

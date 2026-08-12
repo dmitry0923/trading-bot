@@ -133,6 +133,11 @@ histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
 | `alor.ws.reconnect` | Counter | — | переподключения WS |
 | `alor.ws.error` / `alor.ws.closed` | Counter | — | ошибки/закрытия WS |
 | `alor.ws.disconnected` | Counter | `reason` | отключение (MAX_ATTEMPTS) |
+| `alor.ws.orders.connected` / `.disconnected` | Counter | — | подключения/обрывы канала ордеров (13.8.2) |
+| `alor.ws.orders.sent` | Counter | `type` | WS-команды (limit/stop/take-profit/cancel) |
+| `alor.ws.orders.confirmed` / `.rejected` | Counter | `type` | подтверждения/отказы по WS |
+| `alor.ws.orders.uncertain` | Counter | `type, reason` | таймауты/сбои отправки (UNCERTAIN) |
+| `alor.ws.orders.fallback` | Counter | `type, reason` | переключение на REST (WS недоступен до отправки) |
 
 #### Outbox
 

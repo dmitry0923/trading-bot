@@ -278,11 +278,50 @@ flowchart LR
 Тесты: `AgentBacktestSignalGeneratorTest` (warm-up/сэмплинг/полная цепочка —
 25 backtest-тестов зелёные).
 
-### 13.8.2. WebSocket-only исполнение
+### 13.8.2. WebSocket-only исполнение (реализовано)
 
-- Полный перевод market-data и ордеров на WS (`alor.ws`).
-- REST остаётся fallback для `verifyOrder` и токенов.
-- Ожидаемый выигрыш: латентность, меньше лимитов rate-limiter.
+**Функция — WS-primary доставка ордеров, REST — fallback.** Абстракция
+`OrderTransport` (place-limit / place-conditional / cancel) с тремя реализациями:
+`WsOrderTransport` (WebSocket), `RestOrderTransport` (REST-fallback) и
+`RoutedOrderTransport` (маршрутизатор). Включается `alor.ws-orders-enabled=true`
+(`ALOR_WS_ORDERS_ENABLED`, выключено по умолчанию).
+
+Схема:
+
+```mermaid
+flowchart LR
+    OB[OrderOutboxService] --> AL[AlorClient]
+    AL --> RT[RoutedOrderTransport]
+    RT -->|wsOrdersEnabled + LIVE + default portfolio| WS[WsOrderTransport]
+    RT -->|Unavailable до отправки / не-WS сценарий| REST[RestOrderTransport]
+    WS --> S[WS-канал OrdersGetAndSubscribeV2]
+    S -->|событие id=idempotencyKey| C[Confirmed/Rejected]
+```
+
+Контракт доставки (единый для обоих транспортов):
+
+| Исход | WS | REST |
+|---|---|---|
+| Принято | событие с `orderNumber` | 200 + `orderNumber` |
+| Определённый отказ | WS-reject (status/error) | 4xx (кроме 429) |
+| UNCERTAIN (неизвестно, могло дойти) | таймаут/обрыв → `OrderDeliveryUncertainException` | сеть/5xx/429 после retry → `OrderDeliveryUncertainException` |
+| Fallback безопасен | `OrderTransportUnavailableException` ДО отправки (нет канала/не LIVE/не тот портфель) → маршрутизатор шлёт по REST | — |
+
+Ключевые решения:
+
+| Аспект | Решение |
+|---|---|
+| Канал | один persistent WS-сокет на дефолтный портфель (`ReactorNetty`), подписка `OrdersGetAndSubscribeV2`; переподключение с backoff 1s→60s |
+| Корреляция | размещение по `id`=idempotencyKey, отмена по `orderNumber`+status; direct-ответы по `requestId`=guid |
+| Роутинг | WS только для дефолтного портфеля + LIVE; multi-account/`SIMULATION` → REST (полностью корректный путь с реконсиляцией) |
+| Таймаут ответа | `alor.ws-order-timeout-ms` (default 10000) → UNCERTAIN + State Reconciliation по idempotency key (нет double execution) |
+| Парсер | `WsOrderMessages.matchPlace/matchCancel` exception-safe: битое сообщение ≠ обрыв канала |
+| Токен | общий `AlorTokenProvider` (refresh + кэш) для REST и WS |
+| Метрики | `alor.ws.orders.connected/disconnected/sent/confirmed/rejected/uncertain/fallback` |
+
+Тесты: `WsOrderMessagesTest`, `WsOrderTransportTest`, `RoutedOrderTransportTest`,
+`RestOrderTransportTest` (fake-сокет, 33 клиентских теста). Полный
+`test ktlintCheck koverVerify` — BUILD SUCCESSFUL.
 
 ### 13.8.3. Панельный бэктест (реализовано)
 

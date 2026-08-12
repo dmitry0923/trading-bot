@@ -5,6 +5,7 @@ import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.entity.AgentLog
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
@@ -58,6 +59,22 @@ class AgentLogRepository(
             .awaitSingle()
     }
 
+    /**
+     * Решение LLM-стратега (Agent-3-Strategist) для [cycleId] — последняя запись.
+     * Используется экспортом ML-датасета (roadmap v2.4): action + confidence
+     * стратега на входе в позицию.
+     */
+    suspend fun findStrategyDecision(cycleId: String): AgentLog? =
+        databaseClient
+            .sql(
+                "SELECT * FROM agent_logs WHERE cycle_id = :cycleId AND agent_name = :agentName " +
+                    "ORDER BY created_at DESC LIMIT 1",
+            ).bind("cycleId", cycleId)
+            .bind("agentName", STRATEGY_AGENT)
+            .map { row, _ -> toAgentLog(row) }
+            .one()
+            .awaitSingleOrNull()
+
     suspend fun save(log: AgentLog): AgentLog {
         val sql =
             """
@@ -87,5 +104,9 @@ class AgentLogRepository(
                 .one()
                 .awaitSingle()
         return log.copy(id = id)
+    }
+
+    private companion object {
+        const val STRATEGY_AGENT = "Agent-3-Strategist"
     }
 }

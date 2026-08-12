@@ -75,6 +75,13 @@ macro:                             # макро-контекст для фунд
   usd-rub: ${USD_RUB:90.0}         # курс USD/RUB (fallback; live с MOEX приоритетнее)
   usd-rub-ticker: USD000UTSTOM     # тикер валютной секции MOEX для live-курса
 
+ml:                                # ML-модуль (roadmap v2.4, раздел 13.11)
+  enabled: ${ML_ENABLED:false}     # мастер-флаг: false = эндпоинты датасета 404
+  dataset:
+    timeframe: ${ML_DATASET_TIMEFRAME:MINUTE_10}     # таймфрейм свечей для признаков
+    lookback-bars: ${ML_DATASET_LOOKBACK_BARS:30}    # окно признаков (свечей до входа)
+    max-rows: ${ML_DATASET_MAX_ROWS:5000}            # лимит строк экспорта
+
 llm:
   api-key: ${KIMI_API_KEY:}        # если пуст — все LLM-вызовы мгновенно fallback (NO_API_KEY)
   base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
@@ -250,6 +257,10 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `OUTBOX_RABBITMQ_EXCHANGE` | `trading.outbox` | | exchange для публикации outbox-строк | `trading.outbox` |
 | `OUTBOX_RABBITMQ_QUEUE` | `trading.outbox.orders` | | очередь ордеров | `trading.outbox.orders` |
 | `OUTBOX_RABBITMQ_ROUTING_KEY` | `order` | | routing key публикации | `order` |
+| `ML_ENABLED` | `false` | | включить ML-модуль: эндпоинты экспорта датасета (раздел 13.11) | `true` |
+| `ML_DATASET_TIMEFRAME` | `MINUTE_10` | | таймфрейм свечей для признаков датасета | `MINUTE_10` |
+| `ML_DATASET_LOOKBACK_BARS` | `30` | | окно признаков: свечей до входа | `30` |
+| `ML_DATASET_MAX_ROWS` | `5000` | | лимит строк экспорта | `5000` |
 | `OUTBOX_RABBITMQ_DLX` | `trading.outbox.dlx` | | dead-letter exchange | `trading.outbox.dlx` |
 | `OUTBOX_RABBITMQ_DLQ` | `trading.outbox.orders.dlq` | | очередь парковки неудачных доставок | `trading.outbox.orders.dlq` |
 

@@ -58,10 +58,10 @@ gantt
 
 | Фича | Описание | Статус |
 |---|---|---|
-| **LLM-агенты в бэктесте** | заменить детерминированный `signalAt()` на конвейер tech→fund→strategy→contrarian→arbitrator (раздел 11.1) | |
+| **LLM-агенты в бэктесте** | заменить детерминированный `signalAt()` на конвейер tech→fund→strategy→contrarian→arbitrator (раздел 11.1) | ✅ (раздел 13.8.1) |
 | Backtest: панельный прогон | несколько тикеров за один вызов, распределение результатов | ✅ (POST `/api/v1/backtest/panel`, раздел 11.6.1) |
 | Backtest: конфиг `bt.*` | вынос констант 20%/2%/4% и `initialCapital` из кода | ✅ (раздел 11.8.1) |
-| WebSocket-only исполнение | полный переход на WS для market-data и ордеров, REST — только fallback | |
+| WebSocket-only исполнение | полный переход на WS для market-data и ордеров, REST — только fallback | ✅ (раздел 13.8.2) |
 | Уменьшение LLM-латентности | параллельные вызовы агентов, дельта-промпты | |
 | Очередь (RabbitMQ) для outbox | RabbitMQ — дополнительный канал доставки outbox-строк (publisher → очередь → консьюмер через `redispatchById`), DB-worker остаётся фолбэком | ✅ (раздел 13.8.4) |
 
@@ -69,6 +69,7 @@ gantt
 
 - Замена/дополнение части LLM-инференса ML-моделями (CatBoost/LightGBM) для задач, где нужна скорость и стабильность: скрининг кандидатов, оценка вероятности удержания тренда.
 - Retraining pipeline: собранные через `agent_logs` и сделки данные → features → обучение на CI.
+- ✅ **Шаг 1 (датасет-экспорт)**: `GET /api/v1/ml/dataset` (CSV) + `/dataset/stats`, признаки на входе из candles + макро + `agent_logs` + слепые зоны, флаг `ml.enabled` (раздел 13.11).
 
 ### v2.5 — Расширение горизонтов
 
@@ -428,6 +429,40 @@ publish → consume → SENT; already-SENT не переотправляется
 - Переобучение на короткой истории (мало сделок).
 - Нестационарность рынка MOEX — дрейф признаков.
 - Регуляторные ограничения автоматической торговли.
+
+### 13.11.1. Шаг 1: экспорт датасета (реализовано)
+
+**Endpoints** (закрыты аутентификацией, гейтятся `ml.enabled=false` → 404):
+
+- `GET /api/v1/ml/dataset?since=&ticker=&maxRows=` — CSV-файл `ml_dataset.csv`
+  (query-параметры опциональны; строки — самые свежие закрытые позиции);
+- `GET /api/v1/ml/dataset/stats?since=&ticker=` — качество данных: число позиций,
+  win rate, разбивка по тикерам/направлениям, суммарный P&L.
+
+**Строка датасета** (`MlDatasetRow`, 28 колонок):
+
+- **Метка**: `win` (pnl > 0), `pnl_rub`, `pnl_percent`, `close_reason`, `duration_min`, `hour_of_day`;
+- **Признаки на входе** (без lookahead, по свечам до `openedAt`, `MlFeatureExtractor`):
+  `rsi14`, `atr_percent`, `macd_hist_percent`, `bb_percent_b`, `ema_slope_percent`,
+  `volatility20_percent`, `ret_3`, `ret_10`, `ret_20`;
+- **Макро**: `cbr_rate`, `brent`, `usd_rub`;
+- **LLM-агент** (`agent_logs` по `cycleId`): `strategy_action`, `strategy_confidence`
+  (Agent-3-Strategist, последняя запись цикла);
+- **Слепая зона**: `in_blind_spot_hour` — активная слепая зона тикера
+  «Entry at hour H for TICKER» на час входа.
+
+**Известные ограничения (задокументированные риски)**:
+
+- Макро-значения — снапшот конфига/рынка на момент экспорта, а не исторические:
+  для корректного обучения без lookahead нужен исторический макро-контекст
+  (следующий инкремент — таблица макро-снапшотов).
+- `winRate/час` как признак не включён (агрегат по прошлым сделкам); час входа
+  выгружается сырым (`hour_of_day`), агрегация — на этапе обучения.
+- Позиции без 30+ свечей до входа пропускаются (`skippedInsufficientData`).
+
+**Метрики**: `ml.dataset.export` (counter, mode), `ml.dataset.export.rows/skipped/positions`
+(gauges). Конфиг: `ml.enabled`, `ml.dataset.timeframe`, `ml.dataset.lookback-bars`,
+`ml.dataset.max-rows`.
 
 ## 13.12. Детализация v2.5 (Cross-exchange)
 

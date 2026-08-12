@@ -186,6 +186,35 @@ class PositionRepository(
             .collectList()
             .awaitSingle()
 
+    /**
+     * Закрытые позиции (status != OPEN) для экспорта ML-датасета (roadmap v2.4).
+     * Необязательные фильтры: [ticker], [since] (по [closedAt]).
+     */
+    suspend fun findClosed(
+        ticker: String? = null,
+        since: LocalDateTime? = null,
+    ): List<Position> {
+        val conditions = mutableListOf("status != 'OPEN'")
+        val params = mutableMapOf<String, Any>()
+        ticker?.takeIf { it.isNotBlank() }?.let {
+            conditions += "ticker = :ticker"
+            params["ticker"] = it
+        }
+        since?.let {
+            conditions += "closed_at >= :since"
+            params["since"] = it
+        }
+        val where = conditions.joinToString(" AND ")
+        val sql = "SELECT * FROM positions WHERE $where ORDER BY opened_at DESC"
+        var spec = databaseClient.sql(sql)
+        params.forEach { (name, value) -> spec = spec.bind(name, value) }
+        return spec
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     suspend fun findClosedSince(since: LocalDateTime): List<Position> {
         val sql = "SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= :since ORDER BY closed_at DESC"
         return databaseClient

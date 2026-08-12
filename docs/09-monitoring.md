@@ -139,6 +139,16 @@ histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
 | `alor.ws.orders.uncertain` | Counter | `type, reason` | таймауты/сбои отправки (UNCERTAIN) |
 | `alor.ws.orders.fallback` | Counter | `type, reason` | переключение на REST (WS недоступен до отправки) |
 
+#### ML-датасет (roadmap v2.4, раздел 13.11)
+
+| Метрика | Тип | Labels | Описание |
+|---|---|---|---|
+| `ml.dataset.export` | Counter | `mode` | вызовы экспорта (OK/DISABLED) |
+| `ml.dataset.export.rows` | Gauge | — | строки в последнем экспорте |
+| `ml.dataset.export.skipped` | Gauge | — | позиции без данных свечей (пропущены) |
+| `ml.dataset.export.positions` | Gauge | — | всего закрытых позиций в последнем экспорте |
+
+
 #### Outbox
 
 | Метрика | Тип | Labels | Описание |

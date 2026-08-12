@@ -114,6 +114,41 @@ export interface BacktestResult {
   timestamp: string;
 }
 
+export interface PanelTickerSummary {
+  ticker: string;
+  totalReturn: number;
+  sharpeRatio: number;
+  sortinoRatio: number;
+  maxDrawdown: number;
+  winRate: number;
+  profitFactor: number;
+  totalTrades: number;
+  passable: boolean;
+}
+
+export interface PanelBacktestSummary {
+  tickerCount: number;
+  passCount: number;
+  passShare: number;
+  avgTotalReturn: number;
+  medianTotalReturn: number;
+  minTotalReturn: number;
+  maxTotalReturn: number;
+  totalTrades: number;
+}
+
+export interface PanelBacktestResponse {
+  tickers: string[];
+  days: number;
+  timeframe: string;
+  initialCapital: number;
+  slPercent: number;
+  tpPercent: number;
+  minBarsForSignal: number;
+  results: PanelTickerSummary[];
+  summary: PanelBacktestSummary;
+}
+
 export interface BotSettings {
   tradingEnabled: boolean;
   riskEnabled: boolean;

@@ -4,6 +4,8 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestValidator
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.backtest.PanelBacktestRequest
+import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.PositionStatus
@@ -98,6 +100,7 @@ class ApiController(
     private val backtestEngine: BacktestEngine,
     private val backtestValidator: BacktestValidator,
     private val backtestResultRepository: BacktestResultRepository,
+    private val panelBacktestService: PanelBacktestService,
     private val backtestConfig: BacktestConfig,
     private val objectMapper: ObjectMapper,
     private val historicalDataLoader: HistoricalDataLoader,
@@ -266,8 +269,8 @@ class ApiController(
 
     private suspend fun requireAccount(accountId: Long?) {
         if (accountId != null && tradingAccountService.findById(accountId) == null) {
-            throw org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.NOT_FOUND,
+            throw ResponseStatusException(
+                HttpStatus.NOT_FOUND,
                 "account not found: $accountId",
             )
         }
@@ -275,8 +278,8 @@ class ApiController(
 
     private fun requireAccountBlocking(accountId: Long?) {
         if (accountId != null && runBlocking { tradingAccountService.findById(accountId) } == null) {
-            throw org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.NOT_FOUND,
+            throw ResponseStatusException(
+                HttpStatus.NOT_FOUND,
                 "account not found: $accountId",
             )
         }
@@ -428,6 +431,57 @@ class ApiController(
                         "createdAt" to r.createdAt.toString(),
                     )
                 },
+        )
+    }
+
+    /**
+     * Панельный бэктест (roadmap v2.3): прогон стратегии по нескольким тикерам
+     * за один вызов с распределением результатов. Каждый тикер прогоняется
+     * параллельно через [com.trading.bot.backtest.BacktestEngine.run] — результаты
+     * персистятся в `backtest_results` (13.7.3). Требует роль ADMIN.
+     */
+    @PostMapping("/backtest/panel")
+    suspend fun panelBacktest(
+        @RequestBody request: PanelBacktestRequest,
+    ): Map<String, Any> {
+        meterRegistry.counter("api.backtest.panel").increment()
+        if (request.tickers.isEmpty()) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "tickers must not be empty")
+        }
+        val response = panelBacktestService.run(request)
+        return mapOf(
+            "tickers" to response.tickers,
+            "days" to response.days,
+            "timeframe" to response.timeframe,
+            "initialCapital" to response.initialCapital,
+            "slPercent" to response.slPercent,
+            "tpPercent" to response.tpPercent,
+            "minBarsForSignal" to response.minBarsForSignal,
+            "results" to
+                response.results.map { r ->
+                    mapOf(
+                        "ticker" to r.ticker,
+                        "totalReturn" to r.totalReturn,
+                        "sharpeRatio" to r.sharpeRatio,
+                        "sortinoRatio" to r.sortinoRatio,
+                        "maxDrawdown" to r.maxDrawdown,
+                        "winRate" to r.winRate,
+                        "profitFactor" to r.profitFactor,
+                        "totalTrades" to r.totalTrades,
+                        "passable" to r.passable,
+                    )
+                },
+            "summary" to
+                mapOf(
+                    "tickerCount" to response.summary.tickerCount,
+                    "passCount" to response.summary.passCount,
+                    "passShare" to response.summary.passShare,
+                    "avgTotalReturn" to response.summary.avgTotalReturn,
+                    "medianTotalReturn" to response.summary.medianTotalReturn,
+                    "minTotalReturn" to response.summary.minTotalReturn,
+                    "maxTotalReturn" to response.summary.maxTotalReturn,
+                    "totalTrades" to response.summary.totalTrades,
+                ),
         )
     }
 

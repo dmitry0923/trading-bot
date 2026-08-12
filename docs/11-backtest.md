@@ -102,29 +102,36 @@ for (i in 1 until sorted.size) {
     val current = sorted[i]
 
     // 1) SL/TP по внутрисвечному диапазону текущей свечи
-    if (position != null && sl/tp заданы) {
-        when (hitStopOrTarget(current, sl, tp)) {
-            STOP   -> closePosition("STOP_LOSS",   sl)      // по стопу
-            TARGET -> closePosition("TAKE_PROFIT", tp)      // по тейку
+    val pos0 = position
+    if (pos0 != null && pos0.stopLoss != null && pos0.takeProfit != null) {
+        when (SimulatedExecution.hitStopOrTarget(current, pos0.stopLoss, pos0.takeProfit)) {
+            STOP   -> closePosition("STOP_LOSS",   pos0.stopLoss)   // по стопу
+            TARGET -> closePosition("TAKE_PROFIT", pos0.takeProfit) // по тейку
         }
     }
 
     // 2) сигнал по бару i-1
-    val signal = signalAt(sorted, i - 1, minBars)
-    if (signal == HOLD || signal == CLOSE) { фиксируем equity; continue }
+    val signal = signalAt(sorted, i - 1, minBarsForSignal)
+    if (signal == HOLD || signal == CLOSE) {
+        equityCurve.add(equityAt(cash, position, current.closePrice)) // фиксируем equity
+        continue
+    }
 
     // 3) если позиция открыта и сигнал инверсный — REVERSAL
-    if (позиция открыта) {
-        if (направление противоположно сигналу) {
+    val curPos = position
+    if (curPos != null) {
+        val opposite = if (signal == BUY) SHORT else LONG
+        if (curPos.direction == opposite) {
             closePosition("REVERSAL", current.openPrice)
             position = openPosition(signal, current.openPrice)
         }
+        equityCurve.add(equityAt(cash, position, current.closePrice))
         continue
     }
 
     // 4) открытие новой позиции по цене открытия текущей свечи
     position = openPosition(signal, current.openPrice)
-    cash -= entry*qty + commission
+    cash -= position.entryPrice * position.quantity + commission
     equityCurve.add(equityAt(cash, position, current.closePrice))
 }
 // 5) закрытие оставшейся позиции по последней цене (END_OF_PERIOD)
@@ -162,9 +169,13 @@ val qty = (capitalSlice / price).toInt()          // вниз
 val lotQty = SimulatedExecution.lotRounded(qty)   // кратно лоту
 if (lotQty <= 0) return null
 val fill = marketFill(price, isBuy)               // +0.1% проскальзывание
-SL = fill * (1 - 2%)  /  fill * (1 + 2%)          // по направлению
-TP = fill * (1 + 4%)  /  fill * (1 - 4%)
+val sl = if (isBuy) fill * (1 - 0.02) else fill * (1 + 0.02) // SL: вниз для LONG, вверх для SHORT
+val tp = if (isBuy) fill * (1 + 0.04) else fill * (1 - 0.04) // TP: вверх для LONG, вниз для SHORT
 ```
+
+> **В реальном коде** значения `0.02`/`0.04` берутся из конфига `bt.sl-percent`/`bt.tp-percent`
+> (в долях от цены входа), слайс капитала — из `bt.capital-slice` (см. 11.8.1);
+> в `BacktestEngine.openPosition` используется `BigDecimal.ONE ± slPercent`.
 
 Константы текущей версии — вынесены в конфиг `bt.*` (см. 11.8.1, реализовано v2.3):
 
@@ -321,9 +332,31 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 
 Предостережение: при малом числе свечей (тикер недавно добавлен, данных `< 32`) движок возвращает `emptyResult()` — все метрики `0.0`, `totalTrades = 0`, PASS/REJECT = `REJECT`.
 
+### POST /api/v1/backtest/panel
+
+Панельный бэктест (roadmap v2.3): прогон стратегии по нескольким тикерам за один вызов
+(`PanelBacktestService`, параллельный `async`/`awaitAll`). Тикеры можно подгрузить с MOEX
+(`loadHistory = true`, `historicalDataLoader.loadAndSaveAll`) или прогонять по уже сохранённой
+истории. Каждый тикер инкрементирует `bt_pass_total`, результаты персистятся в `backtest_results`.
+
+- **Request** (JSON): `tickers` (обязателен, 400 при пустом), `days`, `timeframe`, `loadHistory`,
+  `initialCapital`, `slPercent`, `tpPercent`, `minBarsForSignal`. Последние шесть опциональны —
+  дефолты из конфига `bt.*` (11.8.1).
+- **Response 200**: `results[]` — `PanelTickerSummary` (без `equityCurve`) + `summary` —
+  распределение: `tickerCount`, `passCount`, `passShare`, `avgTotalReturn`, `medianTotalReturn`,
+  `minTotalReturn`, `maxTotalReturn`, `totalTrades`.
+- **Метрика**: `api.backtest.panel` counter.
+- **UI**: `BacktestPage.tsx` — таблица распределения по тикерам со статусом PASS/REJECT.
+
+```bash
+curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
+  -H "Content-Type: application/json" \
+  -d '{"tickers":["SBER","GAZP"],"days":365}'
+```
+
 ## 11.7. Тесты
 
-Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 9 тестов (нет Spring-контекста, чистые unit-тесты):
+Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 12 тестов (нет Spring-контекста, чистые unit-тесты):
 
 | Тест | Что проверяет |
 |---|---|
@@ -336,6 +369,11 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 | `metrics map is compact and excludes heavy series` | `metrics()` — 13 полей, без `equityCurve`/`monthlyReturns`/`tradeReturns` |
 | `commission and slippage constants` | комиссия 0.05%, проскальзывание 0.1% |
 | `lot rounding is down to whole lots of instrument` | округление до целых лотов (SBER=10, VTBR=1000) |
+| `backtest config exposes default values` | `BacktestConfig()` дефолты совпадают с `bt.*` (100000/365/MINUTE_10/30/2.0/4.0/0.20) |
+| `initial capital from config scales equity proportionally` | `bt.initial-capital` 200000 масштабирует эквити ~2x |
+| `capital slice from config changes position size` | `bt.capital-slice` 0.40 масштабирует P&L vs 0.20 |
+
+`PanelBacktestSummarizerTest` — 3 теста агрегации распределения (пустой список, доля PASS + средняя доходность, медиана при чётном количестве).
 
 Запуск:
 
@@ -371,7 +409,7 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 2. **Нет `avgHoldBars` и `monthlyReturns`** — заглушки, расчёт по месяцам отложен.
 3. **Out-of-sample — детерминированно** — OOS покрыт walk-forward `BacktestValidator` (`/api/v1/backtest/{ticker}/validate`, раздел 13.7.7); LLM/ML-подход — roadmap.
 4. **Нет отдельного Spring-профиля `backtest`** — запуск через REST. Профиль (автозапуск по `--bt.tickers`, отчёт в консоль) — roadmap. Персист результатов в `backtest_results` реализован (разделы 13.7.3, 7.2).
-5. **Нет распределения по тикерам** — один вызов = один тикер; панельный прогон не реализован.
+5. ~~**Нет распределения по тикерам**~~ — реализовано: панельный прогон `/api/v1/backtest/panel` (11.6.1). Один вызов = несколько тикеров с итоговой сводкой. Фронт: `BacktestPage.tsx`.
 6. ~~**Константы захардкожены** — 20% слайс капитала, 2%/4% SL/TP, `initialCapital = 100000`~~. Вынесено в конфиг `bt.*` (11.8.1).
 7. **Внутрисвечное исполнение SL/TP** — по уровню без уточнения «цена открытия следующей свечи» для limit-ордеров: вход всегда по открытию `t+1` через `marketFill`, лимитные входы не используются в цикле (функция `limitFill` готова, но в `simulate` не задействована).
 

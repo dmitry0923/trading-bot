@@ -110,7 +110,7 @@ class BacktestResultPersistenceIntegrationTest : AbstractTestContainerTest() {
 
         val params = objectMapper.readTree(record.params)
         assertEquals(365, params.get("days").asInt())
-        assertEquals("MINUTE_10", params.get("timeframe").asText())
+        assertEquals("MINUTE_10", params.get("timeframe").asString())
 
         val metrics = objectMapper.readTree(record.metrics)
         assertEquals(result.totalTrades, metrics.get("totalTrades").asInt())
@@ -147,7 +147,7 @@ class BacktestResultPersistenceIntegrationTest : AbstractTestContainerTest() {
         assertEquals(200, response.statusCode())
 
         val body = objectMapper.readTree(response.body())
-        assertEquals("HTTPBT", body.get("ticker").asText())
+        assertEquals("HTTPBT", body.get("ticker").asString())
         val results = body.get("results")
         assertTrue(results.size() >= 1)
         val first = results.get(0)
@@ -175,6 +175,55 @@ class BacktestResultPersistenceIntegrationTest : AbstractTestContainerTest() {
         assertTrue(first.get("oos").has("oosTrades"))
     }
 
+    @Test
+    fun `panel endpoint backtests multiple tickers and computes distribution`() {
+        val candles = loadFixtureCandles()
+        runBlocking { candleRepository.saveAll(candles) }
+
+        val response =
+            postJson(
+                "/api/v1/backtest/panel",
+                """{"tickers":["SBER","NODATABT"],"days":365}""",
+                adminToken(),
+            )
+        assertEquals(200, response.statusCode())
+
+        val body = objectMapper.readTree(response.body())
+        assertEquals("MINUTE_10", body.get("timeframe").asString())
+        assertEquals(365, body.get("days").asInt())
+        val results = body.get("results")
+        assertEquals(2, results.size())
+
+        // SBER — реальная фикстура, сохранена ранее.
+        val sber = results.find { it.get("ticker").asString() == "SBER" }
+        assertNotNull(sber)
+        assertTrue(sber!!.get("totalTrades").asInt() > 0)
+
+        // NODATABT — нет данных: пустой результат.
+        val noData = results.find { it.get("ticker").asString() == "NODATABT" }
+        assertNotNull(noData)
+        assertEquals(0, noData!!.get("totalTrades").asInt())
+
+        val summary = body.get("summary")
+        assertEquals(2, summary.get("tickerCount").asInt())
+        assertTrue(summary.get("totalTrades").asInt() >= 1)
+        assertTrue(summary.has("passShare"))
+        assertTrue(summary.has("medianTotalReturn"))
+        assertTrue(summary.has("minTotalReturn"))
+        assertTrue(summary.has("maxTotalReturn"))
+    }
+
+    @Test
+    fun `panel endpoint rejects empty tickers`() {
+        val response =
+            postJson(
+                "/api/v1/backtest/panel",
+                """{"tickers":[]}""",
+                adminToken(),
+            )
+        assertEquals(400, response.statusCode())
+    }
+
     private fun loadFixtureCandles(): List<Candle> {
         val stream = checkNotNull(javaClass.classLoader.getResourceAsStream("fixtures/moex_sber_minute10.csv"))
         val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -200,16 +249,13 @@ class BacktestResultPersistenceIntegrationTest : AbstractTestContainerTest() {
             }
     }
 
-    private fun adminToken(): String = login("test-admin", "test-admin-pass").get("accessToken").asString()
+    private fun adminToken(): String = login().get("accessToken").asString()
 
-    private fun login(
-        username: String,
-        password: String,
-    ): JsonNode {
+    private fun login(): JsonNode {
         val response =
             postJson(
                 "/api/v1/auth/login",
-                """{"username":"$username","password":"$password"}""",
+                """{"username":"test-admin","password":"test-admin-pass"}""",
             )
         assertEquals(200, response.statusCode())
         return objectMapper.readTree(response.body())

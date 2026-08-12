@@ -393,6 +393,7 @@ sum(increase(event_published[1h])) by (type)
 | Метрика | Тип | Описание |
 |---|---|---|
 | `api.backtest` | Counter | tag `ticker` — вызовы бэктеста |
+| `api.backtest.panel` | Counter | панельный бэктест (несколько тикеров) |
 | `api.backtest.results` | Counter | tag `ticker` — чтение истории прогонов |
 | `api.backtest.validate` | Counter | tag `ticker` — walk-forward валидации |
 | `bt.total_trades` | Gauge | tag `ticker` — сделки последнего прогона |

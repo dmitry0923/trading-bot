@@ -69,6 +69,7 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | GET | `/api/v1/analytics/time-pattern/{ticker}` | win rate по часам | ✅ |
 | GET | `/api/v1/analytics/health` | health аналитики | ✅ |
 | GET | `/api/v1/backtest/{ticker}` | бэктест тикера за N дней | ✅ |
+| POST | `/api/v1/backtest/panel` | панельный бэктест нескольких тикеров (ADMIN) | ✅ |
 | GET | `/api/v1/backtest/results` | история прогонов бэктеста (сравнение итераций) | ✅ |
 | GET | `/api/v1/backtest/{ticker}/validate` | walk-forward валидация (OOS) | ✅ |
 | GET | `/api/v1/risk/exposure` | live-снимок портфельного риска (Correlation Engine) | ✅ |
@@ -542,6 +543,64 @@ Live-снимок аккаунта: AUM, дневной P&L и лимиты, о�
 ```
 
 При недостатке свечей (< 32) возвращаются нулевые метрики, `totalTrades = 0`.
+
+### POST /api/v1/backtest/panel
+
+Панельный бэктест (roadmap v2.3): прогон стратегии по нескольким тикерам за один вызов с распределением результатов. Тикеры прогоняются параллельно через `BacktestEngine.run` — каждый результат персистится в `backtest_results` и инкрементирует `bt_pass_total`. Метрика `api.backtest.panel`. Требует роль ADMIN.
+
+**Request** (JSON):
+```json
+{
+  "tickers": ["SBER", "GAZP", "LKOH"],
+  "days": 365,
+  "timeframe": "MINUTE_10",
+  "loadHistory": true,
+  "initialCapital": 100000,
+  "slPercent": 0.02,
+  "tpPercent": 0.04,
+  "minBarsForSignal": 30
+}
+```
+
+Поля `days`/`timeframe`/`initialCapital`/`slPercent`/`tpPercent`/`minBarsForSignal` опциональны — при отсутствии используются значения конфига `bt.*` (раздел 11.8.1). `slPercent`/`tpPercent` — доли от цены входа (0.02 = 2%). `tickers` — обязателен (400 при пустом списке).
+
+**Response 200**:
+```json
+{
+  "tickers": ["SBER", "GAZP", "LKOH"],
+  "days": 365,
+  "timeframe": "MINUTE_10",
+  "initialCapital": 100000,
+  "slPercent": 0.02,
+  "tpPercent": 0.04,
+  "minBarsForSignal": 30,
+  "results": [
+    {
+      "ticker": "SBER",
+      "totalReturn": 0.1234,
+      "sharpeRatio": 1.41,
+      "sortinoRatio": 1.6,
+      "maxDrawdown": 0.081,
+      "winRate": 0.5421,
+      "profitFactor": 1.87,
+      "totalTrades": 152,
+      "passable": true
+    }
+  ],
+  "summary": {
+    "tickerCount": 3,
+    "passCount": 2,
+    "passShare": 0.6667,
+    "avgTotalReturn": 0.08,
+    "medianTotalReturn": 0.07,
+    "minTotalReturn": -0.03,
+    "maxTotalReturn": 0.20,
+    "totalTrades": 320
+  }
+}
+```
+
+`summary` — распределение результатов по тикерам (доля прошедших критерии, средняя/медианная доходность, разброс). Ответ не включает `equityCurve` — для сравнения итераций используйте `/api/v1/backtest/results`.
 
 ### GET /api/v1/backtest/results?ticker=&limit=20
 

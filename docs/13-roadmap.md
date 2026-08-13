@@ -88,9 +88,47 @@ gantt
 
 1. **Набор regression-тестов** по каждому модулю (Guardrails, SemanticCache, Agent parsers, outbox, BacktestEngine).
 2. **Backtest всех тикеров** по критериям раздела 11.5 перед каждой новой стратегией.
-3. **Chaos testing**: отключение Redis/Postgres/Kimi/сети — проверка graceful degradation.
+3. ✅ **Chaos testing**: отключение Redis/Postgres/Kimi/сети — проверка graceful degradation (раздел 13.3.1).
 4. **Нагрузочное тестирование**: до 100 тикеров × 6 агентов × 2 LLM-вызова — бюджет латентности и стоимости.
 5. **Мониторинг вырожденных случаев**: SPREAD > 1%, депозитарные паузы, гэпы.
+
+### 13.3.1. Chaos testing (реализовано)
+
+**Идея:** доказать (тестами, а не декларативно), что при недоступности любой внешней
+зависимости бот не падает: критический путь работает от in-memory слоя, hot path —
+от Redis, отказы LLM-провайдера превращаются в детерминированный fallback NEUTRAL.
+
+**Авария моделируется по-разному в зависимости от семантики зависимости:**
+
+| Зависимость | Авария | Восстановление |
+|---|---|---|
+| PostgreSQL | `docker pause` — процессы заморожены, порт занят, данные сохранены | `docker unpause` — данные/схема на месте, пулы (R2DBC/Hikari) переподключаются |
+| Redis | `stop()`/`start()` — контейнер пересоздаётся (данные теряются, это нормально для кэша) | `awaitUntil` + повторная запись probe-значения |
+| LLM (Kimi) | пустой API-ключ → мгновенный `NO_API_KEY`; недоступный endpoint (`127.0.0.1:1`) → `CALL_ERROR` | fallback-ответ детерминирован и фиксируется метрикой |
+| сеть | моделируется недоступным LLM-endpoint (MOEX захардкожен в клиенте, Alor требует LIVE+токен — см. ограничения ниже) | — |
+
+> Почему не `stop()`/`start()` для PostgreSQL: в Testcontainers 2.0.5 повторный старт
+> того же контейнера ненадёжен — уже отработавший `LogMessageWaitStrategy` не видит
+> логи нового контейнера и `doStart()` убивает его по таймауту. `docker pause`
+> даёт ту же недоступность без пересоздания контейнера.
+
+**Сценарии (`src/test/kotlin/com/trading/bot/integration/`):**
+
+| Тест | Что проверяет |
+|---|---|
+| `ChaosPostgresIntegrationTest` | Postgres недоступен → `SettingsService.getSettings()` продолжает работать из памяти (значения не меняются), Redis-кэш свечей жив; после `unpause` R2DBC восстанавливается, round-trip `saveSettings`/`loadSettings` проходит |
+| `ChaosRedisIntegrationTest` | Redis недоступен → свечной кэш (`candle.cache.error`) и кэш стратегий/фидбэков fail-open (старый кэш не теряется), semantic cache fail-open (`llm.cache.error`), emergency stop работает из памяти (`bot.emergency_stop{source=MANUAL}`), distributed lock fail-open для планировщиков / fail-closed для входа (`distributed.lock.error`/`distributed.lock.skipped`); после restart кэши восстанавливаются |
+| `ChaosLlmIntegrationTest` | Пустой `llm.api-key` → `isFallback=true`, причина `NO_API_KEY`, без сетевого вызова; недоступный endpoint (settings-оверрайд `llmApiKey`/`llmBaseUrl`) → `CALL_ERROR`; обе метрики `llm.fallback.activated{agent,reason}`; настройки восстанавливаются в `finally` |
+| `ChaosTestSupport` (хелперы) | `chaosPostgres`/`chaosRedis` с фиксированными host-портами (адрес не меняется при аварии), `pauseContainer`/`unpauseContainer`, `awaitUntil` |
+
+**Проверяемые метрики:** `llm.cache.error{agent}` (semantic cache fail-open),
+`llm.fallback.activated{agent,reason}` (NO_API_KEY/CALL_ERROR), `bot.emergency_stop{source}`,
+`distributed.lock.error{name}`/`distributed.lock.skipped{name}`. Кэши свечей/стратегий/фидбэков
+fail-open проверяются по поведению (пустой список / null), без метрик — см. `CandleCacheService`/`RedisCacheService`.
+
+**Ограничения:** сетевой chaos для MOEX невозможен без изменения кода — `baseUrl`
+захардкожен (`https://iss.moex.com/iss`), Alor требует LIVE-режим и токен; планировщики
+в тестах отключены (`app.scheduling.enabled=false`).
 
 ## 13.4. Контрольные точки (milestones)
 

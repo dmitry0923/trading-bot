@@ -94,6 +94,12 @@ ml:                                # ML-модуль (roadmap v2.4, раздел
     trend-gate-enabled: ${ML_FILTER_TREND_GATE_ENABLED:false}  # тренд-гейт входа (13.11.7)
     trend-min-score: ${ML_FILTER_TREND_MIN_SCORE:0.5}          # мин. оценка удержания тренда (13.11.7)
 
+mtf:                                # multi-timeframe фильтр тренда (roadmap v2.5, раздел 13.12.1)
+  filter:
+    enabled: ${MTF_FILTER_ENABLED:false}                       # входы гейтятся трендом старшего ТФ
+    higher-timeframe: ${MTF_FILTER_HIGHER_TIMEFRAME:HOUR_1}    # старший ТФ тренда: HOUR_1/DAY_1
+    bars: ${MTF_FILTER_BARS:40}                                # lookback в барах старшего ТФ (min 30)
+
 llm:
   api-key: ${KIMI_API_KEY:}        # если пуст — все LLM-вызовы мгновенно fallback (NO_API_KEY)
   base-url: ${KIMI_BASE_URL:https://api.moonshot.cn/v1}
@@ -258,6 +264,9 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `LLM_SEMANTIC_CACHE` | `true` | | семантический кэш вкл/выкл | `true` |
 | `LLM_SEMANTIC_CACHE_TTL` | `10` | | TTL кэша, мин | `10` |
 | `LLM_DELTA_PROMPTS_ENABLED` | `false` | | дельта-промпты: стратег/контрариан получают изменения отчётов вместо полного reasoning (раздел 13.8.5) | `true` |
+| `MTF_FILTER_ENABLED` | `false` | | multi-timeframe фильтр: входы гейтятся трендом старшего ТФ (раздел 13.12.1) | `true` |
+| `MTF_FILTER_HIGHER_TIMEFRAME` | `HOUR_1` | | старший ТФ тренда: `HOUR_1`/`DAY_1` | `DAY_1` |
+| `MTF_FILTER_BARS` | `40` | | lookback фильтра в барах старшего ТФ (min 30) | `60` |
 | `TRADING_MODE` | `SIMULATION` | **да** | SIMULATION / LIVE | `SIMULATION` |
 | `BOT_INTERVAL_MS` | `300000` | | интервал бот-цикла | `300000` |
 | `STRATEGY_INTERVAL_MS` | `600000` | | интервал стратегий | `600000` |

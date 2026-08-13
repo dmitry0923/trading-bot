@@ -22,6 +22,11 @@ import java.math.BigDecimal
  *   При `true` бэктест прогоняет модель на входе каждого бара (требуется
  *   доступная модель, иначе — fail-closed: входы блокируются). Не влияет на
  *   live-гейт (`ml.filter.enabled`).
+ * @property mtfFilterEnabled применять multi-timeframe фильтр тренда старшего ТФ
+ *   (раздел 13.9.1) в бэктесте. При `true` вход гейтится трендом ресемплированных
+ *   в `mtf.filter.higher-timeframe` свечей (point-in-time на момент бара;
+ *   недостаток баров старшего ТФ — fail-closed: вход блокируется). Не влияет на
+ *   live-гейт (`mtf.filter.enabled`).
  * @property monteCarloSimulations число bootstrap-симуляций для Monte Carlo
  *   (раздел 13.7.8), по умолчанию 1000.
  * @property monteCarloSeed seed генератора для детерминированных прогонов
@@ -38,6 +43,7 @@ class BacktestConfig {
     var tpPercent: Double = 4.0
     var capitalSlice: Double = 0.20
     var mlFilterEnabled: Boolean = false
+    var mtfFilterEnabled: Boolean = false
     var monteCarloSimulations: Int = 1000
     var monteCarloSeed: Long = 42
 }

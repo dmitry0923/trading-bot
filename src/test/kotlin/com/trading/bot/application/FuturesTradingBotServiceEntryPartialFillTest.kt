@@ -32,6 +32,7 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
@@ -87,6 +88,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
+    private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
 
     private val futuresEntryProfile =
         FuturesEntryProfile(
@@ -113,6 +115,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             distributedLockConfig,
             tradingAccountService,
             mlEntryFilter,
+            higherTfTrendFilter,
         )
 
     private val service =

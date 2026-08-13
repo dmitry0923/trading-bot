@@ -415,6 +415,9 @@ curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations
 | `ml filter blocks all entries when enabled and model rejects` | `bt.ml-filter-enabled` + вероятность < порога → 0 сделок, `bt_ml_blocked_total` растёт |
 | `ml filter pass-through keeps trades when model allows` | вероятность ≥ порога → сделки не блокируются |
 | `ml filter is not consulted when bt flag disabled` | при `bt.ml-filter-enabled=false` фильтр не вызывается |
+| `mtf filter blocks opposing entries when enabled` | `bt.mtf-filter-enabled` + тренд/нехватка баров старшего ТФ → 0 сделок, `bt_mtf_blocked_total` растёт |
+| `mtf filter pass-through keeps trades when filter allows` | фильтр пропускает входы → сделки есть |
+| `mtf filter is not consulted when bt flag disabled` | при `bt.mtf-filter-enabled=false` фильтр не вызывается |
 | `execution costs are parameterizable for stress runs` | параметризация ставок комиссии/проскальзывания (стресс, 13.7.8) |
 | `stress multipliers degrade backtest equity` | ×5 комиссии/проскальзывания снижают эквити, число сделок не меняется |
 
@@ -445,6 +448,7 @@ curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations
 | `bt.tp-percent` | `BT_TP_PERCENT` | `4.0` | тейк-профит, % от цены входа |
 | `bt.capital-slice` | `BT_CAPITAL_SLICE` | `0.20` | доля капитала на одну позицию |
 | `bt.ml-filter-enabled` | `BT_ML_FILTER_ENABLED` | `false` | ML-фильтр входа в бэктесте (раздел 13.11.6); не влияет на live-гейт |
+| `bt.mtf-filter-enabled` | `BT_MTF_FILTER_ENABLED` | `false` | multi-timeframe фильтр тренда в бэктесте (раздел 13.12.1); не влияет на live-гейт |
 | `bt.monte-carlo-simulations` | `BT_MONTE_CARLO_SIMULATIONS` | `1000` | число bootstrap-симуляций Monte Carlo (раздел 13.7.8) |
 | `bt.monte-carlo-seed` | `BT_MONTE_CARLO_SEED` | `42` | seed генератора Monte Carlo (воспроизводимость) |
 
@@ -484,6 +488,19 @@ live/бэктест. Признаки строятся на момент бар�
 сделок). Если включён тренд-гейт входа (`ml.filter.trend-gate-enabled=true`,
 раздел 13.11.7), он применяется и к бэктесту: вход дополнительно требует
 `trendScore >= ml.filter.trend-min-score`.
+
+### Multi-timeframe фильтр в бэктесте (реализовано, раздел 13.12.1)
+
+При `bt.mtf-filter-enabled=true` (`BT_MTF_FILTER_ENABLED`) `BacktestEngine` гейтит
+входы тем же `HigherTfTrendFilter`, что и live (`DecisionEngine`), для
+консистентности live/бэктест. Старший ТФ (по умолчанию `HOUR_1`) строится
+ресемплингом (`CandleResampler`) 10-минутных свечей, завершённых к моменту бара
+(`subList(0, i)` + `completedBefore = bar.time`) — без lookahead. Флаг
+`mtf.filter.enabled` при этом игнорируется (изолированный прогон); тренд
+вычисляется по данным фикстуры, при нехватке баров старшего ТФ входы
+блокируются (fail-closed). Блокировки считаются в метрику
+`bt_mtf_blocked_total{ticker}`; инверсия с заблокированным встречным входом
+закрывает позицию как `MTF_FILTER_REVERSAL` (аналог ML-фильтра).
 
 ### Поток агентного сигнала (11.8.2)
 

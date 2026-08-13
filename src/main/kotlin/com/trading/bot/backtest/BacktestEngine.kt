@@ -8,6 +8,7 @@ import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -30,6 +31,10 @@ import java.util.UUID
  * - При `bt.ml-filter-enabled=true` гейтит входы ML-фильтром ([MlEntryFilter],
  *   roadmap 13.11.6): признаки на момент бара, confidence=null; блокировки
  *   считаются в метрику `bt_ml_blocked_total{ticker}` (live-гейт не затрагивается)
+ * - При `bt.mtf-filter-enabled=true` гейтит входы multi-timeframe фильтром
+ *   ([HigherTfTrendFilter], roadmap v2.5): тренд ресемплированных в старший ТФ
+ *   свечей на момент бара, point-in-time без lookahead; блокировки считаются
+ *   в метрику `bt_mtf_blocked_total{ticker}` (live-гейт не затрагивается)
  * - Считает метрики: Sharpe, MaxDD, PF, win rate
  * - Сохраняет результат в `backtest_results` (roadmap v2.2, 13.7.3) и инкрементирует
  *   `bt_pass_total{result=PASS|REJECT}` для сравнения итераций стратегии.
@@ -52,6 +57,7 @@ class BacktestEngine(
     private val meterRegistry: MeterRegistry? = null,
     private val signalGenerator: BacktestSignalGenerator = DeterministicBacktestSignalGenerator(),
     private val mlEntryFilter: MlEntryFilter? = null,
+    private val higherTfTrendFilter: HigherTfTrendFilter? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -175,6 +181,7 @@ class BacktestEngine(
         val tradeReturns = ArrayList<Double>()
         val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
         var mlBlockedCount = 0
+        var mtfBlockedCount = 0
 
         var position: PositionSim? = null
         val sorted = candles.sortedBy { it.time }
@@ -260,6 +267,43 @@ class BacktestEngine(
                 }
             }
 
+            if (entering && backtestConfig.mtfFilterEnabled && higherTfTrendFilter != null) {
+                // Multi-timeframe фильтр тренда (раздел 13.9.1): старший ТФ строится
+                // по завершённым к моменту бара свечам (без lookahead), вход против
+                // тренда старшего ТФ блокируется.
+                val blockReason =
+                    higherTfTrendFilter.shouldBlock(
+                        ticker,
+                        signal,
+                        sorted.subList(0, i),
+                        current.time,
+                        requireEnabled = false,
+                    )
+                if (blockReason != null) {
+                    mtfBlockedCount++
+                    logger.debug { "Backtest $ticker: higher-TF filter blocked entry at ${current.time}: $blockReason" }
+                    meterRegistry?.counter("bt_mtf_blocked_total", "ticker", ticker)?.increment()
+                    if (curPos != null) {
+                        // Сигнал инверсии, но встречный вход отклонён фильтром → закрыть текущую позицию
+                        cash =
+                            closePosition(
+                                ticker,
+                                curPos,
+                                "MTF_FILTER_REVERSAL",
+                                current.openPrice,
+                                cash,
+                                equityCurve,
+                                tradeReturns,
+                                commissionMultiplier,
+                                slippageMultiplier,
+                            )
+                        position = null
+                    }
+                    equityCurve.add(equityAt(cash, position, current.closePrice))
+                    continue
+                }
+            }
+
             if (curPos != null) {
                 // Инверсия сигнала: закрыть текущую позицию и открыть встречную
                 val opposite = if (signal == StrategyAction.BUY) PositionDirection.SHORT else PositionDirection.LONG
@@ -285,7 +329,6 @@ class BacktestEngine(
                             i,
                             slPercent,
                             tpPercent,
-                            commissionMultiplier,
                             slippageMultiplier,
                         )
                     if (position != null) {
@@ -306,7 +349,6 @@ class BacktestEngine(
                     i,
                     slPercent,
                     tpPercent,
-                    commissionMultiplier,
                     slippageMultiplier,
                 )
             if (position != null) {
@@ -339,7 +381,7 @@ class BacktestEngine(
                 "MDD=${String.format("%.2f%%", result.maxDrawdown * 100)}, PF=${String.format("%.2f", result.profitFactor)}, " +
                 "win=${String.format("%.2f%%", result.winRate * 100)}, expectancy=${String.format("%.2f", result.expectancy)}, " +
                 "W/L=${String.format("%.2f", result.winLossRatio)}, trades=${result.totalTrades}, " +
-                "mlBlocked=$mlBlockedCount " +
+                "mlBlocked=$mlBlockedCount, mtfBlocked=$mtfBlockedCount " +
                 "-> ${if (result.isPassable()) "PASS" else "REJECT"}"
         }
         return result
@@ -394,7 +436,6 @@ class BacktestEngine(
         bar: Int,
         slPercent: Double,
         tpPercent: Double,
-        commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null

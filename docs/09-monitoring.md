@@ -159,6 +159,7 @@ histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
 | `ml.trend.candidates` | Gauge | — | кандидатов в последнем прогнозе тренда |
 | `ml.trend.skipped` | Gauge | — | тикеры без данных свечей (пропущены) |
 | `ml.entry.filter` | Counter | `ticker`, `result` | решения ML-фильтра входа (PASS/REJECT/FAIL_CLOSED, раздел 13.11.5; тренд-гейт — раздел 13.11.7) |
+| `mtf.entry.filter` | Counter | `ticker`, `result` | решения multi-timeframe фильтра тренда (PASS/REJECT/FAIL_CLOSED, раздел 13.12.1) |
 
 
 #### Outbox
@@ -430,6 +431,7 @@ sum(increase(event_published[1h])) by (type)
 | `backtest.agent.evaluations` | Counter | tag `agent` — LLM-вызовы агентного генератора сигналов (11.8.1) |
 | `backtest.agent.signal` | Counter | tag `signal` (BUY/SELL/HOLD) — сигналы агентного режима |
 | `bt_ml_blocked_total` | Counter | tag `ticker` — входы, отклонённые ML-фильтром за прогон (раздел 13.11.6) |
+| `bt_mtf_blocked_total` | Counter | tag `ticker` — входы, отклонённые multi-timeframe фильтром за прогон (раздел 13.12.1) |
 
 PromQL:
 

@@ -13,6 +13,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -65,6 +66,7 @@ class DecisionEngine(
     private val distributedLockConfig: DistributedLockConfig,
     private val tradingAccountService: TradingAccountService,
     private val mlEntryFilter: MlEntryFilter,
+    private val higherTfTrendFilter: HigherTfTrendFilter,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -149,6 +151,17 @@ class DecisionEngine(
             logger.warn { "ML filter rejected $ticker: $reason" }
             meterRegistry
                 .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "ML_FILTER"))
+                .increment()
+            return
+        }
+
+        // Multi-timeframe фильтр тренда (13.9.1): вход против тренда старшего ТФ →
+        // отказ. Выключен — pass-through. Fail-closed при включённом фильтре и
+        // недостатке свечей для тренда.
+        higherTfTrendFilter.shouldBlock(signal)?.let { reason ->
+            logger.warn { "Higher-TF filter rejected $ticker: $reason" }
+            meterRegistry
+                .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "MTF_FILTER"))
                 .increment()
             return
         }

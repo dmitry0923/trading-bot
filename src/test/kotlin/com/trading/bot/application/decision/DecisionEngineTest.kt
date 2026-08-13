@@ -20,6 +20,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.Tags
@@ -63,6 +64,7 @@ class DecisionEngineTest {
     private val distributedLockService = DistributedLockService(distributedLockConfig, lockRedis, meterRegistry)
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
+    private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -78,10 +80,12 @@ class DecisionEngineTest {
         gatewayPrice = null
         gatewayOpened = null
         Mockito.reset(mlEntryFilter)
+        Mockito.reset(higherTfTrendFilter)
         Mockito.`when`(lockRedis.opsForValue()).thenReturn(lockValueOps)
         Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(true)
         runBlocking {
             Mockito.`when`(mlEntryFilter.shouldBlock(any())).thenReturn(null)
+            Mockito.`when`(higherTfTrendFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("100"))
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
@@ -113,6 +117,7 @@ class DecisionEngineTest {
             distributedLockConfig,
             tradingAccountService,
             mlEntryFilter,
+            higherTfTrendFilter,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -200,6 +205,36 @@ class DecisionEngineTest {
 
     @Test
     fun `ml filter pass-through when filter allows`() {
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
+        assertEquals(PositionDirection.LONG, gatewayDirection)
+    }
+
+    @Test
+    fun `higher tf filter rejection blocks entry after risk and ml approval`() {
+        val profile = FakeEntryProfile(riskVerdict = RiskVerdict.Allowed)
+        runBlocking {
+            Mockito
+                .`when`(higherTfTrendFilter.shouldBlock(any()))
+                .thenReturn("Higher-TF filter: higher-TF trend DOWN opposes BUY")
+        }
+
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("MTF_FILTER"))
+        runBlocking {
+            Mockito.verify(higherTfTrendFilter).shouldBlock(any())
+        }
+    }
+
+    @Test
+    fun `higher tf filter pass-through when filter allows`() {
         runBlocking {
             engine().openPosition(signal(), gateway())
         }

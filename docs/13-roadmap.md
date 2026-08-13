@@ -81,7 +81,7 @@ gantt
 
 ### v2.5 — Расширение горизонтов
 
-- Multi-timeframe: вход по 10-минутному, фильтр по часовому/дневному.
+- ✅ **Multi-timeframe**: вход по 10-минутному, фильтр по часовому/дневному (раздел 13.12.1).
 - Cross-exchange: мониторинг котировок на нескольких площадках, арбитраж между MOEX и международными рынками (по мере регуляторной готовности).
 
 ## 13.3. План стабилизации (непрерывно)
@@ -819,7 +819,49 @@ H-001: `размер = капитал × риск% × волатильность
 **Ограничение**: множитель применяется в stock-контуре (`AdaptiveRiskService`);
 фьючерсный сайзинг Si остаётся фиксированным (1 контракт, раздел 15).
 
-## 13.12. Детализация v2.5 (Cross-exchange)
+## 13.12. Детализация v2.5 (multi-timeframe, cross-exchange)
+
+### 13.12.1. Multi-timeframe фильтр тренда (реализовано)
+
+**Идея:** входы по младшему таймфрейму (10-мин) гейтятся трендом старшего ТФ
+(часовой/дневной) — стратегия «торгует по направлению большего периода». Старшие
+свечи нигде не хранятся (MOEX-клиент отдаёт только `MINUTE_10`), поэтому часовой/
+дневной тренд строится **ресемплингом уже загруженных 10-минутных свечей** — без
+изменения интеграций, единый механизм для live и бэктеста.
+
+**Реализация:**
+
+| Компонент | Назначение |
+|---|---|
+| `CandleResampler` (domain, чистый) | агрегация 10-мин → `HOUR_1`/`H1`/`DAY_1`/`D1`: open/high/low/close/volume, время = начало бакета; `completedBefore` — point-in-time обрезка незавершённого бакета (нет lookahead) |
+| `MtfConfig` (`mtf.filter.*`) | `enabled` (live-гейт), `higherTimeframe` (`HOUR_1` по умолчанию), `bars` (lookback в барах старшего ТФ, 40) |
+| `HigherTfTrendFilter` (service) | тренд EMA12/26 по ресемплированному ряду через `IndicatorCalculator`; fail-closed: фильтр включён, но баров старшего ТФ < 30 → вход БЛОК; BUY при тренде DOWN → БЛОК (REJECT), SELL при UP → БЛОК, SIDEWAYS/по тренду → PASS |
+| `DecisionEngine` (live) | гейт после risk- и ML-этапов (`mtf.filter.enabled`); отказ — метрика `<profile>.risk.reject{reason=MTF_FILTER}` |
+| `BacktestEngine` (бэктест) | `bt.mtf-filter-enabled`: старший ТФ строится по завершённым к моменту бара свечам (`subList(0,i)` + `completedBefore=bar.time`), инверсия при заблокированном встречном входе → `MTF_FILTER_REVERSAL`; метрика `bt_mtf_blocked_total{ticker}` |
+
+**Политика отказов** (как у ML-фильтра, 13.11.5): выключен — pass-through; включён,
+данных недостаточно — fail-closed БЛОК; тренд противоположен действию — БЛОК (REJECT);
+тренд совпадает или SIDEWAYS — PASS. HOLD не гейтится никогда.
+
+**Конфигурация:**
+
+```yaml
+mtf:
+  filter:
+    enabled: ${MTF_FILTER_ENABLED:false}
+    higher-timeframe: ${MTF_FILTER_HIGHER_TIMEFRAME:HOUR_1}
+    bars: ${MTF_FILTER_BARS:40}
+bt:
+  mtf-filter-enabled: ${BT_MTF_FILTER_ENABLED:false}
+```
+
+**Тесты:** `CandleResamplerTest` (агрегация OHLCV, H1/D1, point-in-time),
+`HigherTfTrendFilterTest` (политика блокировки, fail-closed, live-обёртка с
+репозиторием), гейты в `DecisionEngineTest` и `BacktestEngineTest`. Полный прогон:
+597 тестов (12 fail — только Testcontainers без Docker: `SemanticCacheTest` +
+11 integration, 1 skipped), ktlint чист.
+
+### 13.12.2. Cross-exchange
 
 **Целевые рынки**: MOEX (основной) + внебиржевые/другие площадки по мере готовности.
 

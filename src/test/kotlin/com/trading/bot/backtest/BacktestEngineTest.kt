@@ -2,8 +2,11 @@ package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.MlConfig
+import com.trading.bot.config.MtfConfig
 import com.trading.bot.domain.ml.MlFeatureVector
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.repository.CandleRepository
+import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.MlFeatureResolver
 import com.trading.bot.service.ml.MlModel
@@ -24,8 +27,7 @@ import java.time.LocalDateTime
 class BacktestEngineTest {
     private val engine =
         BacktestEngine(
-            com.trading.bot.repository
-                .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
         )
 
     private fun candle(
@@ -232,8 +234,7 @@ class BacktestEngineTest {
         val big =
             runBlocking {
                 BacktestEngine(
-                    com.trading.bot.repository
-                        .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                     backtestConfig =
                         BacktestConfig().apply {
                             initialCapital = BigDecimal("200000")
@@ -251,8 +252,7 @@ class BacktestEngineTest {
         val doubled =
             runBlocking {
                 BacktestEngine(
-                    com.trading.bot.repository
-                        .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                     backtestConfig =
                         BacktestConfig().apply {
                             capitalSlice = 0.40
@@ -306,8 +306,7 @@ class BacktestEngineTest {
         }
         val filteredEngine =
             BacktestEngine(
-                com.trading.bot.repository
-                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                 meterRegistry = meterRegistry,
                 backtestConfig =
                     BacktestConfig().apply {
@@ -334,8 +333,7 @@ class BacktestEngineTest {
         }
         val filteredEngine =
             BacktestEngine(
-                com.trading.bot.repository
-                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                 backtestConfig =
                     BacktestConfig().apply {
                         mlFilterEnabled = true
@@ -353,8 +351,7 @@ class BacktestEngineTest {
         val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
         val engineWithoutFlag =
             BacktestEngine(
-                com.trading.bot.repository
-                    .CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                 mlEntryFilter = mlEntryFilter,
             )
 
@@ -362,6 +359,70 @@ class BacktestEngineTest {
 
         runBlocking {
             Mockito.verify(mlEntryFilter, Mockito.never()).shouldBlock(any(), any(), anyOrNull(), any(), any())
+        }
+    }
+
+    @Test
+    fun `mtf filter blocks opposing entries when enabled`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val mtfFilter =
+            HigherTfTrendFilter(
+                MtfConfig(),
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry,
+            )
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mtfFilterEnabled = true
+                    },
+                higherTfTrendFilter = mtfFilter,
+            )
+
+        // V-образная серия: BUY-сигналы рождаются у дна (тренд старшего ТФ ещё
+        // не накоплен → fail-closed блок) и на подъёме тренд UP противоположен
+        // возможным SELL-сигналам у вершин → все входы блокируются.
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertEquals(0, result.totalTrades, "MTF-фильтр должен блокировать все входы в нисходящем тренде")
+        val blocked = meterRegistry.counter("bt_mtf_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    @Test
+    fun `mtf filter pass-through keeps trades when filter allows`() {
+        val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mtfFilterEnabled = true
+                    },
+                higherTfTrendFilter = higherTfTrendFilter,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertTrue(result.totalTrades > 0, "pass-through фильтра не должен блокировать сделки")
+    }
+
+    @Test
+    fun `mtf filter is not consulted when bt flag disabled`() {
+        val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
+        val engineWithoutFlag =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                higherTfTrendFilter = higherTfTrendFilter,
+            )
+
+        runBlocking { engineWithoutFlag.simulate("SBER", trendingCandles()) }
+
+        runBlocking {
+            Mockito.verify(higherTfTrendFilter, Mockito.never()).shouldBlock(any(), any(), any(), any(), any())
         }
     }
 

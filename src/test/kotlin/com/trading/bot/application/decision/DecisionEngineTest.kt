@@ -19,6 +19,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
@@ -33,6 +34,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
 import java.math.BigDecimal
@@ -65,6 +67,7 @@ class DecisionEngineTest {
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
     private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
+    private val degenerateCaseGuard = Mockito.mock(DegenerateCaseGuard::class.java)
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -81,11 +84,13 @@ class DecisionEngineTest {
         gatewayOpened = null
         Mockito.reset(mlEntryFilter)
         Mockito.reset(higherTfTrendFilter)
+        Mockito.reset(degenerateCaseGuard)
         Mockito.`when`(lockRedis.opsForValue()).thenReturn(lockValueOps)
         Mockito.`when`(marketDataGate.isPriceDataFresh("Si")).thenReturn(true)
         runBlocking {
             Mockito.`when`(mlEntryFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(higherTfTrendFilter.shouldBlock(any())).thenReturn(null)
+            Mockito.`when`(degenerateCaseGuard.blockReason(any(), any())).thenReturn(null)
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("100"))
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
@@ -118,6 +123,7 @@ class DecisionEngineTest {
             tradingAccountService,
             mlEntryFilter,
             higherTfTrendFilter,
+            degenerateCaseGuard,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -235,6 +241,34 @@ class DecisionEngineTest {
 
     @Test
     fun `higher tf filter pass-through when filter allows`() {
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
+        assertEquals(PositionDirection.LONG, gatewayDirection)
+    }
+
+    @Test
+    fun `degenerate case rejection blocks entry after freshness check`() {
+        val profile = FakeEntryProfile()
+        runBlocking {
+            Mockito.`when`(degenerateCaseGuard.blockReason(any(), any())).thenReturn("WIDE_SPREAD")
+        }
+
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("WIDE_SPREAD"))
+        runBlocking {
+            Mockito.verify(degenerateCaseGuard).blockReason(eq("Si"), eq("MINUTE_10"))
+        }
+    }
+
+    @Test
+    fun `degenerate case pass-through when guard allows`() {
         runBlocking {
             engine().openPosition(signal(), gateway())
         }

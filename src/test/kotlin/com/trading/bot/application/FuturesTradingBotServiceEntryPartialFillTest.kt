@@ -31,6 +31,7 @@ import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
@@ -89,6 +90,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
     private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
+    private val degenerateCaseGuard = Mockito.mock(DegenerateCaseGuard::class.java)
 
     private val futuresEntryProfile =
         FuturesEntryProfile(
@@ -116,6 +118,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             tradingAccountService,
             mlEntryFilter,
             higherTfTrendFilter,
+            degenerateCaseGuard,
         )
 
     private val service =

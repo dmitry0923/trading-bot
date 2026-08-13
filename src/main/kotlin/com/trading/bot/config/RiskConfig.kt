@@ -363,6 +363,20 @@ class RiskConfig {
     /** Глубина скользящего ATR% для распределения волатильности. */
     var regimeVolatilityHistoryBars: Int = 50
 
+    // ===== Degenerate case guardrails (roadmap 13.3.5) =====
+
+    /** Мастер-выключатель пре-входного guard'а вырожденных случаев (спред/гэп/пауза). */
+    var degenerateCaseGuardEnabled: Boolean = true
+
+    /** Максимальный спред (ask-bid)/ask в %, выше которого вход запрещён (роадмап: SPREAD > 1%). */
+    var maxSpreadPercent: Double = 1.0
+
+    /** Максимальный открывающий гэп |open - prevClose|/prevClose в %, выше которого вход запрещён. */
+    var maxGapPercent: Double = 3.0
+
+    /** Подряд идущих свечей с нулевым объёмом, при котором фиксируется депозитарная пауза. */
+    var consecutiveZeroVolumeBars: Int = 3
+
     /** Конфигурация классификатора [RegimeDetectionConfig] из настроек risk.regime.*. */
     fun toRegimeDetectionConfig(): RegimeDetectionConfig =
         RegimeDetectionConfig(

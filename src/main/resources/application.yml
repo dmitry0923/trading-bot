@@ -461,6 +461,11 @@ risk:
     "15.0": 0.0
   default-stop-loss-points: 50
   default-take-profit-points: 100
+  # Вырожденные случаи (roadmap 13.3.5): широкий спред, гэп, депозитарная пауза
+  degenerate-case-guard-enabled: true
+  max-spread-percent: 1.0
+  max-gap-percent: 3.0
+  consecutive-zero-volume-bars: 3
   min-liquidation-distance-percent: 25.0
   max-margin-usage-percent: 30.0
   max-contracts-per-position: 1

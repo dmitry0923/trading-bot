@@ -90,7 +90,7 @@ gantt
 2. **Backtest всех тикеров** по критериям раздела 11.5 перед каждой новой стратегией.
 3. ✅ **Chaos testing**: отключение Redis/Postgres/Kimi/сети — проверка graceful degradation (раздел 13.3.1).
 4. **Нагрузочное тестирование**: до 100 тикеров × 6 агентов × 2 LLM-вызова — бюджет латентности и стоимости.
-5. **Мониторинг вырожденных случаев**: SPREAD > 1%, депозитарные паузы, гэпы.
+5. ✅ **Мониторинг вырожденных случаев**: SPREAD > 1%, депозитарные паузы, гэпы (раздел 13.3.2).
 
 ### 13.3.1. Chaos testing (реализовано)
 
@@ -129,6 +129,38 @@ fail-open проверяются по поведению (пустой спис�
 **Ограничения:** сетевой chaos для MOEX невозможен без изменения кода — `baseUrl`
 захардкожен (`https://iss.moex.com/iss`), Alor требует LIVE-режим и токен; планировщики
 в тестах отключены (`app.scheduling.enabled=false`).
+
+### 13.3.2. Мониторинг вырожденных случаев (реализовано)
+
+**Идея:** перед каждым входом в позицию проверять вырожденные состояния рынка и
+блокировать вход с метрикой. Проверки fail-open: при недоступности данных
+(нет снэпшота, пустой кэш свечей) вход НЕ блокируется.
+
+**Состав guard'а (`DegenerateCaseGuard` + чистый детектор `DegenerateCaseDetector`):**
+
+| Проверка | Условие блокировки | Причина (`...risk.reject{reason=...}`) | Конфиг (`risk.*`) |
+|---|---|---|---|
+| Широкий спред | `(ask-bid)/ask > max-spread-percent` | `WIDE_SPREAD` | `max-spread-percent: 1.0` |
+| Гэп | `\|open(last) - prevClose\|/prevClose > max-gap-percent` | `PRICE_GAP` | `max-gap-percent: 3.0` |
+| Депозитарная пауза | последние N свечей с нулевым объёмом | `DEPOSITARY_PAUSE` | `consecutive-zero-volume-bars: 3` |
+
+**Мастер-выключатель:** `risk.degenerate-case-guard-enabled: true`; отдельная проверка
+отключается порогом `<= 0`. Точка врезки — `DecisionEngine.doOpenPosition` сразу после
+`MarketDataGate` (freshness), до риск-движка и ML-фильтра; метрика `${profile.metricPrefix}.risk.reject`
+(та же серия, что MTF/ML-фильтры). Таймфрейм свечей для гэпа/паузы берётся из `Signal.timeframe`.
+
+**Переиспользование математики спреда:** `AlorClient.spreadPercent` (исполняющий слой,
+slippage control 0.5% в `placeMarketOrder`) делегирует в `DegenerateCaseDetector.spreadPercent` —
+единая формула, совпадающая семантика fail-open (bid/ask → currentPrice).
+
+**Fail-open по данным:**
+- снэпшот недоступен (`getMarketSnapshot` вернул null) → спред не проверяется;
+- свечей меньше порога / prevClose <= 0 / Redis недоступен (пустой список) → гэп и пауза
+  не блокируют (не ломаем торговлю на пустом кэше, в отличие от MTF-фильтра).
+
+**Тесты:** `DegenerateCaseDetectorTest` (11 кейсов чистой математики), `DegenerateCaseGuardTest`
+(8 кейсов: порядок проверок, fail-open, выключение), `DecisionEngineTest` (reject → метрика
+`WIDE_SPREAD`, pass-through; проверка вызова с `(ticker, timeframe)`).
 
 ## 13.4. Контрольные точки (milestones)
 

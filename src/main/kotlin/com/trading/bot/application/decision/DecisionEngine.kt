@@ -12,6 +12,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
@@ -37,18 +38,20 @@ import java.util.concurrent.ConcurrentHashMap
  *      вход выполняет только одна инстанция; при недоступности Redis вход блокируется
  *      (fail-closed, чтобы не открыть позицию без лока).
  *   3. [MarketDataGate] (defense in depth: свежие рыночные данные).
- *   4. Цена входа: [AlorClient.getLastPrice] ?: signal.targetPrice.
- *   5. [EntryProfile.riskEngine].canEnter (Да/Нет).
- *   6. ML-фильтр входа ([MlEntryFilter], roadmap 13.11.5): прогноз модели < порога —
+ *   4. Детектор вырожденных случаев ([DegenerateCaseGuard], roadmap 13.3.5):
+ *      широкий спред, гэп, депозитарная пауза — отказ входа (fail-open без данных).
+ *   5. Цена входа: [AlorClient.getLastPrice] ?: signal.targetPrice.
+ *   6. [EntryProfile.riskEngine].canEnter (Да/Нет).
+ *   7. ML-фильтр входа ([MlEntryFilter], roadmap 13.11.5): прогноз модели < порога —
  *      отказ (pass-through при выключенном фильтре).
- *   7. [EntryProfile.preSizingChecks] (корреляционные фильтры акций).
- *   8. [EntryProfile.sizePosition] (Kelly / маржа-риск).
- *   9. [EntryProfile.postSizingChecks] (лимиты Gross/Net Exposure).
- *   10. [EntryProfile.buildOrderParams] (SL/TP/маржа/ликвидация).
- *   11. [PortfolioRiskEngine] по [EntryProfile.portfolioMode]:
+ *   8. [EntryProfile.preSizingChecks] (корреляционные фильтры акций).
+ *   9. [EntryProfile.sizePosition] (Kelly / маржа-риск).
+ *   10. [EntryProfile.postSizingChecks] (лимиты Gross/Net Exposure).
+ *   11. [EntryProfile.buildOrderParams] (SL/TP/маржа/ликвидация).
+ *   12. [PortfolioRiskEngine] по [EntryProfile.portfolioMode]:
  *       ENFORCED — BLOCK/SCALE, READ_ONLY — только метрики/логи.
- *   12. [OrderBuilder.recordStrategyExecution] + [ExecutionGateway.placeEntryOrder].
- *   13. [EntryProfile.onOpened] (дневной P&L reset + agent log для акций).
+ *   13. [OrderBuilder.recordStrategyExecution] + [ExecutionGateway.placeEntryOrder].
+ *   14. [EntryProfile.onOpened] (дневной P&L reset + agent log для акций).
  *
  * НЕ зависит от исполнения: размещение ордера приходит через [ExecutionGateway]
  * (обёртка над OrderExecutionEngine) — тесты используют фейки.
@@ -67,6 +70,7 @@ class DecisionEngine(
     private val tradingAccountService: TradingAccountService,
     private val mlEntryFilter: MlEntryFilter,
     private val higherTfTrendFilter: HigherTfTrendFilter,
+    private val degenerateCaseGuard: DegenerateCaseGuard,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -118,6 +122,16 @@ class DecisionEngine(
             logger.warn { "STALE market data — entry blocked $ticker (defense in depth)" }
             meterRegistry
                 .counter("${profile.metricPrefix}.entry.rejected", Tags.of("ticker", ticker, "reason", "STALE_DATA"))
+                .increment()
+            return
+        }
+
+        // Вырожденные случаи (13.3.5): широкий спред, гэп, депозитарная пауза → отказ
+        // входа. Fail-open при недоступности данных (не ломаем торговлю на пустом кэше).
+        degenerateCaseGuard.blockReason(ticker, signal.timeframe)?.let { reason ->
+            logger.warn { "Degenerate case rejected $ticker: $reason" }
+            meterRegistry
+                .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", reason))
                 .increment()
             return
         }

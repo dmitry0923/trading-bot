@@ -2,6 +2,7 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.domain.risk.DegenerateCaseDetector
 import com.trading.bot.model.dto.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
@@ -18,7 +19,6 @@ import org.springframework.web.reactive.function.client.WebClient
 import org.springframework.web.reactive.function.client.WebClientResponseException
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
-import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
@@ -559,12 +559,8 @@ class AlorClient(
         logger.info { "Slippage: expected=$expectedPrice filled=$filledPrice qty=$qty => $slippageRub RUB" }
     }
 
-    private fun spreadPercent(snapshot: MarketSnapshot): BigDecimal {
-        val bid = snapshot.bid ?: snapshot.currentPrice
-        val ask = snapshot.ask ?: snapshot.currentPrice
-        if (bid <= BigDecimal.ZERO || ask <= BigDecimal.ZERO || bid >= ask) return BigDecimal.ZERO
-        return ask.subtract(bid).divide(ask, 6, RoundingMode.HALF_UP)
-    }
+    private fun spreadPercent(snapshot: MarketSnapshot): BigDecimal =
+        DegenerateCaseDetector.spreadPercent(snapshot.bid, snapshot.ask, snapshot.currentPrice)
 
     /**
      * Определённый отказ биржи (4xx, кроме 429): ордер не принят — ретраить бессмысленно.

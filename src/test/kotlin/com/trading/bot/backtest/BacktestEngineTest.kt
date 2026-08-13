@@ -4,7 +4,10 @@ import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.MlConfig
 import com.trading.bot.config.MtfConfig
 import com.trading.bot.domain.ml.MlFeatureVector
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
@@ -15,6 +18,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -471,5 +475,312 @@ class BacktestEngineTest {
         // неизвестный инструмент (lotSize <= 0) — лотность игнорируется
         assertEquals(77, SimulatedExecution.lotRounded(77, 0))
         assertEquals(77, SimulatedExecution.lotRounded(77, -1))
+    }
+
+    @Test
+    fun `hitStopOrTarget detects stop and target within candle range`() {
+        val candle =
+            Candle(
+                ticker = "SBER",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("100"),
+                highPrice = BigDecimal("105"),
+                lowPrice = BigDecimal("95"),
+                closePrice = BigDecimal("100"),
+                volume = 1000L,
+                time = LocalDateTime.now(),
+            )
+        assertEquals(SimulatedExecution.StopTpHit.STOP, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("96"), BigDecimal("106")))
+        assertEquals(SimulatedExecution.StopTpHit.STOP, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("95"), BigDecimal("106")))
+        assertEquals(SimulatedExecution.StopTpHit.TARGET, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("90"), BigDecimal("104")))
+        assertEquals(SimulatedExecution.StopTpHit.TARGET, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("90"), BigDecimal("105")))
+        assertNull(SimulatedExecution.hitStopOrTarget(candle, BigDecimal("94"), BigDecimal("106")))
+        assertEquals(SimulatedExecution.StopTpHit.STOP, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("96"), BigDecimal("104")))
+    }
+
+    @Test
+    fun `profit factor win-loss ratio and recovery factor are infinite with only wins`() {
+        val result =
+            BacktestMetrics.compute(
+                "SBER",
+                listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("102000")),
+                listOf(1000.0, 1000.0),
+            )
+        assertEquals(Double.POSITIVE_INFINITY, result.profitFactor)
+        assertEquals(Double.POSITIVE_INFINITY, result.winLossRatio)
+        assertEquals(Double.POSITIVE_INFINITY, result.recoveryFactor)
+        assertEquals(1.0, result.winRate)
+    }
+
+    @Test
+    fun `profit factor is zero with only losing trades`() {
+        val result =
+            BacktestMetrics.compute(
+                "SBER",
+                listOf(BigDecimal("100000"), BigDecimal("99500"), BigDecimal("99200")),
+                listOf(-500.0, -300.0),
+            )
+        assertEquals(0.0, result.profitFactor)
+        assertEquals(0.0, result.winLossRatio)
+        assertEquals(0.0, result.winRate)
+        assertEquals(2, result.totalTrades)
+    }
+
+    @Test
+    fun `deterministic generator holds when window is below min bars`() {
+        runBlocking {
+            val gen = DeterministicBacktestSignalGenerator()
+            assertEquals(StrategyAction.HOLD, gen.signal("SBER", candles(), 10, 30, "cycle"))
+            assertEquals(StrategyAction.HOLD, gen.signal("SBER", candles(), 0, 30, "cycle"))
+        }
+    }
+
+    @Test
+    fun `deterministic generator emits buy and sell on trend turn fixtures`() {
+        runBlocking {
+            val gen = DeterministicBacktestSignalGenerator()
+            val signals = mutableListOf<StrategyAction>()
+            for (i in 30 until 300) {
+                signals += gen.signal("SBER", trendingCandles(), i, 30, "cycle")
+                signals += gen.signal("SBER", peakCandles(), i, 30, "cycle")
+            }
+            assertTrue(signals.contains(StrategyAction.BUY), "V-образная серия должна давать BUY у дна")
+            assertTrue(signals.contains(StrategyAction.SELL), "перевёрнутая V-серия должна давать SELL у вершины")
+            assertTrue(signals.contains(StrategyAction.HOLD), "на промежутках должны быть удержания")
+        }
+    }
+
+    @Test
+    fun `run returns empty result when too few candles and skips persist`() {
+        val candleRepo = Mockito.mock(CandleRepository::class.java)
+        val resultRepo = Mockito.mock(BacktestResultRepository::class.java)
+        val engine = BacktestEngine(candleRepo, backtestResultRepository = resultRepo)
+        runBlocking {
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                    ),
+                ).thenReturn(emptyList())
+
+            val result = engine.run("SBER", days = 5, timeframe = "MINUTE_10")
+
+            assertEquals(0, result.totalTrades)
+            assertEquals(0.0, result.totalReturn)
+            Mockito.verify(resultRepo, Mockito.never()).save(any())
+        }
+    }
+
+    @Test
+    fun `run persists result and increments pass metric`() {
+        val candleRepo = Mockito.mock(CandleRepository::class.java)
+        val resultRepo = Mockito.mock(BacktestResultRepository::class.java)
+        val meterRegistry = SimpleMeterRegistry()
+        val engine = BacktestEngine(candleRepo, backtestResultRepository = resultRepo, meterRegistry = meterRegistry)
+        runBlocking {
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                    ),
+                ).thenReturn(trendingCandles())
+
+            val result = engine.run("SBER", days = 5, timeframe = "MINUTE_10")
+
+            assertTrue(result.totalTrades > 0)
+            Mockito.verify(resultRepo).save(any())
+        }
+        val pass =
+            meterRegistry
+                .find("bt_pass_total")
+                .tag("result", "PASS")
+                .counter()
+                ?.count() ?: 0.0
+        val reject =
+            meterRegistry
+                .find("bt_pass_total")
+                .tag("result", "REJECT")
+                .counter()
+                ?.count() ?: 0.0
+        assertTrue(pass + reject > 0, "bt_pass_total должен инкрементироваться")
+    }
+
+    @Test
+    fun `persist failure does not break the run`() {
+        val candleRepo = Mockito.mock(CandleRepository::class.java)
+        val resultRepo = Mockito.mock(BacktestResultRepository::class.java)
+        val engine = BacktestEngine(candleRepo, backtestResultRepository = resultRepo)
+        runBlocking {
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                    ),
+                ).thenReturn(trendingCandles())
+            Mockito.`when`(resultRepo.save(any())).thenThrow(RuntimeException("db down"))
+
+            val result = engine.run("SBER", days = 5, timeframe = "MINUTE_10")
+
+            assertTrue(result.totalTrades > 0, "сбой персиста не должен ронять прогон")
+        }
+    }
+
+    @Test
+    fun `tiny capital opens no positions because of lot rounding`() {
+        val result = runBlocking { engine.simulate("SBER", candles(), initialCapital = BigDecimal("0.01")) }
+        assertEquals(0, result.totalTrades)
+        assertTrue(result.equityCurve.isNotEmpty())
+        assertTrue(result.equityCurve.all { it == BigDecimal("0.01") })
+    }
+
+    @Test
+    fun `zero capital opens no positions`() {
+        val result = runBlocking { engine.simulate("SBER", candles(), initialCapital = BigDecimal.ZERO) }
+        assertEquals(0, result.totalTrades)
+        assertTrue(result.equityCurve.isNotEmpty())
+        assertTrue(result.equityCurve.all { it == BigDecimal.ZERO })
+    }
+
+    @Test
+    fun `CLOSE signal is treated as hold and opens no position`() {
+        val closeEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.CLOSE),
+            )
+
+        val result = runBlocking { closeEngine.simulate("SBER", candles()) }
+
+        assertEquals(0, result.totalTrades)
+        assertEquals(candles().size, result.equityCurve.size)
+        assertTrue(result.equityCurve.all { it == BigDecimal("100000") })
+    }
+
+    @Test
+    fun `ml filter reversal closes open position when opposite entry blocked`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
+        runBlocking {
+            Mockito
+                .`when`(
+                    mlEntryFilter.shouldBlock(
+                        any(),
+                        any(),
+                        anyOrNull(),
+                        any(),
+                        Mockito.eq(false),
+                    ),
+                ).thenAnswer { inv ->
+                    if (inv.getArgument<StrategyAction>(1) == StrategyAction.SELL) "blocked-by-ml" else null
+                }
+        }
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mlFilterEnabled = true
+                    },
+                mlEntryFilter = mlEntryFilter,
+                signalGenerator = SwitchSignalGenerator(switchAfter = 50, first = StrategyAction.BUY, second = StrategyAction.SELL),
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", flatCandles()) }
+
+        assertEquals(1, result.totalTrades, "заблокированная инверсия закрывает позицию ровно один раз")
+        val blocked = meterRegistry.counter("bt_ml_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    @Test
+    fun `mtf filter reversal closes open position when opposite entry blocked`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
+        runBlocking {
+            Mockito
+                .`when`(
+                    higherTfTrendFilter.shouldBlock(
+                        any(),
+                        any(),
+                        Mockito.anyList(),
+                        any(),
+                        Mockito.eq(false),
+                    ),
+                ).thenAnswer { inv ->
+                    if (inv.getArgument<StrategyAction>(1) == StrategyAction.SELL) "blocked-by-mtf" else null
+                }
+        }
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mtfFilterEnabled = true
+                    },
+                higherTfTrendFilter = higherTfTrendFilter,
+                signalGenerator = SwitchSignalGenerator(switchAfter = 50, first = StrategyAction.BUY, second = StrategyAction.SELL),
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", flatCandles()) }
+
+        assertEquals(1, result.totalTrades, "заблокированная инверсия закрывает позицию ровно один раз")
+        val blocked = meterRegistry.counter("bt_mtf_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    private fun peakCandles(): List<Candle> {
+        val prices = (0 until 150).map { 100.0 + it * 1.0 } + (150 until 300).map { 250.0 - (it - 150) * 1.0 }
+        return prices.mapIndexed { i, price -> candle(price, i) }
+    }
+
+    private fun flatCandles(count: Int = 300): List<Candle> =
+        (0 until count).map { i ->
+            Candle(
+                ticker = "SBER",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("100"),
+                highPrice = BigDecimal("101"),
+                lowPrice = BigDecimal("99"),
+                closePrice = BigDecimal("100"),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        }
+
+    private class ConstantSignalGenerator(
+        private val action: StrategyAction,
+    ) : BacktestSignalGenerator {
+        override suspend fun signal(
+            ticker: String,
+            candles: List<Candle>,
+            index: Int,
+            minBars: Int,
+            cycleId: String,
+        ): StrategyAction = action
+    }
+
+    private class SwitchSignalGenerator(
+        private val switchAfter: Int,
+        private val first: StrategyAction,
+        private val second: StrategyAction,
+    ) : BacktestSignalGenerator {
+        override suspend fun signal(
+            ticker: String,
+            candles: List<Candle>,
+            index: Int,
+            minBars: Int,
+            cycleId: String,
+        ): StrategyAction = if (index < switchAfter) first else second
     }
 }

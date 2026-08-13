@@ -86,7 +86,7 @@ gantt
 
 ## 13.3. План стабилизации (непрерывно)
 
-1. **Набор regression-тестов** по каждому модулю (Guardrails, SemanticCache, Agent parsers, outbox, BacktestEngine).
+1. ✅ **Набор regression-тестов** по каждому модулю (Guardrails, SemanticCache, Agent parsers, outbox, BacktestEngine) — раздел 13.3.3.
 2. **Backtest всех тикеров** по критериям раздела 11.5 перед каждой новой стратегией.
 3. ✅ **Chaos testing**: отключение Redis/Postgres/Kimi/сети — проверка graceful degradation (раздел 13.3.1).
 4. **Нагрузочное тестирование**: до 100 тикеров × 6 агентов × 2 LLM-вызова — бюджет латентности и стоимости.
@@ -161,6 +161,23 @@ slippage control 0.5% в `placeMarketOrder`) делегирует в `Degenerate
 **Тесты:** `DegenerateCaseDetectorTest` (11 кейсов чистой математики), `DegenerateCaseGuardTest`
 (8 кейсов: порядок проверок, fail-open, выключение), `DecisionEngineTest` (reject → метрика
 `WIDE_SPREAD`, pass-through; проверка вызова с `(ticker, timeframe)`).
+
+### 13.3.3. Regression-тесты модулей (реализовано)
+
+**Идея:** каждый модуль защищён собственным набором тестов от регрессий при
+рефакторинге. Покрытие сгруппировано по модулям, 139 тестов:
+
+| Модуль | Тест | Что покрывает |
+|---|---|---|
+| Guardrails | `GuardrailsTest` (13) | раздел 13.4.2: TOXIC/HARMFUL/PRIVACY/CRITICAL — FAIL, NEUTRAL — PASS, деградация при нераспознанной категории, безопасность входа |
+| SemanticCache | `SemanticCacheUnitTest` (12) | hit/miss, TTL-истечение, нормировка и схожесть, ошибки Redis → fail-open, fallback без сети |
+| Agent parsers | `AgentResponseParsingTest` (36) | все 6 агентов: нормальные и вырожденные ответы, переключатели (toggles), ошибки разбора, fallback NEUTRAL |
+| Outbox | `OrderOutboxServiceTest` (30) | dispatch по типам заявок (market/limit/stop/take-profit/cancel), idempotency, UNCERTAIN → fail-состояния, `resolvePortfolio`, обработка malformed payload, ошибки воркера |
+| BacktestEngine | `BacktestEngineTest` (33) + `MonteCarloAnalyzerTest` (9) + `BacktestValidatorTest` (6) | stop/target (в т.ч. границы), метрики и бесконечности (profit factor, drawdown), детерминированный генератор сигналов, `run`/persist + метрики, вырожденные капиталы (0 / меньше лота), CLOSE как hold, ML/MTF-фильтры (pass-through, блокировка, reversal-закрытие), walk-forward folds и OOS-агрегация, Monte Carlo (пустые/нулевые сценарии) |
+
+Попутно исправлен вырожденный случай в основном коде: `BacktestMetrics.maxDrawdown`
+не падает с `ArithmeticException` при нулевой кривой капитала (возвращает 0.0).
+
 
 ## 13.4. Контрольные точки (milestones)
 

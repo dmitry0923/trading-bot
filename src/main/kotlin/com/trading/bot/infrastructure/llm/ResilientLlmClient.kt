@@ -91,7 +91,7 @@ class ResilientLlmClient(
      * @param temperature температура генерации
      * @param cacheNamespace изолирует semantic cache (например "backtest"); null — общий (live) кэш
      */
-    suspend fun complete(
+    open suspend fun complete(
         agent: String,
         ticker: String,
         prompt: PromptTemplate,

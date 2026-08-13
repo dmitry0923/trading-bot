@@ -87,6 +87,20 @@ class MonteCarloAnalyzerTest {
     }
 
     @Test
+    fun `zero simulations and non-positive capital return neutral result`() {
+        val noSims = MonteCarlo.simulate(listOf(1000.0), capital, simulations = 0, seed = 42)
+        assertEquals(0, noSims.simulations)
+        assertEquals(0.0, noSims.medianReturn, 1e-12)
+        assertEquals(0.0, noSims.p5Return, 1e-12)
+        assertEquals(0.0, noSims.probabilityOfLoss, 1e-12)
+
+        val zeroCapital = MonteCarlo.simulate(listOf(1000.0), BigDecimal.ZERO, simulations = 50, seed = 42)
+        assertEquals(0.0, zeroCapital.medianReturn, 1e-12)
+        assertEquals(0.0, zeroCapital.p5Return, 1e-12)
+        assertFalse(zeroCapital.isRobust())
+    }
+
+    @Test
     fun `stress scenario maps backtest metrics`() {
         val result =
             BacktestMetrics.compute(

@@ -46,6 +46,33 @@ class BacktestValidatorTest {
         assertEquals(0.0, result.consistency)
     }
 
+    @Test
+    fun `fold with too-small train window falls back to first grid parameters`() {
+        val result =
+            runBlocking {
+                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any())).thenReturn(result())
+                validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
+            }
+        // Первый фолд: train пуст (недостаточно баров для настройки) -> дефолт первой пары сетки (0.01, 0.02).
+        assertEquals(0.01, result.folds[0].chosenSlPercent)
+        assertEquals(0.02, result.folds[0].chosenTpPercent)
+        // Последующие фолды имеют достаточно train-баров -> тюнинг по сетке.
+        assertTrue(result.folds[1].chosenSlPercent in listOf(0.01, 0.02, 0.03))
+    }
+
+    @Test
+    fun `aggregate with no out-of-sample trades is empty and not robust`() {
+        val noTrades = BacktestMetrics.compute("SBER", listOf(BigDecimal("100000")), emptyList())
+        val result =
+            runBlocking {
+                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any())).thenReturn(noTrades)
+                validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
+            }
+        assertEquals(3, result.folds.size)
+        assertEquals(0, result.aggregateOutOfSample.totalTrades)
+        assertFalse(result.isRobust())
+    }
+
     private companion object {
         const val OOS_TRADES = 3
     }

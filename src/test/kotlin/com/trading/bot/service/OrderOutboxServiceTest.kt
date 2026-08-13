@@ -15,10 +15,12 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
 import org.springframework.data.redis.core.StringRedisTemplate
 import tools.jackson.module.kotlin.jacksonObjectMapper
@@ -655,6 +657,447 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                 )
+        }
+    }
+
+    @Test
+    fun `stop type routes to placeStopOrder with stopPrice`() {
+        val outboxId = UUID.randomUUID()
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeStopOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-stop")
+            stubMarkSentRecording(sentOrders)
+
+            val result = service.placeOrder("Si", "sell", 2, null, "stop", stopPrice = BigDecimal("91500"))
+
+            assertTrue(result.success)
+            assertEquals("ord-stop", result.alorOrderId)
+            Mockito
+                .verify(alorClient)
+                .placeStopOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.eq(2),
+                    eq(BigDecimal("91500")),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+        }
+        assertEquals(listOf("ord-stop"), sentOrders)
+    }
+
+    @Test
+    fun `take-profit type routes to placeTakeProfitOrder with stopPrice`() {
+        val outboxId = UUID.randomUUID()
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeTakeProfitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-tp")
+            stubMarkSentRecording(sentOrders)
+
+            val result = service.placeOrder("Si", "buy", 1, null, "take-profit", stopPrice = BigDecimal("92500"))
+
+            assertTrue(result.success)
+            assertEquals("ord-tp", result.alorOrderId)
+            Mockito
+                .verify(alorClient)
+                .placeTakeProfitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.eq(1),
+                    eq(BigDecimal("92500")),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+        }
+        assertEquals(listOf("ord-tp"), sentOrders)
+    }
+
+    @Test
+    fun `stop type without stopPrice marks failed`() {
+        val outboxId = UUID.randomUUID()
+        val failedErrors = mutableListOf<String>()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            stubMarkFailedRecording(failedErrors)
+
+            val result = service.placeOrder("Si", "sell", 1, null, "stop")
+
+            assertFalse(result.success)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeStopOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+        }
+        assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
+    }
+
+    @Test
+    fun `placeCancelOrder confirmed marks sent with cancelled and publishes`() {
+        val outboxId = UUID.randomUUID()
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(AlorClient.CancelResult.CONFIRMED)
+            stubMarkSentRecording(sentOrders)
+
+            val result = service.placeCancelOrder(positionId = 5L, orderId = "order-123")
+
+            assertTrue(result.success)
+            assertEquals("cancelled", result.alorOrderId)
+            Mockito.verify(outboxPublisher).publish(outboxId)
+            Mockito.verify(alorClient).cancelOrder(eq("order-123"), Mockito.anyString(), Mockito.anyString())
+        }
+        assertEquals(listOf("cancelled"), sentOrders)
+    }
+
+    @Test
+    fun `cancel REJECTED is treated as cancelled`() {
+        val outboxId = UUID.randomUUID()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(AlorClient.CancelResult.REJECTED)
+            stubMarkSentRecording(mutableListOf())
+
+            val result = service.placeCancelOrder(positionId = 5L, orderId = "order-456")
+
+            assertTrue(result.success)
+            assertEquals("cancelled", result.alorOrderId)
+        }
+    }
+
+    @Test
+    fun `cancel UNCERTAIN marks failed definitive`() {
+        val outboxId = UUID.randomUUID()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(AlorClient.CancelResult.UNCERTAIN)
+            stubMarkFailedRecording(mutableListOf())
+
+            val result = service.placeCancelOrder(positionId = 5L, orderId = "order-789")
+
+            assertFalse(result.success)
+            assertNull(result.alorOrderId)
+            assertFalse(result.uncertain)
+            Mockito.verify(outboxRepo).markFailed(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `unknown order type marks failed without touching exchange`() {
+        val outbox = outboxRow(retryCount = 0, key = "idem-weird", type = "weird", price = "92000")
+        val failedErrors = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubMarkFailedRecording(failedErrors)
+
+            service.processPending()
+
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .markFailed(anyUuid(), Mockito.anyString())
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeStopOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+        }
+        assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
+    }
+
+    @Test
+    fun `malformed payload is caught by worker without crashing`() {
+        val outbox =
+            OrderOutbox(
+                id = UUID.randomUUID(),
+                payloadJson = "not-a-valid-json",
+                status = OutboxStatus.FAILED,
+                idempotencyKey = "idem-bad",
+                retryCount = 0,
+            )
+        runBlocking {
+            stubRetryable(listOf(outbox))
+
+            service.processPending()
+
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .findRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
+            Mockito.verify(outboxRepo, Mockito.never()).markFailed(anyUuid(), Mockito.anyString())
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+        }
+    }
+
+    @Test
+    fun `dispatch throws when outbox row has no id`() {
+        runBlocking {
+            Mockito.`when`(outboxRepo.save(anyOutbox())).thenReturn(OrderOutbox(payloadJson = ""))
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn("ord-1")
+        }
+
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking { service.placeOrder("Si", "buy", 1, BigDecimal("92000"), "limit") }
+        }
+
+        runBlocking {
+            Mockito.verify(outboxPublisher, Mockito.never()).publish(any())
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `resolvePortfolio uses outbox accountId column`() {
+        val outboxId = UUID.randomUUID()
+        val portfolios = mutableListOf<String>()
+        runBlocking {
+            Mockito.`when`(tradingAccountService.portfolioOf(7L)).thenReturn("PORTFOLIO-7")
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenAnswer { inv ->
+                    portfolios += inv.getArgument<String>(5)
+                    "ord"
+                }
+            stubMarkSentRecording(mutableListOf())
+
+            service.placeOrder("Si", "buy", 1, BigDecimal("92000"), "limit", accountId = 7L)
+        }
+        assertEquals(listOf("PORTFOLIO-7"), portfolios)
+    }
+
+    @Test
+    fun `resolvePortfolio falls back to payload accountId for legacy rows`() {
+        val payload =
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "ticker" to "Si",
+                    "side" to "buy",
+                    "qty" to 1,
+                    "price" to "92000",
+                    "type" to "limit",
+                    "idempotencyKey" to "legacy-account",
+                    "accountId" to 42L,
+                ),
+            )
+        val outbox =
+            OrderOutbox(
+                id = UUID.randomUUID(),
+                payloadJson = payload,
+                status = OutboxStatus.FAILED,
+                idempotencyKey = "legacy-account",
+                retryCount = 0,
+            )
+        val portfolios = mutableListOf<String>()
+        runBlocking {
+            Mockito.`when`(tradingAccountService.portfolioOf(42L)).thenReturn("PORTFOLIO-42")
+            stubRetryable(listOf(outbox))
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenAnswer { inv ->
+                    portfolios += inv.getArgument<String>(5)
+                    "ord"
+                }
+            stubMarkSentRecording(mutableListOf())
+
+            service.processPending()
+
+            Mockito.verify(tradingAccountService, Mockito.timeout(3000)).portfolioOf(42L)
+            Mockito
+                .verify(alorClient, Mockito.timeout(3000))
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+        }
+        assertEquals(listOf("PORTFOLIO-42"), portfolios)
+    }
+
+    @Test
+    fun `resolvePortfolio falls back to position accountId`() {
+        val payload =
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "ticker" to "Si",
+                    "side" to "buy",
+                    "qty" to 1,
+                    "price" to "92000",
+                    "type" to "limit",
+                    "idempotencyKey" to "legacy-pos",
+                    "positionId" to 1L,
+                ),
+            )
+        val outbox =
+            OrderOutbox(
+                id = UUID.randomUUID(),
+                payloadJson = payload,
+                status = OutboxStatus.FAILED,
+                idempotencyKey = "legacy-pos",
+                retryCount = 0,
+                positionId = 1L,
+            )
+        val portfolios = mutableListOf<String>()
+        runBlocking {
+            Mockito.`when`(tradingAccountService.portfolioOf(9L)).thenReturn("PORTFOLIO-9")
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(openPosition().copy(accountId = 9L))
+            stubRetryable(listOf(outbox))
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                    ),
+                ).thenAnswer { inv ->
+                    portfolios += inv.getArgument<String>(5)
+                    "ord"
+                }
+            stubMarkSentRecording(mutableListOf())
+
+            service.processPending()
+
+            Mockito.verify(tradingAccountService, Mockito.timeout(3000)).portfolioOf(9L)
+            Mockito
+                .verify(alorClient, Mockito.timeout(3000))
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+        }
+        assertEquals(listOf("PORTFOLIO-9"), portfolios)
+    }
+
+    @Test
+    fun `worker catches exception from findRetryable`() {
+        runBlocking {
+            Mockito
+                .`when`(
+                    outboxRepo.findRetryable(
+                        Mockito.anyInt(),
+                        Mockito.anyInt(),
+                        Mockito.anyInt(),
+                        Mockito.anyInt(),
+                        Mockito.anyInt(),
+                    ),
+                ).thenThrow(RuntimeException("db unavailable"))
+
+            service.processPending()
+
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .findRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
         }
     }
 }

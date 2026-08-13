@@ -171,6 +171,7 @@ object BacktestMetrics {
     fun maxDrawdown(equityCurve: List<BigDecimal>): Double {
         if (equityCurve.size < 2) return 0.0
         var peak = equityCurve.first()
+        if (peak <= BigDecimal.ZERO) return 0.0
         var maxDd = 0.0
         for (eq in equityCurve) {
             if (eq > peak) peak = eq

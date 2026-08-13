@@ -90,6 +90,9 @@ configurations.all {
 tasks.withType<Test> {
     useJUnitPlatform()
     jvmArgs("-Xshare:off", "-XX:+EnableDynamicAgentLoading")
+    // Проброс system property в JVM тестов: полномасштабный нагрузочный прогон
+    // (roadmap 13.3.4) запускается `./gradlew.bat test -Dload.full=true`.
+    systemProperty("load.full", System.getProperty("load.full", ""))
     testLogging {
         events("passed", "skipped", "failed")
         showExceptions = true

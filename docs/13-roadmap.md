@@ -1085,8 +1085,8 @@ flowchart LR
 
 | Пакет / класс | Что добавить | Приоритет |
 |---|---|---|
-| `client.AlorRestClient` / `AlorWebSocketClient` | unit-тесты на mock WebClient/WS-потока (парсинг, fallback, outbox-повторы) | P0 |
-| `service.RiskManagementService` | пороговые сценарии: maxPositionRub, daily loss limit, sector/volatility, restart-resume daily PnL | P0 |
+| `client.AlorClient` / `client.AlorWebSocketClient` | unit-тесты на mock WebClient/WS-потока (парсинг, fallback, outbox-повторы) — ✅ раздел 13.17.1 | P0 |
+| `service.RiskManagementService` | пороговые сценарии: maxPositionRub, daily loss limit, sector/volatility, restart-resume daily PnL — ✅ раздел 13.17.1 | P0 |
 | `service.FeedbackService` / `SelfLearningService` | feedback-парсинг, обучение агентов, fallback на дефолт | P1 |
 | `service.StrategyService` | HOLD при `confidence < 0.5`, учёт sector/volatility guard | P1 |
 | `service.SettingsService` | применённые настройки → RiskConfig/LeverageConfig (runtime), валидация | P1 |
@@ -1096,6 +1096,26 @@ flowchart LR
 
 > Критерий «100% покрытие» применяется к критичным торговым путям (client, risk, execution, settings);
 > для генерации отчётов и инфраструктуры допускается исключение через `@Generated`/фильтры Kover.
+
+### 13.17.1. P0: Alor-клиенты и RiskManagementService (реализовано)
+
+- `AlorClientTest` — REST-пути поверх реального локального HTTP-сервера
+  («mock WebClient», паттерн `FakeLlmServer`): парсинг quotes/orders/positions/trades
+  (в т.ч. fallback-поля `id`/`orderNo`, `filledQuantity`, `avgFillPrice`, время сек/мс),
+  Bearer-токен в Authorization, State Reconciliation по idempotency key
+  (Found/NotFound/Unknown — outbox-повторы), `Failed`/null при недоступной бирже,
+  метрики `alor.quotes.ok/error`, `alor.reconcile{result}`, `alor.reconcile.fetch_error`,
+  блокировка market-ордера при широком спреде (`alor.order.blocked{WIDE_SPREAD}`),
+  slippage (`trade.slippage.rub`), SIMULATION-режим без REST.
+- `AlorWebSocketClientTest` — `parseExecution` (FILLED/PARTIALLY_FILLED/CANCELED/
+  REJECTED/NEW/UNKNOWN, служебные сообщения → null, fallback-поля) и `parseQuote`
+  (приоритет Last, mid при отсутствии Last, bid/offer-only, ticker из guid `q-`/symbol,
+  время сек/мс, null на мусоре).
+- `RiskManagementServiceThresholdTest` — `isVolatilityTooHigh` (порог ATR%, граница,
+  null/ноль, disabled) и `exceedsPortfolioLimits` (Gross/Net exposure, направленность
+  long/short, нетинг, граница порога, метрики `risk.portfolio.*.blocked`).
+- Дневной лимит убытка и restart-resume daily PnL покрыты ранее:
+  `RiskManagementServiceDailyPnLTest` (делегирование) + `DrawdownProtectionServiceTest`.
 
 ## 13.18. Наблюдаемость LLM-агента (3 фазы) — реализовано
 

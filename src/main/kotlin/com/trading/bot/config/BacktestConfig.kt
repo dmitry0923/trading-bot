@@ -22,6 +22,10 @@ import java.math.BigDecimal
  *   При `true` бэктест прогоняет модель на входе каждого бара (требуется
  *   доступная модель, иначе — fail-closed: входы блокируются). Не влияет на
  *   live-гейт (`ml.filter.enabled`).
+ * @property monteCarloSimulations число bootstrap-симуляций для Monte Carlo
+ *   (раздел 13.7.8), по умолчанию 1000.
+ * @property monteCarloSeed seed генератора для детерминированных прогонов
+ *   (воспроизводимость в тестах и CI).
  */
 @Component
 @ConfigurationProperties(prefix = "bt")
@@ -34,4 +38,6 @@ class BacktestConfig {
     var tpPercent: Double = 4.0
     var capitalSlice: Double = 0.20
     var mlFilterEnabled: Boolean = false
+    var monteCarloSimulations: Int = 1000
+    var monteCarloSeed: Long = 42
 }

@@ -54,7 +54,8 @@ com.trading.bot.backtest
 ├── BacktestEngine.kt        # @Service: run() + simulate() + signalAt() + PositionSim
 ├── SimulatedExecution.kt    # object: комиссия, slippage, лотность, hitStopOrTarget
 ├── BacktestResult.kt        # data class + BacktestMetrics (Sharpe/MDD/PF/win rate)
-└── src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt  # 9 тестов
+├── MonteCarloAnalyzer.kt    # Monte Carlo bootstrap + стресс-сценарии (13.7.8)
+└── src/test/kotlin/com/trading/bot/backtest/  # BacktestEngineTest, MonteCarloAnalyzerTest и др.
 ```
 
 Связь с REST: `ApiController` инжектит `BacktestEngine` и вызывает `run(ticker, days)`.
@@ -354,6 +355,45 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
   -d '{"tickers":["SBER","GAZP"],"days":365}'
 ```
 
+### GET /api/v1/backtest/{ticker}/robustness?days=365
+
+Анализ устойчивости бэктеста (roadmap 13.7.8): Monte Carlo bootstrap по фактическим сделкам
++ стресс-перепрогоны с увеличенными издержками. Дополняет walk-forward (`/validate`) оценкой
+«хрупкости» доходности к порядку сделок и росту комиссии/проскальзывания.
+
+- **Query**: `days` (default `bt.days`), `loadHistory`, `timeframe`, `simulations`
+  (default `bt.monte-carlo-simulations` = 1000), `seed` (default `bt.monte-carlo-seed` = 42).
+- **Метрика**: `api.backtest.robustness` counter, тег `ticker`.
+- **Response 200**: `base` (метрики базового прогона + `passable`), `monteCarlo`
+  (распределение путей: `medianReturn`, `p5Return`, `p95Return`, `avgReturn`, `minReturn`,
+  `maxReturn`, `probabilityOfLoss`, `mcRobust`), `stress[]` (5 сценариев: `commission_x2`,
+  `commission_x5`, `slippage_x2`, `slippage_x5`, `combined_stress` — каждый со своими
+  множителями и метриками), `robust` — сводный вердикт.
+
+```bash
+curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations=500"
+```
+
+Пример ответа:
+
+```json
+{
+  "ticker": "SBER",
+  "simulations": 500,
+  "robust": true,
+  "base": {"name": "base", "totalReturn": 0.1234, "sharpeRatio": 1.41, "maxDrawdown": 0.081, "profitFactor": 1.87, "totalTrades": 152, "passable": true},
+  "monteCarlo": {"medianReturn": 0.1100, "p5Return": 0.0210, "p95Return": 0.2100, "avgReturn": 0.1100, "minReturn": -0.0310, "maxReturn": 0.3000, "probabilityOfLoss": 0.02, "mcRobust": true},
+  "stress": [
+    {"name": "commission_x2", "description": "Комиссия ×2", "commissionMultiplier": 2.0, "slippageMultiplier": 1.0, "totalReturn": 0.1050, "passable": true},
+    {"name": "combined_stress", "description": "Комиссия ×3 + проскальзывание ×3", "commissionMultiplier": 3.0, "slippageMultiplier": 3.0, "totalReturn": 0.0620, "passable": true}
+  ]
+}
+```
+
+Если Monte Carlo неустойчив (`p5Return <= 0` или `probabilityOfLoss >= 0.25`) или любой
+стресс-сценарий роняет `passable` — `robust: false`: доходность скорее зависит от удачного
+порядка сделок / низких издержек, чем от преимущества стратегии.
+
 ## 11.7. Тесты
 
 Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 12 тестов (нет Spring-контекста, чистые unit-тесты):
@@ -375,7 +415,10 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
 | `ml filter blocks all entries when enabled and model rejects` | `bt.ml-filter-enabled` + вероятность < порога → 0 сделок, `bt_ml_blocked_total` растёт |
 | `ml filter pass-through keeps trades when model allows` | вероятность ≥ порога → сделки не блокируются |
 | `ml filter is not consulted when bt flag disabled` | при `bt.ml-filter-enabled=false` фильтр не вызывается |
+| `execution costs are parameterizable for stress runs` | параметризация ставок комиссии/проскальзывания (стресс, 13.7.8) |
+| `stress multipliers degrade backtest equity` | ×5 комиссии/проскальзывания снижают эквити, число сделок не меняется |
 
+`MonteCarloAnalyzerTest` — детерминизм Monte Carlo по seed, квантили (P5/медиана/P95), доля убыточных путей, отображение стресс-сценариев.
 `PanelBacktestSummarizerTest` — 3 теста агрегации распределения (пустой список, доля PASS + средняя доходность, медиана при чётном количестве).
 
 Запуск:
@@ -402,6 +445,8 @@ curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
 | `bt.tp-percent` | `BT_TP_PERCENT` | `4.0` | тейк-профит, % от цены входа |
 | `bt.capital-slice` | `BT_CAPITAL_SLICE` | `0.20` | доля капитала на одну позицию |
 | `bt.ml-filter-enabled` | `BT_ML_FILTER_ENABLED` | `false` | ML-фильтр входа в бэктесте (раздел 13.11.6); не влияет на live-гейт |
+| `bt.monte-carlo-simulations` | `BT_MONTE_CARLO_SIMULATIONS` | `1000` | число bootstrap-симуляций Monte Carlo (раздел 13.7.8) |
+| `bt.monte-carlo-seed` | `BT_MONTE_CARLO_SEED` | `42` | seed генератора Monte Carlo (воспроизводимость) |
 
 Значения применяются в `BacktestEngine.run/simulate` (дефолты параметров),
 `BacktestValidator.validate` (initialCapital, minBarsForSignal) и в эндпоинтах

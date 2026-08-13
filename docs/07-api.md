@@ -72,6 +72,7 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 | POST | `/api/v1/backtest/panel` | панельный бэктест нескольких тикеров (ADMIN) | ✅ |
 | GET | `/api/v1/backtest/results` | история прогонов бэктеста (сравнение итераций) | ✅ |
 | GET | `/api/v1/backtest/{ticker}/validate` | walk-forward валидация (OOS) | ✅ |
+| GET | `/api/v1/backtest/{ticker}/robustness` | Monte Carlo + стресс-сценарии устойчивости | ✅ |
 | GET | `/api/v1/risk/exposure` | live-снимок портфельного риска (Correlation Engine) | ✅ |
 | GET | `/api/v1/risk/correlation` | корреляционная матрица watchlist (heatmap) | ✅ |
 | POST | `/api/v1/bot/emergency-stop` | аварийная остановка | ✅ |
@@ -652,6 +653,31 @@ Walk-forward валидация стратегии (C-002, раздел 13.7.7):
 ```
 
 `robust` = OOS Sharpe > 0.5, OOS PF > 1.1, >= 60% прибыльных фолдов, >= 100 OOS-сделок (иначе `false`).
+
+### GET /api/v1/backtest/{ticker}/robustness?days=365&simulations=1000
+
+Анализ устойчивости бэктеста (раздел 13.7.8, `MonteCarloAnalyzer`): Monte Carlo bootstrap по фактическим сделкам прогона + перепрогон стресс-сценариев с увеличенными комиссией и проскальзыванием. Метрика `api.backtest.robustness` (тег `ticker`).
+
+**Query**: `days` (опционально, default из `bt.days`), `loadHistory` (default false), `timeframe` (опционально, default из `bt.timeframe`), `simulations` (опционально, default из `bt.monte-carlo-simulations` = 1000), `seed` (опционально, default из `bt.monte-carlo-seed` = 42 — детерминизм прогона).
+
+**Response 200**:
+```json
+{
+  "ticker": "SBER",
+  "timeframe": "MINUTE_10",
+  "simulations": 500,
+  "robust": true,
+  "base": {"name": "base", "totalReturn": 0.12, "sharpeRatio": 1.4, "maxDrawdown": 0.08, "totalTrades": 152, "passable": true},
+  "monteCarlo": {"medianReturn": 0.11, "p5Return": 0.02, "p95Return": 0.21, "avgReturn": 0.11, "minReturn": -0.03, "maxReturn": 0.30, "probabilityOfLoss": 0.02, "mcRobust": true},
+  "stress": [
+    {"name": "commission_x2", "description": "Комиссия ×2", "commissionMultiplier": 2.0, "slippageMultiplier": 1.0, "totalReturn": 0.10, "passable": true},
+    {"name": "combined_stress", "description": "Комиссия ×3 + проскальзывание ×3", "commissionMultiplier": 3.0, "slippageMultiplier": 3.0, "totalReturn": 0.06, "passable": true}
+  ],
+  "timestamp": "2026-08-13T18:04:11"
+}
+```
+
+`robust` = базовый прогон проходит критерии приёма И `mcRobust` (P5-доходность > 0, доля убыточных путей < 25%) И все стресс-сценарии проходят `passable`. Стресс-сценарии: `commission_x2`, `commission_x5`, `slippage_x2`, `slippage_x5`, `combined_stress` (комиссия ×3 + проскальзывание ×3).
 
 ### POST /api/v1/bot/emergency-stop
 

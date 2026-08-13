@@ -422,6 +422,7 @@ sum(increase(event_published[1h])) by (type)
 | `api.backtest.panel` | Counter | панельный бэктест (несколько тикеров) |
 | `api.backtest.results` | Counter | tag `ticker` — чтение истории прогонов |
 | `api.backtest.validate` | Counter | tag `ticker` — walk-forward валидации |
+| `api.backtest.robustness` | Counter | tag `ticker` — Monte Carlo + стресс-анализ (13.7.8) |
 | `bt.total_trades` | Gauge | tag `ticker` — сделки последнего прогона |
 | `bt.sharpe` / `bt.max_drawdown` / `bt.profit_factor` | Gauge | tag `ticker` |
 | `bt_pass_total` | Counter | tag `result` (PASS/REJECT) — итог каждого прогона/валидации, сравнение итераций |

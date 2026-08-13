@@ -21,17 +21,32 @@ object SimulatedExecution {
         val commission: BigDecimal,
     )
 
-    /** Цена исполнения market-ордера с проскальзыванием 0.1%. */
+    /**
+     * Цена исполнения market-ордера с проскальзыванием 0.1%.
+     *
+     * @param slippageRate ставка проскальзывания (по умолчанию 0.1%); стресс-прогоны
+     *   (roadmap 13.7.8) передают умноженную ставку для оценки чувствительности.
+     */
     fun marketFill(
         reference: BigDecimal,
         isBuy: Boolean,
+        slippageRate: BigDecimal = MARKET_SLIPPAGE_RATE,
     ): Fill {
-        val slip = reference.multiply(MARKET_SLIPPAGE_RATE)
+        val slip = reference.multiply(slippageRate)
         val price = if (isBuy) reference.add(slip) else reference.subtract(slip)
         return Fill(price, commissionOn(price))
     }
 
-    fun commissionOn(price: BigDecimal): BigDecimal = price.multiply(COMMISSION_RATE).setScale(4, RoundingMode.HALF_UP)
+    /**
+     * Комиссия с цены исполнения (0.05% от оборота).
+     *
+     * @param commissionRate ставка комиссии (по умолчанию 0.05%); стресс-прогоны
+     *   передают умноженную ставку.
+     */
+    fun commissionOn(
+        price: BigDecimal,
+        commissionRate: BigDecimal = COMMISSION_RATE,
+    ): BigDecimal = price.multiply(commissionRate).setScale(4, RoundingMode.HALF_UP)
 
     /**
      * Округление до целого лота (вниз) по лотности инструмента.

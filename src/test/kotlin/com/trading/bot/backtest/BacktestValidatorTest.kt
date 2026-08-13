@@ -54,7 +54,7 @@ class BacktestValidatorTest {
     fun `validation produces per-fold and aggregate out-of-sample results`() {
         val result =
             runBlocking {
-                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any())).thenReturn(result())
+                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any())).thenReturn(result())
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
             }
         assertEquals(3, result.folds.size)

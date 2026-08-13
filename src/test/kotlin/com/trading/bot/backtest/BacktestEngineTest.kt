@@ -196,6 +196,34 @@ class BacktestEngineTest {
         assertEquals(4.0, config.tpPercent)
         assertEquals(0.20, config.capitalSlice)
         assertFalse(config.mlFilterEnabled)
+        assertEquals(1000, config.monteCarloSimulations)
+        assertEquals(42L, config.monteCarloSeed)
+    }
+
+    @Test
+    fun `stress multipliers degrade backtest equity`() {
+        val base = runBlocking { engine.simulate("SBER", trendingCandles()) }
+        assertTrue(base.totalTrades > 0, "fixture must produce trades")
+        val commissionStress =
+            runBlocking { engine.simulate("SBER", trendingCandles(), commissionMultiplier = 5.0) }
+        val slippageStress =
+            runBlocking { engine.simulate("SBER", trendingCandles(), slippageMultiplier = 5.0) }
+        val combined =
+            runBlocking { engine.simulate("SBER", trendingCandles(), commissionMultiplier = 3.0, slippageMultiplier = 3.0) }
+
+        assertTrue(
+            commissionStress.equityCurve.last() < base.equityCurve.last(),
+            "commission x5 must reduce equity, base=${base.equityCurve.last()} stress=${commissionStress.equityCurve.last()}",
+        )
+        assertTrue(
+            slippageStress.equityCurve.last() < base.equityCurve.last(),
+            "slippage x5 must reduce equity, base=${base.equityCurve.last()} stress=${slippageStress.equityCurve.last()}",
+        )
+        assertTrue(
+            combined.equityCurve.last() < commissionStress.equityCurve.last(),
+            "combined stress must be harsher than commission alone",
+        )
+        assertEquals(base.totalTrades, commissionStress.totalTrades, "stress must not change trade count")
     }
 
     @Test
@@ -252,6 +280,18 @@ class BacktestEngineTest {
     fun `commission and slippage constants`() {
         assertEquals(BigDecimal("0.0005"), SimulatedExecution.COMMISSION_RATE)
         assertEquals(BigDecimal("0.001"), SimulatedExecution.MARKET_SLIPPAGE_RATE)
+    }
+
+    @Test
+    fun `execution costs are parameterizable for stress runs`() {
+        // Комиссия по параметризованной ставке: price * rate
+        val highCommission = SimulatedExecution.commissionOn(BigDecimal("100000"), BigDecimal("0.001"))
+        assertEquals(BigDecimal("100.0000"), highCommission)
+        // Проскальзывание по удвоенной ставке: цена отклоняется в 2 раза сильнее
+        val buy = SimulatedExecution.marketFill(BigDecimal("100"), isBuy = true, slippageRate = BigDecimal("0.002"))
+        assertEquals(0, BigDecimal("100.2").compareTo(buy.price))
+        val sell = SimulatedExecution.marketFill(BigDecimal("100"), isBuy = false, slippageRate = BigDecimal("0.002"))
+        assertEquals(0, BigDecimal("99.8").compareTo(sell.price))
     }
 
     @Test

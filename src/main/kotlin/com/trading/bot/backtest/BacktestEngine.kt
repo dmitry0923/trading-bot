@@ -74,6 +74,8 @@ class BacktestEngine(
      * @param minBarsForSignal минимальное число баров для сигнала (по умолчанию `bt.min-bars-for-signal`)
      * @param slPercent стоп-лосс в долях от цены входа (по умолчанию `bt.sl-percent` / 100)
      * @param tpPercent тейк-профит в долях от цены входа (по умолчанию `bt.tp-percent` / 100)
+     * @param commissionMultiplier множитель ставки комиссии (1.0 = базово; стресс-прогон 13.7.8)
+     * @param slippageMultiplier множитель ставки проскальзывания (1.0 = базово)
      */
     suspend fun run(
         ticker: String,
@@ -83,6 +85,8 @@ class BacktestEngine(
         minBarsForSignal: Int = backtestConfig.minBarsForSignal,
         slPercent: Double = backtestConfig.slPercent / 100.0,
         tpPercent: Double = backtestConfig.tpPercent / 100.0,
+        commissionMultiplier: Double = 1.0,
+        slippageMultiplier: Double = 1.0,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -91,7 +95,17 @@ class BacktestEngine(
             return emptyResult(ticker)
         }
         logger.info { "Backtest $ticker: ${candles.size} candles loaded" }
-        val result = simulate(ticker, candles, initialCapital, minBarsForSignal, slPercent, tpPercent)
+        val result =
+            simulate(
+                ticker,
+                candles,
+                initialCapital,
+                minBarsForSignal,
+                slPercent,
+                tpPercent,
+                commissionMultiplier,
+                slippageMultiplier,
+            )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
     }
@@ -142,6 +156,9 @@ class BacktestEngine(
      * Учёт: при открытии cash -= entry*qty + commission_entry.
      * При закрытии cash += exit*qty - commission_exit (тело возвращается автоматически).
      * PnL сделки включает обе комиссии.
+     *
+     * @param commissionMultiplier множитель ставки комиссии (стресс-прогоны 13.7.8)
+     * @param slippageMultiplier множитель ставки проскальзывания (стресс-прогоны 13.7.8)
      */
     suspend fun simulate(
         ticker: String,
@@ -150,6 +167,8 @@ class BacktestEngine(
         minBarsForSignal: Int = backtestConfig.minBarsForSignal,
         slPercent: Double = backtestConfig.slPercent / 100.0,
         tpPercent: Double = backtestConfig.tpPercent / 100.0,
+        commissionMultiplier: Double = 1.0,
+        slippageMultiplier: Double = 1.0,
     ): BacktestResult {
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
@@ -168,12 +187,34 @@ class BacktestEngine(
             if (pos0 != null && pos0.stopLoss != null && pos0.takeProfit != null) {
                 when (SimulatedExecution.hitStopOrTarget(current, pos0.stopLoss, pos0.takeProfit)) {
                     SimulatedExecution.StopTpHit.STOP -> {
-                        cash = closePosition(ticker, pos0, "STOP_LOSS", pos0.stopLoss, cash, equityCurve, tradeReturns)
+                        cash =
+                            closePosition(
+                                ticker,
+                                pos0,
+                                "STOP_LOSS",
+                                pos0.stopLoss,
+                                cash,
+                                equityCurve,
+                                tradeReturns,
+                                commissionMultiplier,
+                                slippageMultiplier,
+                            )
                         position = null
                     }
 
                     SimulatedExecution.StopTpHit.TARGET -> {
-                        cash = closePosition(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, cash, equityCurve, tradeReturns)
+                        cash =
+                            closePosition(
+                                ticker,
+                                pos0,
+                                "TAKE_PROFIT",
+                                pos0.takeProfit,
+                                cash,
+                                equityCurve,
+                                tradeReturns,
+                                commissionMultiplier,
+                                slippageMultiplier,
+                            )
                         position = null
                     }
 
@@ -200,7 +241,18 @@ class BacktestEngine(
                     meterRegistry?.counter("bt_ml_blocked_total", "ticker", ticker)?.increment()
                     if (curPos != null) {
                         // Сигнал инверсии, но встречный вход отклонён фильтром → закрыть текущую позицию
-                        cash = closePosition(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, cash, equityCurve, tradeReturns)
+                        cash =
+                            closePosition(
+                                ticker,
+                                curPos,
+                                "ML_FILTER_REVERSAL",
+                                current.openPrice,
+                                cash,
+                                equityCurve,
+                                tradeReturns,
+                                commissionMultiplier,
+                                slippageMultiplier,
+                            )
                         position = null
                     }
                     equityCurve.add(equityAt(cash, position, current.closePrice))
@@ -212,10 +264,32 @@ class BacktestEngine(
                 // Инверсия сигнала: закрыть текущую позицию и открыть встречную
                 val opposite = if (signal == StrategyAction.BUY) PositionDirection.SHORT else PositionDirection.LONG
                 if (curPos.direction == opposite) {
-                    cash = closePosition(ticker, curPos, "REVERSAL", current.openPrice, cash, equityCurve, tradeReturns)
-                    position = openPosition(ticker, signal, current.openPrice, cash, i, slPercent, tpPercent)
+                    cash =
+                        closePosition(
+                            ticker,
+                            curPos,
+                            "REVERSAL",
+                            current.openPrice,
+                            cash,
+                            equityCurve,
+                            tradeReturns,
+                            commissionMultiplier,
+                            slippageMultiplier,
+                        )
+                    position =
+                        openPosition(
+                            ticker,
+                            signal,
+                            current.openPrice,
+                            cash,
+                            i,
+                            slPercent,
+                            tpPercent,
+                            commissionMultiplier,
+                            slippageMultiplier,
+                        )
                     if (position != null) {
-                        cash = applyOpen(cash, position)
+                        cash = applyOpen(cash, position, commissionMultiplier)
                     }
                 }
                 equityCurve.add(equityAt(cash, position, current.closePrice))
@@ -223,16 +297,38 @@ class BacktestEngine(
             }
 
             // Открытие новой позиции на открытии текущей свечи
-            position = openPosition(ticker, signal, current.openPrice, cash, i, slPercent, tpPercent)
+            position =
+                openPosition(
+                    ticker,
+                    signal,
+                    current.openPrice,
+                    cash,
+                    i,
+                    slPercent,
+                    tpPercent,
+                    commissionMultiplier,
+                    slippageMultiplier,
+                )
             if (position != null) {
-                cash = applyOpen(cash, position)
+                cash = applyOpen(cash, position, commissionMultiplier)
             }
             equityCurve.add(equityAt(cash, position, current.closePrice))
         }
 
         // Закрыть оставшуюся позицию по последней цене
         position?.let { pos ->
-            cash = closePosition(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, cash, equityCurve, tradeReturns)
+            cash =
+                closePosition(
+                    ticker,
+                    pos,
+                    "END_OF_PERIOD",
+                    sorted.last().closePrice,
+                    cash,
+                    equityCurve,
+                    tradeReturns,
+                    commissionMultiplier,
+                    slippageMultiplier,
+                )
         }
         equityCurve.add(cash)
 
@@ -256,6 +352,11 @@ class BacktestEngine(
         (signal == StrategyAction.BUY && direction == PositionDirection.SHORT) ||
             (signal == StrategyAction.SELL && direction == PositionDirection.LONG)
 
+    private fun commissionRate(multiplier: Double): BigDecimal = SimulatedExecution.COMMISSION_RATE.multiply(BigDecimal.valueOf(multiplier))
+
+    private fun slippageRate(multiplier: Double): BigDecimal =
+        SimulatedExecution.MARKET_SLIPPAGE_RATE.multiply(BigDecimal.valueOf(multiplier))
+
     /**
      * Учёт открытия позиции: комиссия входа списывается, номинал остаётся в кэше
      * (позиция учитывается как нереализованный PnL в [equityAt]).
@@ -263,7 +364,11 @@ class BacktestEngine(
     private fun applyOpen(
         cash: BigDecimal,
         pos: PositionSim,
-    ): BigDecimal = cash.subtract(SimulatedExecution.commissionOn(pos.entryPrice))
+        commissionMultiplier: Double = 1.0,
+    ): BigDecimal =
+        cash.subtract(
+            SimulatedExecution.commissionOn(pos.entryPrice, commissionRate(commissionMultiplier)),
+        )
 
     /** Оценка текущего капитала: cash + нереализованный PnL позиции (mark-to-market). */
     private fun equityAt(
@@ -289,6 +394,8 @@ class BacktestEngine(
         bar: Int,
         slPercent: Double,
         tpPercent: Double,
+        commissionMultiplier: Double = 1.0,
+        slippageMultiplier: Double = 1.0,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val lotSize = instrumentsConfig.find(ticker)?.lotSize ?: 1
@@ -298,7 +405,7 @@ class BacktestEngine(
         if (lotQty <= 0) return null
 
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-        val fill = SimulatedExecution.marketFill(price, direction == PositionDirection.LONG)
+        val fill = SimulatedExecution.marketFill(price, direction == PositionDirection.LONG, slippageRate(slippageMultiplier))
         val sl = BigDecimal.valueOf(slPercent)
         val tp = BigDecimal.valueOf(tpPercent)
         return PositionSim(
@@ -331,10 +438,12 @@ class BacktestEngine(
         cash: BigDecimal,
         equityCurve: MutableList<BigDecimal>,
         tradeReturns: MutableList<Double>,
+        commissionMultiplier: Double = 1.0,
+        slippageMultiplier: Double = 1.0,
     ): BigDecimal {
-        val fill = SimulatedExecution.marketFill(price, pos.direction == PositionDirection.SHORT)
-        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice)
-        val commissionExit = SimulatedExecution.commissionOn(fill.price)
+        val fill = SimulatedExecution.marketFill(price, pos.direction == PositionDirection.SHORT, slippageRate(slippageMultiplier))
+        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice, commissionRate(commissionMultiplier))
+        val commissionExit = SimulatedExecution.commissionOn(fill.price, commissionRate(commissionMultiplier))
         val gross =
             when (pos.direction) {
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)

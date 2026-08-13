@@ -297,6 +297,10 @@ bt:
   # ML-фильтр входа в бэктесте (roadmap 13.11.6): признаки на момент бара,
   # confidence=null. Требует доступной модели; не влияет на live-гейт ml.filter.enabled.
   ml-filter-enabled: ${BT_ML_FILTER_ENABLED:false}
+  # Monte Carlo + стресс-сценарии бэктеста (roadmap 13.7.8): число bootstrap-симуляций
+  # и фиксированный seed для воспроизводимых прогонов /api/v1/backtest/{ticker}/robustness.
+  monte-carlo-simulations: ${BT_MONTE_CARLO_SIMULATIONS:1000}
+  monte-carlo-seed: ${BT_MONTE_CARLO_SEED:42}
   # LLM-агенты в бэктесте (roadmap 13.8.1): по умолчанию выключены.
   # Включаются профилем `backtest` (application-backtest.yml) или переменной BT_AGENT_ENABLED=true.
   agent:

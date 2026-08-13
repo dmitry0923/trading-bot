@@ -437,3 +437,4 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/risk/daily-p
 | Разрешить волатильные инструменты | `risk.max-volatility-percent=8.0` |
 | Добавить тикер в торговлю | добавить в `trading.tickers` + `risk.sectors` (иначе сектор UNKNOWN) |
 | Длинный горизонт бэктеста | `GET /api/v1/backtest/{ticker}?days=730` (требует историю свечей) |
+| Анализ устойчивости стратегии | `GET /api/v1/backtest/{ticker}/robustness?simulations=2000` (Monte Carlo + стресс-сценарии, раздел 13.7.8; число симуляций — `bt.monte-carlo-simulations`) |

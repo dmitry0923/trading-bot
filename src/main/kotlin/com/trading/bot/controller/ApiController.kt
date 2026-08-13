@@ -4,6 +4,7 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestValidator
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.config.BacktestConfig
@@ -99,6 +100,7 @@ class ApiController(
     private val tradeEventRepository: TradeEventRepository,
     private val backtestEngine: BacktestEngine,
     private val backtestValidator: BacktestValidator,
+    private val monteCarloAnalyzer: MonteCarloAnalyzer,
     private val backtestResultRepository: BacktestResultRepository,
     private val panelBacktestService: PanelBacktestService,
     private val backtestConfig: BacktestConfig,
@@ -527,6 +529,81 @@ class ApiController(
             "timestamp" to LocalDateTime.now().toString(),
         )
     }
+
+    /**
+     * Анализ устойчивости бэктеста (roadmap 13.7.8): Monte Carlo bootstrap по
+     * фактическим сделкам + стресс-перепрогоны с увеличенными комиссией и
+     * проскальзыванием. Дополняет walk-forward ([.validateBacktest]) оценкой
+     * «хрупкости» доходности к порядку сделок и росту издержек.
+     */
+    @GetMapping("/backtest/{ticker}/robustness")
+    suspend fun backtestRobustness(
+        @PathVariable ticker: String,
+        @RequestParam(required = false) days: Int?,
+        @RequestParam(defaultValue = "false") loadHistory: Boolean,
+        @RequestParam(required = false) timeframe: String?,
+        @RequestParam(required = false) simulations: Int?,
+        @RequestParam(required = false) seed: Long?,
+    ): Map<String, Any> {
+        meterRegistry
+            .counter(
+                "api.backtest.robustness",
+                Tags
+                    .of("ticker", ticker),
+            ).increment()
+        val effectiveDays = days ?: backtestConfig.days
+        val effectiveTimeframe = timeframe ?: backtestConfig.timeframe
+        val effectiveSimulations = simulations ?: backtestConfig.monteCarloSimulations
+        val effectiveSeed = seed ?: backtestConfig.monteCarloSeed
+        if (loadHistory) {
+            historicalDataLoader.loadAndSave(ticker, effectiveDays)
+        }
+        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
+        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val report =
+            monteCarloAnalyzer.analyze(
+                ticker,
+                candles,
+                simulations = effectiveSimulations,
+                seed = effectiveSeed,
+            )
+        return mapOf(
+            "ticker" to ticker,
+            "timeframe" to effectiveTimeframe,
+            "simulations" to report.monteCarlo.simulations,
+            "robust" to report.isRobust(),
+            "base" to stressToMap(report.base),
+            "monteCarlo" to
+                mapOf(
+                    "medianReturn" to report.monteCarlo.medianReturn,
+                    "p5Return" to report.monteCarlo.p5Return,
+                    "p95Return" to report.monteCarlo.p95Return,
+                    "avgReturn" to report.monteCarlo.avgReturn,
+                    "minReturn" to report.monteCarlo.minReturn,
+                    "maxReturn" to report.monteCarlo.maxReturn,
+                    "probabilityOfLoss" to report.monteCarlo.probabilityOfLoss,
+                    "mcRobust" to report.monteCarlo.isRobust(),
+                ),
+            "stress" to report.stress.map { stressToMap(it) },
+            "timestamp" to LocalDateTime.now().toString(),
+        )
+    }
+
+    private fun stressToMap(scenario: com.trading.bot.backtest.StressScenarioResult): Map<String, Any> =
+        mapOf(
+            "name" to scenario.name,
+            "description" to scenario.description,
+            "commissionMultiplier" to scenario.commissionMultiplier,
+            "slippageMultiplier" to scenario.slippageMultiplier,
+            "totalReturn" to scenario.totalReturn,
+            "sharpeRatio" to scenario.sharpeRatio,
+            "sortinoRatio" to scenario.sortinoRatio,
+            "maxDrawdown" to scenario.maxDrawdown,
+            "profitFactor" to scenario.profitFactor,
+            "winRate" to scenario.winRate,
+            "totalTrades" to scenario.totalTrades,
+            "passable" to scenario.passable,
+        )
 
     private suspend fun persistValidationResult(
         ticker: String,

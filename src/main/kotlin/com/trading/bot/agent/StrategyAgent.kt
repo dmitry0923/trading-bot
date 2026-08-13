@@ -60,6 +60,8 @@ class StrategyAgent(
      * @param version версия LLM-шаблона промпта
      * @param temperature температура генерации (live-путь 0.15, бэктест — 0.0)
      * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
+     * @param techDelta дельта-компрессия тех-отчёта (roadmap 13.8); null — полный текст
+     * @param fundDelta дельта-компрессия фундаментального отчёта (roadmap 13.8); null — полный текст
      * @return черновик стратегии (Draft)
      */
     suspend fun formulate(
@@ -72,6 +74,8 @@ class StrategyAgent(
         version: String = PromptRegistry.DEFAULT_VERSION,
         temperature: Double = 0.15,
         cacheNamespace: String? = null,
+        techDelta: String? = null,
+        fundDelta: String? = null,
     ): Draft {
         val start = System.currentTimeMillis()
 
@@ -104,10 +108,10 @@ class StrategyAgent(
                 "techConfidence" to tech.confidence,
                 "techTrend" to tech.trend,
                 "techRsi" to tech.rsi,
-                "techReasoning" to tech.reasoning,
+                "techReasoning" to (techDelta ?: tech.reasoning),
                 "fundConclusion" to fund.conclusion,
                 "fundConfidence" to fund.confidence,
-                "fundReasoning" to fund.reasoning,
+                "fundReasoning" to (fundDelta ?: fund.reasoning),
             )
 
         val prompt = promptRegistry.getTemplate("strategy", version)

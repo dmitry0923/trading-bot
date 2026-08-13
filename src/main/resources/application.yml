@@ -118,6 +118,7 @@ llm:
   retry-enabled: true
   queue-capacity: 64
   queue-concurrency: 2
+  delta-prompts-enabled: ${LLM_DELTA_PROMPTS_ENABLED:false}
 
 trace-storage:
   enabled: ${TRACE_STORAGE_ENABLED:false}

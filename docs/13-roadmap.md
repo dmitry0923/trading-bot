@@ -62,7 +62,7 @@ gantt
 | Backtest: панельный прогон | несколько тикеров за один вызов, распределение результатов | ✅ (POST `/api/v1/backtest/panel`, раздел 11.6.1) |
 | Backtest: конфиг `bt.*` | вынос констант 20%/2%/4% и `initialCapital` из кода | ✅ (раздел 11.8.1) |
 | WebSocket-only исполнение | полный переход на WS для market-data и ордеров, REST — только fallback | ✅ (раздел 13.8.2) |
-| Уменьшение LLM-латентности | параллельные вызовы агентов, дельта-промпты | |
+| Уменьшение LLM-латентности | параллельные вызовы агентов, дельта-промпты | ✅ (раздел 13.8.5) |
 | Очередь (RabbitMQ) для outbox | RabbitMQ — дополнительный канал доставки outbox-строк (publisher → очередь → консьюмер через `redispatchById`), DB-worker остаётся фолбэком | ✅ (раздел 13.8.4) |
 
 ### v2.4 — ML-агенты
@@ -420,6 +420,46 @@ flowchart LR
 **Тесты:** `RabbitMqTransportIntegrationTest` (полный путь против Postgres + RabbitMQ:
 publish → consume → SENT; already-SENT не переотправляется; invalid → DLQ),
 `OrderOutboxPublisherTest`, `OutboxOrderConsumerTest`, хуки в `OrderOutboxServiceTest`.
+
+### 13.8.5. Уменьшение LLM-латентности (реализовано)
+
+Две независимые оптимизации агентного контура:
+
+1. **Параллельные вызовы независимых агентов.** `DiscretionaryStrategy.runChain`
+   (live-контур для A/B-эксперимента и аналитики) запускал Technical + Fundamental
+   + адаптивный порог строго последовательно. Теперь первые два — как в
+   `AgentBacktestSignalGenerator` (13.8.1) — исполняются параллельно
+   (`coroutineScope`/`async`), что вдвое сокращает lat-часть цепочки до первого
+   LLM-вызова стратега. Зависимая часть (strategist → contrarian → arbitrator)
+   остаётся последовательной — шаг зависит от результата предыдущего.
+   Проверка параллельности — `DiscretionaryStrategyTest` (3 вызова стартуют
+   одновременно, `maxConcurrent ≥ 2`).
+
+2. **Дельта-промпты.** При `llm.delta-prompts-enabled=true` (`LLM_DELTA_PROMPTS_ENABLED`,
+   выключено по умолчанию) стратег и контрариан получают вместо полного текста
+   `techReasoning`/`fundReasoning` только компактную дельту отчётов с прошлой оценки
+   тикера:
+
+   - `AgentReportDelta` — чистый компрессор: `null` на первой оценке (полный текст),
+     `"NO_CHANGE"` при идентичных значениях, иначе перечисление изменённых полей
+     (`conclusion`, `confidence`, `trend`, `rsi`, `atr`, `macd`, `reasoning` до 120
+     символов). Числовые поля — с `Locale.ROOT` (запятая от локали не попадает в промпт).
+   - `DeltaPromptStore` — in-memory `ConcurrentHashMap` последних отчётов по тикеру
+     (конкурентный доступ: тикеры обрабатываются параллельно); состояние обновляется
+     после каждого цикла, при перезапуске пусто → первая оценка всегда с полным текстом.
+   - Фолбэк: при выключенной фиче/отсутствии предыдущего отчёта агенты работают как
+     раньше (полный `reasoning`). Сигнальные поля (`conclusion`/`confidence`/`trend`/`rsi`)
+     передаются всегда — дельта сжимает только текст обоснований.
+   - Метрика: `agent.delta.prompts{mode=DELTA|FULL}` — доля циклов с дельтой.
+
+   Дельта-промпты не затрагивают критический путь советника: `LlmAdvisor` — один
+   LLM-вызов, там сжимать нечего. Ограничение в 2 одновременных LLM-вызова
+   (`llm.queue-concurrency`) и semantic cache (по fingerprint рынка) не менялись.
+
+**Тесты:** `DiscretionaryStrategyTest` (цепочка + параллельность + дельты),
+`AgentReportDeltaTest`, `DeltaPromptStoreTest` (5 юнит-тестов компрессора, 5 —
+хранилища). Полный набор: 563 теста, 1 Docker-зависимый fail (`SemanticCacheTest`),
+ktlint чист.
 
 ## 13.9. Метрики зрелости продукта
 

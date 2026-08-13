@@ -53,6 +53,7 @@ class ContrarianAgent(
      * @param version версия LLM-шаблона промпта
      * @param temperature температура генерации (live-путь 0.1, бэктест — 0.0)
      * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
+     * @param techDelta дельта-компрессия тех-отчёта (roadmap 13.8); null — полный текст
      * @return отчёт о валидности, уровне риска и критике
      */
     suspend fun challenge(
@@ -64,6 +65,7 @@ class ContrarianAgent(
         version: String = PromptRegistry.DEFAULT_VERSION,
         temperature: Double = 0.1,
         cacheNamespace: String? = null,
+        techDelta: String? = null,
     ): ChallengeReport {
         val start = System.currentTimeMillis()
 
@@ -85,7 +87,7 @@ class ContrarianAgent(
                 "strategyReasoning" to draft.reasoning,
                 "techConclusion" to tech.conclusion,
                 "techConfidence" to tech.confidence,
-                "techReasoning" to tech.reasoning,
+                "techReasoning" to (techDelta ?: tech.reasoning),
                 "fundConclusion" to fund.conclusion,
                 "fundConfidence" to fund.confidence,
                 "currentPrice" to snapshot.currentPrice.toPlainString(),

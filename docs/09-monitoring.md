@@ -44,6 +44,7 @@
 | `agent.arbitrator.decision` | Counter | `action` | финальные решения |
 | `agent.arbitrator.parse.error` | Counter | — | parse-ошибки арбитра |
 | `arbitrator.deterministic.override` | Counter | `reason` | детерминированные overrides (CRITICAL_CHALLENGE, RISK_CONTEXT_PAUSE, DAILY_LOSS_LIMIT, LOW_DRAFT_CONFIDENCE, RISK_CRITICAL, LOW_CONFIDENCE, ZERO_QUANTITY, PRICE_DEVIATION) |
+| `agent.delta.prompts` | Counter | `agent`, `mode` | дельта-промпты: `mode=DELTA` — сжатые отчёты, `FULL` — полный текст (13.8.5) |
 
 #### Feedback / адаптивный риск
 

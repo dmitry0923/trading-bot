@@ -109,6 +109,7 @@ llm:
   retry-enabled: true
   queue-capacity: 64          # ёмкость FIFO-очереди LLM-запросов
   queue-concurrency: 2        # максимум одновременных LLM-вызовов
+  delta-prompts-enabled: ${LLM_DELTA_PROMPTS_ENABLED:false}  # дельта-промпты для стратега/контрариана (раздел 13.8.5)
 
 resilience4j:                      # конфигурация Resilience4j для LLM
   circuitbreaker:
@@ -256,6 +257,7 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `USD_RUB` | `90.0` | | курс fallback | `90.0` |
 | `LLM_SEMANTIC_CACHE` | `true` | | семантический кэш вкл/выкл | `true` |
 | `LLM_SEMANTIC_CACHE_TTL` | `10` | | TTL кэша, мин | `10` |
+| `LLM_DELTA_PROMPTS_ENABLED` | `false` | | дельта-промпты: стратег/контрариан получают изменения отчётов вместо полного reasoning (раздел 13.8.5) | `true` |
 | `TRADING_MODE` | `SIMULATION` | **да** | SIMULATION / LIVE | `SIMULATION` |
 | `BOT_INTERVAL_MS` | `300000` | | интервал бот-цикла | `300000` |
 | `STRATEGY_INTERVAL_MS` | `600000` | | интервал стратегий | `600000` |

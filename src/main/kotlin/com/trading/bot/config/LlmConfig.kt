@@ -31,9 +31,11 @@ import org.springframework.stereotype.Component
  * @property guardrailsMaxPriceDeviationPercent макс. отклонение целевой цены от рынка, %
  * @property circuitBreakerEnabled включает Circuit Breaker
  * @property rateLimiterEnabled включает Rate Limiter
- * @property retryEnabled включает Retry
- * @property queueCapacity ёмкость очереди запросов LLM (FIFO)
- * @property queueConcurrency максимальное число одновременных LLM-вызовов
+ *  @property retryEnabled включает Retry
+ *  @property queueCapacity ёмкость очереди запросов LLM (FIFO)
+ *  @property queueConcurrency максимальное число одновременных LLM-вызовов
+ *  @property deltaPromptsEnabled включает дельта-промпты: стратег/контрариан
+ *              получают только изменения отчётов tech/fund вместо полного reasoning
  */
 @Component
 @ConfigurationProperties(prefix = "llm")
@@ -67,6 +69,8 @@ class LlmConfig {
 
     var queueCapacity: Int = 64
     var queueConcurrency: Int = 2
+
+    var deltaPromptsEnabled: Boolean = false
 
     /**
      * Возвращает базовый URL и модель по умолчанию для провайдера.

@@ -86,7 +86,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         request: EntryRequest,
     ): PositionSizeResult {
-        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker)
+        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker, confidence = signal.confidence)
         val kellyQty =
             if (kellySizeRub > BigDecimal.ZERO) {
                 kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt()

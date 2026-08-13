@@ -5,6 +5,7 @@ import com.trading.bot.domain.risk.MarketRegime
 import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
+import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -42,6 +43,7 @@ class AdaptiveRiskServiceCorrelationTest {
             correlationProvider,
             marketRegimeProvider,
             Mockito.mock(AumProvider::class.java),
+            Mockito.mock(AgentLogRepository::class.java),
         )
 
     private fun stubCorrelation(value: Double?) {

@@ -55,6 +55,10 @@
 | `adaptive.position_size` | Gauge | `ticker` | Kelly-размер позиции |
 | `adaptive.drawdown_recovery` | Gauge | — | 1.0 если recovery-режим |
 | `adaptive.pause` | Gauge | `ticker` | 1.0 если пауза |
+| `adaptive.confidence_threshold` | Gauge | `ticker` | применяемый порог уверенности (калиброванный или fallback, 13.11.8) |
+| `adaptive.confidence_calibrated` | Counter | `ticker` | вызовы, где порог вычислен онлайн-калибровкой по исходам (13.11.8) |
+| `adaptive.confidence_fallback` | Counter | `ticker` | вызовы, где калибровка недоступна и применены правила по win rate |
+| `adaptive.confidence_factor` | Gauge | `ticker` | размер-множитель по уверенности сигнала (13.11.9) |
 
 #### LLM
 

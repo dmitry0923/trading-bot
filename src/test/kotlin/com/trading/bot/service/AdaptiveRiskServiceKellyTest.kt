@@ -7,6 +7,7 @@ import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.DrawdownStatus
 import com.trading.bot.model.dto.TradeStats
 import com.trading.bot.model.entity.Position
+import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -35,6 +36,7 @@ class AdaptiveRiskServiceKellyTest {
     private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
     private val marketRegimeProvider: MarketRegimeProvider = { MarketRegime.NORMAL }
     private val aumProvider = Mockito.mock(AumProvider::class.java)
+    private val agentLogRepo = Mockito.mock(AgentLogRepository::class.java)
 
     private val service =
         AdaptiveRiskService(
@@ -47,6 +49,7 @@ class AdaptiveRiskServiceKellyTest {
             correlationProvider,
             marketRegimeProvider,
             aumProvider,
+            agentLogRepo,
         )
 
     private fun stats(

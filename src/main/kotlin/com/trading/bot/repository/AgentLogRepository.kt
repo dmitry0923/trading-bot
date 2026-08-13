@@ -75,6 +75,37 @@ class AgentLogRepository(
             .one()
             .awaitSingleOrNull()
 
+    /**
+     * Батч-получение уверенности стратега (Agent-3-Strategist) по списку cycleId.
+     *
+     * Используется онлайн-калибровкой порога уверенности (roadmap 13.11.8): для закрытых
+     * позиций тикера одним запросом поднимаются уверенности на входе. Возвращает map
+     * cycleId -> confidence; cycleId без лога стратега (детерминированные стратегии без
+     * LLM-контура) отсутствуют в результате.
+     */
+    suspend fun findStrategyConfidenceByCycleIds(cycleIds: Collection<String>): Map<String, Double> {
+        val ids = cycleIds.map { it.trim() }.distinct().filter { it.isNotEmpty() }
+        if (ids.isEmpty()) return emptyMap()
+        val placeholders = ids.indices.joinToString(",") { ":id$it" }
+        var spec =
+            databaseClient
+                .sql(
+                    """
+                    SELECT cycle_id, confidence
+                    FROM agent_logs
+                    WHERE cycle_id IN ($placeholders) AND agent_name = :agentName
+                    """.trimIndent(),
+                ).bind("agentName", STRATEGY_AGENT)
+        ids.forEachIndexed { i, id -> spec = spec.bind("id$i", id) }
+        return spec
+            .map { row, _ ->
+                row.require("cycle_id", String::class.java) to (row.get("confidence", BigDecimal::class.java)?.toDouble() ?: 0.0)
+            }.all()
+            .collectList()
+            .awaitSingle()
+            .toMap()
+    }
+
     suspend fun save(log: AgentLog): AgentLog {
         val sql =
             """

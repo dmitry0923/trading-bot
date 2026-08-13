@@ -26,6 +26,17 @@
 | `risk.trailing-stop-enabled` | `true` | Boolean | трейлинг-стоп включён |
 | `risk.trailing-stop-percent` | `1.5` | Double | отступ трейлинг-стопа, % от текущей цены |
 | `risk.sectors` | `{}` | Map<String, String> | справочник `ticker -> сектор` |
+| `risk.confidence-calibration-enabled` | `true` | Boolean | онлайн-калибровка порога уверенности по исходам сделок (13.11.8) |
+| `risk.confidence-calibration-days` | `14` | Integer | окно сбора закрытых сделок тикера, календарных дней |
+| `risk.confidence-calibration-min-trades` | `10` | Integer | минимум сделок в выборке `confidence >= c` для калиброванного порога |
+| `risk.confidence-calibration-target-win-rate` | `0.55` | Double | целевой win rate отфильтрованной по порогу выборки |
+| `risk.confidence-calibration-min-threshold` | `0.50` | Double | нижняя граница поиска порога |
+| `risk.confidence-calibration-max-threshold` | `0.85` | Double | верхняя граница поиска порога |
+| `risk.confidence-calibration-step` | `0.05` | Double | шаг перебора порога |
+| `risk.confidence-sizing-enabled` | `true` | Boolean | масштабирование размера позиции по уверенности сигнала (13.11.9) |
+| `risk.confidence-sizing-min-factor` | `0.5` | Double | размер-множитель при confidence == адаптивный порог |
+| `risk.confidence-sizing-max-factor` | `1.0` | Double | размер-множитель при confidence >= ceiling |
+| `risk.confidence-sizing-ceiling` | `0.90` | Double | уверенность, при которой размер достигает max-factor |
 
 Реализация полей (`RiskConfig.kt`):
 
@@ -284,7 +295,22 @@ finalQty < 1 → вход отклонён (ZERO_RISK_SIZE)
 
 ### Динамический порог confidence
 
-`getAdaptiveConfidenceThreshold(ticker)` — таблица в разделе 3.5 (0.55–0.80).
+`getAdaptiveConfidenceThreshold(ticker)` — онлайн-калибровка по исходам сделок
+(roadmap 13.11.8): закрытые позиции тикера за окно калибровки джойнятся с
+уверенностью стратега на входе (`agent_logs`), `ConfidenceCalibrator` подбирает
+нижнюю границу, при которой выборка `confidence >= c` достигает целевого win rate
+(раздел 13.11.8). Fallback при недостатке данных — таблица правил в разделе 3.5
+(0.55–0.80). Метрики: `adaptive.confidence_threshold`,
+`adaptive.confidence_calibrated`, `adaptive.confidence_fallback`.
+
+### Confidence-aware сайзинг
+
+`calculateOptimalPositionSize(ticker, confidence)` масштабирует размер позиции по
+уверенности сигнала (roadmap 13.11.9): линейная интерполяция от
+`confidence-sizing-min-factor` (0.5) при `confidence == адаптивный порог` до
+`confidence-sizing-max-factor` (1.0) при `confidence >= confidence-sizing-ceiling`
+(0.90). Множитель только урезает размер (max = 1.0), `confidence == null` и
+выключенный сайзинг нейтральны. Метрика: `adaptive.confidence_factor{ticker}`.
 
 ## 5.6. Daily Loss Limit
 

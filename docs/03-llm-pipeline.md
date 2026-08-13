@@ -370,6 +370,14 @@ flowchart LR
 
 **Адаптивный порог уверенности** (`AdaptiveRiskService.getAdaptiveConfidenceThreshold`):
 
+Онлайн-калибровка по исходам сделок (roadmap 13.11.8): закрытые позиции тикера за
+окно `risk.confidence-calibration-days` (14 дн) джойнятся с уверенностью стратега
+на входе (`agent_logs`, Agent-3-Strategist, по `cycleId`); [ConfidenceCalibrator]
+ищет самую низкую границу c из [0.50..0.85] (шаг 0.05), при которой выборка
+`confidence >= c` содержит >= `min-trades` (10) сделок и даёт win rate
+>= `target-win-rate` (0.55). При недостатке данных — fallback на правила по win
+rate за 14 дней:
+
 | winRate (14 дн) | Порог confidence |
 |---|---|
 | нет данных | 0.60 |
@@ -378,7 +386,7 @@ flowchart LR
 | > 0.60 | 0.55 |
 | иначе | 0.60 |
 
-Механика: проигрываем → требуем от LLM большей уверенности; выигрываем → снижаем порог. Порог передаётся в StrategyAgent (guardrail) и в ArbitratorAgent (детерминированный override LOW_DRAFT_CONFIDENCE).
+Механика: проигрываем → требуем от LLM большей уверенности; выигрываем → снижаем порог. Порог передаётся в StrategyAgent (guardrail) и в ArbitratorAgent (детерминированный override LOW_DRAFT_CONFIDENCE). Метрики: `adaptive.confidence_threshold` (gauge), `adaptive.confidence_calibrated`/`adaptive.confidence_fallback` (counters).
 
 **Паузы**:
 - `AdaptiveRiskService.shouldPauseTrading(ticker)`: `maxConsecutiveLosses >= 4` или `profitFactor <= 0.5 при trades >= 5` → пауза;

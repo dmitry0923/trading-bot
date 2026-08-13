@@ -70,6 +70,52 @@ class RiskConfig {
      */
     var kellyMaxPositionFraction: Double = 0.10
 
+    // ===== Online-калибровка порога уверенности (roadmap 13.11.8) =====
+
+    /** Включена ли онлайн-калибровка порога уверенности по исходам сделок. */
+    var confidenceCalibrationEnabled: Boolean = true
+
+    /** Окно (календарных дней) для сбора закрытых сделок тикера при калибровке. */
+    var confidenceCalibrationDays: Int = 14
+
+    /** Минимум сделок в выборке `confidence >= c` для калиброванного порога. */
+    var confidenceCalibrationMinTrades: Int = 10
+
+    /** Целевой win rate, который должна давать отфильтрованная по порогу выборка. */
+    var confidenceCalibrationTargetWinRate: Double = 0.55
+
+    /** Нижняя граница поиска порога уверенности. */
+    var confidenceCalibrationMinThreshold: Double = 0.50
+
+    /** Верхняя граница поиска порога уверенности. */
+    var confidenceCalibrationMaxThreshold: Double = 0.85
+
+    /** Шаг перебора порога уверенности. */
+    var confidenceCalibrationStep: Double = 0.05
+
+    // ===== Confidence-aware позиционный сайзинг (roadmap 13.11.9) =====
+
+    /**
+     * Включено ли масштабирование размера позиции по уверенности стратега.
+     * sizeFactor = f(confidence, adaptiveThreshold): сигнал на пороге — минимальный
+     * размер ([confidenceSizingMinFactor]), уверенность >= [confidenceSizingCeiling] —
+     * полный размер ([confidenceSizingMaxFactor]). Множитель только урезает размер
+     * относительно текущего baseline (max factor = 1.0), никогда не раздувает его.
+     */
+    var confidenceSizingEnabled: Boolean = true
+
+    /** Размер-множитель при confidence, равном адаптивному порогу (минимальный размер). */
+    var confidenceSizingMinFactor: Double = 0.5
+
+    /** Размер-множитель при confidence >= [confidenceSizingCeiling] (полный размер). */
+    var confidenceSizingMaxFactor: Double = 1.0
+
+    /**
+     * Уверенность (0..1), при которой размер достигает [confidenceSizingMaxFactor].
+     * Выше порога калибровки (0.50..0.85): 0.85..0.90 означает «полная уверенность».
+     */
+    var confidenceSizingCeiling: Double = 0.90
+
     /**
      * Целевая волатильность для volatility targeting, % в ДЕНЬ (дневной горизонт).
      * multiplier = volatilityTargetPercent / dailyVolPercent, где dailyVolPercent —

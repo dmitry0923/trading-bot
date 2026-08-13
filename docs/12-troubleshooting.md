@@ -123,7 +123,7 @@ Graceful degradation встроен везде:
    SELECT ticker, action, confidence, override_reason FROM agent_logs
    WHERE agent_name='Agent-5-Arbitrator' AND ticker='SBER' ORDER BY created_at DESC LIMIT 5;
    ```
-3. Порог confidence — стратегия `confidence` ниже адаптивного порога (0.55–0.80).
+ 3. Порог confidence — стратегия `confidence` ниже адаптивного порога (калибровка 0.50–0.85, fallback 0.55–0.80, раздел 13.11.8).
 
 ### «События не доходят до обработчика»
 

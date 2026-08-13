@@ -177,6 +177,19 @@ risk:
   default-take-profit-percent: 4.0
   trailing-stop-enabled: true
   trailing-stop-percent: 1.5
+  # Online-калибровка порога уверенности по исходам сделок (roadmap 13.11.8)
+  confidence-calibration-enabled: true
+  confidence-calibration-days: 14
+  confidence-calibration-min-trades: 10
+  confidence-calibration-target-win-rate: 0.55
+  confidence-calibration-min-threshold: 0.50
+  confidence-calibration-max-threshold: 0.85
+  confidence-calibration-step: 0.05
+  # Confidence-aware позиционный сайзинг (roadmap 13.11.9)
+  confidence-sizing-enabled: true
+  confidence-sizing-min-factor: 0.5
+  confidence-sizing-max-factor: 1.0
+  confidence-sizing-ceiling: 0.90
   sectors:                            # справочник ticker -> сектор (sector concentration)
     SBER: FINANCE
     VTBR: FINANCE

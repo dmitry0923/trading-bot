@@ -1,11 +1,13 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.ConfidenceCalibrator
 import com.trading.bot.domain.risk.MarketRegime
 import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.domain.risk.PerTickerRegime
 import com.trading.bot.domain.risk.RegimeDetector
 import com.trading.bot.model.entity.Position
+import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -26,7 +28,10 @@ import kotlin.math.sqrt
  * - Market regime: режим VOLATILE урезает размер на regimeVolatileSizeMultiplier,
  *   STRESS обнуляет размер (входы блокирует FuturesRiskEngine)
  * - Адаптивные SL/TP: множитель ATR зависит от sl/tp hit rate тикера
- * - Адаптивный порог уверенности арбитра: хуже win rate -> выше порог
+ * - Адаптивный порог уверенности арбитра: онлайн-калибровка по исходам сделок
+ *   (ConfidenceCalibrator), fallback — правила по win rate
+ * - Confidence-aware сайзинг: размер позиции масштабируется по уверенности сигнала
+ *   относительно адаптивного порога (порог -> min factor, ceiling -> max factor)
  * - shouldPauseTrading()/isInDrawdownRecovery(): пауза при серии убытков
  * - exceedsCorrelationLimit()/exceedsSectorCorrelationLimit(): корреляционные
  *   фильтры по закрытиям из Redis (математика — общий [CorrelationMatrixProvider])
@@ -43,6 +48,7 @@ class AdaptiveRiskService(
     private val correlationProvider: CorrelationMatrixProvider,
     private val marketRegimeProvider: MarketRegimeProvider,
     private val aumProvider: AumProvider,
+    private val agentLogRepository: AgentLogRepository,
 ) {
     private val logger = KotlinLogging.logger {}
     private val correlationThreshold = 0.8
@@ -133,18 +139,24 @@ class AdaptiveRiskService(
      *    volatility (stddev лог-доходностей по DAY_1) либо дневной эквивалент
      *    ATR (10-мин ATR% * sqrt(свечей в дне)). Высокая волатильность режет
      *    размер, низкая — (в пределах clamp) увеличивает. Без данных — нейтрально.
-     * 3. Drawdown degradation: непрерывный множитель по глубине просадки от пика
+     * 3. Confidence-aware сайзинг: множитель по уверенности сигнала относительно
+     *    адаптивного порога — маржинальный сигнал (confidence = порог) режет размер
+     *    до [RiskConfig.confidenceSizingMinFactor], высокая уверенность
+     *    (>= [RiskConfig.confidenceSizingCeiling]) — полный размер.
+     * 4. Drawdown degradation: непрерывный множитель по глубине просадки от пика
      *    AUM (drawdownScaleTiers) плюс fallback-множитель при серии убытков подряд.
      *
      * @param ticker тикер инструмента
      * @param atr дневной ATR (если null — берётся/масштабируется из кэша свечей)
      * @param currentPrice текущая цена (если null — последнее закрытие из кэша)
+     * @param confidence уверенность сигнала (0..1); null — без confidence-сайзинга
      * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
      */
     suspend fun calculateOptimalPositionSize(
         ticker: String,
         atr: BigDecimal? = null,
         currentPrice: BigDecimal? = null,
+        confidence: Double? = null,
     ): BigDecimal {
         val aum = aumProvider.currentAum()
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
@@ -176,6 +188,11 @@ class AdaptiveRiskService(
             size = size.multiply(BigDecimal(volMultiplier))
         }
 
+        // Confidence-aware сайзинг: маржинальный сигнал (confidence == порог) —
+        // минимальный размер, высокая уверенность — полный. Не раздувает baseline.
+        val confidenceFactor = confidenceSizingFactor(ticker, confidence)
+        size = size.multiply(BigDecimal(confidenceFactor))
+
         // Drawdown degradation: непрерывный множитель по глубине просадки + серия убытков.
         val drawdownFactor = drawdownScaleMultiplier().coerceAtMost(recoveryReductionFactor())
         size = size.multiply(BigDecimal(drawdownFactor))
@@ -201,7 +218,7 @@ class AdaptiveRiskService(
         meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), finalSize.toDouble())
         logger.info {
             "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, " +
-                "drawdownFactor=$drawdownFactor, regimeFactor=$regimeFactor)"
+                "confidenceFactor=$confidenceFactor, drawdownFactor=$drawdownFactor, regimeFactor=$regimeFactor)"
         }
         return finalSize
     }
@@ -265,6 +282,42 @@ class AdaptiveRiskService(
                 .coerceIn(riskConfig.minVolatilitySizeMultiplier, riskConfig.maxVolatilitySizeMultiplier)
         }
         return null
+    }
+
+    /**
+     * Множитель размера позиции по уверенности сигнала (roadmap 13.11.9).
+     *
+     * Линейная интерполяция между [RiskConfig.confidenceSizingMinFactor] (при
+     * confidence == адаптивный порог тикера) и [RiskConfig.confidenceSizingMaxFactor]
+     * (при confidence >= [RiskConfig.confidenceSizingCeiling]). Множитель только
+     * урезает размер относительно baseline (max factor = 1.0) и никогда не раздувает
+     * его. При confidence == null (API/нет сигнала) или выключенном сайте возвращается
+     * 1.0 (нейтрально, поведение прежнее).
+     *
+     * @param ticker тикер инструмента
+     * @param confidence уверенность сигнала (0..1) или null
+     * @return множитель размера (0..1)
+     */
+    private suspend fun confidenceSizingFactor(
+        ticker: String,
+        confidence: Double?,
+    ): Double {
+        if (!riskConfig.confidenceSizingEnabled || confidence == null) return 1.0
+        val normalized = confidence.coerceIn(0.0, 1.0)
+        val threshold = getAdaptiveConfidenceThreshold(ticker)
+        val span = riskConfig.confidenceSizingCeiling - threshold
+        // Порог близко к ceiling (строгая калибровка) — любой прошедший сигнал полный.
+        if (span <= 1e-9) {
+            meterRegistry.gauge("adaptive.confidence_factor", Tags.of("ticker", ticker), 1.0)
+            return riskConfig.confidenceSizingMaxFactor
+        }
+        val t = ((normalized - threshold) / span).coerceIn(0.0, 1.0)
+        val factor =
+            riskConfig.confidenceSizingMinFactor +
+                (riskConfig.confidenceSizingMaxFactor - riskConfig.confidenceSizingMinFactor) * t
+        val clamped = factor.coerceIn(0.0, 1.0)
+        meterRegistry.gauge("adaptive.confidence_factor", Tags.of("ticker", ticker), clamped)
+        return clamped
     }
 
     /**
@@ -348,18 +401,75 @@ class AdaptiveRiskService(
     /**
      * Адаптивный порог уверенности для арбитра по тикеру.
      *
+     * Онлайн-калибровка (roadmap 13.11.8): по закрытым сделкам тикера за
+     * [RiskConfig.confidenceCalibrationDays] и уверенности стратега на входе
+     * (agent_logs) подбирается самая низкая граница уверенности, при которой выборка
+     * `confidence >= c` даёт win rate >= [RiskConfig.confidenceCalibrationTargetWinRate]
+     * (см. [ConfidenceCalibrator]). При недостатке данных — fallback на правила по
+     * win rate (0.55 при сильной статистике, 0.80 при слабой).
+     *
      * @param ticker тикер инструмента
-     * @return порог уверенности от 0.55 (сильная статистика) до 0.80 (слабая)
+     * @return порог уверенности
      */
     suspend fun getAdaptiveConfidenceThreshold(ticker: String): Double {
-        val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        return when {
-            stats == null -> 0.60
-            stats.winRate < 0.35 -> 0.80
-            stats.winRate < 0.45 -> 0.70
-            stats.winRate > 0.60 -> 0.55
-            else -> 0.60
+        val calibrated = calibrateConfidenceThreshold(ticker)
+        if (calibrated != null) {
+            meterRegistry.gauge("adaptive.confidence_threshold", Tags.of("ticker", ticker), calibrated)
+            meterRegistry.counter("adaptive.confidence_calibrated", Tags.of("ticker", ticker)).increment()
+            return calibrated
         }
+        val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
+        val fallback =
+            when {
+                stats == null -> 0.60
+                stats.winRate < 0.35 -> 0.80
+                stats.winRate < 0.45 -> 0.70
+                stats.winRate > 0.60 -> 0.55
+                else -> 0.60
+            }
+        meterRegistry.gauge("adaptive.confidence_threshold", Tags.of("ticker", ticker), fallback)
+        meterRegistry.counter("adaptive.confidence_fallback", Tags.of("ticker", ticker)).increment()
+        return fallback
+    }
+
+    /**
+     * Калибровка порога уверенности по фактическим исходам тикера.
+     *
+     * Закрытые позиции за окно калибровки джойнятся с уверенностью стратега на входе
+     * (agent_logs, agent Agent-3-Strategist по cycleId). Позиции без cycleId или без
+     * лога стратега (детерминированные стратегии) в выборку не попадают. Возвращает null,
+     * если калибровка выключена, данных недостаточно или ни одна граница не даёт целевой
+     * win rate.
+     */
+    private suspend fun calibrateConfidenceThreshold(ticker: String): Double? {
+        if (!riskConfig.confidenceCalibrationEnabled) return null
+        val since = LocalDateTime.now().minusDays(riskConfig.confidenceCalibrationDays.toLong())
+        val closedWithOutcome =
+            positionRepo
+                .findClosedByTickerSince(ticker, since)
+                .filter { it.cycleId != null && it.pnl != null }
+                .mapNotNull { pos ->
+                    val cycleId = pos.cycleId ?: return@mapNotNull null
+                    val pnl = pos.pnl ?: return@mapNotNull null
+                    cycleId to pnl
+                }
+        if (closedWithOutcome.size < riskConfig.confidenceCalibrationMinTrades) return null
+        val confidenceByCycleId =
+            agentLogRepository.findStrategyConfidenceByCycleIds(closedWithOutcome.map { it.first })
+        if (confidenceByCycleId.isEmpty()) return null
+        return ConfidenceCalibrator
+            .calibrate(
+                outcomes =
+                    closedWithOutcome.mapNotNull { (cycleId, pnl) ->
+                        val confidence = confidenceByCycleId[cycleId] ?: return@mapNotNull null
+                        confidence to (pnl > BigDecimal.ZERO)
+                    },
+                targetWinRate = riskConfig.confidenceCalibrationTargetWinRate,
+                minTrades = riskConfig.confidenceCalibrationMinTrades,
+                minThreshold = riskConfig.confidenceCalibrationMinThreshold,
+                maxThreshold = riskConfig.confidenceCalibrationMaxThreshold,
+                step = riskConfig.confidenceCalibrationStep,
+            )?.threshold
     }
 
     /**

@@ -1,7 +1,6 @@
 package com.trading.bot.application.risk
 
 import com.trading.bot.config.InstrumentsConfig
-import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.PositionSizer
@@ -18,28 +17,33 @@ import java.math.RoundingMode
  *   portfolioMoney  = депозит (50 000 ₽)
  *   stopLossPoints  = стоп в пунктах (default 50)
  *   currentGo       = текущее гарантийное обеспечение (default 15 000 ₽)
- *   effectiveLeverage = clamp(userLeverage, min, max) = 2.0
  *
  * ФОРМУЛЫ (все расчёты в рублях):
- *   1. marginPerContract   = go / leverage = 15000 / 2 = 7500 ₽
+ *   1. marginPerContract   = currentGo (ПОЛНОЕ гарантийное обеспечение биржи).
+ *      Пользовательское плечо НЕ делит маржу: брокер требует GO независимо от
+ *      выбранного leverage, поэтому `go / leverage` занижало бы маржу и могло
+ *      привести к оверсайзингу.
  *   2. riskAmount          = portfolioMoney * riskPerTradePercent / 100 = 50000 * 1% = 500 ₽
  *   3. lossPerContract     = stopLossPoints * priceStepCost = 50 * 10 = 500 ₽
  *   4. maxContractsByRisk  = riskAmount / lossPerContract = 500 / 500 = 1
  *   5. marginBudget        = portfolioMoney * maxMarginUsagePercent / 100 = 50000 * 30% = 15000 ₽
- *   6. maxContractsByMargin= marginBudget / marginPerContract = 15000 / 7500 = 2
+ *   6. maxContractsByMargin= marginBudget / marginPerContract = 15000 / 15000 = 1
  *   7. finalQty            = floor(min(maxContractsByRisk, maxContractsByMargin, maxContractsPerPosition))
  *
- * Ликвидация (guardrail):
+ * Ликвидация (guardrail) — ОЦЕНОЧНАЯ дистанция для предварительного риск-чека:
  *   pointValue = priceStepCost / priceStep = 10 / 0.01 = 1000 ₽ на 1.0 цены
- *   bufferPrice = (marginPerContract * leverage) / pointValue = (7500 * 2) / 1000 = 15 ₽
- *   liquidationPrice (LONG)  = entryPrice - bufferPrice
- *   liquidationPrice (SHORT) = entryPrice + bufferPrice
+ *   bufferPrice = currentGo / pointValue = 15000 / 1000 = 15 ₽
+ *   estimatedLiquidationPrice (LONG)  = entryPrice - bufferPrice
+ *   estimatedLiquidationPrice (SHORT) = entryPrice + bufferPrice
+ *
+ * Это упрощённая модель (потеря вариационной маржи = GO, без maintenance margin,
+ * комиссий и режима позиции биржи). Для production использовать официальную
+ * liquidation price биржи, если она предоставляется.
  *
  * Если finalQty < 1 → возвращаем quantity = 0 с причиной отказа (вход запрещён).
  */
 @Service
 class FuturesPositionSizer(
-    private val leverageConfig: LeverageConfig,
     private val riskConfig: RiskConfig,
     private val instrumentsConfig: InstrumentsConfig,
 ) : PositionSizer {
@@ -71,10 +75,10 @@ class FuturesPositionSizer(
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_STOP_LOSS_POINTS")
         }
 
-        val leverage = leverageConfig.effective()
-
-        // 1. Маржа на один контракт (руб): go / leverage
-        val marginPerContract = currentGo.divide(leverage, 4, RoundingMode.HALF_UP)
+        // 1. Маржа на один контракт (руб): ПОЛНОЕ гарантийное обеспечение биржи.
+        //    Плечо не уменьшает маржу — брокер требует GO независимо от leverage
+        //    (консервативно, без оверсайзинга).
+        val marginPerContract = currentGo
 
         // 2. Риск на сделку (руб): депозит * riskPerTradePercent%
         val riskPercent = BigDecimal(riskConfig.riskPerTradePercent.toString())
@@ -126,7 +130,7 @@ class FuturesPositionSizer(
         }
 
         val marginRequired = marginPerContract.multiply(BigDecimal(finalQty))
-        val liquidationPrice = calculateLiquidationPrice(entryPrice, direction, marginPerContract, leverage, instrument)
+        val liquidationPrice = calculateLiquidationPrice(entryPrice, direction, marginPerContract, instrument)
 
         return PositionSizeResult(
             quantity = finalQty,
@@ -138,18 +142,24 @@ class FuturesPositionSizer(
     }
 
     /**
-     * Ликвидационная цена для LONG/SHORT.
+     * ОЦЕНОЧНАЯ ликвидационная цена для LONG/SHORT (guardrail, не биржевая).
      *
      * pointValue = priceStepCost / priceStep (для Si: 1000 ₽/цена)
-     * bufferPrice = (marginPerContract * leverage) / pointValue
-     *   Si: (7500 * 2) / 1000 = 15 ₽ — при таком движении против позиции
-     *       теряется вся маржа контракта.
+     * bufferPrice = marginPerContract / pointValue = GO / pointValue
+     *   Si: 15000 / 1000 = 15 ₽ — при таком движении против позиции теряется
+     *       вся маржа контракта (вариационная маржа ≈ GO).
+     *
+     * Плечо здесь НЕ участвует: пользовательское leverage не влияет ни на требуемую
+     * биржей маржу, ни на дистанцию до ликвидации.
+     *
+     * Формула упрощена (без maintenance margin, комиссий и режима позиции) —
+     * использовать только для предварительного риск-чека; при наличии официальной
+     * liquidation price биржи — предпочитать её.
      */
     private fun calculateLiquidationPrice(
         entryPrice: BigDecimal?,
         direction: PositionDirection?,
         marginPerContract: BigDecimal,
-        leverage: BigDecimal,
         instrument: InstrumentsConfig.InstrumentSpec,
     ): BigDecimal? {
         if (entryPrice == null || direction == null) return null
@@ -158,7 +168,6 @@ class FuturesPositionSizer(
 
         val bufferPrice =
             marginPerContract
-                .multiply(leverage)
                 .divide(pointValue, 6, RoundingMode.HALF_UP)
 
         return when (direction) {

@@ -9,7 +9,9 @@ import java.math.BigDecimal
  * @property quantity итоговое количество контрактов (0 = вход запрещён)
  * @property marginRequired требуемая маржа в рублях
  * @property riskAmount допустимый риск на сделку в рублях
- * @property liquidationPrice расчётная цена ликвидации (null, если не считалась)
+ * @property liquidationPrice ОЦЕНОЧНАЯ цена ликвидации (упрощённая модель для
+ *   риск-чека; null, если не считалась). Для production предпочитать официальную
+ *   liquidation price биржи, если она предоставляется.
  * @property reason причина отказа при quantity = 0 (null при успехе)
  */
 data class PositionSizeResult(

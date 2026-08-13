@@ -7,7 +7,9 @@ import java.math.RoundingMode
 /**
  * Симуляция исполнения ордеров в бэктесте.
  *
- * - Комиссия: 0.05% от оборота (entry + exit)
+ * - Комиссия: 0.05% от ОБОРОТА (entry + exit), оборот = цена × количество.
+ *   Позиция может иметь quantity > 1, поэтому комиссия считается как
+ *   price × quantity × rate (ранее quantity игнорировалось — systematic bias).
  * - Проскальзывание: 0.1% для market-ордеров, 0 для limit
  * - Лотность: округление вниз до целого лота
  * - Исполнение по цене открытия следующей свечи (консервативно)
@@ -18,7 +20,6 @@ object SimulatedExecution {
 
     data class Fill(
         val price: BigDecimal,
-        val commission: BigDecimal,
     )
 
     /**
@@ -34,19 +35,25 @@ object SimulatedExecution {
     ): Fill {
         val slip = reference.multiply(slippageRate)
         val price = if (isBuy) reference.add(slip) else reference.subtract(slip)
-        return Fill(price, commissionOn(price))
+        return Fill(price)
     }
 
     /**
-     * Комиссия с цены исполнения (0.05% от оборота).
+     * Комиссия за полный оборот (0.05% от price × quantity).
      *
+     * @param quantity количество контрактов/акций (оборот = price × quantity)
      * @param commissionRate ставка комиссии (по умолчанию 0.05%); стресс-прогоны
      *   передают умноженную ставку.
      */
     fun commissionOn(
         price: BigDecimal,
+        quantity: Int = 1,
         commissionRate: BigDecimal = COMMISSION_RATE,
-    ): BigDecimal = price.multiply(commissionRate).setScale(4, RoundingMode.HALF_UP)
+    ): BigDecimal =
+        price
+            .multiply(BigDecimal.valueOf(quantity.toLong()))
+            .multiply(commissionRate)
+            .setScale(4, RoundingMode.HALF_UP)
 
     /**
      * Округление до целого лота (вниз) по лотности инструмента.

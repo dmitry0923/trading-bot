@@ -1,11 +1,15 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.MlConfig
 import com.trading.bot.config.MtfConfig
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.ml.MlFeatureVector
+import com.trading.bot.domain.risk.PositionSizeResult
+import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.StrategyAction
-import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
@@ -24,6 +28,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -215,7 +220,7 @@ class BacktestEngineTest {
         val slippageStress =
             runBlocking { engine.simulate("SBER", trendingCandles(), slippageMultiplier = 5.0) }
         val combined =
-            runBlocking { engine.simulate("SBER", trendingCandles(), commissionMultiplier = 3.0, slippageMultiplier = 3.0) }
+            runBlocking { engine.simulate("SBER", trendingCandles(), commissionMultiplier = 5.0, slippageMultiplier = 5.0) }
 
         assertTrue(
             commissionStress.equityCurve.last() < base.equityCurve.last(),
@@ -227,7 +232,15 @@ class BacktestEngineTest {
         )
         assertTrue(
             combined.equityCurve.last() < commissionStress.equityCurve.last(),
-            "combined stress must be harsher than commission alone",
+            "combined stress must be harsher than commission alone, " +
+                "combined=${combined.equityCurve.last()} (trades=${combined.totalTrades}) " +
+                "commission=${commissionStress.equityCurve.last()} (trades=${commissionStress.totalTrades})",
+        )
+        assertTrue(
+            combined.equityCurve.last() < slippageStress.equityCurve.last(),
+            "combined stress must be harsher than slippage alone, " +
+                "combined=${combined.equityCurve.last()} (trades=${combined.totalTrades}) " +
+                "slippage=${slippageStress.equityCurve.last()} (trades=${slippageStress.totalTrades})",
         )
         assertEquals(base.totalTrades, commissionStress.totalTrades, "stress must not change trade count")
     }
@@ -288,14 +301,103 @@ class BacktestEngineTest {
 
     @Test
     fun `execution costs are parameterizable for stress runs`() {
-        // Комиссия по параметризованной ставке: price * rate
-        val highCommission = SimulatedExecution.commissionOn(BigDecimal("100000"), BigDecimal("0.001"))
+        // Комиссия по параметризованной ставке: price * qty * rate (qty=1 по умолчанию)
+        val highCommission = SimulatedExecution.commissionOn(BigDecimal("100000"), 1, BigDecimal("0.001"))
         assertEquals(BigDecimal("100.0000"), highCommission)
         // Проскальзывание по удвоенной ставке: цена отклоняется в 2 раза сильнее
         val buy = SimulatedExecution.marketFill(BigDecimal("100"), isBuy = true, slippageRate = BigDecimal("0.002"))
         assertEquals(0, BigDecimal("100.2").compareTo(buy.price))
         val sell = SimulatedExecution.marketFill(BigDecimal("100"), isBuy = false, slippageRate = BigDecimal("0.002"))
         assertEquals(0, BigDecimal("99.8").compareTo(sell.price))
+    }
+
+    @Test
+    fun `commission scales with quantity for full turnover`() {
+        // Пример из ревью: цена 300 ₽, количество 1000, ставка 0.05%
+        // раньше комиссия = 300 * 0.0005 = 0.15 ₽ (вместо 150 ₽) — quantity игнорировался.
+        assertEquals(0, BigDecimal("150").compareTo(SimulatedExecution.commissionOn(BigDecimal("300"), 1000)))
+        // единичное количество — без изменений
+        assertEquals(0, BigDecimal("0.1500").compareTo(SimulatedExecution.commissionOn(BigDecimal("300"))))
+        // стресс-ставка (умноженная) тоже учитывает оборот
+        assertEquals(
+            0,
+            BigDecimal("1500").compareTo(SimulatedExecution.commissionOn(BigDecimal("300"), 1000, BigDecimal("0.005"))),
+        )
+    }
+
+    @Test
+    fun `pnl charges commission on the full position size`() {
+        // flat 100 ₽, constant BUY: qty = 100000 * 0.2 / 100 = 200 акций SBER (лот 10).
+        // entry fill = 100.1 (slippage 0.1%), exit fill = 99.9.
+        // gross = (99.9 - 100.1) * 200 = -40 ₽
+        // комиссии = (100.1*200 + 99.9*200) * 0.0005 = 20 ₽
+        // итог equity = 100000 - 40 - 20 = 99940 ₽ (раньше было ~99959.9).
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val result = runBlocking { engine.simulate("SBER", flatCandles()) }
+
+        assertEquals(1, result.totalTrades)
+        assertEquals(-60.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("99940").compareTo(result.equityCurve.last()))
+    }
+
+    @Test
+    fun `backtest sizes futures through the production PositionSizer`() {
+        // Si @ 92000: старый fallback capitalSlice (20% от 100k = 20k) давал бы
+        // qty = 0 (92000 > 20000) → 0 сделок. Production-сайзер (риск на сделку)
+        // даёт 1 контракт → сделки есть. Это доказывает, что backtest использует
+        // тот же алгоритм сайзинга, что и live.
+        val sizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig())
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                positionSizer = sizer,
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val result = runBlocking { engine.simulate("Si", siCandles()) }
+
+        assertTrue(result.totalTrades > 0, "production sizer must allow Si entries that the 20%% slice would reject")
+    }
+
+    @Test
+    fun `backtest consults PositionSizer for futures tickers only`() {
+        val sizer = Mockito.mock(PositionSizer::class.java)
+        Mockito
+            .`when`(
+                sizer.calculateContracts(any(), any(), any(), any(), anyOrNull(), anyOrNull()),
+            ).thenReturn(
+                PositionSizeResult(
+                    quantity = 3,
+                    marginRequired = BigDecimal("45000"),
+                    riskAmount = BigDecimal("1000"),
+                    liquidationPrice = null,
+                    reason = null,
+                ),
+            )
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                positionSizer = sizer,
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val futures = runBlocking { engine.simulate("Si", flatCandles()) }
+        assertTrue(futures.totalTrades > 0, "futures ticker must route through PositionSizer")
+        val verifiedSi = Mockito.verify(sizer, Mockito.atLeastOnce())
+        verifiedSi.calculateContracts(eq("Si"), any(), any(), any(), anyOrNull(), anyOrNull())
+
+        Mockito.clearInvocations(sizer)
+        val stock = runBlocking { engine.simulate("SBER", flatCandles()) }
+        assertTrue(stock.totalTrades > 0, "stock ticker must use capital-slice fallback")
+        val verifiedSber = Mockito.verify(sizer, Mockito.never())
+        verifiedSber.calculateContracts(eq("SBER"), any(), any(), any(), anyOrNull(), anyOrNull())
     }
 
     @Test
@@ -753,6 +855,21 @@ class BacktestEngineTest {
                 highPrice = BigDecimal("101"),
                 lowPrice = BigDecimal("99"),
                 closePrice = BigDecimal("100"),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        }
+
+    /** Si-фьючерс на реальных уровнях цены (~92 000): capitalSlice-fallback даёт 0 лотов. */
+    private fun siCandles(count: Int = 300): List<Candle> =
+        (0 until count).map { i ->
+            Candle(
+                ticker = "Si",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("92000"),
+                highPrice = BigDecimal("92200"),
+                lowPrice = BigDecimal("91800"),
+                closePrice = BigDecimal("92000"),
                 volume = 1000L,
                 time = LocalDateTime.now().plusMinutes(10L * i),
             )

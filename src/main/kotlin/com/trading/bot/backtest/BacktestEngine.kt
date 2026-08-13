@@ -2,6 +2,8 @@ package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.BacktestResultEntity
@@ -42,6 +44,14 @@ import java.util.UUID
  * Лотность позиций берётся из [InstrumentsConfig] (как в live) — размер позиции
  * округляется вниз до целого лота, совпадая с реальным исполнением на бирже.
  *
+ * Сайзинг — единый с live: для фьючерсных тикеров размер позиции считает
+ * [PositionSizer] (тот же [com.trading.bot.application.risk.FuturesPositionSizer],
+ * что и в production-пайплайне), SL/TP — по пунктам ([RiskConfig.defaultStopLossPoints]/
+ * [RiskConfig.defaultTakeProfitPoints]), как в [com.trading.bot.application.OrderBuilder].
+ * Для акций (и при отсутствии sizer) используется fallback `bt.capital-slice`.
+ * GO в бэктесте берётся из [InstrumentsConfig] (в non-live так же делает
+ * [com.trading.bot.infrastructure.alor.AlorFuturesClient]).
+ *
  * Параметры прогона по умолчанию (слайс капитала, SL/TP, стартовый капитал,
  * глубина истории, таймфрейм, warm-up) — из [BacktestConfig] (prefix `bt.*`).
  *
@@ -58,6 +68,8 @@ class BacktestEngine(
     private val signalGenerator: BacktestSignalGenerator = DeterministicBacktestSignalGenerator(),
     private val mlEntryFilter: MlEntryFilter? = null,
     private val higherTfTrendFilter: HigherTfTrendFilter? = null,
+    private val positionSizer: PositionSizer? = null,
+    private val riskConfig: RiskConfig = RiskConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -409,7 +421,7 @@ class BacktestEngine(
         commissionMultiplier: Double = 1.0,
     ): BigDecimal =
         cash.subtract(
-            SimulatedExecution.commissionOn(pos.entryPrice, commissionRate(commissionMultiplier)),
+            SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity, commissionRate(commissionMultiplier)),
         )
 
     /** Оценка текущего капитала: cash + нереализованный PnL позиции (mark-to-market). */
@@ -439,32 +451,104 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
-        val lotSize = instrumentsConfig.find(ticker)?.lotSize ?: 1
-        val capitalSlice = cash.multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
-        val qty = capitalSlice.divide(price, 0, RoundingMode.DOWN).toInt()
+        val instrument = instrumentsConfig.find(ticker)
+        val lotSize = instrument?.lotSize ?: 1
+        val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        val qty = sizeQuantity(ticker, instrument, direction, price, cash)
         val lotQty = SimulatedExecution.lotRounded(qty, lotSize)
         if (lotQty <= 0) return null
 
-        val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val fill = SimulatedExecution.marketFill(price, direction == PositionDirection.LONG, slippageRate(slippageMultiplier))
-        val sl = BigDecimal.valueOf(slPercent)
-        val tp = BigDecimal.valueOf(tpPercent)
         return PositionSim(
             direction = direction,
             quantity = lotQty,
             entryPrice = fill.price,
-            stopLoss =
-                when (direction) {
-                    PositionDirection.LONG -> fill.price.multiply(BigDecimal.ONE.subtract(sl)).setScale(2, RoundingMode.HALF_UP)
-                    PositionDirection.SHORT -> fill.price.multiply(BigDecimal.ONE.add(sl)).setScale(2, RoundingMode.HALF_UP)
-                },
-            takeProfit =
-                when (direction) {
-                    PositionDirection.LONG -> fill.price.multiply(BigDecimal.ONE.add(tp)).setScale(2, RoundingMode.HALF_UP)
-                    PositionDirection.SHORT -> fill.price.multiply(BigDecimal.ONE.subtract(tp)).setScale(2, RoundingMode.HALF_UP)
-                },
+            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent),
+            takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent),
             entryBars = bar,
         )
+    }
+
+    /**
+     * Размер позиции — единый источник истины с live:
+     * - фьючерс + [PositionSizer] → сайзинг через production-алгоритм
+     *   (риск на сделку / маржинальный бюджет / лимит контрактов). GO берётся из
+     *   [InstrumentsConfig] — то же значение, что использует live в non-live режиме.
+     * - иначе (акции / нет sizer) → fallback `bt.capital-slice`.
+     */
+    private fun sizeQuantity(
+        ticker: String,
+        instrument: InstrumentsConfig.InstrumentSpec?,
+        direction: PositionDirection,
+        price: BigDecimal,
+        cash: BigDecimal,
+    ): Int {
+        val futuresSizer = positionSizer
+        if (instrument != null && instrumentsConfig.isFutures(ticker) && futuresSizer != null) {
+            val size =
+                futuresSizer.calculateContracts(
+                    ticker = ticker,
+                    portfolioMoney = cash,
+                    stopLossPoints = riskConfig.defaultStopLossPoints,
+                    currentGo = instrument.go,
+                    entryPrice = price,
+                    direction = direction,
+                )
+            if (size.quantity <= 0) {
+                logger.debug { "Backtest $ticker: sizer rejected entry (${size.reason})" }
+            }
+            return size.quantity
+        }
+        val capitalSlice = cash.multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
+        return capitalSlice.divide(price, 0, RoundingMode.DOWN).toInt()
+    }
+
+    /**
+     * Стоп-лосс: для фьючерсов — отступ в пунктах от цены входа (как live
+     * [com.trading.bot.application.OrderBuilder.buildFuturesOrderParams]),
+     * для акций — процент от цены входа (`slPercent`).
+     */
+    private fun stopPrice(
+        ticker: String,
+        instrument: InstrumentsConfig.InstrumentSpec?,
+        direction: PositionDirection,
+        fillPrice: BigDecimal,
+        slPercent: Double,
+    ): BigDecimal {
+        if (instrument != null && instrumentsConfig.isFutures(ticker)) {
+            val offset = BigDecimal(riskConfig.defaultStopLossPoints).multiply(instrument.priceStep)
+            return when (direction) {
+                PositionDirection.LONG -> fillPrice.subtract(offset)
+                PositionDirection.SHORT -> fillPrice.add(offset)
+            }.setScale(2, RoundingMode.HALF_UP)
+        }
+        val sl = BigDecimal.valueOf(slPercent)
+        return when (direction) {
+            PositionDirection.LONG -> fillPrice.multiply(BigDecimal.ONE.subtract(sl))
+            PositionDirection.SHORT -> fillPrice.multiply(BigDecimal.ONE.add(sl))
+        }.setScale(2, RoundingMode.HALF_UP)
+    }
+
+    /** Тейк-профит: для фьючерсов — пункты, для акций — процент (см. [stopPrice]). */
+    private fun takePrice(
+        ticker: String,
+        instrument: InstrumentsConfig.InstrumentSpec?,
+        direction: PositionDirection,
+        fillPrice: BigDecimal,
+        tpPercent: Double,
+    ): BigDecimal {
+        if (instrument != null && instrumentsConfig.isFutures(ticker)) {
+            val offset = BigDecimal(riskConfig.defaultTakeProfitPoints).multiply(instrument.priceStep)
+            return when (direction) {
+                PositionDirection.LONG -> fillPrice.add(offset)
+                PositionDirection.SHORT -> fillPrice.subtract(offset)
+            }.setScale(2, RoundingMode.HALF_UP)
+        }
+        val tp = BigDecimal.valueOf(tpPercent)
+        return when (direction) {
+            PositionDirection.LONG -> fillPrice.multiply(BigDecimal.ONE.add(tp))
+            PositionDirection.SHORT -> fillPrice.multiply(BigDecimal.ONE.subtract(tp))
+        }.setScale(2, RoundingMode.HALF_UP)
     }
 
     /**
@@ -483,8 +567,8 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
     ): BigDecimal {
         val fill = SimulatedExecution.marketFill(price, pos.direction == PositionDirection.SHORT, slippageRate(slippageMultiplier))
-        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice, commissionRate(commissionMultiplier))
-        val commissionExit = SimulatedExecution.commissionOn(fill.price, commissionRate(commissionMultiplier))
+        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity, commissionRate(commissionMultiplier))
+        val commissionExit = SimulatedExecution.commissionOn(fill.price, pos.quantity, commissionRate(commissionMultiplier))
         val gross =
             when (pos.direction) {
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)

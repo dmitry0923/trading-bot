@@ -2,7 +2,6 @@ package com.trading.bot.domain.risk
 
 import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.config.InstrumentsConfig
-import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.PositionDirection
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -12,12 +11,11 @@ import java.math.BigDecimal
 
 /**
  * Проверка позиционирования по спецификации:
- *   deposit = 50 000 ₽, leverage = 2.0, GO = 15 000 ₽, стоп = 50 пунктов
- *   → qty = 1, margin = 7 500 ₽, risk = 500 ₽.
+ *   deposit = 50 000 ₽, GO = 15 000 ₽, стоп = 50 пунктов
+ *   → qty = 1, margin = 15 000 ₽ (полное GO биржи), risk = 500 ₽.
  */
 class FuturesPositionSizerTest {
     private val riskConfig = RiskConfig()
-    private val leverageConfig = LeverageConfig()
     private val instrumentsConfig =
         InstrumentsConfig().apply {
             instruments =
@@ -35,7 +33,7 @@ class FuturesPositionSizerTest {
                 )
         }
 
-    private val sizer = FuturesPositionSizer(leverageConfig, riskConfig, instrumentsConfig)
+    private val sizer = FuturesPositionSizer(riskConfig, instrumentsConfig)
 
     @Test
     fun `qty is 1 for 50k deposit stop 50 points go 15000`() {
@@ -48,7 +46,8 @@ class FuturesPositionSizerTest {
             )
 
         assertEquals(1, result.quantity)
-        assertEquals(0, BigDecimal("7500").compareTo(result.marginRequired))
+        // маржа = полное GO биржи (плечо не уменьшает требуемую брокером маржу)
+        assertEquals(0, BigDecimal("15000").compareTo(result.marginRequired))
         assertEquals(0, BigDecimal("500").compareTo(result.riskAmount))
         assertNull(result.reason)
     }
@@ -83,9 +82,9 @@ class FuturesPositionSizerTest {
 
     @Test
     fun `zero qty when margin insufficient`() {
-        // риск 500 ₽ позволяет 1 контракт, но maxMarginUsagePercent = 1% → бюджет 500 ₽ < 7500 ₽ → 0
+        // риск 500 ₽ позволяет 1 контракт, но maxMarginUsagePercent = 1% → бюджет 500 ₽ < 15000 ₽ → 0
         val tightMarginConfig = RiskConfig().apply { maxMarginUsagePercent = 1.0 }
-        val tightSizer = FuturesPositionSizer(leverageConfig, tightMarginConfig, instrumentsConfig)
+        val tightSizer = FuturesPositionSizer(tightMarginConfig, instrumentsConfig)
 
         val result =
             tightSizer.calculateContracts(
@@ -111,7 +110,7 @@ class FuturesPositionSizerTest {
                 direction = PositionDirection.LONG,
             )
 
-        // buffer = (7500 * 2) / 1000 = 15 ₽ → liq = 92000 - 15 = 91985
+        // buffer = GO / pointValue = 15000 / 1000 = 15 ₽ → liq = 92000 - 15 = 91985
         val liq = requireNotNull(result.liquidationPrice)
         assertEquals(0, BigDecimal("91985").compareTo(liq))
     }
@@ -130,5 +129,38 @@ class FuturesPositionSizerTest {
 
         val liq = requireNotNull(result.liquidationPrice)
         assertEquals(0, BigDecimal("92015").compareTo(liq))
+    }
+
+    @Test
+    fun `liquidation buffer is estimated from full GO only`() {
+        // Дистанция до ликвидации = GO / pointValue; плечо в расчёте не участвует
+        // (раньше формула (go/leverage)*leverage/pointValue сокращала leverage).
+        val liq =
+            sizer
+                .calculateContracts(
+                    "Si",
+                    BigDecimal("50000"),
+                    50,
+                    BigDecimal("15000"),
+                    BigDecimal("92000"),
+                    PositionDirection.LONG,
+                ).liquidationPrice
+        requireNotNull(liq)
+        assertEquals(0, BigDecimal("91985").compareTo(liq)) // буфер 15 = 15000 / 1000
+
+        // Удвоенный GO → удвоенный буфер: оценка масштабируется вместе с маржой.
+        // Депозит 100000, чтобы маржинальный бюджет 30% (30000) покрывал увеличенный GO.
+        val liqBigGo =
+            sizer
+                .calculateContracts(
+                    "Si",
+                    BigDecimal("100000"),
+                    50,
+                    BigDecimal("30000"),
+                    BigDecimal("92000"),
+                    PositionDirection.LONG,
+                ).liquidationPrice
+        requireNotNull(liqBigGo)
+        assertEquals(0, BigDecimal("91970").compareTo(liqBigGo)) // буфер 30
     }
 }

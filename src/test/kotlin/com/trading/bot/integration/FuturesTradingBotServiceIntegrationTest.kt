@@ -126,7 +126,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         assertEquals(0, BigDecimal("92000").compareTo(pos.entryPrice))
         assertEquals(0, BigDecimal("2.0").compareTo(pos.leverage!!))
         assertEquals(0, BigDecimal("15000").compareTo(pos.goPerContract!!))
-        assertEquals(0, BigDecimal("7500").compareTo(pos.marginUsed!!))
+        assertEquals(0, BigDecimal("15000").compareTo(pos.marginUsed!!))
         assertEquals(0, BigDecimal("91999.50").compareTo(pos.stopLoss!!))
         assertEquals(0, BigDecimal("92001.00").compareTo(pos.takeProfit!!))
         assertEquals(0, BigDecimal("91985").compareTo(pos.liquidationPrice!!))
@@ -152,7 +152,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                         instrumentType = InstrumentType.FUTURES,
                         leverage = BigDecimal("2.0"),
                         goPerContract = BigDecimal("15000"),
-                        marginUsed = BigDecimal("7500"),
+                        marginUsed = BigDecimal("15000"),
                         liquidationPrice = BigDecimal("91985"),
                         variationMargin = BigDecimal.ZERO,
                         stopLossPoints = 50,

@@ -202,7 +202,7 @@ curl http://localhost:8080/actuator/prometheus
 
 - [ ] `TRADING_MODE=SIMULATION` прогнан ≥ 1 неделю с `MAX_OPEN_POS>0`
 - [ ] Дневной P&L не терялся (рестарт не сбрасывал лимит) — `daily_risk_snapshot` восстанавливает состояние (раздел 6.6).
-- [ ] Бэктест тикеров из портфеля: `isPassable()` = PASS хотя бы по большинству (раздел 11.5)
+- [x] Бэктест тикеров из портфеля: `isPassable()` = PASS хотя бы по большинству (раздел 11.5, гейт — 13.3.5)
 - [ ] `KIMI_API_KEY`, `ALOR_TOKEN`, `ALOR_REFRESH_TOKEN`, `ALOR_PORTFOLIO` в Secrets
 - [ ] Промпты в ConfigMap (`prompts/*.yml`) протестированы в проде-режиме
 - [ ] Алерты Prometheus активны: BotDown, DailyLossLimitReached, LLMCircuitBreakerOpen, OutboxStuck

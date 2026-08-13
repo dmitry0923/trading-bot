@@ -7,6 +7,7 @@ import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
+import com.trading.bot.backtest.PortfolioBacktestGuard
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.model.PositionStatus
@@ -103,6 +104,7 @@ class ApiController(
     private val monteCarloAnalyzer: MonteCarloAnalyzer,
     private val backtestResultRepository: BacktestResultRepository,
     private val panelBacktestService: PanelBacktestService,
+    private val portfolioBacktestGuard: PortfolioBacktestGuard,
     private val backtestConfig: BacktestConfig,
     private val objectMapper: ObjectMapper,
     private val historicalDataLoader: HistoricalDataLoader,
@@ -484,6 +486,39 @@ class ApiController(
                     "maxTotalReturn" to response.summary.maxTotalReturn,
                     "totalTrades" to response.summary.totalTrades,
                 ),
+        )
+    }
+
+    /**
+     * Гейт приёмки стратегии (roadmap 13.3 п.2): панельный бэктест всех тикеров
+     * портфеля (`trading.tickers`) по критериям раздела 11.5 — `isPassable()` =
+     * PASS хотя бы у большинства (14.9). Прогон на уже сохранённых свечах.
+     */
+    @PostMapping("/backtest/portfolio-check")
+    suspend fun portfolioBacktestCheck(): Map<String, Any> {
+        meterRegistry.counter("api.backtest.portfolio.check").increment()
+        val check = portfolioBacktestGuard.checkPortfolio()
+        return mapOf(
+            "accepted" to check.verdict.accepted,
+            "minPassShare" to check.verdict.minPassShare,
+            "tickerCount" to check.verdict.tickerCount,
+            "passCount" to check.verdict.passCount,
+            "passShare" to check.verdict.passShare,
+            "timeframe" to check.panel.timeframe,
+            "days" to check.panel.days,
+            "results" to
+                check.panel.results.map { r ->
+                    mapOf(
+                        "ticker" to r.ticker,
+                        "totalReturn" to r.totalReturn,
+                        "sharpeRatio" to r.sharpeRatio,
+                        "maxDrawdown" to r.maxDrawdown,
+                        "winRate" to r.winRate,
+                        "profitFactor" to r.profitFactor,
+                        "totalTrades" to r.totalTrades,
+                        "passable" to r.passable,
+                    )
+                },
         )
     }
 

@@ -85,9 +85,9 @@ gantt
 - Cross-exchange: мониторинг котировок на нескольких площадках, арбитраж между MOEX и международными рынками (по мере регуляторной готовности).
 
 ## 13.3. План стабилизации (непрерывно)
-
 1. ✅ **Набор regression-тестов** по каждому модулю (Guardrails, SemanticCache, Agent parsers, outbox, BacktestEngine) — раздел 13.3.3.
-2. **Backtest всех тикеров** по критериям раздела 11.5 перед каждой новой стратегией.
+
+2. ✅ **Backtest всех тикеров** по критериям раздела 11.5 перед каждой новой стратегией — раздел 13.3.5.
 3. ✅ **Chaos testing**: отключение Redis/Postgres/Kimi/сети — проверка graceful degradation (раздел 13.3.1).
 4. ✅ **Нагрузочное тестирование**: до 100 тикеров × 6 агентов × 2 LLM-вызова — бюджет латентности и стоимости (раздел 13.3.4).
 5. ✅ **Мониторинг вырожденных случаев**: SPREAD > 1%, депозитарные паузы, гэпы (раздел 13.3.2).
@@ -216,6 +216,29 @@ slippage control 0.5% в `placeMarketOrder`) делегирует в `Degenerate
 **Референс (100 тикеров, concurrency=8, simLatency=200мс):** 1200 вызовов,
 цикл 32.4 с (теоретический минимум 30 с), throughput ~37 вызовов/с, 282 000
 токенов ≈ 5.64 ₽ за цикл, 0 fallback.
+
+
+### 13.3.5. Backtest всех тикеров по критериям 11.5 (реализовано)
+
+**Идея:** перед продвижением каждой новой стратегии — панельный бэктест ВСЕХ
+тикеров портфеля (`trading.tickers`) по критериям раздела 11.5
+(`isPassable()`: sharpe > 1.2, drawdown < 0.15, profit factor > 1.3,
+≥ 100 сделок) с приёмкой по большинству (раздел 14.9): доля PASS ≥ 0.5.
+
+**Гейт:** `PortfolioBacktestGate.evaluate(summary, minPassShare = 0.5)` — чистая
+логика вердикта `PortfolioBacktestVerdict.accepted` (пустой портфель — REJECT,
+граница ровно 50% — PASS). Обёртка `PortfolioBacktestGuard.checkPortfolio()`
+прогоняет панель по `trading.tickers` с параметрами `bt.*` через
+`PanelBacktestService` (без подкачки MOEX — по сохранённым свечам) и пишет
+метрики `bt.portfolio.gate{verdict=PASS|REJECT}` и `bt.portfolio.pass_share`.
+
+**Вызов:** `POST /api/v1/backtest/portfolio-check` — ответ: `accepted`,
+`minPassShare`, `tickerCount`, `passCount`, `passShare`, параметры прогона и
+per-ticker метрики с `passable`.
+
+**Тесты:** `PortfolioBacktestGateTest` (порог, граница 50%, пустой портфель,
+невалидный порог), `PortfolioBacktestGuardTest` (прогон по всем тикерам
+`trading.tickers`, вердикт, метрики PASS/REJECT).
 
 
 ## 13.4. Контрольные точки (milestones)

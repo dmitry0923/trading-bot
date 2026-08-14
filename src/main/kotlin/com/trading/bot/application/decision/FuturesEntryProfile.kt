@@ -7,8 +7,8 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.order.OrderParams
-import com.trading.bot.domain.risk.Atr
 import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.RiskEngine
@@ -31,9 +31,9 @@ import java.math.BigDecimal
  * Воспроизводит прежний пайплайн FuturesEntryCoordinator:
  * - риск-этап: [FuturesRiskEngine] (Да/Нет, с STRESS-проверкой);
  * - сайзинг: [FuturesPositionSizer] (риск на сделку / маржинальный бюджет / лимит контрактов);
- * - стоп: ATR-адаптивная дистанция в пунктах ([Atr.stopPoints], fallback —
- *   [RiskConfig.defaultStopLossPoints]); передаётся и в сайзер (риск на сделку
- *   учитывает ATR-стоп), и в параметры заявки;
+ * - стоп: ATR-адаптивная дистанция в пунктах через [FuturesStopResolver]
+ *   (fallback — [RiskConfig.defaultStopLossPoints]); передаётся и в сайзер
+ *   (риск на сделку учитывает ATR-стоп), и в параметры заявки;
  * - параметры заявки: SL/TP в ценах от стопа, маржа, ликвидация, плечо
  *   ([OrderBuilder.buildFuturesOrderParams]);
  * - портфельный риск — ENFORCED ([PortfolioRiskEngine]): превышение VaR95 / слабая
@@ -56,6 +56,7 @@ class FuturesEntryProfile(
     private val meterRegistry: MeterRegistry,
     private val tradingAccountService: TradingAccountService,
     private val candleCache: CandleCacheService,
+    private val futuresStopResolver: FuturesStopResolver,
 ) : EntryProfile {
     private val logger = KotlinLogging.logger {}
 
@@ -139,30 +140,19 @@ class FuturesEntryProfile(
         )
 
     /**
-     * Дистанция стоп-лосса фьючерса в пунктах: ATR(period) × multiplier по свечам
-     * MINUTE_10 из кэша (границы [RiskConfig.futuresAtrStopMinPoints]..max). Если
-     * ATR-стоп выключен или данных недостаточно — фиксированный дефолт.
+     * Дистанция стоп-лосса фьючерса в пунктах: ATR по свечам MINUTE_10 из кэша,
+     * политика (флаг, клампы, fallback) — единый [FuturesStopResolver], тот же,
+     * что использует backtest. Если данных недостаточно — фиксированный дефолт.
      */
     private fun resolveStopLossPoints(ticker: String): Int {
-        if (riskConfig.futuresAtrStopEnabled) {
-            val atr =
-                candleCache.calculateAtr(
-                    ticker,
-                    "MINUTE_10",
-                    riskConfig.futuresAtrStopPeriod,
-                )
-            val instrument = instrumentsConfig.find(ticker)
-            if (atr != null && instrument != null) {
-                return Atr.stopPoints(
-                    atr = atr,
-                    priceStep = instrument.priceStep,
-                    multiplier = riskConfig.futuresAtrStopMultiplier,
-                    minPoints = riskConfig.futuresAtrStopMinPoints,
-                    maxPoints = riskConfig.futuresAtrStopMaxPoints,
-                ) ?: riskConfig.defaultStopLossPoints
-            }
-        }
-        return riskConfig.defaultStopLossPoints
+        val instrument = instrumentsConfig.find(ticker) ?: return riskConfig.defaultStopLossPoints
+        val atr =
+            candleCache.calculateAtr(
+                ticker,
+                "MINUTE_10",
+                riskConfig.futuresAtrStopPeriod,
+            )
+        return futuresStopResolver.resolve(atr, instrument.priceStep, riskConfig)
     }
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED

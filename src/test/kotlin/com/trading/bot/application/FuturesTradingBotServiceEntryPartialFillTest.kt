@@ -12,6 +12,7 @@ import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskReport
 import com.trading.bot.domain.risk.PortfolioRiskRequest
@@ -105,6 +106,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             meterRegistry,
             tradingAccountService,
             Mockito.mock(CandleCacheService::class.java),
+            FuturesStopResolver(),
         )
     private val decisionEngine =
         DecisionEngine(

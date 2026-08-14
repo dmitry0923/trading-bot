@@ -4,6 +4,7 @@ import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.Atr
+import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
@@ -71,6 +72,7 @@ class BacktestEngine(
     private val higherTfTrendFilter: HigherTfTrendFilter? = null,
     private val positionSizer: PositionSizer? = null,
     private val riskConfig: RiskConfig = RiskConfig(),
+    private val futuresStopResolver: FuturesStopResolver = FuturesStopResolver(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -532,8 +534,9 @@ class BacktestEngine(
     }
 
     /**
-     * ATR-адаптивная дистанция стопа фьючерса в пунктах — зеркало live-пайплайна
-     * ([com.trading.bot.application.decision.FuturesEntryProfile.resolveStopLossPoints]):
+     * Дистанция стопа фьючерса в пунктах — политика делегирована единому
+     * [FuturesStopResolver] (тот же, что в live-пайплайне
+     * [com.trading.bot.application.decision.FuturesEntryProfile]):
      * ATR по завершённым к моменту входа свечам (без lookahead) × multiplier.
      * null — акции или недостаток данных (тогда фиксированный дефолт).
      */
@@ -542,15 +545,9 @@ class BacktestEngine(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
     ): Int? {
-        if (instrument == null || !instrumentsConfig.isFutures(ticker) || !riskConfig.futuresAtrStopEnabled) return null
-        val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod) ?: return null
-        return Atr.stopPoints(
-            atr = atr,
-            priceStep = instrument.priceStep,
-            multiplier = riskConfig.futuresAtrStopMultiplier,
-            minPoints = riskConfig.futuresAtrStopMinPoints,
-            maxPoints = riskConfig.futuresAtrStopMaxPoints,
-        )
+        if (instrument == null || !instrumentsConfig.isFutures(ticker)) return null
+        val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod)
+        return futuresStopResolver.resolve(atr, instrument.priceStep, riskConfig)
     }
 
     /**

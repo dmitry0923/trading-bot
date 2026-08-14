@@ -821,6 +821,8 @@ class BacktestEngineTest {
             }
 
         assertEquals(1, result.totalTrades, "short must be held to end-of-period, not churned by stop-outs")
+        // Вход на баре 1 (индекс), закрытие END_OF_PERIOD на баре 119 → удержание 118 баров.
+        assertEquals(118.0, result.avgHoldBars, 1e-9)
     }
 
     @Test

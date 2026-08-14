@@ -198,6 +198,7 @@ class BacktestEngine(
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
         val tradeReturns = ArrayList<Double>()
+        val tradeHoldBars = ArrayList<Int>()
         val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
         var mlBlockedCount = 0
         var mtfBlockedCount = 0
@@ -220,7 +221,9 @@ class BacktestEngine(
                                 "STOP_LOSS",
                                 pos0.stopLoss,
                                 cash,
+                                i,
                                 tradeReturns,
+                                tradeHoldBars,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -235,7 +238,9 @@ class BacktestEngine(
                                 "TAKE_PROFIT",
                                 pos0.takeProfit,
                                 cash,
+                                i,
                                 tradeReturns,
+                                tradeHoldBars,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -272,7 +277,9 @@ class BacktestEngine(
                                 "ML_FILTER_REVERSAL",
                                 current.openPrice,
                                 cash,
+                                i,
                                 tradeReturns,
+                                tradeHoldBars,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -308,7 +315,9 @@ class BacktestEngine(
                                 "MTF_FILTER_REVERSAL",
                                 current.openPrice,
                                 cash,
+                                i,
                                 tradeReturns,
+                                tradeHoldBars,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -330,7 +339,9 @@ class BacktestEngine(
                             "REVERSAL",
                             current.openPrice,
                             cash,
+                            i,
                             tradeReturns,
+                            tradeHoldBars,
                             commissionMultiplier,
                             slippageMultiplier,
                         )
@@ -382,14 +393,16 @@ class BacktestEngine(
                     "END_OF_PERIOD",
                     sorted.last().closePrice,
                     cash,
+                    sorted.lastIndex,
                     tradeReturns,
+                    tradeHoldBars,
                     commissionMultiplier,
                     slippageMultiplier,
                 )
         }
         equityCurve.add(cash)
 
-        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns)
+        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns, tradeHoldBars)
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
@@ -630,7 +643,9 @@ class BacktestEngine(
         reason: String,
         price: BigDecimal,
         cash: BigDecimal,
+        closeBar: Int,
         tradeReturns: MutableList<Double>,
+        tradeHoldBars: MutableList<Int>,
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
     ): BigDecimal {
@@ -646,6 +661,7 @@ class BacktestEngine(
         val pnl = gross.subtract(commissionEntry).subtract(commissionExit)
 
         tradeReturns.add(pnl.toDouble())
+        tradeHoldBars.add((closeBar - pos.entryBars).coerceAtLeast(0))
         // Комиссия входа уже списана при открытии; здесь добавляется gross за вычетом комиссии выхода
         val newCash = cash.add(gross).subtract(commissionExit)
         logger.debug { "Backtest close $ticker $reason pnl=$pnl" }

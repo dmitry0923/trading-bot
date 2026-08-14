@@ -74,6 +74,7 @@ object BacktestMetrics {
         ticker: String,
         equityCurve: List<BigDecimal>,
         tradeReturns: List<Double>,
+        holdBars: List<Int> = emptyList(),
     ): BacktestResult {
         val totalReturn =
             if (equityCurve.size >= 2 && equityCurve.first() > BigDecimal.ZERO) {
@@ -153,7 +154,7 @@ object BacktestMetrics {
             winRate = winRate,
             profitFactor = profitFactor,
             totalTrades = tradeReturns.size,
-            avgHoldBars = 0.0,
+            avgHoldBars = if (holdBars.isNotEmpty()) holdBars.average() else 0.0,
             equityCurve = equityCurve,
             monthlyReturns = emptyMap(),
             expectancy = expectancy,

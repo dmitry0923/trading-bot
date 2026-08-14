@@ -181,7 +181,15 @@ class BacktestValidator(
             acc = acc.add(BigDecimal.valueOf(r))
             equity.add(acc)
         }
-        return BacktestMetrics.compute(ticker, equity, tradeReturns)
+        // avgHoldBars агрегируется по объединённым OOS-сделкам: средневзвешенное
+        // по числу сделок каждого фолда (точное среднее по конкатенации сделок).
+        val avgHoldBars =
+            if (tradeReturns.isNotEmpty()) {
+                folds.sumOf { it.outOfSample.avgHoldBars * it.outOfSample.totalTrades } / tradeReturns.size
+            } else {
+                0.0
+            }
+        return BacktestMetrics.compute(ticker, equity, tradeReturns).copy(avgHoldBars = avgHoldBars)
     }
 
     private fun emptyResult(ticker: String): BacktestResult = BacktestMetrics.compute(ticker, emptyList(), emptyList())

@@ -1461,14 +1461,29 @@ out on a normal bar» — SELL-only генератор + колеблющиес�
 вход+2%, таргет вход-4% не достигаются) → ровно 1 сделка (удержание до конца
 периода), раньше был churn из десятков стоп-аутов.
 
-### 13.20.2. Находки аудита (не фиксы)
+### 13.20.2. MR-I: BT-003 — avgHoldBars больше не 0 ✅
+
+Проблема: `PositionSim.entryBars` записывался при входе, но никогда не
+использовался — `avgHoldBars` всегда возвращал 0.0 (репортинг в REST и персист
+метрик, не влиял на `isPassable`).
+
+Решение:
+- `BacktestMetrics.compute(..., holdBars: List<Int> = emptyList())` —
+  `avgHoldBars = среднее(holdBars)` (пустой список → 0.0, обратная совместимость).
+- `BacktestEngine`: параллельный `tradeHoldBars`, `closePosition` принимает
+  `closeBar` и пишет `(closeBar - entryBars).coerceAtLeast(0)` (6 точек закрытия:
+  SL/TP/ML/MTF/reversal/END_OF_PERIOD).
+- `BacktestValidator.aggregateOutOfSample`: avgHoldBars по объединённым OOS-сделкам
+  как средневзвешенное по числу сделок фолдов.
+
+Тесты: engine-тест «short position is not stopped out on a normal bar» теперь
+проверяет `avgHoldBars == 118.0` (вход бар 1 → закрытие END_OF_PERIOD бар 119).
+
+### 13.20.3. Находки аудита (не фиксы)
 
 - BT-002 (конвенция, не баг): гэп бара входа сквозь стоп — стоп применяется со
   следующего бара, вход по открытию текущего. Консервативное упрощение 10-мин
   баров, задокументировано в [SimulatedExecution].
-- BT-003 (репортинг): `avgHoldBars` всегда 0.0 — `PositionSim.entryBars`
-  записывается, но не агрегируется в `BacktestMetrics.compute` (нужен возврат
-  длительностей удержания из движка). Не влияет на `isPassable`.
 - BT-004 (эффективность настройки): для фьючерсов сетка SL/TP в walk-forward
   (`BacktestValidator.tuneParams`) не влияет на результат — `stopPrice`/`takePrice`
   для фьючерсов берут пункты (`defaultStopLossPoints`/`defaultTakeProfitPoints`,
@@ -1482,4 +1497,4 @@ out on a normal bar» — SELL-only генератор + колеблющиес�
   без lookahead (сигнал бар i-1 → исполнение открытие i; история для ATR/MTF —
   бары до i).
 
-| P3 | BT-003 avgHoldBars; BT-004 фьючерсная сетка walk-forward | pending |
+| P3 | BT-004 фьючерсная сетка walk-forward | pending |

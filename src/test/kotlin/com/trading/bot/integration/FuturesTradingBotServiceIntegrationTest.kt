@@ -12,9 +12,11 @@ import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.DailyRiskSnapshotRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.TradingHaltService
 import io.micrometer.core.instrument.MeterRegistry
@@ -29,6 +31,7 @@ import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import java.math.BigDecimal
+import java.time.LocalDateTime
 
 /**
  * Интеграционный тест FuturesTradingBotService против реальной Postgres.
@@ -68,6 +71,9 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var meterRegistry: MeterRegistry
 
+    @Autowired
+    lateinit var candleCache: CandleCacheService
+
     @MockitoBean
     lateinit var alorClient: AlorClient
 
@@ -88,6 +94,10 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         // Данные всегда «свежие»: эти тесты проверяют риск-движок, а не MarketDataGate.
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
+        // Портфельный риск-движок fail-closed без данных о волатильности
+        // (PORTFOLIO_DATA_INSUFFICIENT) — сеем дневные свечи Si, чтобы realized vol
+        // был KNOWN. MINUTE_10 не сеем: ATR null -> stopLossPoints остаётся 50.
+        seedDayCandles()
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))
             Mockito
@@ -244,6 +254,24 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         eventPublisher.publishStrategyGenerated(signal(BigDecimal("92000")))
         Thread.sleep(200) // дать async-обработчику отработать
         assertTrue(runBlocking { positionRepo.findByStatus(PositionStatus.OPEN) }.isEmpty())
+    }
+
+    private fun seedDayCandles() {
+        val base = BigDecimal("92000")
+        val candles =
+            (0 until 70).map { i ->
+                Candle(
+                    ticker = "Si",
+                    timeframe = "DAY_1",
+                    openPrice = base.add(BigDecimal(i)),
+                    highPrice = base.add(BigDecimal(i)).add(BigDecimal.ONE),
+                    lowPrice = base.add(BigDecimal(i)).subtract(BigDecimal.ONE),
+                    closePrice = base.add(BigDecimal(i).multiply(BigDecimal("0.5"))),
+                    volume = 1000L,
+                    time = LocalDateTime.now().minusDays((70 - i).toLong()),
+                )
+            }
+        candleCache.addCandles(candles)
     }
 
     private fun anyBigDecimal(): BigDecimal {

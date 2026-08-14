@@ -1157,6 +1157,10 @@ flowchart LR
   (фикстура `stopOutCandles`, стоп → re-entry → закрытие в конце периода), пустой вход →
   non-passable, одна свеча → без открытий, неположительный стартовый капитал → без деления
   на 0 (`recoveryFactor = +Infinity`).
+- `FuturesTradingBotServiceIntegrationTest` — починена интеграция с fail-closed портфельным
+  риском: в `setup()` сеются 70 DAY_1 свечей Si (realized vol → KNOWN, вход не блокируется
+  `PORTFOLIO_DATA_INSUFFICIENT`); MINUTE_10 не сеется, чтобы `stopLossPoints` оставался
+  дефолтным 50. Итог полного прогона: 906 тестов, 905 pass, 2 skipped.
 
 ## 13.18. Наблюдаемость LLM-агента (3 фазы) — реализовано
 

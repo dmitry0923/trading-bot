@@ -18,16 +18,17 @@ import java.time.LocalDateTime
  * Monte Carlo bootstrap и стресс-сценарии бэктеста (roadmap 13.7.8, MR-004/H-003).
  *
  * Чистая математика [MonteCarlo] тестируется детерминированно (seed);
- * [MonteCarloAnalyzer] — как оркестратор: базовый прогон, bootstrap по его
- * сделкам и перепрогон стресс-сценариев с увеличенными издержками.
+ * [MonteCarloAnalyzer] — как оркестратор: базовый прогон, bootstrap по периодным
+ * доходностям его кривой капитала и перепрогон стресс-сценариев с увеличенными
+ * издержками.
  */
 class MonteCarloAnalyzerTest {
     private val capital = BigDecimal("100000")
 
     @Test
-    fun `single trade path is fully deterministic`() {
-        // Одна сделка на +1000 руб. => каждый путь ровно +1% при любом seed.
-        val result = MonteCarlo.simulate(listOf(1000.0), capital, simulations = 500, seed = 7)
+    fun `single period return path is fully deterministic`() {
+        // Одна доходность +1% => каждый путь ровно +1% при любом seed.
+        val result = MonteCarlo.simulate(listOf(0.01), capital, simulations = 500, seed = 7)
         assertEquals(0.01, result.medianReturn, 1e-12)
         assertEquals(0.01, result.p5Return, 1e-12)
         assertEquals(0.01, result.p95Return, 1e-12)
@@ -39,8 +40,8 @@ class MonteCarloAnalyzerTest {
     }
 
     @Test
-    fun `all losing trades always end in loss`() {
-        val result = MonteCarlo.simulate(listOf(-500.0, -300.0), capital, simulations = 1000, seed = 42)
+    fun `all losing periods always end in loss`() {
+        val result = MonteCarlo.simulate(listOf(-0.005, -0.003), capital, simulations = 1000, seed = 42)
         assertEquals(1.0, result.probabilityOfLoss, 1e-12)
         assertTrue(result.maxReturn < 0.0)
         assertFalse(result.isRobust())
@@ -48,9 +49,9 @@ class MonteCarloAnalyzerTest {
 
     @Test
     fun `same seed produces identical distribution`() {
-        val trades = listOf(1000.0, -400.0, 700.0, -200.0, 1500.0, -600.0)
-        val a = MonteCarlo.simulate(trades, capital, simulations = 2000, seed = 42)
-        val b = MonteCarlo.simulate(trades, capital, simulations = 2000, seed = 42)
+        val returns = listOf(0.01, -0.004, 0.007, -0.002, 0.015, -0.006)
+        val a = MonteCarlo.simulate(returns, capital, simulations = 2000, seed = 42)
+        val b = MonteCarlo.simulate(returns, capital, simulations = 2000, seed = 42)
         assertEquals(a.medianReturn, b.medianReturn)
         assertEquals(a.p5Return, b.p5Return)
         assertEquals(a.p95Return, b.p95Return)
@@ -61,16 +62,16 @@ class MonteCarloAnalyzerTest {
 
     @Test
     fun `different seed changes the resampling`() {
-        val trades = listOf(1000.0, -400.0, 700.0, -200.0, 1500.0, -600.0)
-        val a = MonteCarlo.simulate(trades, capital, simulations = 500, seed = 1)
-        val b = MonteCarlo.simulate(trades, capital, simulations = 500, seed = 2)
+        val returns = listOf(0.01, -0.004, 0.007, -0.002, 0.015, -0.006)
+        val a = MonteCarlo.simulate(returns, capital, simulations = 500, seed = 1)
+        val b = MonteCarlo.simulate(returns, capital, simulations = 500, seed = 2)
         assertTrue(a.medianReturn != b.medianReturn || a.p5Return != b.p5Return)
     }
 
     @Test
     fun `percentiles are ordered and within observed range`() {
-        val trades = (1..20).map { (it - 8) * 100.0 } // смесь прибылей и убытков
-        val result = MonteCarlo.simulate(trades, capital, simulations = 2000, seed = 42)
+        val returns = (1..20).map { (it - 8) * 0.01 } // смесь прибылей и убытков
+        val result = MonteCarlo.simulate(returns, capital, simulations = 2000, seed = 42)
         assertTrue(result.p5Return <= result.medianReturn)
         assertTrue(result.medianReturn <= result.p95Return)
         assertTrue(result.minReturn <= result.p5Return)
@@ -79,7 +80,7 @@ class MonteCarloAnalyzerTest {
     }
 
     @Test
-    fun `empty trades return neutral result`() {
+    fun `empty returns produce neutral result`() {
         val result = MonteCarlo.simulate(emptyList(), capital, simulations = 100, seed = 42)
         assertEquals(0.0, result.medianReturn, 1e-12)
         assertEquals(0.0, result.probabilityOfLoss, 1e-12)
@@ -88,7 +89,7 @@ class MonteCarloAnalyzerTest {
 
     @Test
     fun `zero simulations and non-positive capital return neutral result`() {
-        val noSims = MonteCarlo.simulate(listOf(1000.0), capital, simulations = 0, seed = 42)
+        val noSims = MonteCarlo.simulate(listOf(0.01), capital, simulations = 0, seed = 42)
         assertEquals(0, noSims.simulations)
         assertEquals(0.0, noSims.medianReturn, 1e-12)
         assertEquals(0.0, noSims.p5Return, 1e-12)
@@ -138,7 +139,7 @@ class MonteCarloAnalyzerTest {
         // Базовый прогон без стресса + 5 сценариев
         assertEquals(5, report.stress.size)
         assertEquals(50, report.monteCarlo.simulations)
-        // 3000 руб. на каждую симуляцию из одной сделки -> ровно +3%
+        // Кривая капитала [100000, 103000] даёт одну периодную доходность +3% -> ровно +3%
         assertEquals(0.03, report.monteCarlo.medianReturn, 1e-12)
 
         // Множители стресса доходят до движка в каждом сценарии

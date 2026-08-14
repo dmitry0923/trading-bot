@@ -88,6 +88,27 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `sharpe and sortino are computed from equity curve returns not per-trade`() {
+        // Ровные сделки давали бы Sharpe = 0 при расчёте по сделкам; по кривой
+        // капитала с волатильностью путь учитывается, и Sharpe/Sortino > 0.
+        val result =
+            BacktestMetrics.compute(
+                "SBER",
+                listOf(
+                    BigDecimal("100000"),
+                    BigDecimal("100300"),
+                    BigDecimal("99800"),
+                    BigDecimal("100400"),
+                    BigDecimal("100500"),
+                ),
+                listOf(40.0, 40.0, 40.0, 40.0),
+            )
+        assertTrue(result.sharpeRatio > 0.0)
+        assertTrue(result.sortinoRatio > 0.0)
+        assertEquals(4, result.totalTrades)
+    }
+
+    @Test
     fun `max drawdown is computed correctly`() {
         val mdd =
             BacktestMetrics.maxDrawdown(
@@ -149,7 +170,8 @@ class BacktestEngineTest {
         val result =
             BacktestMetrics.compute(
                 "SBER",
-                listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("99000"), BigDecimal("102000")),
+                // Кривая капитала согласована со сделками: 1000 → −500 → +2000
+                listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("100500"), BigDecimal("102500")),
                 listOf(1000.0, -500.0, 2000.0),
             )
         assertEquals(3, result.totalTrades)
@@ -183,14 +205,16 @@ class BacktestEngineTest {
                 winLossRatio = 1.4,
                 avgTrade = 100.0,
                 recoveryFactor = 3.0,
+                calmarRatio = 3.0,
             )
 
         val metrics = result.metrics()
 
-        assertEquals(13, metrics.size)
+        assertEquals(14, metrics.size)
         assertEquals(1.5, metrics["sharpeRatio"])
         assertEquals(250, metrics["totalTrades"])
         assertEquals(true, metrics["passable"])
+        assertEquals(3.0, metrics["calmarRatio"])
         assertFalse(metrics.containsKey("equityCurve"))
         assertFalse(metrics.containsKey("monthlyReturns"))
         assertFalse(metrics.containsKey("tradeReturns"))
@@ -364,6 +388,14 @@ class BacktestEngineTest {
         val result = runBlocking { engine.simulate("Si", siCandles()) }
 
         assertTrue(result.totalTrades > 0, "production sizer must allow Si entries that the 20%% slice would reject")
+        // Slippage для фьючерсов считается в пунктах (1 тик = 0.01 ₽), а не 0.1% цены
+        // (~92 пункта, больше стопа в 50 пунктов): процентная ставка + стоп-лосс на
+        // флэте съедали ~75% капитала (~25k), пунктовая оставляет только реалистичную
+        // комиссию от сотен кругосветок по стопу (~72k).
+        assertTrue(
+            result.equityCurve.last() > BigDecimal("60000"),
+            "percent-based slippage must not wipe futures equity, last=${result.equityCurve.last()}",
+        )
     }
 
     @Test
@@ -381,23 +413,75 @@ class BacktestEngineTest {
                     reason = null,
                 ),
             )
-        val engine =
+        val sizerEngine =
             BacktestEngine(
                 CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                 positionSizer = sizer,
                 signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
             )
 
-        val futures = runBlocking { engine.simulate("Si", flatCandles()) }
+        val futures = runBlocking { sizerEngine.simulate("Si", flatCandles()) }
         assertTrue(futures.totalTrades > 0, "futures ticker must route through PositionSizer")
         val verifiedSi = Mockito.verify(sizer, Mockito.atLeastOnce())
         verifiedSi.calculateContracts(eq("Si"), any(), any(), any(), anyOrNull(), anyOrNull())
 
         Mockito.clearInvocations(sizer)
-        val stock = runBlocking { engine.simulate("SBER", flatCandles()) }
+        val stock = runBlocking { sizerEngine.simulate("SBER", flatCandles()) }
         assertTrue(stock.totalTrades > 0, "stock ticker must use capital-slice fallback")
         val verifiedSber = Mockito.verify(sizer, Mockito.never())
         verifiedSber.calculateContracts(eq("SBER"), any(), any(), any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `atr stop widens futures stop versus fixed default`() {
+        // Si-флэт с широкими свечами: ATR(14) = 400 пунктов -> стоп упирается в
+        // max 100 пунктов (фиксированный дефолт — 50). При том же qty=1 риск на
+        // сделку = stopPoints * priceStepCost вдвое больше, поэтому риск-бюджет
+        // (1% портфеля) исчерпывается вдвое раньше => сделок существенно меньше.
+        val atrEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                positionSizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig()),
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+        val fixedEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                positionSizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig()),
+                riskConfig = RiskConfig().apply { futuresAtrStopEnabled = false },
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val atr = runBlocking { atrEngine.simulate("Si", siCandles()) }
+        val fixed = runBlocking { fixedEngine.simulate("Si", siCandles()) }
+
+        assertTrue(fixed.totalTrades > 0, "fixture must produce trades")
+        assertTrue(atr.totalTrades > 0, "ATR stop must not block all entries")
+        assertTrue(
+            atr.totalTrades < fixed.totalTrades,
+            "wider ATR stop must exhaust the risk budget sooner, " +
+                "atr=${atr.totalTrades} fixed=${fixed.totalTrades}",
+        )
+        assertTrue(
+            atr.tradeReturns.average() < fixed.tradeReturns.average(),
+            "wider ATR stop must lose more per trade, " +
+                "atr=${atr.tradeReturns.average()} fixed=${fixed.tradeReturns.average()}",
+        )
+    }
+
+    @Test
+    fun `tick fill applies point-based slippage for futures`() {
+        // 1 тик Si = 0.01 ₽: 0.1% цены (92 ₽ ≈ 9200 тиков) нереалистично для
+        // биржевого исполнения market-ордера по фьючерсу (исполнение в пунктах).
+        val buy = SimulatedExecution.tickFill(BigDecimal("92000"), isBuy = true, ticks = 1, tickSize = BigDecimal("0.01"))
+        assertEquals(0, BigDecimal("92000.01").compareTo(buy.price))
+        val sell = SimulatedExecution.tickFill(BigDecimal("92000"), isBuy = false, ticks = 1, tickSize = BigDecimal("0.01"))
+        assertEquals(0, BigDecimal("91999.99").compareTo(sell.price))
+        val twoTicks = SimulatedExecution.tickFill(BigDecimal("92000"), isBuy = true, ticks = 2, tickSize = BigDecimal("0.01"))
+        assertEquals(0, BigDecimal("92000.02").compareTo(twoTicks.price))
     }
 
     @Test

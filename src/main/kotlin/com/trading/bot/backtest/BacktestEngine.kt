@@ -3,6 +3,7 @@ package com.trading.bot.backtest
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.Atr
 import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
@@ -342,6 +343,7 @@ class BacktestEngine(
                             slPercent,
                             tpPercent,
                             slippageMultiplier,
+                            sorted.subList(0, i),
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, commissionMultiplier)
@@ -362,6 +364,7 @@ class BacktestEngine(
                     slPercent,
                     tpPercent,
                     slippageMultiplier,
+                    sorted.subList(0, i),
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, commissionMultiplier)
@@ -411,6 +414,28 @@ class BacktestEngine(
     private fun slippageRate(multiplier: Double): BigDecimal =
         SimulatedExecution.MARKET_SLIPPAGE_RATE.multiply(BigDecimal.valueOf(multiplier))
 
+    private fun slippageTicks(multiplier: Double): Int = (SimulatedExecution.FUTURES_SLIPPAGE_TICKS * multiplier).toInt().coerceAtLeast(1)
+
+    /**
+     * Цена исполнения market-ордера с проскальзыванием:
+     * - фьючерсы — в ТИКАХ (пунктах), как при исполнении на бирже; процентная
+     *   ставка от цены фьючерса непропорционально велика (0.1% Si ≈ 92 пункта >
+     *   стоп в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] пунктов);
+     * - акции — процентная ставка (0.1%), как исторически в бэктесте.
+     */
+    private fun executionFill(
+        instrument: InstrumentsConfig.InstrumentSpec?,
+        ticker: String,
+        reference: BigDecimal,
+        isBuy: Boolean,
+        slippageMultiplier: Double,
+    ): SimulatedExecution.Fill =
+        if (instrument != null && instrumentsConfig.isFutures(ticker)) {
+            SimulatedExecution.tickFill(reference, isBuy, slippageTicks(slippageMultiplier), instrument.priceStep)
+        } else {
+            SimulatedExecution.marketFill(reference, isBuy, slippageRate(slippageMultiplier))
+        }
+
     /**
      * Учёт открытия позиции: комиссия входа списывается, номинал остаётся в кэше
      * (позиция учитывается как нереализованный PnL в [equityAt]).
@@ -449,21 +474,23 @@ class BacktestEngine(
         slPercent: Double,
         tpPercent: Double,
         slippageMultiplier: Double = 1.0,
+        history: List<Candle>,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
         val lotSize = instrument?.lotSize ?: 1
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-        val qty = sizeQuantity(ticker, instrument, direction, price, cash)
+        val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
+        val qty = sizeQuantity(ticker, instrument, direction, price, cash, stopPoints)
         val lotQty = SimulatedExecution.lotRounded(qty, lotSize)
         if (lotQty <= 0) return null
 
-        val fill = SimulatedExecution.marketFill(price, direction == PositionDirection.LONG, slippageRate(slippageMultiplier))
+        val fill = executionFill(instrument, ticker, price, direction == PositionDirection.LONG, slippageMultiplier)
         return PositionSim(
             direction = direction,
             quantity = lotQty,
             entryPrice = fill.price,
-            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent),
+            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints),
             takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent),
             entryBars = bar,
         )
@@ -482,6 +509,7 @@ class BacktestEngine(
         direction: PositionDirection,
         price: BigDecimal,
         cash: BigDecimal,
+        stopPoints: Int?,
     ): Int {
         val futuresSizer = positionSizer
         if (instrument != null && instrumentsConfig.isFutures(ticker) && futuresSizer != null) {
@@ -489,7 +517,7 @@ class BacktestEngine(
                 futuresSizer.calculateContracts(
                     ticker = ticker,
                     portfolioMoney = cash,
-                    stopLossPoints = riskConfig.defaultStopLossPoints,
+                    stopLossPoints = stopPoints ?: riskConfig.defaultStopLossPoints,
                     currentGo = instrument.go,
                     entryPrice = price,
                     direction = direction,
@@ -504,7 +532,30 @@ class BacktestEngine(
     }
 
     /**
-     * Стоп-лосс: для фьючерсов — отступ в пунктах от цены входа (как live
+     * ATR-адаптивная дистанция стопа фьючерса в пунктах — зеркало live-пайплайна
+     * ([com.trading.bot.application.decision.FuturesEntryProfile.resolveStopLossPoints]):
+     * ATR по завершённым к моменту входа свечам (без lookahead) × multiplier.
+     * null — акции или недостаток данных (тогда фиксированный дефолт).
+     */
+    private fun resolveAtrStopPoints(
+        history: List<Candle>,
+        ticker: String,
+        instrument: InstrumentsConfig.InstrumentSpec?,
+    ): Int? {
+        if (instrument == null || !instrumentsConfig.isFutures(ticker) || !riskConfig.futuresAtrStopEnabled) return null
+        val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod) ?: return null
+        return Atr.stopPoints(
+            atr = atr,
+            priceStep = instrument.priceStep,
+            multiplier = riskConfig.futuresAtrStopMultiplier,
+            minPoints = riskConfig.futuresAtrStopMinPoints,
+            maxPoints = riskConfig.futuresAtrStopMaxPoints,
+        )
+    }
+
+    /**
+     * Стоп-лосс: для фьючерсов — отступ в пунктах от цены входа ([stopPoints]
+     * при ATR-стопе или [RiskConfig.defaultStopLossPoints]; как live
      * [com.trading.bot.application.OrderBuilder.buildFuturesOrderParams]),
      * для акций — процент от цены входа (`slPercent`).
      */
@@ -514,9 +565,11 @@ class BacktestEngine(
         direction: PositionDirection,
         fillPrice: BigDecimal,
         slPercent: Double,
+        stopPoints: Int?,
     ): BigDecimal {
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
-            val offset = BigDecimal(riskConfig.defaultStopLossPoints).multiply(instrument.priceStep)
+            val points = stopPoints ?: riskConfig.defaultStopLossPoints
+            val offset = BigDecimal(points).multiply(instrument.priceStep)
             return when (direction) {
                 PositionDirection.LONG -> fillPrice.subtract(offset)
                 PositionDirection.SHORT -> fillPrice.add(offset)
@@ -566,7 +619,8 @@ class BacktestEngine(
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
     ): BigDecimal {
-        val fill = SimulatedExecution.marketFill(price, pos.direction == PositionDirection.SHORT, slippageRate(slippageMultiplier))
+        val instrument = instrumentsConfig.find(ticker)
+        val fill = executionFill(instrument, ticker, price, pos.direction == PositionDirection.SHORT, slippageMultiplier)
         val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity, commissionRate(commissionMultiplier))
         val commissionExit = SimulatedExecution.commissionOn(fill.price, pos.quantity, commissionRate(commissionMultiplier))
         val gross =

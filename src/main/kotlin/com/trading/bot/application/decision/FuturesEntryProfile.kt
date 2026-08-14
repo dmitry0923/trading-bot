@@ -7,7 +7,9 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.order.OrderParams
+import com.trading.bot.domain.risk.Atr
 import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.RiskEngine
 import com.trading.bot.domain.signal.Signal
@@ -15,6 +17,7 @@ import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
+import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -28,10 +31,17 @@ import java.math.BigDecimal
  * Воспроизводит прежний пайплайн FuturesEntryCoordinator:
  * - риск-этап: [FuturesRiskEngine] (Да/Нет, с STRESS-проверкой);
  * - сайзинг: [FuturesPositionSizer] (риск на сделку / маржинальный бюджет / лимит контрактов);
- * - параметры заявки: SL/TP в пунктах, маржа, ликвидация, плечо
+ * - стоп: ATR-адаптивная дистанция в пунктах ([Atr.stopPoints], fallback —
+ *   [RiskConfig.defaultStopLossPoints]); передаётся и в сайзер (риск на сделку
+ *   учитывает ATR-стоп), и в параметры заявки;
+ * - параметры заявки: SL/TP в ценах от стопа, маржа, ликвидация, плечо
  *   ([OrderBuilder.buildFuturesOrderParams]);
- * - портфельный риск — READ_ONLY (Si-хедж не блокируется, метрики фиксируются;
- *   жёсткий BLOCK/SCALE для Si включается отдельно в фазе 2);
+ * - портфельный риск — ENFORCED ([PortfolioRiskEngine]): превышение VaR95 / слабая
+ *   диверсификация / направленная концентрация BLOCK-ают вход, умеренное превышение
+ *   warn-порогов SCALE-ит размер (как для акций). Одиночный Si-вход на свободных
+ *   средствах не блокируется (концентрация 100% = порог, VaR95 1-контрактной позиции
+ *   далёк от лимита 5% AUM); жёсткий лимит срабатывает при удвоении в тот же тикер
+ *   (effectivePositions → 1) и при перевесе портфеля;
  * - после открытия: без побочных эффектов (PositionOpened публикует ядро исполнения).
  */
 @Component
@@ -45,6 +55,7 @@ class FuturesEntryProfile(
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
     private val tradingAccountService: TradingAccountService,
+    private val candleCache: CandleCacheService,
 ) : EntryProfile {
     private val logger = KotlinLogging.logger {}
 
@@ -84,11 +95,12 @@ class FuturesEntryProfile(
         entryPrice: BigDecimal,
         request: EntryRequest,
     ): PositionSizeResult {
+        val stopLossPoints = resolveStopLossPoints(signal.ticker)
         val size =
             futuresPositionSizer.calculateContracts(
                 signal.ticker,
                 request.portfolioMoney,
-                riskConfig.defaultStopLossPoints,
+                stopLossPoints,
                 request.currentGo,
                 entryPrice,
                 request.direction,
@@ -123,9 +135,37 @@ class FuturesEntryProfile(
             currentGo = request.currentGo,
             size = size,
             leverage = leverageConfig.effective(),
+            stopLossPoints = resolveStopLossPoints(ticker),
         )
 
-    override fun portfolioMode(): PortfolioMode = PortfolioMode.READ_ONLY
+    /**
+     * Дистанция стоп-лосса фьючерса в пунктах: ATR(period) × multiplier по свечам
+     * MINUTE_10 из кэша (границы [RiskConfig.futuresAtrStopMinPoints]..max). Если
+     * ATR-стоп выключен или данных недостаточно — фиксированный дефолт.
+     */
+    private fun resolveStopLossPoints(ticker: String): Int {
+        if (riskConfig.futuresAtrStopEnabled) {
+            val atr =
+                candleCache.calculateAtr(
+                    ticker,
+                    "MINUTE_10",
+                    riskConfig.futuresAtrStopPeriod,
+                )
+            val instrument = instrumentsConfig.find(ticker)
+            if (atr != null && instrument != null) {
+                return Atr.stopPoints(
+                    atr = atr,
+                    priceStep = instrument.priceStep,
+                    multiplier = riskConfig.futuresAtrStopMultiplier,
+                    minPoints = riskConfig.futuresAtrStopMinPoints,
+                    maxPoints = riskConfig.futuresAtrStopMaxPoints,
+                ) ?: riskConfig.defaultStopLossPoints
+            }
+        }
+        return riskConfig.defaultStopLossPoints
+    }
+
+    override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 
     override fun buildPosition(
         signal: Signal,

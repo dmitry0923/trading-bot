@@ -10,13 +10,19 @@ import java.math.RoundingMode
  * - Комиссия: 0.05% от ОБОРОТА (entry + exit), оборот = цена × количество.
  *   Позиция может иметь quantity > 1, поэтому комиссия считается как
  *   price × quantity × rate (ранее quantity игнорировалось — systematic bias).
- * - Проскальзывание: 0.1% для market-ордеров, 0 для limit
+ * - Проскальзывание: 0.1% для market-ордеров (акции), в ТИКАХ (пунктах) для
+ *   фьючерсов ([FUTURES_SLIPPAGE_TICKS]) — процентное проскальзывание от цены
+ *   фьючерса (0.1% Si ≈ 92 пункта) непропорционально велико относительно стопа
+ *   в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] = 50 пунктов.
  * - Лотность: округление вниз до целого лота
  * - Исполнение по цене открытия следующей свечи (консервативно)
  */
 object SimulatedExecution {
     val COMMISSION_RATE = BigDecimal("0.0005")
     val MARKET_SLIPPAGE_RATE = BigDecimal("0.001")
+
+    /** Проскальзывание фьючерсного market-ордера в тиках (пунктах): 1 тик = priceStep. */
+    val FUTURES_SLIPPAGE_TICKS = 1
 
     data class Fill(
         val price: BigDecimal,
@@ -34,6 +40,21 @@ object SimulatedExecution {
         slippageRate: BigDecimal = MARKET_SLIPPAGE_RATE,
     ): Fill {
         val slip = reference.multiply(slippageRate)
+        val price = if (isBuy) reference.add(slip) else reference.subtract(slip)
+        return Fill(price)
+    }
+
+    /**
+     * Цена исполнения с проскальзыванием в ТИКАХ (пунктах) — для фьючерсов:
+     * slip = ticks × tickSize (например 1 тик × 0.01 = 0.01 ₽ для Si).
+     */
+    fun tickFill(
+        reference: BigDecimal,
+        isBuy: Boolean,
+        ticks: Int,
+        tickSize: BigDecimal,
+    ): Fill {
+        val slip = tickSize.multiply(BigDecimal(ticks))
         val price = if (isBuy) reference.add(slip) else reference.subtract(slip)
         return Fill(price)
     }

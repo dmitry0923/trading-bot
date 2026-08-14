@@ -8,12 +8,13 @@ import java.math.BigDecimal
 import kotlin.random.Random
 
 /**
- * Результат Monte Carlo анализа последовательности сделок (roadmap 13.7.8).
+ * Результат Monte Carlo анализа кривой капитала бэктеста (roadmap 13.7.8).
  *
- * Bootstrap-ресемплинг сделок с возвращением: каждый прогон случайно переставляет
- * P&L сделок бэктеста и накапливает их от стартового капитала. Так проверяется,
- * достигнута ли доходность удачным порядком сделок (или несколькими выбросами),
- * а не устойчивым преимуществом стратегии.
+ * Bootstrap-ресемплинг ПЕРИОДНЫХ ДОХОДНОСТЕЙ кривой капитала с возвращением:
+ * каждый прогон случайно переставляет/повторяет доходности фактического пути и
+ * накапливает их мультипликативно от стартового капитала. Так проверяется,
+ * достигнута ли доходность удачным порядком движения капитала (или несколькими
+ * выбросами), а не устойчивым преимуществом стратегии.
  */
 data class MonteCarloResult(
     val simulations: Int,
@@ -96,19 +97,20 @@ data class BacktestRobustnessReport(
 /**
  * Чистая математика Monte Carlo (без Spring — unit-тестируется напрямую).
  *
- * [simulate] — bootstrap с возвращением: каждый из [simulations] путей собирает
- * `tradeReturns.size` сделок, случайно выбранных из фактической истории (порядок
- * переставляется, сделки могут повторяться). Доходность пути = суммарный P&L
- * от [initialCapital].
+ * [simulate] — bootstrap с возвращением по ПЕРИОДНЫМ ДОХОДНОСТЯМ кривой капитала
+ * (мультипликативный компаундинг): каждый путь накапливает `periodReturns.size`
+ * случайно выбранных (с повторениями) доходностей от `initialCapital`. Это
+ * сохраняет распределение доходностей реального пути и эффект сложного процента
+ * (в отличие от аддитивного ресемплинга рублёвых P&L сделок).
  */
 object MonteCarlo {
     fun simulate(
-        tradeReturns: List<Double>,
+        periodReturns: List<Double>,
         initialCapital: BigDecimal,
         simulations: Int,
         seed: Long = 42,
     ): MonteCarloResult {
-        if (tradeReturns.isEmpty() || simulations <= 0 || initialCapital <= BigDecimal.ZERO) {
+        if (periodReturns.isEmpty() || simulations <= 0 || initialCapital <= BigDecimal.ZERO) {
             return MonteCarloResult(
                 simulations = simulations,
                 medianReturn = 0.0,
@@ -126,8 +128,10 @@ object MonteCarlo {
         val capital = initialCapital.toDouble()
         for (s in 0 until simulations) {
             var equity = capital
-            for (t in tradeReturns.indices) {
-                equity += tradeReturns[rnd.nextInt(tradeReturns.size)]
+            val samples = IntArray(periodReturns.size) { rnd.nextInt(periodReturns.size) }
+            for (i in samples) {
+                val factor = 1.0 + periodReturns[i]
+                equity = if (factor > 0.0) equity * factor else 0.0
             }
             pathReturns[s] = (equity - capital) / capital
         }
@@ -156,8 +160,9 @@ object MonteCarlo {
  *
  * Дополняет walk-forward валидацию ([BacktestValidator]) двумя проверками:
  *
- * 1. **Monte Carlo** — bootstrap по фактическим сделкам: если большинство случайных
- *    путей убыточны, доходность не является преимуществом стратегии;
+ * 1. **Monte Carlo** — bootstrap по ПЕРИОДНЫМ ДОХОДНОСТЯМ кривой капитала
+ *    (мультипликативный компаундинг): если большинство случайных путей убыточны,
+ *    доходность не является преимуществом стратегии;
  * 2. **Стресс-сценарии исполнения** — перепрогон движка с увеличенными комиссией
  *    и проскальзыванием (×2/×5 и комбинированный ×3+×3): устойчивость к росту
  *    издержек, типичному для стрессовых условий рынка.
@@ -204,7 +209,13 @@ class MonteCarloAnalyzer(
             backtestEngine.simulate(ticker, candles, initialCapital, minBarsForSignal, slPercent, tpPercent)
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
-        val monteCarlo = MonteCarlo.simulate(baseResult.tradeReturns, initialCapital, simulations, seed)
+        val monteCarlo =
+            MonteCarlo.simulate(
+                BacktestMetrics.periodReturnsFromEquity(baseResult.equityCurve),
+                initialCapital,
+                simulations,
+                seed,
+            )
         val stress =
             scenarios.map { s ->
                 StressScenarioResult.of(

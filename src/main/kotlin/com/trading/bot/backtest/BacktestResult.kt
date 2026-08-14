@@ -8,9 +8,14 @@ import kotlin.math.sqrt
 /**
  * Метрики результата бэктеста (C-002).
  *
- * Помимо базовых (Sharpe/MDD/PF/win rate) содержит Sortino, Expectancy,
+ * Помимо базовых (Sharpe/MDD/PF/win rate) содержит Sortino, Calmar, Expectancy,
  * Win-Loss Ratio, AvgTrade и Recovery Factor — для полноценной оценки
  * устойчивости стратегии (не только доходности, но и качества сделок).
+ *
+ * Sharpe/Sortino/Calmar считаются по КРИВОЙ КАПИТАЛА (периодные доходности
+ * equityCurve), а не по сделкам: риск-метрики должны учитывать путь капитала
+ * во времени и продолжительность удержания позиции, иначе каждая сделка
+ * равновзвешена независимо от того, сколько баров она была открыта.
  */
 data class BacktestResult(
     val ticker: String,
@@ -28,6 +33,7 @@ data class BacktestResult(
     val winLossRatio: Double = 0.0,
     val avgTrade: Double = 0.0,
     val recoveryFactor: Double = 0.0,
+    val calmarRatio: Double = 0.0,
     val tradeReturns: List<Double> = emptyList(),
 ) {
     /**
@@ -58,6 +64,7 @@ data class BacktestResult(
             "winLossRatio" to winLossRatio,
             "avgTrade" to avgTrade,
             "recoveryFactor" to recoveryFactor,
+            "calmarRatio" to calmarRatio,
             "passable" to isPassable(),
         )
 }
@@ -79,8 +86,11 @@ object BacktestMetrics {
                 0.0
             }
 
-        val sharpe = sharpeRatio(tradeReturns)
-        val sortino = sortinoRatio(tradeReturns)
+        // Sharpe/Sortino по периодным доходностям КРИВОЙ КАПИТАЛА, а не по сделкам:
+        // учитывается путь капитала и время удержания позиции.
+        val periodReturns = periodReturnsFromEquity(equityCurve)
+        val sharpe = sharpeRatio(periodReturns)
+        val sortino = sortinoRatio(periodReturns)
         val mdd = maxDrawdown(equityCurve)
         val wins = tradeReturns.count { it > 0 }
         val winRate = if (tradeReturns.isNotEmpty()) wins.toDouble() / tradeReturns.size else 0.0
@@ -110,11 +120,25 @@ object BacktestMetrics {
             } else {
                 0.0
             }
-        val netProfit = tradeReturns.sum()
+        // Чистая прибыль по кривой капитала (согласована с totalReturn/mdd).
+        val netProfit =
+            if (equityCurve.size >= 2) {
+                equityCurve.last().subtract(equityCurve.first()).toDouble()
+            } else {
+                tradeReturns.sum()
+            }
         val recoveryFactor =
             if (mdd > 0) {
                 netProfit / mdd
             } else if (netProfit > 0) {
+                Double.POSITIVE_INFINITY
+            } else {
+                0.0
+            }
+        val calmarRatio =
+            if (mdd > 0) {
+                totalReturn / mdd
+            } else if (totalReturn > 0) {
                 Double.POSITIVE_INFINITY
             } else {
                 0.0
@@ -136,8 +160,31 @@ object BacktestMetrics {
             winLossRatio = winLossRatio,
             avgTrade = avgTrade,
             recoveryFactor = recoveryFactor,
+            calmarRatio = calmarRatio,
             tradeReturns = tradeReturns,
         )
+    }
+
+    /**
+     * Периодные доходности кривой капитала: `(E[i] − E[i−1]) / E[i−1]`.
+     * Точки с неположительным знаменателем пропускаются (нет смысла в доходности
+     * от нулевого/отрицательного капитала).
+     */
+    fun periodReturnsFromEquity(equityCurve: List<BigDecimal>): List<Double> {
+        if (equityCurve.size < 2) return emptyList()
+        val returns = ArrayList<Double>(equityCurve.size - 1)
+        for (i in 1 until equityCurve.size) {
+            val prev = equityCurve[i - 1]
+            if (prev > BigDecimal.ZERO) {
+                returns.add(
+                    equityCurve[i]
+                        .subtract(prev)
+                        .divide(prev, 8, RoundingMode.HALF_UP)
+                        .toDouble(),
+                )
+            }
+        }
+        return returns
     }
 
     fun sharpeRatio(

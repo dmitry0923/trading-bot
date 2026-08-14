@@ -861,6 +861,57 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `equity curve keeps exactly one point per bar when position is stopped out`() {
+        val candles = stopOutCandles()
+        val buyEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val result = runBlocking { buyEngine.simulate("SBER", candles) }
+
+        assertEquals(2, result.totalTrades, "стоп по SL и закрытие конца периода")
+        assertEquals(candles.size, result.equityCurve.size, "по одной точке на свечу без дубликатов на закрытии")
+    }
+
+    @Test
+    fun `simulate with empty candles returns non-passable empty result`() {
+        val result = runBlocking { engine.simulate("SBER", emptyList()) }
+
+        assertEquals(0, result.totalTrades)
+        assertEquals(0.0, result.totalReturn)
+        assertEquals(listOf(BigDecimal("100000")), result.equityCurve)
+        assertFalse(result.isPassable())
+        assertTrue(result.sharpeRatio.isFinite())
+        assertTrue(result.profitFactor.isFinite())
+    }
+
+    @Test
+    fun `simulate with single candle opens nothing and keeps one equity point`() {
+        val result = runBlocking { engine.simulate("SBER", candles().take(1)) }
+
+        assertEquals(0, result.totalTrades)
+        assertEquals(1, result.equityCurve.size)
+        assertEquals(BigDecimal("100000"), result.equityCurve.first())
+    }
+
+    @Test
+    fun `compute handles non-positive initial equity without division by zero`() {
+        val result =
+            BacktestMetrics.compute(
+                "SBER",
+                listOf(BigDecimal.ZERO, BigDecimal("100")),
+                listOf(100.0),
+            )
+        assertEquals(0.0, result.totalReturn)
+        assertEquals(0.0, result.sharpeRatio)
+        assertEquals(0.0, result.maxDrawdown)
+        assertEquals(Double.POSITIVE_INFINITY, result.recoveryFactor)
+        assertEquals(0.0, result.calmarRatio)
+    }
+
+    @Test
     fun `CLOSE signal is treated as hold and opens no position`() {
         val closeEngine =
             BacktestEngine(
@@ -967,6 +1018,30 @@ class BacktestEngineTest {
                 time = LocalDateTime.now().plusMinutes(10L * i),
             )
         }
+
+    /** Вход на баре 1 (fill 100.1), стоп на баре 2 (low 97.5 < SL 98.1), повторный вход — закрытия: STOP + END_OF_PERIOD. */
+    private fun stopOutCandles(): List<Candle> {
+        val ohlc =
+            listOf(
+                doubleArrayOf(100.0, 101.0, 99.0, 100.0),
+                doubleArrayOf(100.0, 101.0, 99.0, 100.0),
+                doubleArrayOf(101.0, 102.0, 97.5, 98.0),
+                doubleArrayOf(100.5, 101.5, 99.5, 100.8),
+                doubleArrayOf(101.0, 101.5, 100.0, 100.9),
+            )
+        return ohlc.mapIndexed { i, p ->
+            Candle(
+                ticker = "SBER",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal(p[0]),
+                highPrice = BigDecimal(p[1]),
+                lowPrice = BigDecimal(p[2]),
+                closePrice = BigDecimal(p[3]),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        }
+    }
 
     /** Si-фьючерс на реальных уровнях цены (~92 000): capitalSlice-fallback даёт 0 лотов. */
     private fun siCandles(count: Int = 300): List<Candle> =

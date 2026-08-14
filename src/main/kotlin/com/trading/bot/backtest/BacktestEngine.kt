@@ -219,7 +219,6 @@ class BacktestEngine(
                                 "STOP_LOSS",
                                 pos0.stopLoss,
                                 cash,
-                                equityCurve,
                                 tradeReturns,
                                 commissionMultiplier,
                                 slippageMultiplier,
@@ -235,7 +234,6 @@ class BacktestEngine(
                                 "TAKE_PROFIT",
                                 pos0.takeProfit,
                                 cash,
-                                equityCurve,
                                 tradeReturns,
                                 commissionMultiplier,
                                 slippageMultiplier,
@@ -273,7 +271,6 @@ class BacktestEngine(
                                 "ML_FILTER_REVERSAL",
                                 current.openPrice,
                                 cash,
-                                equityCurve,
                                 tradeReturns,
                                 commissionMultiplier,
                                 slippageMultiplier,
@@ -310,7 +307,6 @@ class BacktestEngine(
                                 "MTF_FILTER_REVERSAL",
                                 current.openPrice,
                                 cash,
-                                equityCurve,
                                 tradeReturns,
                                 commissionMultiplier,
                                 slippageMultiplier,
@@ -333,7 +329,6 @@ class BacktestEngine(
                             "REVERSAL",
                             current.openPrice,
                             cash,
-                            equityCurve,
                             tradeReturns,
                             commissionMultiplier,
                             slippageMultiplier,
@@ -386,7 +381,6 @@ class BacktestEngine(
                     "END_OF_PERIOD",
                     sorted.last().closePrice,
                     cash,
-                    equityCurve,
                     tradeReturns,
                     commissionMultiplier,
                     slippageMultiplier,
@@ -624,6 +618,10 @@ class BacktestEngine(
     /**
      * Закрытие позиции: cash += exit*qty - commission_exit.
      * PnL сделки (с обеими комиссиями) записывается в tradeReturns.
+     *
+     * Точка кривой капитала НЕ добавляется здесь: кривая строится по одной точке
+     * на свечу (mark-to-market в цикле [simulate]), иначе закрытие по SL/TP внутри
+     * бара давало бы дубликат (нулевую доходность), искажающий Sharpe/Sortino.
      */
     private fun closePosition(
         ticker: String,
@@ -631,7 +629,6 @@ class BacktestEngine(
         reason: String,
         price: BigDecimal,
         cash: BigDecimal,
-        equityCurve: MutableList<BigDecimal>,
         tradeReturns: MutableList<Double>,
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
@@ -650,7 +647,6 @@ class BacktestEngine(
         tradeReturns.add(pnl.toDouble())
         // Комиссия входа уже списана при открытии; здесь добавляется gross за вычетом комиссии выхода
         val newCash = cash.add(gross).subtract(commissionExit)
-        equityCurve.add(newCash)
         logger.debug { "Backtest close $ticker $reason pnl=$pnl" }
         return newCash
     }

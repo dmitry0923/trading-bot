@@ -1339,11 +1339,29 @@ blocked не инкрементится, forced_market инкрементитс�
 (LIQUIDATION_CRITICAL/EMERGENCY_STOP → forceMarket=true, STOP_LOSS → false).
 Обновлены 5-арг стабы `placeMarketOrder` во всех тестах (добавлен 6-й параметр).
 
-### 13.19.4. Очередь EXEC-MR
+### 13.19.4. MR-D: LIVE не сайзит от fallback-капитала (EXEC-005) ✅
+
+Проблема: при ошибке/пустом ответе `/md/v2/Clients/{portfolio}/summaries` в LIVE
+`getPortfolioMoney` возвращал фиктивные 50k → сайзинг фьючерсов мог быть
+катастрофически неверным (например, 1 контракт вместо 50).
+
+Решение:
+- `AlorFuturesClient.getPortfolioMoney` → `BigDecimal?`: LIVE возвращает null при
+  ошибке API или отсутствии баланса (EXEC-005: блокировать вход, не сайзить от
+  фиктивного капитала); SIMULATION по-прежнему отдаёт депозит по умолчанию;
+- `FuturesEntryProfile.buildEntryRequest` → `EntryRequest?`: null портфельных
+  данных → null (вход блокируется), `futures.risk.reject/PORTFOLIO_DATA_UNAVAILABLE`;
+- `DecisionEngine`: null request → reject + метрика `PORTFOLIO_DATA_UNAVAILABLE`;
+- `AumProvider.currentAum`: null-safe (null → config fallback для AUM-лимитов,
+  у которых фолбэк документирован).
+
+Тесты: `AlorFuturesClientTest` (parse moneyAmount/money, missing/malformed → null);
+`DecisionEngineTest` (null entry request блокирует вход + метрика).
+
+### 13.19.5. Очередь EXEC-MR
 
 | # | Проблема | Статус |
 |---|---|---|
-| EXEC-005 | LIVE не должен использовать fallback капитал (defaultPortfolioMoney 50k) | pending |
 | EXEC-006 | UNKNOWN состояние биржи → hard trading halt | pending |
 | EXEC-007 | Direction mismatch → reconciliation/halt, не CLOSED | pending |
 | P1 | fallback GO, risk recalc после reconcile qty, cancel idempotency (CANCEL_UNKNOWN) | pending |

@@ -38,8 +38,36 @@ class AlorFuturesClientTest {
         runBlocking {
             val money = client().getPortfolioMoney()
 
-            assertEquals(0, BigDecimal("50000").compareTo(money))
+            assertEquals(0, BigDecimal("50000").compareTo(money!!))
         }
+
+    @Test
+    fun `portfolio money parsed from moneyAmount field`() {
+        val money = client().parsePortfolioMoney("""{"moneyAmount": "123456.78"}""")
+
+        assertEquals(0, BigDecimal("123456.78").compareTo(money!!))
+    }
+
+    @Test
+    fun `portfolio money parsed from money field fallback`() {
+        val money = client().parsePortfolioMoney("""{"money": "7777"}""")
+
+        assertEquals(0, BigDecimal("7777").compareTo(money!!))
+    }
+
+    @Test
+    fun `portfolio money missing fields yields null`() {
+        val money = client().parsePortfolioMoney("""{"ok": true}""")
+
+        assertEquals(null, money)
+    }
+
+    @Test
+    fun `portfolio money malformed json yields null`() {
+        val money = client().parsePortfolioMoney("not json")
+
+        assertEquals(null, money)
+    }
 
     @Test
     fun `config fallback used for unknown ticker`() =

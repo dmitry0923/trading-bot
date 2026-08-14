@@ -148,6 +148,13 @@ class DecisionEngine(
         // Риск-этап: Да/Нет (дневной лимит, drawdown, волатильность, дубли,
         // лимиты позиций/секторов, ATR%, STRESS, валидность входных данных).
         val request = profile.buildEntryRequest(signal, entryPrice, openPositions, accountId)
+        if (request == null) {
+            logger.warn { "Entry rejected $ticker: portfolio data unavailable (LIVE API)" }
+            meterRegistry
+                .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "PORTFOLIO_DATA_UNAVAILABLE"))
+                .increment()
+            return
+        }
         when (val verdict = profile.riskEngine.canEnter(request)) {
             is RiskVerdict.Rejected -> {
                 logger.warn { "Risk engine rejected $ticker: ${verdict.reason}" }

@@ -59,7 +59,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         openPositions: List<Position>,
         accountId: Long?,
-    ): EntryRequest =
+    ): EntryRequest? =
         EntryRequest(
             ticker = signal.ticker,
             action = signal.action,

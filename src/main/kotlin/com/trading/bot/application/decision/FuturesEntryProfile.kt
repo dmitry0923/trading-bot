@@ -73,9 +73,13 @@ class FuturesEntryProfile(
         entryPrice: BigDecimal,
         openPositions: List<Position>,
         accountId: Long?,
-    ): EntryRequest {
+    ): EntryRequest? {
         val currentGo = alorFuturesClient.getFuturesGO(signal.ticker)
         val portfolioMoney = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
+        if (portfolioMoney == null) {
+            logger.warn { "Portfolio money unavailable for accountId=$accountId, blocking entry for ${signal.ticker} (EXEC-005)" }
+            return null
+        }
         return EntryRequest(
             ticker = signal.ticker,
             action = signal.action,

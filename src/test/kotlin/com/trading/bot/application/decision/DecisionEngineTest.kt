@@ -182,6 +182,17 @@ class DecisionEngineTest {
     }
 
     @Test
+    fun `null entry request blocks entry and records metric`() {
+        val profile = FakeEntryProfile(buildEntryRequestReturnsNull = true)
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("PORTFOLIO_DATA_UNAVAILABLE"))
+    }
+
+    @Test
     fun `risk engine rejection blocks entry`() {
         val profile = FakeEntryProfile(riskVerdict = RiskVerdict.Rejected("limit hit"))
         runBlocking {
@@ -481,6 +492,7 @@ class DecisionEngineTest {
         var orderParams: OrderParams = OrderParams(direction = PositionDirection.LONG, quantity = 5),
         var mode: PortfolioMode = PortfolioMode.ENFORCED,
         var matchesTicker: String = "Si",
+        var buildEntryRequestReturnsNull: Boolean = false,
     ) : EntryProfile {
         var buildEntryRequestCalls = 0
         var onOpenedCalls = 0
@@ -501,8 +513,9 @@ class DecisionEngineTest {
             entryPrice: BigDecimal,
             openPositions: List<Position>,
             accountId: Long?,
-        ): EntryRequest {
+        ): EntryRequest? {
             buildEntryRequestCalls++
+            if (buildEntryRequestReturnsNull) return null
             return EntryRequest(
                 ticker = signal.ticker,
                 action = signal.action,

@@ -52,13 +52,18 @@ interface EntryProfile {
     /** Маршрутизация сигнала на профиль (например, by instruments-config type). */
     fun matches(ticker: String): Boolean
 
-    /** Входные данные для [riskEngine] (портфельные данные инструмента). */
+    /**
+     * Входные данные для [riskEngine] (портфельные данные инструмента).
+     *
+     * @return null — портфельные данные недоступны (LIVE API), вход блокируется
+     *   (EXEC-005): нельзя сайзить от fallback-капитала.
+     */
     suspend fun buildEntryRequest(
         signal: Signal,
         entryPrice: BigDecimal,
         openPositions: List<Position>,
         accountId: Long?,
-    ): EntryRequest
+    ): EntryRequest?
 
     /**
      * Фильтры ДО сайзинга (корреляция). Возвращает причину отказа или null.

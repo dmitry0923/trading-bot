@@ -67,7 +67,7 @@ class AumProvider(
                     override
                 } else {
                     val money = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
-                    if (money > BigDecimal.ZERO) money else riskConfig.maxPositionRub
+                    if (money != null && money > BigDecimal.ZERO) money else riskConfig.maxPositionRub
                 }
             cache[k] = CacheEntry(effective, System.currentTimeMillis())
             meterRegistry.gauge(

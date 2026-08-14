@@ -20,7 +20,9 @@ import java.time.Duration
  *   GET /md/v2/Securities/MOEX/{ticker}/risk
  *   Fallback: instruments.*.go из конфига, если API недоступен.
  * - getPortfolioMoney(): свободные средства портфеля.
- *   Fallback: 50 000 ₽ (депозит по умолчанию) в SIMULATION.
+ *   SIMULATION: 50 000 ₽ (депозит по умолчанию).
+ *   LIVE: реальный баланс, null при ошибке API / отсутствии поля — нельзя
+ *   использовать fallback-капитал для сайзинга (EXEC-005).
  *
  * В SIMULATION режиме все вызовы возвращают значения из конфига.
  */
@@ -77,8 +79,12 @@ class AlorFuturesClient(
 
     /**
      * Свободные средства портфеля (buying power).
+     *
+     * @return баланс в LIVE, конфиг-депозит в SIMULATION, null в LIVE при
+     *   ошибке API или отсутствии баланса в ответе (EXEC-005: блокировать вход,
+     *   а не сайзить от фиктивных 50k).
      */
-    suspend fun getPortfolioMoney(portfolio: String = alorConfig.portfolio): BigDecimal {
+    suspend fun getPortfolioMoney(portfolio: String = alorConfig.portfolio): BigDecimal? {
         if (!isLive) return defaultPortfolioMoney
 
         return try {
@@ -92,18 +98,26 @@ class AlorFuturesClient(
                     .timeout(Duration.ofSeconds(10))
                     .awaitSingle()
 
-            val j = objectMapper.readTree(raw)
-            val money =
-                j.path("moneyAmount").asString().toBigDecimalOrNull()
-                    ?: j.path("money").asString().toBigDecimalOrNull()
-                    ?: defaultPortfolioMoney
+            val money = parsePortfolioMoney(raw)
+            if (money == null) {
+                logger.warn { "getPortfolioMoney: balance field missing in API response" }
+                return null
+            }
 
             meterRegistry.gauge("futures.portfolio.money", money.toDouble())
             logger.info { "Portfolio money = $money ₽" }
             money
         } catch (e: Exception) {
-            logger.warn(e) { "getPortfolioMoney failed, using default $defaultPortfolioMoney" }
-            defaultPortfolioMoney
+            logger.warn(e) { "getPortfolioMoney failed" }
+            null
         }
     }
+
+    /** Разбор баланса из /md/v2/Clients/{portfolio}/summaries. null при отсутствии поля. */
+    internal fun parsePortfolioMoney(raw: String): BigDecimal? =
+        runCatching {
+            val j = objectMapper.readTree(raw)
+            j.path("moneyAmount").asString().toBigDecimalOrNull()
+                ?: j.path("money").asString().toBigDecimalOrNull()
+        }.getOrNull()
 }

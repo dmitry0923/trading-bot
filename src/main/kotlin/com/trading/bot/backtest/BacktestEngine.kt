@@ -211,7 +211,7 @@ class BacktestEngine(
             // Закрытие по SL/TP на внутрисвечном диапазоне текущей свечи
             val pos0 = position
             if (pos0 != null && pos0.stopLoss != null && pos0.takeProfit != null) {
-                when (SimulatedExecution.hitStopOrTarget(current, pos0.stopLoss, pos0.takeProfit)) {
+                when (SimulatedExecution.hitStopOrTarget(current, pos0.stopLoss, pos0.takeProfit, pos0.direction)) {
                     SimulatedExecution.StopTpHit.STOP -> {
                         cash =
                             closePosition(

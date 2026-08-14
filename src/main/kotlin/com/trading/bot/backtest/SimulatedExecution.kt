@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Candle
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -90,18 +91,41 @@ object SimulatedExecution {
         return lots * lotSize
     }
 
-    /** Проверка достижения SL/TP внутри диапазона свечи (intraday high/low). */
+    /**
+     * Проверка достижения SL/TP внутри диапазона свечи (intraday high/low).
+     *
+     * Направление ВАЖНО: для LONG стоп ниже входа, таргет выше (low <= sl / high >= tp);
+     * для SHORT наоборот — стоп ВЫШЕ входа, таргет ниже (high >= sl / low <= tp).
+     * Раньше функция была зашита под LONG и для шортов `low <= sl` срабатывало почти
+     * на каждой свече → все короткие позиции стоп-аутились на первой же свече.
+     *
+     * Если внутри свечи достигнуты и стоп, и таргет — считаем консервативно (стоп):
+     * без внутрисвечной траектории нельзя знать, что сработало раньше.
+     */
     fun hitStopOrTarget(
         candle: Candle,
         sl: BigDecimal,
         tp: BigDecimal,
+        direction: PositionDirection,
     ): StopTpHit? {
         val high = candle.highPrice
         val low = candle.lowPrice
-        return when {
-            low <= sl -> StopTpHit.STOP
-            high >= tp -> StopTpHit.TARGET
-            else -> null
+        return when (direction) {
+            PositionDirection.LONG -> {
+                when {
+                    low <= sl -> StopTpHit.STOP
+                    high >= tp -> StopTpHit.TARGET
+                    else -> null
+                }
+            }
+
+            PositionDirection.SHORT -> {
+                when {
+                    high >= sl -> StopTpHit.STOP
+                    low <= tp -> StopTpHit.TARGET
+                    else -> null
+                }
+            }
         }
     }
 

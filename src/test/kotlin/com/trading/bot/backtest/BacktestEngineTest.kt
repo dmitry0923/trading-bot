@@ -9,6 +9,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.ml.MlFeatureVector
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.PositionSizer
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.BacktestResultRepository
@@ -700,12 +701,126 @@ class BacktestEngineTest {
                 volume = 1000L,
                 time = LocalDateTime.now(),
             )
-        assertEquals(SimulatedExecution.StopTpHit.STOP, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("96"), BigDecimal("106")))
-        assertEquals(SimulatedExecution.StopTpHit.STOP, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("95"), BigDecimal("106")))
-        assertEquals(SimulatedExecution.StopTpHit.TARGET, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("90"), BigDecimal("104")))
-        assertEquals(SimulatedExecution.StopTpHit.TARGET, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("90"), BigDecimal("105")))
-        assertNull(SimulatedExecution.hitStopOrTarget(candle, BigDecimal("94"), BigDecimal("106")))
-        assertEquals(SimulatedExecution.StopTpHit.STOP, SimulatedExecution.hitStopOrTarget(candle, BigDecimal("96"), BigDecimal("104")))
+        // LONG: стоп ниже входа, таргет выше.
+        assertNull(
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("94"), BigDecimal("106"), PositionDirection.LONG),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("96"), BigDecimal("106"), PositionDirection.LONG),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("95"), BigDecimal("106"), PositionDirection.LONG),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.TARGET,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("90"), BigDecimal("104"), PositionDirection.LONG),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.TARGET,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("90"), BigDecimal("105"), PositionDirection.LONG),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("96"), BigDecimal("104"), PositionDirection.LONG),
+        )
+    }
+
+    @Test
+    fun `hitStopOrTarget detects stop and target for SHORT direction`() {
+        val candle =
+            Candle(
+                ticker = "SBER",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("100"),
+                highPrice = BigDecimal("105"),
+                lowPrice = BigDecimal("95"),
+                closePrice = BigDecimal("100"),
+                volume = 1000L,
+                time = LocalDateTime.now(),
+            )
+        // SHORT: стоп ВЫШЕ входа (high >= sl), таргет НИЖЕ (low <= tp).
+        // Обычная свеча (95..105) с входом 100 и стопом 106 НЕ должна стоп-аутить шорт.
+        assertNull(
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("106"), BigDecimal("94"), PositionDirection.SHORT),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("105"), BigDecimal("94"), PositionDirection.SHORT),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("104"), BigDecimal("90"), PositionDirection.SHORT),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.TARGET,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("110"), BigDecimal("95"), PositionDirection.SHORT),
+        )
+        assertEquals(
+            SimulatedExecution.StopTpHit.TARGET,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("110"), BigDecimal("96"), PositionDirection.SHORT),
+        )
+        // Обычная свеча (95..105) с таргетом 94 — таргет не достигнут.
+        assertNull(
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("110"), BigDecimal("94"), PositionDirection.SHORT),
+        )
+        // И стоп, и таргет в диапазоне → консервативно стоп.
+        assertEquals(
+            SimulatedExecution.StopTpHit.STOP,
+            SimulatedExecution.hitStopOrTarget(candle, BigDecimal("104"), BigDecimal("96"), PositionDirection.SHORT),
+        )
+    }
+
+    private object SellOnlySignalGenerator : BacktestSignalGenerator {
+        override suspend fun signal(
+            ticker: String,
+            candles: List<Candle>,
+            index: Int,
+            minBars: Int,
+            cycleId: String,
+        ): StrategyAction = StrategyAction.SELL
+    }
+
+    @Test
+    fun `short position is not stopped out on a normal bar`() {
+        // Шорт открывается по SELL; свечи колеблются в ±0.5% от 100 — стоп (вход+2%)
+        // и таргет (вход-4%) не достигаются → позиция должна удерживаться до конца
+        // периода (1 сделка). Раньше стоп для шорта проверялся как для лонга
+        // (low <= sl), а sl ВЫШЕ входа → срабатывало на каждой свече и бэктест
+        // крутил бесконечную череду стоп-аутов (churn).
+        val oscillating =
+            (0 until 120).map { i ->
+                val base = 100.0 + (if (i % 2 == 0) 0.4 else -0.4)
+                Candle(
+                    ticker = "SBER",
+                    timeframe = "MINUTE_10",
+                    openPrice = BigDecimal(base),
+                    highPrice = BigDecimal(base * 1.004),
+                    lowPrice = BigDecimal(base * 0.996),
+                    closePrice = BigDecimal(base),
+                    volume = 1000L,
+                    time = LocalDateTime.now().plusMinutes(10L * i),
+                )
+            }
+        val engineWithSell =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                signalGenerator = SellOnlySignalGenerator,
+            )
+
+        val result =
+            runBlocking {
+                engineWithSell.simulate(
+                    "SBER",
+                    oscillating,
+                    minBarsForSignal = 1,
+                    slPercent = 0.02,
+                    tpPercent = 0.04,
+                )
+            }
+
+        assertEquals(1, result.totalTrades, "short must be held to end-of-period, not churned by stop-outs")
     }
 
     @Test

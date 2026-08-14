@@ -3,6 +3,7 @@ package com.trading.bot.backtest
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.config.toFuturesAtrStopPolicy
 import com.trading.bot.domain.risk.Atr
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.risk.FuturesStopResolver
@@ -568,7 +569,7 @@ class BacktestEngine(
     ): Int? {
         if (instrument == null || !instrumentsConfig.isFutures(ticker)) return null
         val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod)
-        return futuresStopResolver.resolve(atr, instrument.priceStep, riskConfig)
+        return futuresStopResolver.resolve(atr, instrument.priceStep, riskConfig.toFuturesAtrStopPolicy())
     }
 
     /**

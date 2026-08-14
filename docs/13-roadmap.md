@@ -1149,6 +1149,10 @@ flowchart LR
   `currentMdc` (копия, мутация не влияет), `mdcContext` (наследование текущего MDC + extra перекрывает
   одинаковые ключи), наследование в дочерней корутине на `Dispatchers.IO`, `withMdc` (extra виден внутри,
   окружение восстанавливается после).
+- Чистка архитектуры domain-слоя (LayerArchitectureTest зелёный): из `domain.risk` убраны Spring-зависимости —
+  `FuturesStopResolver` и `EstimatedLiquidationPriceProvider` без `@Component` (регистрация в `RiskBeansConfig`),
+  `RiskConfig` заменён на доменную `FuturesAtrStopPolicy` с маппингом `RiskConfig.toFuturesAtrStopPolicy()`
+  (config-слой); вызовы обновлены в `FuturesEntryProfile` и `BacktestEngine`.
 - `BacktestEngineTest` — edge-кейсы: ровно одна точка equity-кривой на бар при стоп-ауте
   (фикстура `stopOutCandles`, стоп → re-entry → закрытие в конце периода), пустой вход →
   non-passable, одна свеча → без открытий, неположительный стартовый капитал → без деления

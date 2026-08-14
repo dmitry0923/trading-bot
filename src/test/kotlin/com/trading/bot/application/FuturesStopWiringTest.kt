@@ -8,6 +8,7 @@ import com.trading.bot.backtest.BacktestSignalGenerator
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.config.toFuturesAtrStopPolicy
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.FuturesStopResolver
@@ -44,7 +45,7 @@ class FuturesStopWiringTest {
     @Test
     fun `live profile and backtest engine resolve identical stop points`() {
         // ATR 0.20 ₽ при priceStep 0.01 -> 20 пунктов × 2 = 40 (не дефолт 50, не кламп).
-        val expected = FuturesStopResolver().resolve(atr, BigDecimal("0.01"), config)
+        val expected = FuturesStopResolver().resolve(atr, BigDecimal("0.01"), config.toFuturesAtrStopPolicy())
         assertEquals(40, expected)
 
         assertEquals(expected, liveStopPoints())

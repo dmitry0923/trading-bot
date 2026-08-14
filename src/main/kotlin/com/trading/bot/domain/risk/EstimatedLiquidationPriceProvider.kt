@@ -1,7 +1,6 @@
 package com.trading.bot.domain.risk
 
 import com.trading.bot.model.PositionDirection
-import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -23,7 +22,6 @@ import java.math.RoundingMode
  * предоставляет реальную ликвидационную цену — зарегистрировать альтернативную
  * реализацию [LiquidationPriceProvider] и предпочитать её.
  */
-@Component
 class EstimatedLiquidationPriceProvider : LiquidationPriceProvider {
     override fun liquidationPrice(
         entryPrice: BigDecimal?,

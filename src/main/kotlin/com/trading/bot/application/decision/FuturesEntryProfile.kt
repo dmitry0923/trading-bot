@@ -6,6 +6,7 @@ import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.config.toFuturesAtrStopPolicy
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.FuturesStopResolver
@@ -153,7 +154,7 @@ class FuturesEntryProfile(
                 "MINUTE_10",
                 riskConfig.futuresAtrStopPeriod,
             )
-        return futuresStopResolver.resolve(atr, instrument.priceStep, riskConfig)
+        return futuresStopResolver.resolve(atr, instrument.priceStep, riskConfig.toFuturesAtrStopPolicy())
     }
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED

@@ -1092,7 +1092,7 @@ flowchart LR
 | `service.StrategyService` | HOLD при `confidence < 0.5`, учёт sector/volatility guard — guardrail «недостаточно данных → HOLD» и постобработка Guardrails живут в `agent.StrategyAgent` → ✅ `StrategyAgentTest`, раздел 13.17.2 | P1 |
 | `service.SettingsService` | применённые настройки → RiskConfig/LeverageConfig/ExperimentConfig (runtime), валидация — ✅ раздел 13.17.2 | P1 |
 | `controller.*` | `@WebMvcTest` для всех endpoints (роли ADMIN/ANALYTICS, в т.ч. запрет POST для ANALYTICS) — роли покрыты `AuthControllerIntegrationTest` (401/403/200), unit-тесты контроллеров (`MlDatasetControllerTest`, `MlScreeningControllerTest`, `MlTrendControllerTest`, `TradingAccountControllerTest`) | P1 |
-| `infrastructure.*` (UuidV7, outbox poller, промпты) | краевые случаи, retry, таймауты | P2 |
+| `infrastructure.*` (UuidV7, outbox, промпты, tracing) | краевые случаи, retry, таймауты — outbox: `OrderOutboxServiceTest`/`OrderOutboxPublisherTest`/`OutboxOrderConsumerTest`/`StateReconciliationServiceTest`; промпты: `PromptRegistryTest`/`PromptTemplateTest`; `UuidV7Test`; tracing: `TraceContextTest` (раздел 13.17.2), `AsyncTraceStorageTest`, `TraceObjectKeyTest`; LLM: `LlmRoutingTest`, `SemanticCacheTest` | P2 |
 | `backtest.BacktestEngine` | реальная фикстура MOEX уже покрыта (`RealDataBacktestFixtureTest`); edge-кейсы (пустой вход, деление на 0) — ✅ раздел 13.17.2 | P2 |
 
 > Критерий «100% покрытие» применяется к критичным торговым путям (client, risk, execution, settings);
@@ -1145,6 +1145,10 @@ flowchart LR
   битый JSON → HOLD + `strategy.agent.parse.error`; постобработка Guardrails (LOW_CONFIDENCE
   и PRICE_DEVIATION коррекция targetPrice) с реальным `Guardrails`; запись `AgentLog`
   (rawOutput, isCached, tokensUsed, storageKey, cycleId) через `RecordingLogRepo` без БД.
+- `TraceContextTest` — MDC-пропагация trace_id/cycle_id/ticker/agent: `put` (blank/null → удаление),
+  `currentMdc` (копия, мутация не влияет), `mdcContext` (наследование текущего MDC + extra перекрывает
+  одинаковые ключи), наследование в дочерней корутине на `Dispatchers.IO`, `withMdc` (extra виден внутри,
+  окружение восстанавливается после).
 - `BacktestEngineTest` — edge-кейсы: ровно одна точка equity-кривой на бар при стоп-ауте
   (фикстура `stopOutCandles`, стоп → re-entry → закрытие в конце периода), пустой вход →
   non-passable, одна свеча → без открытий, неположительный стартовый капитал → без деления

@@ -1087,12 +1087,13 @@ flowchart LR
 |---|---|---|
 | `client.AlorClient` / `client.AlorWebSocketClient` | unit-тесты на mock WebClient/WS-потока (парсинг, fallback, outbox-повторы) — ✅ раздел 13.17.1 | P0 |
 | `service.RiskManagementService` | пороговые сценарии: maxPositionRub, daily loss limit, sector/volatility, restart-resume daily PnL — ✅ раздел 13.17.1 | P0 |
-| `service.FeedbackService` / `SelfLearningService` | feedback-парсинг, обучение агентов, fallback на дефолт | P1 |
+| `agent.PerformanceFeedbackAgent` (мета-агент обратной связи) | feedback-парсинг, rule-based fallback (мало сделок / LLM-сбой / битый JSON), клампинг границ, кэш — ✅ раздел 13.17.2 | P1 |
+| `service.SelfLearning` (TradeAnalysisService, AdaptiveRiskService, DrawdownProtectionService) | обучение агентов — ✅ раздел 13.17.2 (unit + integration `SelfLearningIntegrationTest`) | P1 |
 | `service.StrategyService` | HOLD при `confidence < 0.5`, учёт sector/volatility guard | P1 |
-| `service.SettingsService` | применённые настройки → RiskConfig/LeverageConfig (runtime), валидация | P1 |
-| `controller.*` | `@WebMvcTest` для всех endpoints (роли ADMIN/ANALYTICS, в т.ч. запрет POST для ANALYTICS) | P1 |
+| `service.SettingsService` | применённые настройки → RiskConfig/LeverageConfig/ExperimentConfig (runtime), валидация — ✅ раздел 13.17.2 | P1 |
+| `controller.*` | `@WebMvcTest` для всех endpoints (роли ADMIN/ANALYTICS, в т.ч. запрет POST для ANALYTICS) — роли покрыты `AuthControllerIntegrationTest` (401/403/200), unit-тесты контроллеров (`MlDatasetControllerTest`, `MlScreeningControllerTest`, `MlTrendControllerTest`, `TradingAccountControllerTest`) | P1 |
 | `infrastructure.*` (UuidV7, outbox poller, промпты) | краевые случаи, retry, таймауты | P2 |
-| `backtest.BacktestEngine` | реальная фикстура MOEX уже покрыта (`RealDataBacktestFixtureTest`); добавить edge-кейсы (пустой вход, деление на 0) | P2 |
+| `backtest.BacktestEngine` | реальная фикстура MOEX уже покрыта (`RealDataBacktestFixtureTest`); edge-кейсы (пустой вход, деление на 0) — ✅ раздел 13.17.2 | P2 |
 
 > Критерий «100% покрытие» применяется к критичным торговым путям (client, risk, execution, settings);
 > для генерации отчётов и инфраструктуры допускается исключение через `@Generated`/фильтры Kover.
@@ -1116,6 +1117,30 @@ flowchart LR
   long/short, нетинг, граница порога, метрики `risk.portfolio.*.blocked`).
 - Дневной лимит убытка и restart-resume daily PnL покрыты ранее:
   `RiskManagementServiceDailyPnLTest` (делегирование) + `DrawdownProtectionServiceTest`.
+
+### 13.17.2. P1/P2: FeedbackAgent, SettingsService, BacktestEngine edge-cases (реализовано)
+
+- `PerformanceFeedbackAgentTest` — генерация feedback поверх `ruleBasedFeedback`:
+  нейтральные статистики; пауза после 3 подряд убытков; коррекция confidence при низком
+  win rate; расширение стопа при высоком slHitRate; guardrail «< 5 сделок / нет статистики →
+  rule-based без LLM» с метрикой `feedback.rule_based{reason=LOW_TRADES}`; LLM-вызов со
+  стабом `StubLlmClient` (реальный наследник `ResilientLlmClient`, т.к. матчер-стабы
+  suspend-методов не совпадают в используемой версии mockito-kotlin): парсинг ответа с
+  клампингом (confidence ±0.2, SL min −0.30, TP max +0.30), fallback `LlmResponse.fallback()`,
+  исключение → rule-based + `feedback.llm.error` + `agent_log`, непарсимый JSON → rule-based;
+  кэш-хит (getFeedback) без вызова LLM и без записи `feedback.cache.hit`; сохранение только
+  ненулевых корректировок в `AdjustmentRepository`.
+- `SettingsServiceTest` — `init()` загружает сохранённые настройки и применяет их к runtime
+  `RiskConfig`/`LeverageConfig`/`ExperimentConfig`; пустое хранилище → дефолты и persist;
+  `updateSettings` персистит + применяет runtime без рестарта (нормализация пустого
+  `experimentId`→default, rollout 0..100, пустой `variantPromptVersion`→null); `getSettings`
+  отдаёт in-memory снапшот без обращения к БД. (Контроллер-роли ADMIN/ANALYTICS покрыты
+  `AuthControllerIntegrationTest`; `StrategyService` — HOLD-правило живёт в `StrategyAgent`,
+  переноса в сервис не требуется.)
+- `BacktestEngineTest` — edge-кейсы: ровно одна точка equity-кривой на бар при стоп-ауте
+  (фикстура `stopOutCandles`, стоп → re-entry → закрытие в конце периода), пустой вход →
+  non-passable, одна свеча → без открытий, неположительный стартовый капитал → без деления
+  на 0 (`recoveryFactor = +Infinity`).
 
 ## 13.18. Наблюдаемость LLM-агента (3 фазы) — реализовано
 

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
@@ -164,6 +165,8 @@ class MonteCarloAnalyzerTest {
                 any(),
                 Mockito.eq(commissionMultiplier),
                 Mockito.eq(slippageMultiplier),
+                anyOrNull(),
+                anyOrNull(),
             ),
         ).thenReturn(result)
     }

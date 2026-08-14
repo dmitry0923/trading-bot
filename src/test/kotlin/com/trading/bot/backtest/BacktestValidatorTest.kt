@@ -10,6 +10,7 @@ import org.mockito.Mockito
 import org.mockito.Mockito.anyInt
 import org.mockito.Mockito.anyString
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -50,7 +51,20 @@ class BacktestValidatorTest {
     fun `fold with too-small train window falls back to first grid parameters`() {
         val result =
             runBlocking {
-                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any())).thenReturn(result())
+                whenever(
+                    engine.simulate(
+                        anyString(),
+                        any(),
+                        any(),
+                        anyInt(),
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                    ),
+                ).thenReturn(result())
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
             }
         // Первый фолд: train пуст (недостаточно баров для настройки) -> дефолт первой пары сетки (0.01, 0.02).
@@ -65,7 +79,20 @@ class BacktestValidatorTest {
         val noTrades = BacktestMetrics.compute("SBER", listOf(BigDecimal("100000")), emptyList())
         val result =
             runBlocking {
-                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any())).thenReturn(noTrades)
+                whenever(
+                    engine.simulate(
+                        anyString(),
+                        any(),
+                        any(),
+                        anyInt(),
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                    ),
+                ).thenReturn(noTrades)
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
             }
         assertEquals(3, result.folds.size)
@@ -101,6 +128,8 @@ class BacktestValidatorTest {
                         Mockito.eq(0.04),
                         any(),
                         any(),
+                        anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(infinitePf)
                 whenever(
@@ -113,6 +142,8 @@ class BacktestValidatorTest {
                         Mockito.eq(0.02),
                         any(),
                         any(),
+                        anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(mediocre)
                 whenever(
@@ -125,6 +156,8 @@ class BacktestValidatorTest {
                         Mockito.eq(0.06),
                         any(),
                         any(),
+                        anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(mediocre)
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
@@ -138,6 +171,33 @@ class BacktestValidatorTest {
         assertEquals(0.04, result.folds[2].chosenTpPercent)
     }
 
+    @Test
+    fun `futures walk-forward tunes SL TP in points not percents`() {
+        val result =
+            runBlocking {
+                // Si — фьючерс: настройка идёт в пунктах (slPoints/tpPoints, BT-004).
+                whenever(
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(25), Mockito.eq(50)),
+                ).thenReturn(result())
+                whenever(
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(50), Mockito.eq(100)),
+                ).thenReturn(result())
+                whenever(
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(100), Mockito.eq(200)),
+                ).thenReturn(result())
+                validator.validate("Si", List(300) { mockCandle(it) }, folds = 3)
+            }
+        // Fold 0: train пуст -> дефолт первой пары ПУНКТОВОЙ сетки (25, 50).
+        assertEquals(25, result.folds[0].chosenSlPoints)
+        assertEquals(50, result.folds[0].chosenTpPoints)
+        // Последующие фолды тюнятся по пунктовой сетке.
+        assertTrue(result.folds[1].chosenSlPoints in listOf(25, 50, 100))
+        assertTrue(result.folds[1].chosenTpPoints in listOf(50, 100, 200))
+        // Проценты для фьючерсов не используются.
+        assertEquals(0.0, result.folds[0].chosenSlPercent)
+        assertEquals(0.0, result.folds[0].chosenTpPercent)
+    }
+
     private companion object {
         const val OOS_TRADES = 3
     }
@@ -146,7 +206,20 @@ class BacktestValidatorTest {
     fun `validation produces per-fold and aggregate out-of-sample results`() {
         val result =
             runBlocking {
-                whenever(engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any())).thenReturn(result())
+                whenever(
+                    engine.simulate(
+                        anyString(),
+                        any(),
+                        any(),
+                        anyInt(),
+                        any(),
+                        any(),
+                        any(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                    ),
+                ).thenReturn(result())
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
             }
         assertEquals(3, result.folds.size)

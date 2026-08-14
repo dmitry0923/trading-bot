@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -45,12 +46,22 @@ data class FoldValidation(
     val outOfSample: BacktestResult,
     val chosenSlPercent: Double,
     val chosenTpPercent: Double,
+    /** Для фьючерсов настройка идёт в пунктах (BT-004); акции — null. */
+    val chosenSlPoints: Int? = null,
+    val chosenTpPoints: Int? = null,
+)
+
+/** Параметры сетки настройки SL/TP: акции — проценты, фьючерсы — пункты. */
+data class GridParams(
+    val slPercent: Double = 0.0,
+    val tpPercent: Double = 0.0,
+    val slPoints: Int? = null,
+    val tpPoints: Int? = null,
 )
 
 /** Параметризованный прогон in-sample окна для walk-forward. */
 private data class Candidate(
-    val sl: Double,
-    val tp: Double,
+    val params: GridParams,
     val result: BacktestResult,
 )
 
@@ -70,16 +81,31 @@ private data class Candidate(
 class BacktestValidator(
     private val backtestEngine: BacktestEngine,
     private val backtestConfig: BacktestConfig = BacktestConfig(),
+    private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
 
-    /** Сетка параметров для in-sample настройки: пары (SL%, TP%). */
-    private val parameterGrid =
+    /**
+     * Сетка параметров для in-sample настройки акций: пары (SL%, TP%).
+     * Фьючерсы настраиваются в ПУНКТАХ ([futuresGrid]) — проценты для них
+     * игнорируются движком (SL/TP в пунктах, BT-004).
+     */
+    private val stockGrid =
         listOf(
-            0.01 to 0.02,
-            0.02 to 0.04,
-            0.03 to 0.06,
+            GridParams(slPercent = 0.01, tpPercent = 0.02),
+            GridParams(slPercent = 0.02, tpPercent = 0.04),
+            GridParams(slPercent = 0.03, tpPercent = 0.06),
         )
+
+    /** Сетка настройки фьючерсов в пунктах (R:R 1:2 вокруг [com.trading.bot.config.RiskConfig.defaultStopLossPoints]=50). */
+    private val futuresGrid =
+        listOf(
+            GridParams(slPoints = 25, tpPoints = 50),
+            GridParams(slPoints = 50, tpPoints = 100),
+            GridParams(slPoints = 100, tpPoints = 200),
+        )
+
+    private fun gridFor(ticker: String): List<GridParams> = if (instrumentsConfig.isFutures(ticker)) futuresGrid else stockGrid
 
     /**
      * Walk-forward прогон по свечам тикера.
@@ -115,20 +141,22 @@ class BacktestValidator(
                 val train = sorted.subList(0, testStart)
                 val test = sorted.subList(testStart, testEnd)
 
-                val (sl, tp) =
+                val params =
                     if (train.size >= minBarsForSignal * 2) {
                         tuneParams(ticker, train, initialCapital, minBarsForSignal)
                     } else {
-                        parameterGrid.first()
+                        gridFor(ticker).first()
                     }
-                val inSample = backtestEngine.simulate(ticker, train, initialCapital, minBarsForSignal, sl, tp)
-                val outOfSample = backtestEngine.simulate(ticker, test, initialCapital, minBarsForSignal, sl, tp)
+                val inSample = simulateWith(params, ticker, train, initialCapital, minBarsForSignal)
+                val outOfSample = simulateWith(params, ticker, test, initialCapital, minBarsForSignal)
                 FoldValidation(
                     foldIndex = i,
                     inSample = inSample,
                     outOfSample = outOfSample,
-                    chosenSlPercent = sl,
-                    chosenTpPercent = tp,
+                    chosenSlPercent = params.slPercent,
+                    chosenTpPercent = params.tpPercent,
+                    chosenSlPoints = params.slPoints,
+                    chosenTpPoints = params.tpPoints,
                 )
             }
 
@@ -137,19 +165,46 @@ class BacktestValidator(
     }
 
     /**
+     * Прогон с параметрами настройки. Фьючерсы — через [GridParams.slPoints]/
+     * [GridParams.tpPoints] (в пунктах); акции — через проценты (8-арг вызов,
+     * движок использует ATR/дефолты для пунктовых стопов).
+     */
+    private suspend fun simulateWith(
+        params: GridParams,
+        ticker: String,
+        candles: List<Candle>,
+        initialCapital: BigDecimal,
+        minBarsForSignal: Int,
+    ): BacktestResult =
+        if (params.slPoints != null && params.tpPoints != null) {
+            backtestEngine.simulate(
+                ticker,
+                candles,
+                initialCapital,
+                minBarsForSignal,
+                params.slPercent,
+                params.tpPercent,
+                slPoints = params.slPoints,
+                tpPoints = params.tpPoints,
+            )
+        } else {
+            backtestEngine.simulate(ticker, candles, initialCapital, minBarsForSignal, params.slPercent, params.tpPercent)
+        }
+
+    /**
      * Подбор (SL, TP) на in-sample окне: максимизирует Profit Factor при
-     * достаточном числе сделок, при равенстве — по Sharpe.
+     * достаточном числе сделок, при равенстве — по Sharpe. Сетка зависит от
+     * типа инструмента: акции — проценты, фьючерсы — пункты (BT-004).
      */
     private suspend fun tuneParams(
         ticker: String,
         train: List<Candle>,
         initialCapital: BigDecimal,
         minBarsForSignal: Int,
-    ): Pair<Double, Double> {
+    ): GridParams {
         val candidates =
-            parameterGrid.map { (sl, tp) ->
-                val r = backtestEngine.simulate(ticker, train, initialCapital, minBarsForSignal, sl, tp)
-                Candidate(sl, tp, r)
+            gridFor(ticker).map { params ->
+                Candidate(params, simulateWith(params, ticker, train, initialCapital, minBarsForSignal))
             }
         val best =
             candidates.maxWithOrNull(
@@ -159,7 +214,7 @@ class BacktestValidator(
                     { it.result.sharpeRatio },
                 ),
             )
-        return best?.let { it.sl to it.tp } ?: parameterGrid.first()
+        return best?.params ?: gridFor(ticker).first()
     }
 
     /**

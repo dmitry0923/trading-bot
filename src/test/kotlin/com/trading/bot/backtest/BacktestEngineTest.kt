@@ -498,6 +498,52 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `explicit slPoints tpPoints override atr and default stop for futures`() {
+        // Вход на баре 1 (открытие 92000, fill 92000.01). Бар 2 ныряет до 91999.9 —
+        // на 10 пунктов ниже входа, но не на 100. При slPoints=10 стоп (91999.91)
+        // пробит -> стоп-аут и churn повторов; при slPoints=100 стоп (91999.01)
+        // не пробит -> позиция удерживается до конца периода. Сетка walk-forward
+        // (BT-004) полагается на то, что пункты реально управляют SL/TP фьючерса.
+        fun candle(
+            o: Double,
+            h: Double,
+            l: Double,
+            c: Double,
+            i: Int,
+        ): Candle =
+            Candle(
+                ticker = "Si",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal(o.toString()),
+                highPrice = BigDecimal(h.toString()),
+                lowPrice = BigDecimal(l.toString()),
+                closePrice = BigDecimal(c.toString()),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        val candles =
+            listOf(
+                candle(92000.0, 92001.0, 91999.0, 92000.0, 0),
+                candle(92000.0, 92001.0, 91999.0, 92000.0, 1),
+                candle(91999.9, 92000.5, 91999.9, 92000.0, 2),
+            ) + (3 until 300).map { candle(92000.0, 92000.5, 91999.5, 92000.0, it) }
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                positionSizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig()),
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val tight = runBlocking { engine.simulate("Si", candles, minBarsForSignal = 1, slPoints = 10, tpPoints = 200) }
+        val wide = runBlocking { engine.simulate("Si", candles, minBarsForSignal = 1, slPoints = 100, tpPoints = 200) }
+
+        assertEquals(1, wide.totalTrades, "100-point stop must hold the long to end-of-period")
+        assertTrue(tight.totalTrades > 1, "10-point stop must stop out and re-enter, churn=${tight.totalTrades}")
+    }
+
+    @Test
     fun `tick fill applies point-based slippage for futures`() {
         // 1 тик Si = 0.01 ₽: 0.1% цены (92 ₽ ≈ 9200 тиков) нереалистично для
         // биржевого исполнения market-ордера по фьючерсу (исполнение в пунктах).

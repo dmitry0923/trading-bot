@@ -101,6 +101,8 @@ class BacktestEngine(
      * @param tpPercent тейк-профит в долях от цены входа (по умолчанию `bt.tp-percent` / 100)
      * @param commissionMultiplier множитель ставки комиссии (1.0 = базово; стресс-прогон 13.7.8)
      * @param slippageMultiplier множитель ставки проскальзывания (1.0 = базово)
+     * @param slPoints стоп-лосс фьючерса в пунктах (BT-004; null = ATR/дефолт)
+     * @param tpPoints тейк-профит фьючерса в пунктах (BT-004; null = дефолт)
      */
     suspend fun run(
         ticker: String,
@@ -112,6 +114,8 @@ class BacktestEngine(
         tpPercent: Double = backtestConfig.tpPercent / 100.0,
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -130,6 +134,8 @@ class BacktestEngine(
                 tpPercent,
                 commissionMultiplier,
                 slippageMultiplier,
+                slPoints,
+                tpPoints,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -184,6 +190,11 @@ class BacktestEngine(
      *
      * @param commissionMultiplier множитель ставки комиссии (стресс-прогоны 13.7.8)
      * @param slippageMultiplier множитель ставки проскальзывания (стресс-прогоны 13.7.8)
+     * @param slPoints стоп-лосс фьючерса в пунктах (переопределяет ATR-политику/
+     *   [RiskConfig.defaultStopLossPoints]); для акций игнорируется — настройка
+     *   walk-forward BT-004, см. [BacktestValidator].
+     * @param tpPoints тейк-профит фьючерса в пунктах (переопределяет
+     *   [RiskConfig.defaultTakeProfitPoints]); для акций игнорируется.
      */
     suspend fun simulate(
         ticker: String,
@@ -194,6 +205,8 @@ class BacktestEngine(
         tpPercent: Double = backtestConfig.tpPercent / 100.0,
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
     ): BacktestResult {
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
@@ -356,6 +369,8 @@ class BacktestEngine(
                             tpPercent,
                             slippageMultiplier,
                             sorted.subList(0, i),
+                            slPoints,
+                            tpPoints,
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, commissionMultiplier)
@@ -377,6 +392,8 @@ class BacktestEngine(
                     tpPercent,
                     slippageMultiplier,
                     sorted.subList(0, i),
+                    slPoints,
+                    tpPoints,
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, commissionMultiplier)
@@ -488,13 +505,15 @@ class BacktestEngine(
         tpPercent: Double,
         slippageMultiplier: Double = 1.0,
         history: List<Candle>,
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
         val lotSize = instrument?.lotSize ?: 1
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
-        val qty = sizeQuantity(ticker, instrument, direction, price, cash, stopPoints)
+        val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints)
         val lotQty = SimulatedExecution.lotRounded(qty, lotSize)
         if (lotQty <= 0) return null
 
@@ -503,8 +522,8 @@ class BacktestEngine(
             direction = direction,
             quantity = lotQty,
             entryPrice = fill.price,
-            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints),
-            takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent),
+            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints, slPoints),
+            takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent, tpPoints),
             entryBars = bar,
         )
     }
@@ -587,7 +606,8 @@ class BacktestEngine(
 
     /**
      * Стоп-лосс: для фьючерсов — отступ в пунктах от цены входа ([stopPoints]
-     * при ATR-стопе или [RiskConfig.defaultStopLossPoints]; как live
+     * при ATR-стопе, [slPoints] при явной настройке walk-forward (BT-004), иначе
+     * [RiskConfig.defaultStopLossPoints]; как live
      * [com.trading.bot.application.OrderBuilder.buildFuturesOrderParams]),
      * для акций — процент от цены входа через [ExitRules.calcSL] (тот же код,
      * что в live [com.trading.bot.application.OrderBuilder.buildStockOrderParams]).
@@ -599,9 +619,10 @@ class BacktestEngine(
         fillPrice: BigDecimal,
         slPercent: Double,
         stopPoints: Int?,
+        slPoints: Int? = null,
     ): BigDecimal {
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
-            val points = stopPoints ?: riskConfig.defaultStopLossPoints
+            val points = slPoints ?: stopPoints ?: riskConfig.defaultStopLossPoints
             val offset = BigDecimal(points).multiply(instrument.priceStep)
             return when (direction) {
                 PositionDirection.LONG -> fillPrice.subtract(offset)
@@ -618,9 +639,10 @@ class BacktestEngine(
         direction: PositionDirection,
         fillPrice: BigDecimal,
         tpPercent: Double,
+        tpPoints: Int? = null,
     ): BigDecimal {
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
-            val offset = BigDecimal(riskConfig.defaultTakeProfitPoints).multiply(instrument.priceStep)
+            val offset = BigDecimal(tpPoints ?: riskConfig.defaultTakeProfitPoints).multiply(instrument.priceStep)
             return when (direction) {
                 PositionDirection.LONG -> fillPrice.add(offset)
                 PositionDirection.SHORT -> fillPrice.subtract(offset)

@@ -1485,9 +1485,10 @@ out on a normal bar» — SELL-only генератор + колеблющиес�
   следующего бара, вход по открытию текущего. Консервативное упрощение 10-мин
   баров, задокументировано в [SimulatedExecution].
 - BT-004 (эффективность настройки): для фьючерсов сетка SL/TP в walk-forward
-  (`BacktestValidator.tuneParams`) не влияет на результат — `stopPrice`/`takePrice`
+  (`BacktestValidator.tuneParams`) не влияла на результат — `stopPrice`/`takePrice`
   для фьючерсов берут пункты (`defaultStopLossPoints`/`defaultTakeProfitPoints`,
-  ATR-политика), а не проценты. Настройка молча работает только для акций.
+  ATR-политика), а не проценты. Настройка молча работала только для акций.
+  **Исправлено в 13.20.4 (MR-J).**
 - BT-005 (артефакт моделирования): при стоп-ауте и инверсии в одном баре новый
   вход идёт по открытию бара, хотя стоп сработал внутрибарочно после открытия —
   вход по времени «раньше» выхода. Минорно, зафиксировано как конвенция.
@@ -1497,4 +1498,29 @@ out on a normal bar» — SELL-only генератор + колеблющиес�
   без lookahead (сигнал бар i-1 → исполнение открытие i; история для ATR/MTF —
   бары до i).
 
-| P3 | BT-004 фьючерсная сетка walk-forward | pending |
+### 13.20.4. MR-J: BT-004 — walk-forward сетка для фьючерсов в пунктах ✅
+
+Проблема: `BacktestValidator.tuneParams` подбирал пары (SL%, TP%) и передавал их
+в `simulate`, но для фьючерсов `BacktestEngine.stopPrice`/`takePrice` игнорируют
+проценты — стоп/тейк в пунктах (дефолты `RiskConfig`, ATR-политика). Сетка
+молча не работала для фьючерсов (см. 13.20.3).
+
+Решение:
+- `BacktestEngine.simulate`/`run`/`openPosition`/`stopPrice`/`takePrice`/`sizeQuantity`:
+  новые параметры `slPoints`/`tpPoints: Int? = null`. Фьючерсные ветки
+  резолвят стоп как `slPoints ?: stopPoints(ATR) ?: defaultStopLossPoints(50)`,
+  тейк — `tpPoints ?: defaultTakeProfitPoints(100)`; сайзинг использует
+  `slPoints ?: stopPoints`, чтобы риск-бюджет соответствовал настроенной дистанции.
+- `BacktestValidator`: сетка разнесена по типу инструмента — `stockGrid`
+  (0.01/0.02, 0.02/0.04, 0.03/0.06 в %) и `futuresGrid` (25/50, 50/100, 100/200
+  в пунктах, R:R 1:2 вокруг дефолта 50); `GridParams(slPercent, tpPercent,
+  slPoints, tpPoints)`; `tuneParams` возвращает `GridParams`; `FoldValidation`
+  обогащена `chosenSlPoints`/`chosenTpPoints`; акции идут старым 8-арг путём,
+  фьючерсы — 10-арг с именованными `slPoints`/`tpPoints`.
+
+Тесты:
+- engine: «explicit slPoints tpPoints override atr and default stop for futures» —
+  бар 2 ныряет на 10 пунктов ниже входа: при `slPoints=10` стоп пробит (churn),
+  при `slPoints=100` позиция удерживается до конца (ровно 1 сделка).
+- validator: «futures walk-forward tunes SL TP in points not percents» —
+  `Si` настраивается по пунктовой сетке (fold 0 → дефолт 25/50), проценты 0.0.

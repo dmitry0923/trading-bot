@@ -138,6 +138,89 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /**
+     * Атомарный claim позиции на закрытие (EXEC-001).
+     *
+     * Одиночный UPDATE с условиями `status = 'OPEN' AND pending_close = false` —
+     * PostgreSQL сериализует конкурентные UPDATE'ы по одной строке (row lock) и
+     * пере-проверяет WHERE после блокировки: только один поток получит
+     * rowsUpdated == 1 и право ставить close-ордер, остальные — 0 и сразу выходят
+     * (без создания второго ордера).
+     *
+     * @return true — claim получен (1 строка), false — позиция уже закрывается
+     *   другим потоком / уже закрыта.
+     */
+    suspend fun claimForClose(id: Long): Boolean {
+        val sql =
+            """
+            UPDATE positions SET pending_close = true
+            WHERE id = :id AND status = 'OPEN' AND pending_close = false
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("id", id)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle() == 1L
+    }
+
+    /**
+     * Атомарный переход позиции в закрытое состояние (EXEC-001, защита от двойной
+     * финализации одного close-ордера). Конкурентные [finalizeClosePosition]-вызовы
+     * (claim-поток и сверяющие потоки) за один UPDATE переводят строку только один раз:
+     * rowsUpdated == 1 только у первого, остальные получают 0 и пропускают побочные
+     * эффекты (recordPositionClosed / onPositionClosed / снятие защитных заявок).
+     *
+     * @return true — переход выполнен этим вызовом (1 строка), false — позиция уже
+     *   не в состоянии OPEN (закрыта другим потоком).
+     */
+    suspend fun transitionToClosed(
+        id: Long,
+        status: PositionStatus,
+        closePrice: BigDecimal,
+        closeReason: String,
+        pnl: BigDecimal,
+    ): Boolean {
+        val sql =
+            """
+            UPDATE positions SET
+                status = :status, closed_at = :closedAt, close_price = :closePrice,
+                close_reason = :closeReason, pnl = :pnl, pending_close = false, close_order_id = NULL
+            WHERE id = :id AND status = 'OPEN'
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("id", id)
+            .bind("status", status.name)
+            .bind("closedAt", LocalDateTime.now())
+            .bind("closePrice", closePrice)
+            .bind("closeReason", closeReason)
+            .bind("pnl", pnl)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle() == 1L
+    }
+
+    /**
+     * Освобождение claim после ОПРЕДЕЛЁННОГО отказа биржи (close-ордер не создан):
+     * позиция снова становится закрываемой. Условие `close_order_id IS NULL`
+     * гарантирует, что при UNCERTAIN-доставке (ордер мог дойти до биржи, closeOrderId
+     * ещё не известен) claim НЕ снимается — реконсилятор доводит состояние до конца.
+     */
+    suspend fun releaseCloseClaim(id: Long): Boolean {
+        val sql =
+            """
+            UPDATE positions SET pending_close = false
+            WHERE id = :id AND status = 'OPEN' AND pending_close = true AND close_order_id IS NULL
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("id", id)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle() == 1L
+    }
+
     suspend fun findByAlorOrderId(alorOrderId: String): Position? {
         val sql = "SELECT * FROM positions WHERE alor_order_id = :alorOrderId"
         return databaseClient

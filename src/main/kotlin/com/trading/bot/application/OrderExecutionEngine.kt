@@ -175,62 +175,93 @@ class OrderExecutionEngine(
 
     /**
      * Закрытие позиции (стейт-машина, защита от double execution).
+     *
+     * Атомарный claim (EXEC-001): [PositionRepository.claimForClose] делает одиночный
+     * `UPDATE ... SET pending_close = true WHERE status='OPEN' AND pending_close=false`
+     * и возвращает затронул ли он 1 строку. PostgreSQL row lock сериализует
+     * конкурентные закрытия (монитор ликвидации, стоп-лосс, стратегия, реконсилятор) —
+     * второй поток получит false и НЕ создаст close-ордер, а только свернёт состояние
+     * уже существующего (confirmCloseFill / resolveCloseViaOutbox). Раньше между
+     * чтением `pendingClose` и записью было окно гонки, в котором два потока могли
+     * поставить два независимых close-ордера (два idempotency key, двойное закрытие).
      */
     suspend fun closePosition(
         pos: Position,
         price: BigDecimal,
         reason: String,
     ) {
-        // Уже идёт закрытие — НЕ создаём второй ордер, сверяем состояние текущего.
-        if (pos.pendingClose) {
-            if (pos.closeOrderId != null) {
-                confirmCloseFill(pos, price, reason)
-            } else {
-                resolveCloseViaOutbox(pos)
+        val positionId =
+            pos.id ?: run {
+                logger.error { "Cannot close ${pos.ticker}: position has no id" }
+                return
+            }
+
+        // Атомарный claim: только один поток получает право создавать close-ордер.
+        if (!positionRepo.claimForClose(positionId)) {
+            val current = positionRepo.findById(positionId)
+            if (current.pendingClose) {
+                if (current.closeOrderId != null) {
+                    confirmCloseFill(current, price, reason)
+                } else {
+                    resolveCloseViaOutbox(current)
+                }
             }
             return
         }
 
+        val current = positionRepo.findById(positionId)
+        // Повторная попытка закрытия при уже существующем close-ордере (например,
+        // после UNCERTAIN-доставки без closeOrderId реконсилятор мог проставить id) —
+        // новый ордер НЕ создаём, только сверяем исполнение.
+        if (current.closeOrderId != null) {
+            confirmCloseFill(current, price, reason)
+            return
+        }
+
         val side =
-            when (pos.direction) {
+            when (current.direction) {
                 PositionDirection.LONG -> "sell"
                 PositionDirection.SHORT -> "buy"
             }
         val placed =
             orderOutboxService.placeOrder(
-                pos.ticker,
+                current.ticker,
                 side,
-                pos.quantity,
+                current.quantity,
                 null,
                 "market",
-                positionId = pos.id,
+                positionId = positionId,
                 closeReason = reason,
             )
         if (!placed.success || placed.alorOrderId == null) {
             if (placed.uncertain) {
                 logger.warn {
-                    "Close for ${pos.ticker} UNCERTAIN (outbox=${placed.outboxId}); " +
+                    "Close for ${current.ticker} UNCERTAIN (outbox=${placed.outboxId}); " +
                         "position stays open, pending outbox reconciliation"
                 }
-                pos.pendingClose = true
-                pos.closeOrderId = null
-                pos.closeReason = reason
-                positionRepo.save(pos)
-                meterRegistry.counter("$metricPrefix.close.uncertain", Tags.of("ticker", pos.ticker)).increment()
+                // Claim уже поставил pending_close=true; позиция остаётся открытой,
+                // ордер мог дойти до биржи — реконсилятор outbox доведёт до конца.
+                current.pendingClose = true
+                current.closeOrderId = null
+                current.closeReason = reason
+                positionRepo.save(current)
+                meterRegistry.counter("$metricPrefix.close.uncertain", Tags.of("ticker", current.ticker)).increment()
             } else {
-                logger.error { "Close order NOT accepted for ${pos.ticker} ($reason); position stays OPEN" }
-                meterRegistry.counter("$metricPrefix.close.rejected", Tags.of("ticker", pos.ticker)).increment()
-                pos.pendingClose = false
-                positionRepo.save(pos)
+                logger.error { "Close order NOT accepted for ${current.ticker} ($reason); position stays OPEN" }
+                meterRegistry.counter("$metricPrefix.close.rejected", Tags.of("ticker", current.ticker)).increment()
+                // Определённый отказ биржи — ордер НЕ создан: освобождаем claim,
+                // позиция снова закрываема. Guard `close_order_id IS NULL` защищает от
+                // затирания closeOrderId, который реконсилятор мог успеть проставить.
+                positionRepo.releaseCloseClaim(positionId)
             }
             return
         }
 
-        pos.closeOrderId = placed.alorOrderId
-        pos.pendingClose = true
-        pos.closeReason = reason
-        positionRepo.save(pos)
-        confirmCloseFill(pos, price, reason)
+        current.closeOrderId = placed.alorOrderId
+        current.pendingClose = true
+        current.closeReason = reason
+        positionRepo.save(current)
+        confirmCloseFill(current, price, reason)
     }
 
     /**
@@ -817,19 +848,34 @@ class OrderExecutionEngine(
 
     /**
      * Полное закрытие: P&L = realizedPnl (partial) + P&L остатка.
+     *
+     * Атомарный переход в закрытое состояние ([PositionRepository.transitionToClosed]):
+     * из конкурирующих вызовов (claim-поток + сверяющие потоки по тому же close-ордеру)
+     * побочные эффекты (recordPositionClosed / onPositionClosed / снятие защитных заявок)
+     * выполняет только тот, чей UPDATE перевёл строку из OPEN.
      */
     private suspend fun finalizeClosePosition(
         pos: Position,
         closePrice: BigDecimal,
         reason: String,
     ) {
-        val remainderPnl = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
-        val totalPnl = pos.realizedPnl.add(remainderPnl)
-        pos.status =
+        val positionId =
+            pos.id ?: run {
+                logger.error { "Cannot finalize close for ${pos.ticker}: position has no id" }
+                return
+            }
+        val targetStatus =
             when (reason) {
                 "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
                 else -> PositionStatus.CLOSED
             }
+        val remainderPnl = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
+        val totalPnl = pos.realizedPnl.add(remainderPnl)
+        if (!positionRepo.transitionToClosed(positionId, targetStatus, closePrice, reason, totalPnl)) {
+            logger.warn { "Finalize skip ${pos.ticker}: position already closed by another path" }
+            return
+        }
+        pos.status = targetStatus
         pos.closedAt = LocalDateTime.now()
         pos.closePrice = closePrice
         pos.closeReason = reason
@@ -837,7 +883,6 @@ class OrderExecutionEngine(
         pos.pendingClose = false
         pos.closeOrderId = null
         cancelProtectionOrders(pos)
-        positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason)
         onPositionClosed(pos)
         meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason)).increment()

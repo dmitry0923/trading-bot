@@ -1249,3 +1249,50 @@ flowchart LR
 Новые конфиги (`trace-storage.*`): `async-buffer-size` (env `TRACE_ASYNC_BUFFER_SIZE`),
 `retention-days` (env `TRACE_RETENTION_DAYS`). API: `GET /api/v1/traces`.
 Тесты: `AsyncTraceStorageTest`, `TraceObjectKeyTest`, `TraceQueryServiceTest`, `LlmResponseTest`.
+
+## 13.19. Execution correctness (EXEC) — по приоритету пользователя
+
+Приоритет: 1) execution correctness, 2) state consistency, 3) backtest correctness,
+4) risk enforcement, 5) только потом strategy optimization. Новые стратегии/AI не добавлять.
+
+### 13.19.1. MR-A: атомарный claim на закрытие (EXEC-001) ✅
+
+Проблема: между чтением `pendingClose` и записью было окно гонки — монитор ликвидации,
+стоп-лосс, стратегия и реконсилятор могли поставить два независимых close-ордера
+(двойное закрытие). Также двойная финализация одного close-ордера могла дублировать
+`recordPositionClosed`/`onPositionClosed`.
+
+Решение:
+- `PositionRepository.claimForClose(id)` — одиночный `UPDATE positions SET pending_close=true
+  WHERE id=:id AND status='OPEN' AND pending_close=false` (row lock Postgres сериализует
+  конкурентов, rowsUpdated==1 только у одного);
+- `PositionRepository.releaseCloseClaim(id)` — освобождение после определённого отказа
+  биржи с guard `close_order_id IS NULL` (не снимает claim, если реконсилятор успел
+  проставить closeOrderId);
+- `PositionRepository.transitionToClosed(...)` — атомарная финализация
+  `WHERE status='OPEN'`; побочные эффекты выполняет только тот вызов, чей UPDATE
+  перевёл строку;
+- `OrderExecutionEngine.closePosition` переписан на claim-основе: второй поток при
+  claim=false НЕ создаёт ордер, а сверяет существующий (confirmCloseFill /
+  resolveCloseViaOutbox); UNCERTAIN-доставка оставляет `pendingClose=true`;
+- `OrderExecutionEngine.finalizeClosePosition` использует `transitionToClosed`
+  (вместо `save`): при rowsUpdated==0 побочные эффекты пропускаются.
+
+Тесты: `OrderExecutionEngineCloseClaimTest` (6 сценариев: первый close — один ордер;
+конкурентный двойной close — один ордер и одно событие; повторный close на pending —
+только сверка; UNCERTAIN держит pendingClose; определённый отказ освобождает claim;
+двойная финализация — одно событие). Обновлён `FuturesTradingBotServicePartialCloseTest`
+(стабы claimForClose/findById/transitionToClosed).
+
+### 13.19.2. Очередь EXEC-MR
+
+| # | Проблема | Статус |
+|---|---|---|
+| EXEC-002 | Атомарная защита от дубля входа (unique-резервация позиции до отправки ордера) | pending |
+| EXEC-003 | Настоящее emergency-исполнение (обход spread-guard 0.5% для ликвидационных закрытий) | pending |
+| EXEC-004 | Emergency-закрытие не должно блокироваться spread-guard | pending |
+| EXEC-005 | LIVE не должен использовать fallback капитал (defaultPortfolioMoney 50k) | pending |
+| EXEC-006 | UNKNOWN состояние биржи → hard trading halt | pending |
+| EXEC-007 | Direction mismatch → reconciliation/halt, не CLOSED | pending |
+| P1 | fallback GO, risk recalc после reconcile qty, cancel idempotency (CANCEL_UNKNOWN) | pending |
+| P2 | CoroutineScope lifecycle, distributed outbox claim (SKIP LOCKED) | pending |

@@ -95,6 +95,16 @@ class FuturesTradingBotServicePartialCloseTest {
         return BigDecimal.ZERO
     }
 
+    private fun anyStatus(): PositionStatus {
+        Mockito.any(PositionStatus::class.java)
+        return PositionStatus.OPEN
+    }
+
+    private fun anyString(): String {
+        Mockito.any(String::class.java)
+        return "Si"
+    }
+
     private fun pos(): Position =
         Position(
             id = 1L,
@@ -117,6 +127,22 @@ class FuturesTradingBotServicePartialCloseTest {
             Mockito
                 .`when`(positionRepo.findByStatus(PositionStatus.OPEN))
                 .thenReturn(listOf(pos))
+            Mockito
+                .`when`(positionRepo.claimForClose(Mockito.anyLong()))
+                .thenReturn(true)
+            Mockito
+                .`when`(positionRepo.findById(Mockito.anyLong()))
+                .thenReturn(pos)
+            Mockito
+                .`when`(
+                    positionRepo.transitionToClosed(
+                        Mockito.anyLong(),
+                        anyStatus(),
+                        anyBigDecimal(),
+                        anyString(),
+                        anyBigDecimal(),
+                    ),
+                ).thenReturn(true)
         }
         Mockito
             .`when`(futuresRiskEngine.checkLiquidationDistance(anyPosition(), anyBigDecimal()))

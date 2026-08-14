@@ -8,3 +8,5 @@
 bt:
   agent:
     enabled: true
+    # Порог уверенности стратега и арбитра (live-fallback без статистики).
+    confidence-threshold: 0.60

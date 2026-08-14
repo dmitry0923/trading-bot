@@ -470,6 +470,7 @@ curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations
 | `bt.agent.sample-every` | `BT_AGENT_SAMPLE_EVERY` | `20` | сигнал каждые N баров (warm-up первые `bt.min-bars-for-signal` баров — HOLD) |
 | `bt.agent.temperature` | `BT_AGENT_TEMPERATURE` | `0.0` | температура LLM (детерминированность) |
 | `bt.agent.cache-namespace` | `BT_AGENT_CACHE_NAMESPACE` | `backtest` | изоляция semantic cache от live-кэша |
+| `bt.agent.confidence-threshold` | `BT_AGENT_CONFIDENCE_THRESHOLD` | `0.60` | единый порог уверенности стратега и арбитра = live-fallback без статистики (`AdaptiveRiskService` при `stats == null`); адаптивный порог live в бэктесте не вычисляется — нет истории сделок |
 
 Профиль `backtest` (`application-backtest.yml`) задаёт `bt.agent.enabled=true` —
 это же значение принимает `KIMI_API_KEY`: если ключ пуст, все агенты мгновенно

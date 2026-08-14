@@ -28,6 +28,9 @@ import java.time.ZoneId
  *   не читает/не пишет live-кэш (защита от look-ahead bias и загрязнения).
  * - Технический и фундаментальный агенты вызываются параллельно.
  * - Цепочка соответствует live-пути: tech → fund → strategy → contrarian → arbitrator.
+ * - Порог уверенности — единый `bt.agent.confidence-threshold` (0.60) для стратега
+ *   и арбитра, как live-fallback без статистики (адаптивный порог в бэктесте не
+ *   вычисляется: истории сделок в прогоне нет, а обращаться к live-истории нельзя).
  *
  * При недоступности LLM агенты возвращают детерминированные fallback'и
  * (INSUFFICIENT_DATA/NEUTRAL/HOLD) — прогон идёт без API-ключа.
@@ -108,7 +111,7 @@ class AgentBacktestSignalGenerator(
                 fund,
                 snapshot,
                 cycleId,
-                adaptiveThreshold = 0.5,
+                adaptiveThreshold = config.confidenceThreshold,
                 version = PromptRegistry.DEFAULT_VERSION,
                 temperature = config.temperature,
                 cacheNamespace = config.cacheNamespace,
@@ -133,7 +136,7 @@ class AgentBacktestSignalGenerator(
                 snapshot,
                 cycleId,
                 contextPrompt = null,
-                adaptiveConfidence = 0.60,
+                adaptiveConfidence = config.confidenceThreshold,
                 version = PromptRegistry.DEFAULT_VERSION,
                 bypassCache = false,
                 temperature = config.temperature,

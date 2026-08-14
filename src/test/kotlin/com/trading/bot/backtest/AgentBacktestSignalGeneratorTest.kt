@@ -44,6 +44,7 @@ class AgentBacktestSignalGeneratorTest {
             sampleEvery = 20
             temperature = 0.0
             cacheNamespace = "backtest"
+            confidenceThreshold = 0.60
         }
 
     private val generator =
@@ -119,7 +120,7 @@ class AgentBacktestSignalGeneratorTest {
             fundAgent.analyze("SBER", cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
         ).thenReturn(fund)
         whenever(
-            stratAgent.formulate("SBER", tech, fund, snapshot, cycleId, 0.5, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+            stratAgent.formulate("SBER", tech, fund, snapshot, cycleId, 0.60, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
         ).thenReturn(draft)
         whenever(
             contrAgent.challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
@@ -168,7 +169,7 @@ class AgentBacktestSignalGeneratorTest {
             Mockito.verify(fundAgent).analyze("SBER", cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
             Mockito
                 .verify(stratAgent)
-                .formulate("SBER", tech, fund, snapshot, cycleId, 0.5, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
+                .formulate("SBER", tech, fund, snapshot, cycleId, 0.60, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
             Mockito
                 .verify(contrAgent)
                 .challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
@@ -181,6 +182,78 @@ class AgentBacktestSignalGeneratorTest {
                 cycleId,
                 null,
                 0.60,
+                PromptRegistry.DEFAULT_VERSION,
+                false,
+                0.0,
+                "backtest",
+            )
+        }
+    }
+
+    @Test
+    fun `custom confidence threshold propagates to strategy and arbitrator`() {
+        val customConfig =
+            BacktestAgentConfig().apply {
+                sampleEvery = 20
+                confidenceThreshold = 0.75
+            }
+        val customGenerator =
+            AgentBacktestSignalGenerator(
+                techAgent,
+                fundAgent,
+                stratAgent,
+                contrAgent,
+                arbAgent,
+                customConfig,
+                SimpleMeterRegistry(),
+            )
+        runBlocking {
+            whenever(
+                techAgent.analyze("SBER", window, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+            ).thenReturn(tech)
+            whenever(
+                fundAgent.analyze("SBER", cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+            ).thenReturn(fund)
+            whenever(
+                stratAgent.formulate("SBER", tech, fund, snapshot, cycleId, 0.75, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+            ).thenReturn(draft)
+            whenever(
+                contrAgent.challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+            ).thenReturn(challenge)
+            whenever(
+                arbAgent.adjudicate(
+                    draft,
+                    challenge,
+                    tech,
+                    fund,
+                    snapshot,
+                    cycleId,
+                    null,
+                    0.75,
+                    PromptRegistry.DEFAULT_VERSION,
+                    false,
+                    0.0,
+                    "backtest",
+                ),
+            ).thenReturn(final)
+        }
+
+        val signal = runBlocking { customGenerator.signal("SBER", list, index = index, minBars = minBars, cycleId = cycleId) }
+        assertEquals(StrategyAction.BUY, signal)
+
+        runBlocking {
+            Mockito
+                .verify(stratAgent)
+                .formulate("SBER", tech, fund, snapshot, cycleId, 0.75, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
+            Mockito.verify(arbAgent).adjudicate(
+                draft,
+                challenge,
+                tech,
+                fund,
+                snapshot,
+                cycleId,
+                null,
+                0.75,
                 PromptRegistry.DEFAULT_VERSION,
                 false,
                 0.0,

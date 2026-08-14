@@ -16,6 +16,11 @@ import org.springframework.stereotype.Component
  * @property temperature температура генерации LLM (бэктесту нужна 0.0 — детерминизм).
  * @property cacheNamespace изолирует semantic cache от live-контура
  *  (исключает look-ahead bias и загрязнение live-кэша бэктест-ответами).
+ * @property confidenceThreshold порог уверенности стратега и арбитра — один на
+ *  всю цепочку, как в live ([com.trading.bot.service.AdaptiveRiskService]
+ *  передаёт одинаковое значение в `formulate` и `adjudicate`). Дефолт 0.60 =
+ *  live-fallback без статистики (`stats == null`). В бэктесте нет истории сделок,
+ *  поэтому адаптивный порог не вычисляется, а берётся из конфига.
  */
 @Component
 @ConfigurationProperties(prefix = "bt.agent")
@@ -24,4 +29,5 @@ class BacktestAgentConfig {
     var sampleEvery: Int = 20
     var temperature: Double = 0.0
     var cacheNamespace: String = "backtest"
+    var confidenceThreshold: Double = 0.60
 }

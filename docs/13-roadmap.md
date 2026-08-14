@@ -269,7 +269,7 @@ per-ticker метрики с `passable`.
 |---|---|---|
 | P0 | Emergency stop | безопасность: ручная остановка в любой момент |
 | P0 | Persist daily PnL | лимит убытка не должен теряться при рестарте |
-| P1 | LLM в бэктесте | соответствие живому конвейеру, достоверность критериев приёма |
+| P1 | LLM в бэктесте | ✅ соответствие живому конвейеру, достоверность критериев приёма (раздел 13.8.1, доработка 13.20.5) |
 | P1 | Партиционирование candles | ✅ TimescaleDB hypertable + retention 90 дней (раздел 6.4) |
 | P2 | Distributed lock | мульти-реплика (после стабилизации singleton) |
 | P2 | Multi-account | бизнес-расширение |
@@ -1524,3 +1524,39 @@ out on a normal bar» — SELL-only генератор + колеблющиес�
   при `slPoints=100` позиция удерживается до конца (ровно 1 сделка).
 - validator: «futures walk-forward tunes SL TP in points not percents» —
   `Si` настраивается по пунктовой сетке (fold 0 → дефолт 25/50), проценты 0.0.
+
+### 13.20.5. MR-K: BT-007 — агентный контур бэктеста приведён к live (P1 ✅)
+
+Аудит соответствия агентного генератора (`AgentBacktestSignalGenerator`, 13.8.1)
+live-контуру `DiscretionaryStrategy.runChain` для закрытия P1 «LLM в бэктесте»
+(13.6: «соответствие живому конвейеру, достоверность критериев приёма»).
+
+Проверено (совпадает, изменений не требует):
+- Цепочка tech → fund (параллельно) → strategy → contrarian → arbitrator идентична live.
+- Агенты используют только `currentPrice`/`volume` снимка — бэктест-снимок
+  (бар) даёт те же поля, bid/ask не используются.
+- Guardrails агентов (INSUFFICIENT_TECH_DATA → HOLD, draft HOLD → без LLM-вызова,
+  CRITICAL_CHALLENGE → HOLD) срабатывают внутри агентов одинаково.
+- Fallback при недоступности LLM детерминированы (работают без API-ключа).
+
+Найдено и исправлено:
+- **Порог уверенности был разным**: стратег получал `adaptiveThreshold=0.5`,
+  арбитр — `adaptiveConfidence=0.60`. Live передаёт одно значение
+  (`AdaptiveRiskService.getAdaptiveConfidenceThreshold`, fallback без статистики =
+  0.60) и стратегу, и арбитру. Бэктест-стратег пропускал сделки с уверенностью
+  0.5–0.6, которые live-контур прижал бы к HOLD → критерии приёма были мягче
+  live. Фикс: единый `bt.agent.confidence-threshold` (дефолт 0.60 = live-fallback
+  без статистики) для обоих; адаптивный порог в бэктесте не вычисляется —
+  истории сделок в прогоне нет, обращаться к live-истории нельзя (look-ahead).
+
+Зафиксировано как конвенции (осознанные отличия бэктеста от live):
+- Delta-промпты (`llm.delta-prompts-enabled`) в бэктесте не используются —
+  полные отчёты (стоимостная оптимизация live, на корректность не влияет).
+- `contextPrompt` арбитра (память feedback) в бэктесте = null — памяти нет.
+- Regime-гейт live (`StrategyService`, CRASH/PUMP/THIN/EXTREME → skip) в бэктесте
+  не применяется — отдельная фича (детерминированный `RegimeDetector` по фикстуре),
+  вне скоупа P1.
+
+Тесты: `AgentBacktestSignalGeneratorTest` — стабы/проверки переведены на 0.60;
+добавлен «custom confidence threshold propagates to strategy and arbitrator»
+(0.75 доходит до `formulate` и `adjudicate`). Полный билд зелёный (940+ тестов).

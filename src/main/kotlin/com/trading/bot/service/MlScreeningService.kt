@@ -27,7 +27,7 @@ import java.time.LocalDateTime
  * позицию): технические признаки из свечей ([MlFeatureExtractor]) + последний
  * макро-снапшот на `captured_at <= now` (без lookahead, фолбэк на текущий контекст)
  * + признак слепой зоны на текущий час. Решение стратега на момент скрининга ещё
- * не принято: `strategy_action=""`, `strategy_confidence=NaN`.
+ * не принято: `strategy_action=""`, `strategy_signal_strength=NaN`.
  *
  * Модель прогоняется в обоих направлениях, для тикера берётся лучшее. Результат
  * сортируется по вероятности убывания и ограничивается topN тикеров.
@@ -130,7 +130,7 @@ class MlScreeningService(
                         inBlindSpotHour = inBlindSpot,
                         hourOfDay = hourOfDay,
                         strategyAction = "",
-                        strategyConfidence = null,
+                        strategySignalStrength = null,
                         direction = direction,
                     )
                 val probability = model.probability(vector.numericFeatures(), vector.categoricalFeatures())

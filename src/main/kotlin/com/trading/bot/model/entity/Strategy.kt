@@ -13,7 +13,7 @@ data class Strategy(
     val stopLoss: BigDecimal? = null,
     val takeProfit: BigDecimal? = null,
     val trailingStop: Boolean = false,
-    val confidence: Double,
+    val signalStrength: Double,
     val reasoning: String,
     val rawJson: String? = null,
     val cycleId: String,

@@ -86,7 +86,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         request: EntryRequest,
     ): PositionSizeResult {
-        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker, confidence = signal.confidence)
+        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker, signalStrength = signal.signalStrength)
         val kellyQty =
             if (kellySizeRub > BigDecimal.ZERO) {
                 kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt()
@@ -187,7 +187,7 @@ class StockEntryProfile(
                 agentName = "TradingBot",
                 ticker = signal.ticker,
                 action = "OPEN",
-                confidence = signal.confidence,
+                signalStrength = signal.signalStrength,
                 reasoning =
                     "Opened ${opened.direction.name} ${params.quantity} @ ${opened.entryPrice} " +
                         "(target=${signal.targetPrice}, adaptive qty=${params.quantity}, kelly=${size.quantity})",

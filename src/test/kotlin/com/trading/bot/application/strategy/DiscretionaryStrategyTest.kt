@@ -86,11 +86,11 @@ class DiscretionaryStrategyTest {
             rsi = 45.0,
             atr = 1.0,
             conclusion = "BULLISH",
-            confidence = 0.7,
+            signalStrength = 0.7,
             reasoning = "uptrend",
         )
 
-    private val fund = FundamentalReport(conclusion = "NEUTRAL", confidence = 0.5, reasoning = "macro ok")
+    private val fund = FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.5, reasoning = "macro ok")
 
     private val draft = StrategyAgent.Draft(StrategyAction.BUY, BigDecimal("102"), 0.65, "buy")
 
@@ -99,7 +99,7 @@ class DiscretionaryStrategyTest {
             isValid = true,
             riskLevel = "LOW",
             critique = "looks fine",
-            confidence = 0.8,
+            signalStrength = 0.8,
         )
 
     private val final =
@@ -159,7 +159,7 @@ class DiscretionaryStrategyTest {
 
         assertEquals(StrategyAction.BUY, decision.action)
         assertEquals(BigDecimal("102"), decision.targetPrice)
-        assertEquals(0.7, decision.confidence)
+        assertEquals(0.7, decision.signalStrength)
 
         runBlocking {
             Mockito.verify(techAgent).analyze("SBER", candles, snapshot, "cycle-1")

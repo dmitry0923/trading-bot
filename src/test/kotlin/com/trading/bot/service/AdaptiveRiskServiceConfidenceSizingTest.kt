@@ -20,8 +20,8 @@ import java.time.Instant
 
 /**
  * Confidence-aware позиционный сайзинг (roadmap 13.11.9): размер позиции масштабируется
- * по уверенности сигнала относительно адаптивного порога тикера. Множитель только
- * урезает размер (min factor при пороге, max factor при ceiling), null-уверенность
+ * по силе сигнала относительно адаптивного порога тикера. Множитель только
+ * урезает размер (min factor при пороге, max factor при ceiling), null-сигнал
  * и выключенный сайзинг нейтральны.
  */
 class AdaptiveRiskServiceConfidenceSizingTest {
@@ -107,37 +107,37 @@ class AdaptiveRiskServiceConfidenceSizingTest {
     // Порог fallback без данных = 0.60, ceiling = 0.90, minFactor = 0.5, maxFactor = 1.0.
     // База без Kelly-статистики = aum * min(0.15, 0.10) = 50000 * 0.10 = 5000.
     private fun assertSize(
-        confidence: Double?,
+        signalStrength: Double?,
         expected: BigDecimal,
     ) {
-        val size = runBlocking { service.calculateOptimalPositionSize("SBER", confidence = confidence) }
-        assertEquals(expected.toDouble(), size.toDouble(), 1.0, "size for confidence=$confidence")
+        val size = runBlocking { service.calculateOptimalPositionSize("SBER", signalStrength = signalStrength) }
+        assertEquals(expected.toDouble(), size.toDouble(), 1.0, "size for signalStrength=$signalStrength")
     }
 
     @Test
-    fun `null confidence keeps size neutral`() {
+    fun `null signal strength keeps size neutral`() {
         assertSize(null, BigDecimal("5000"))
     }
 
     @Test
-    fun `confidence at threshold uses minimum factor`() {
-        // confidence = порог (0.60) -> factor 0.5 -> 2500
+    fun `signal strength at threshold uses minimum factor`() {
+        // signalStrength = порог (0.60) -> factor 0.5 -> 2500
         assertSize(0.60, BigDecimal("2500"))
     }
 
     @Test
-    fun `confidence at ceiling uses max factor`() {
-        // confidence = ceiling (0.90) -> factor 1.0 -> 5000
+    fun `signal strength at ceiling uses max factor`() {
+        // signalStrength = ceiling (0.90) -> factor 1.0 -> 5000
         assertSize(0.90, BigDecimal("5000"))
     }
 
     @Test
-    fun `confidence above ceiling stays at max factor`() {
+    fun `signal strength above ceiling stays at max factor`() {
         assertSize(0.95, BigDecimal("5000"))
     }
 
     @Test
-    fun `mid confidence interpolates linearly`() {
+    fun `mid signal strength interpolates linearly`() {
         // t = (0.75 - 0.60) / (0.90 - 0.60) = 0.5 -> factor = 0.5 + 0.5*0.5 = 0.75 -> 3750
         assertSize(0.75, BigDecimal("3750"))
     }
@@ -159,7 +159,7 @@ class AdaptiveRiskServiceConfidenceSizingTest {
         // и перерегистрация из других тестов того же имени делает чтение недетерминированным.
         val registry = SimpleMeterRegistry()
         val isolatedService = buildService(registry)
-        runBlocking { isolatedService.calculateOptimalPositionSize("SBER", confidence = 0.75) }
+        runBlocking { isolatedService.calculateOptimalPositionSize("SBER", signalStrength = 0.75) }
         val gauge = registry.find("adaptive.confidence_factor").tag("ticker", "SBER").gauge()
         assertEquals(0.75, gauge!!.value(), 1e-9)
     }

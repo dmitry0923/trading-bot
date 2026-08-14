@@ -142,7 +142,7 @@ class PerformanceFeedbackAgent(
                     agentName = "Agent-6-Performance",
                     ticker = ticker,
                     action = if (feedback.shouldPauseTrading) "PAUSE" else "ADJUST",
-                    confidence = stats.winRate,
+                    signalStrength = stats.winRate,
                     reasoning =
                         "confAdj=${feedback.confidenceAdjustment}, " +
                             "slAdj=${feedback.slAdjustmentPercent}, tpAdj=${feedback.tpAdjustmentPercent}",

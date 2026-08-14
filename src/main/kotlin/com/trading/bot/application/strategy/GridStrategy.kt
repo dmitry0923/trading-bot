@@ -57,11 +57,11 @@ class GridStrategy : Strategy {
             } else {
                 (price.subtract(upperBand)).divide(range, 4, RoundingMode.HALF_UP).toDouble()
             }
-        val confidence = (0.5 + proximity.coerceIn(0.0, 1.0) * 0.35).coerceIn(0.0, 0.85)
+        val signalStrength = (0.5 + proximity.coerceIn(0.0, 1.0) * 0.35).coerceIn(0.0, 0.85)
         val reasoning =
             "Price in ${if (direction == StrategyAction.BUY) "lower" else "upper"} band " +
                 "of [$lower..$upper] (range=$range) -> $direction"
-        return StrategyDecision(direction, price, confidence, reasoning)
+        return StrategyDecision(direction, price, signalStrength, reasoning)
     }
 
     private companion object {

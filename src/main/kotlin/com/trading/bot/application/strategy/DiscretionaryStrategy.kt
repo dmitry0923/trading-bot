@@ -121,6 +121,6 @@ class DiscretionaryStrategy(
                     ).increment()
             }
 
-            StrategyDecision(final.action, final.targetPrice, final.confidence, final.reasoning)
+            StrategyDecision(final.action, final.targetPrice, final.signalStrength, final.reasoning)
         }
 }

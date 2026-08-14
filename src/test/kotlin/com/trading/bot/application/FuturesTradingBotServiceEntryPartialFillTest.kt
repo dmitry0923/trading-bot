@@ -212,7 +212,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             ticker = "Si",
             action = StrategyAction.BUY,
             targetPrice = BigDecimal("92000"),
-            confidence = 0.8,
+            signalStrength = 0.8,
             reasoning = "test",
             timeframe = "MINUTE_10",
             cycleId = "cycle-1",

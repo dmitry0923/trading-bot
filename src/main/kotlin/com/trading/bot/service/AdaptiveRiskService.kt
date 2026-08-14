@@ -139,8 +139,8 @@ class AdaptiveRiskService(
      *    volatility (stddev лог-доходностей по DAY_1) либо дневной эквивалент
      *    ATR (10-мин ATR% * sqrt(свечей в дне)). Высокая волатильность режет
      *    размер, низкая — (в пределах clamp) увеличивает. Без данных — нейтрально.
-     * 3. Confidence-aware сайзинг: множитель по уверенности сигнала относительно
-     *    адаптивного порога — маржинальный сигнал (confidence = порог) режет размер
+     * 3. Signal-strength-aware сайзинг: множитель по силе сигнала относительно
+     *    адаптивного порога — маржинальный сигнал (signalStrength = порог) режет размер
      *    до [RiskConfig.confidenceSizingMinFactor], высокая уверенность
      *    (>= [RiskConfig.confidenceSizingCeiling]) — полный размер.
      * 4. Drawdown degradation: непрерывный множитель по глубине просадки от пика
@@ -149,14 +149,14 @@ class AdaptiveRiskService(
      * @param ticker тикер инструмента
      * @param atr дневной ATR (если null — берётся/масштабируется из кэша свечей)
      * @param currentPrice текущая цена (если null — последнее закрытие из кэша)
-     * @param confidence уверенность сигнала (0..1); null — без confidence-сайзинга
+     * @param signalStrength сила сигнала (0..1); null — без confidence-сайзинга
      * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
      */
     suspend fun calculateOptimalPositionSize(
         ticker: String,
         atr: BigDecimal? = null,
         currentPrice: BigDecimal? = null,
-        confidence: Double? = null,
+        signalStrength: Double? = null,
     ): BigDecimal {
         val aum = aumProvider.currentAum()
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
@@ -188,9 +188,9 @@ class AdaptiveRiskService(
             size = size.multiply(BigDecimal(volMultiplier))
         }
 
-        // Confidence-aware сайзинг: маржинальный сигнал (confidence == порог) —
+        // Signal-strength-aware сайзинг: маржинальный сигнал (signalStrength == порог) —
         // минимальный размер, высокая уверенность — полный. Не раздувает baseline.
-        val confidenceFactor = confidenceSizingFactor(ticker, confidence)
+        val confidenceFactor = confidenceSizingFactor(ticker, signalStrength)
         size = size.multiply(BigDecimal(confidenceFactor))
 
         // Drawdown degradation: непрерывный множитель по глубине просадки + серия убытков.
@@ -285,25 +285,25 @@ class AdaptiveRiskService(
     }
 
     /**
-     * Множитель размера позиции по уверенности сигнала (roadmap 13.11.9).
+     * Множитель размера позиции по силе сигнала (roadmap 13.11.9).
      *
      * Линейная интерполяция между [RiskConfig.confidenceSizingMinFactor] (при
-     * confidence == адаптивный порог тикера) и [RiskConfig.confidenceSizingMaxFactor]
-     * (при confidence >= [RiskConfig.confidenceSizingCeiling]). Множитель только
+     * signalStrength == адаптивный порог тикера) и [RiskConfig.confidenceSizingMaxFactor]
+     * (при signalStrength >= [RiskConfig.confidenceSizingCeiling]). Множитель только
      * урезает размер относительно baseline (max factor = 1.0) и никогда не раздувает
-     * его. При confidence == null (API/нет сигнала) или выключенном сайте возвращается
-     * 1.0 (нейтрально, поведение прежнее).
+     * его. При signalStrength == null (API/нет сигнала) или выключенном сайте
+     * возвращается 1.0 (нейтрально, поведение прежнее).
      *
      * @param ticker тикер инструмента
-     * @param confidence уверенность сигнала (0..1) или null
+     * @param signalStrength сила сигнала (0..1) или null
      * @return множитель размера (0..1)
      */
     private suspend fun confidenceSizingFactor(
         ticker: String,
-        confidence: Double?,
+        signalStrength: Double?,
     ): Double {
-        if (!riskConfig.confidenceSizingEnabled || confidence == null) return 1.0
-        val normalized = confidence.coerceIn(0.0, 1.0)
+        if (!riskConfig.confidenceSizingEnabled || signalStrength == null) return 1.0
+        val normalized = signalStrength.coerceIn(0.0, 1.0)
         val threshold = getAdaptiveConfidenceThreshold(ticker)
         val span = riskConfig.confidenceSizingCeiling - threshold
         // Порог близко к ceiling (строгая калибровка) — любой прошедший сигнал полный.
@@ -435,7 +435,7 @@ class AdaptiveRiskService(
     /**
      * Калибровка порога уверенности по фактическим исходам тикера.
      *
-     * Закрытые позиции за окно калибровки джойнятся с уверенностью стратега на входе
+     * Закрытые позиции за окно калибровки джойнятся с силой сигнала стратега на входе
      * (agent_logs, agent Agent-3-Strategist по cycleId). Позиции без cycleId или без
      * лога стратега (детерминированные стратегии) в выборку не попадают. Возвращает null,
      * если калибровка выключена, данных недостаточно или ни одна граница не даёт целевой
@@ -455,14 +455,14 @@ class AdaptiveRiskService(
                 }
         if (closedWithOutcome.size < riskConfig.confidenceCalibrationMinTrades) return null
         val confidenceByCycleId =
-            agentLogRepository.findStrategyConfidenceByCycleIds(closedWithOutcome.map { it.first })
+            agentLogRepository.findStrategySignalStrengthByCycleIds(closedWithOutcome.map { it.first })
         if (confidenceByCycleId.isEmpty()) return null
         return ConfidenceCalibrator
             .calibrate(
                 outcomes =
                     closedWithOutcome.mapNotNull { (cycleId, pnl) ->
-                        val confidence = confidenceByCycleId[cycleId] ?: return@mapNotNull null
-                        confidence to (pnl > BigDecimal.ZERO)
+                        val signalStrength = confidenceByCycleId[cycleId] ?: return@mapNotNull null
+                        signalStrength to (pnl > BigDecimal.ZERO)
                     },
                 targetWinRate = riskConfig.confidenceCalibrationTargetWinRate,
                 minTrades = riskConfig.confidenceCalibrationMinTrades,

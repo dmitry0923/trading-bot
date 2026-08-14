@@ -25,7 +25,7 @@ class StrategyRepository(
             stopLoss = row.get("stop_loss", BigDecimal::class.java),
             takeProfit = row.get("take_profit", BigDecimal::class.java),
             trailingStop = row.require("trailing_stop", Boolean::class.javaObjectType),
-            confidence = row.require("confidence", Double::class.javaObjectType),
+            signalStrength = row.require("signal_strength", Double::class.javaObjectType),
             reasoning = row.require("reasoning", String::class.java),
             rawJson = row.get("raw_json", String::class.java),
             cycleId = row.require("cycle_id", String::class.java),
@@ -56,8 +56,8 @@ class StrategyRepository(
     suspend fun save(strategy: Strategy): Strategy {
         val sql =
             """
-            INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, confidence, reasoning, raw_json, cycle_id, valid_until, timeframe, strategy_name, created_at)
-            VALUES (:ticker, :action, :targetPrice, :quantity, :stopLoss, :takeProfit, :trailingStop, :confidence, :reasoning, :rawJson, :cycleId, :validUntil, :timeframe, :strategyName, :createdAt)
+            INSERT INTO strategies (ticker, action, target_price, quantity, stop_loss, take_profit, trailing_stop, signal_strength, reasoning, raw_json, cycle_id, valid_until, timeframe, strategy_name, created_at)
+            VALUES (:ticker, :action, :targetPrice, :quantity, :stopLoss, :takeProfit, :trailingStop, :signalStrength, :reasoning, :rawJson, :cycleId, :validUntil, :timeframe, :strategyName, :createdAt)
             RETURNING id
             """.trimIndent()
         val id =
@@ -70,7 +70,7 @@ class StrategyRepository(
                 .bindOrNull("stopLoss", strategy.stopLoss)
                 .bindOrNull("takeProfit", strategy.takeProfit)
                 .bind("trailingStop", strategy.trailingStop)
-                .bind("confidence", strategy.confidence)
+                .bind("signalStrength", strategy.signalStrength)
                 .bindOrNull("reasoning", strategy.reasoning)
                 .bindOrNull("rawJson", strategy.rawJson)
                 .bindOrNull("cycleId", strategy.cycleId)

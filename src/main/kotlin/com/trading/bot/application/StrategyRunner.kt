@@ -35,7 +35,7 @@ data class StrategyResult(
  *   1. Жёсткий фильтр: при [com.trading.bot.domain.risk.PerTickerRegime.blocksEntry]
  *      или отсутствии совместимых стратегий — HOLD, цикл стратегий не запускается;
  *      иначе запускаются ТОЛЬКО допустимые для режима стратегии.
- *   2. Мягкое взвешивание: confidence каждого решения умножается на
+ *   2. Мягкое взвешивание: signalStrength каждого решения умножается на
  *      [StrategySelector.fitScore] (0..1) — режим влияет на выбор победителя.
  *
  * Если режим в контексте отсутствует — поведение прежнее (все стратегии, без
@@ -110,13 +110,13 @@ class StrategyRunner(
                     }.awaitAll()
             }
 
-        // Мягкое взвешивание уверенности по режиму (0 при отсутствии режима — нейтрально).
+        // Мягкое взвешивание силы сигнала по режиму (0 при отсутствии режима — нейтрально).
         val weighted =
             evaluated.map { (id, decision) ->
                 val fit = if (regime != null) strategySelector.fitScore(id, regime) else 1.0
                 val weightedDecision =
                     if (fit < 1.0) {
-                        decision.copy(confidence = (decision.confidence * fit).coerceIn(0.0, 1.0))
+                        decision.copy(signalStrength = (decision.signalStrength * fit).coerceIn(0.0, 1.0))
                     } else {
                         decision
                     }
@@ -124,7 +124,7 @@ class StrategyRunner(
             }
 
         val winner =
-            weighted.maxByOrNull { it.second.confidence }
+            weighted.maxByOrNull { it.second.signalStrength }
                 ?: return StrategyResult(
                     winnerId = "NONE",
                     decision = StrategyDecision.hold(context.snapshot.currentPrice, "No strategies evaluated"),

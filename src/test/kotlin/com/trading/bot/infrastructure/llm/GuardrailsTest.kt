@@ -18,16 +18,16 @@ class GuardrailsTest {
     }
 
     private fun buySignal(
-        confidence: Double = 0.8,
+        signalStrength: Double = 0.8,
         price: BigDecimal = BigDecimal("100"),
     ) = Guardrails.Signal(
         action = StrategyAction.BUY,
         targetPrice = price,
-        confidence = confidence,
+        signalStrength = signalStrength,
     )
 
     @Test
-    fun `high confidence buy passes through unchanged`() {
+    fun `high signalStrength buy passes through unchanged`() {
         val result = guardrails().apply(buySignal(), marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6)
         assertFalse(result.overridden)
         assertEquals(StrategyAction.BUY, result.signal.action)
@@ -35,8 +35,8 @@ class GuardrailsTest {
     }
 
     @Test
-    fun `low confidence signal is overridden to HOLD`() {
-        val result = guardrails().apply(buySignal(confidence = 0.4), marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6)
+    fun `low signalStrength signal is overridden to HOLD`() {
+        val result = guardrails().apply(buySignal(signalStrength = 0.4), marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6)
         assertTrue(result.overridden)
         assertEquals(StrategyAction.HOLD, result.signal.action)
         assertEquals("GUARDRAIL: LOW_CONFIDENCE", result.overrideReason)
@@ -106,7 +106,7 @@ class GuardrailsTest {
             Guardrails.Signal(
                 action = StrategyAction.SELL,
                 targetPrice = BigDecimal("100"),
-                confidence = 0.8,
+                signalStrength = 0.8,
             )
         val result = guardrails().apply(sell, marketPrice = BigDecimal("100"), adaptiveThreshold = 0.6)
         assertFalse(result.overridden)
@@ -118,7 +118,7 @@ class GuardrailsTest {
     fun `lowercase critical is not treated as critical`() {
         val result =
             guardrails().apply(
-                buySignal(confidence = 0.4),
+                buySignal(signalStrength = 0.4),
                 marketPrice = BigDecimal("100"),
                 adaptiveThreshold = 0.6,
                 riskLevel = "critical",

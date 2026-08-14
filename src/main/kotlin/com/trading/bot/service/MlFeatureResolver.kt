@@ -32,7 +32,7 @@ class MlFeatureResolver(
         ticker: String,
         at: LocalDateTime,
         strategyAction: String,
-        strategyConfidence: Double?,
+        strategySignalStrength: Double?,
         direction: String,
     ): MlFeatureVector? {
         val timeframe = mlConfig.dataset.timeframe
@@ -62,7 +62,7 @@ class MlFeatureResolver(
             inBlindSpotHour = inBlindSpot,
             hourOfDay = at.hour,
             strategyAction = strategyAction,
-            strategyConfidence = strategyConfidence,
+            strategySignalStrength = strategySignalStrength,
             direction = direction,
         )
     }

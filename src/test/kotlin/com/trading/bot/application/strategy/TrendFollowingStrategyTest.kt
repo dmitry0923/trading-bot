@@ -45,7 +45,7 @@ class TrendFollowingStrategyTest {
         val decision = runBlocking { strategy.evaluate(context(indicators("UP", 0.5, 55.0))) }
         assertEquals(StrategyAction.BUY, decision.action)
         assertEquals(price, decision.targetPrice)
-        assertTrue(decision.confidence in 0.45..0.9, "confidence=${decision.confidence}")
+        assertTrue(decision.signalStrength in 0.45..0.9, "signalStrength=${decision.signalStrength}")
     }
 
     @Test
@@ -58,7 +58,7 @@ class TrendFollowingStrategyTest {
     fun `HOLD when macd contradicts trend`() {
         val decision = runBlocking { strategy.evaluate(context(indicators("UP", -0.2, 55.0))) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 
     @Test

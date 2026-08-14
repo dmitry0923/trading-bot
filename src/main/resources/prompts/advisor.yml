@@ -18,7 +18,7 @@ prompts:
       {"verdict":"AGREE|NEUTRAL|VETO","confidenceAdjustment":0.0,"explanation":"string","alternativeScenarios":["string"],"riskLevel":"LOW|NORMAL|HIGH|CRITICAL"}.
     user_template: >
       Ticker: {{ticker}}
-      Детерминированный сигнал: {{signal}} @ {{targetPrice}} (confidence={{signalConfidence}})
+      Детерминированный сигнал: {{signal}} @ {{targetPrice}} (signalStrength={{signalStrength}})
       Reasoning стратегии: {{signalReasoning}}
       Рыночный режим: {{regime}} (тренд={{trend}}, conclusion={{techConclusion}}, RSI={{rsi}})
       Текущая цена: {{currentPrice}}

@@ -20,7 +20,7 @@ import java.time.LocalDateTime
  * модели ([MlModelProvider]) для сигнала ниже `ml.filter.threshold` — вход
  * блокируется. Признаки строятся на текущий момент ([MlFeatureResolver]) с
  * реальным решением стратега (`strategy_action = signal.action`,
- * `strategy_confidence = signal.confidence`) — в отличие от скрининга, где
+ * `strategy_signal_strength = signal.signalStrength`) — в отличие от скрининга, где
  * стратег ещё не отработал.
  *
  * Ядро [shouldBlock] параметризовано временем `at` и флагом `requireEnabled`,
@@ -56,7 +56,7 @@ class MlEntryFilter(
         shouldBlock(
             ticker = signal.ticker,
             action = signal.action,
-            confidence = signal.confidence,
+            signalStrength = signal.signalStrength,
             at = LocalDateTime.now(),
         )
 
@@ -69,7 +69,7 @@ class MlEntryFilter(
     suspend fun shouldBlock(
         ticker: String,
         action: StrategyAction,
-        confidence: Double?,
+        signalStrength: Double?,
         at: LocalDateTime,
         requireEnabled: Boolean = true,
     ): String? {
@@ -87,7 +87,7 @@ class MlEntryFilter(
                 ticker = ticker,
                 at = at,
                 strategyAction = action.name,
-                strategyConfidence = confidence,
+                strategySignalStrength = signalStrength,
                 direction = direction,
             ) ?: return blocked(ticker, action, "insufficient candle data for ML features")
 

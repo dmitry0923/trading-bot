@@ -666,7 +666,7 @@ class BacktestEngineTest {
             cbrRate = 16.0,
             brentPrice = 75.0,
             usdRub = 90.0,
-            strategyConfidence = 0.8,
+            strategySignalStrength = 0.8,
             inBlindSpotHour = 0,
             hourOfDay = 14,
             strategyAction = "BUY",

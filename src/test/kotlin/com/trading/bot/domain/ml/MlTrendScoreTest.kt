@@ -84,7 +84,7 @@ class MlTrendScoreTest {
             cbrRate = 16.0,
             brentPrice = 75.0,
             usdRub = 90.0,
-            strategyConfidence = null,
+            strategySignalStrength = null,
             inBlindSpotHour = 0,
             hourOfDay = 14,
             strategyAction = "",

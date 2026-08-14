@@ -21,7 +21,7 @@ class DeltaPromptStoreTest {
             rsi = 45.0,
             atr = 1.0,
             conclusion = "BULLISH",
-            confidence = 0.7,
+            signalStrength = 0.7,
             reasoning = "momentum above MA",
         )
 

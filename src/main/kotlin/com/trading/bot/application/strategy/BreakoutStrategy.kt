@@ -51,11 +51,11 @@ class BreakoutStrategy : Strategy {
 
         val breakSize = if (direction == StrategyAction.BUY) close.subtract(resistance) else support.subtract(close)
         val strength = if (atr > 0.0) breakSize.toDouble() / atr else 1.0
-        val confidence = (0.45 + strength.coerceIn(0.0, 1.0) * 0.45).coerceIn(0.0, 0.9)
+        val signalStrength = (0.45 + strength.coerceIn(0.0, 1.0) * 0.45).coerceIn(0.0, 0.9)
         val reasoning =
             "Breakout ${if (direction == StrategyAction.BUY) "above $resistance" else "below $support"} " +
                 "by ${round(breakSize)} (${round(strength)}xATR) -> $direction"
-        return StrategyDecision(direction, price, confidence, reasoning)
+        return StrategyDecision(direction, price, signalStrength, reasoning)
     }
 
     private fun round(v: Double): String = v.toBigDecimal().setScale(3, RoundingMode.HALF_UP).toPlainString()

@@ -8,7 +8,7 @@ data class AgentLog(
     val agentName: String,
     val ticker: String? = null,
     val action: String,
-    val confidence: Double? = null,
+    val signalStrength: Double? = null,
     val reasoning: String? = null,
     val rawOutput: String? = null,
     val latencyMs: Long? = null,

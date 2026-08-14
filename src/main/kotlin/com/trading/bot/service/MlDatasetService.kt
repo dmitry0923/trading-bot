@@ -234,7 +234,7 @@ class MlDatasetService(
             usdRub = macro.usdRub,
             macroSource = macroSource,
             strategyAction = strategyLog?.action,
-            strategyConfidence = strategyLog?.confidence,
+            strategySignalStrength = strategyLog?.signalStrength,
             inBlindSpotHour = if (inBlindSpot) 1 else 0,
         )
     }

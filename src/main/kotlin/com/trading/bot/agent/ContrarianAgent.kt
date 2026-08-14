@@ -39,7 +39,7 @@ class ContrarianAgent(
         val isValid: Boolean,
         val riskLevel: String,
         val critique: String,
-        val confidence: Double,
+        val signalStrength: Double,
     )
 
     /**
@@ -72,7 +72,7 @@ class ContrarianAgent(
         // GUARDRAIL: если стратег сказал HOLD — LLM не вызываем, риск низкий
         if (draft.action == StrategyAction.HOLD) {
             return logAndReturn(
-                ChallengeReport(isValid = true, riskLevel = "LOW", critique = "No position proposed", confidence = 1.0),
+                ChallengeReport(isValid = true, riskLevel = "LOW", critique = "No position proposed", signalStrength = 1.0),
                 snapshot.ticker,
                 cycleId,
                 start,
@@ -86,10 +86,10 @@ class ContrarianAgent(
                 "targetPrice" to draft.targetPrice.toPlainString(),
                 "strategyReasoning" to draft.reasoning,
                 "techConclusion" to tech.conclusion,
-                "techConfidence" to tech.confidence,
+                "techSignalStrength" to tech.signalStrength,
                 "techReasoning" to (techDelta ?: tech.reasoning),
                 "fundConclusion" to fund.conclusion,
-                "fundConfidence" to fund.confidence,
+                "fundSignalStrength" to fund.signalStrength,
                 "currentPrice" to snapshot.currentPrice.toPlainString(),
                 "trend" to tech.trend,
                 "rsi" to tech.rsi,
@@ -121,7 +121,7 @@ class ContrarianAgent(
         val report =
             if (resp.isFallback) {
                 logger.info { "LLM unavailable for challenge, allowing trade" }
-                ChallengeReport(isValid = true, riskLevel = "LOW", critique = "LLM unavailable", confidence = 0.5)
+                ChallengeReport(isValid = true, riskLevel = "LOW", critique = "LLM unavailable", signalStrength = 0.5)
             } else {
                 try {
                     val j = objectMapper.readTree(resp.content)
@@ -132,11 +132,11 @@ class ContrarianAgent(
                                 if (it in setOf("LOW", "MEDIUM", "HIGH", "CRITICAL")) it else "LOW"
                             },
                         critique = j.path("critique").asString(""),
-                        confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                        signalStrength = j.path("signalStrength").asDouble(0.0).coerceIn(0.0, 1.0),
                     )
                 } catch (e: Exception) {
                     logger.warn(e) { "Contrarian LLM parse error" }
-                    ChallengeReport(isValid = true, riskLevel = "LOW", critique = "Parse error", confidence = 0.5)
+                    ChallengeReport(isValid = true, riskLevel = "LOW", critique = "Parse error", signalStrength = 0.5)
                 }
             }
 
@@ -159,7 +159,7 @@ class ContrarianAgent(
                 agentName = "Agent-4-Contrarian",
                 ticker = ticker,
                 action = "CHALLENGE:${report.riskLevel}",
-                confidence = report.confidence,
+                signalStrength = report.signalStrength,
                 reasoning = report.critique,
                 rawOutput = raw,
                 latencyMs = System.currentTimeMillis() - startMs,

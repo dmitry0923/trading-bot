@@ -314,18 +314,18 @@ class StrategyService(
                 )
             } else {
                 result.decision.copy(
-                    confidence = (result.decision.confidence + advisorVerdict.confidenceAdjustment).coerceIn(0.0, 1.0),
+                    signalStrength = (result.decision.signalStrength + advisorVerdict.confidenceAdjustment).coerceIn(0.0, 1.0),
                 )
             }
 
         // Сигнал стратегического этапа — чистое направление (без quantity/SL/TP).
-        val effectiveConfidence = decision.confidence.coerceAtLeast(adaptiveConf)
+        val effectiveSignalStrength = decision.signalStrength.coerceAtLeast(adaptiveConf)
         val signal =
             Signal(
                 ticker = ticker,
                 action = decision.action,
                 targetPrice = decision.targetPrice,
-                confidence = effectiveConfidence,
+                signalStrength = effectiveSignalStrength,
                 reasoning =
                     decision.reasoning +
                         " | Regime: ${regime.describe()} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}" +
@@ -346,7 +346,7 @@ class StrategyService(
                 stopLoss = null,
                 takeProfit = null,
                 trailingStop = false,
-                confidence = signal.confidence,
+                signalStrength = signal.signalStrength,
                 reasoning = signal.reasoning,
                 rawJson = objectMapper.writeValueAsString(result.all),
                 cycleId = cycleId,
@@ -370,7 +370,7 @@ class StrategyService(
                 if (variantVersion != null) {
                     discretionaryStrategy.produceVariant(context, variantVersion)
                 } else {
-                    StrategyDecision(signal.action, signal.targetPrice, signal.confidence, signal.reasoning)
+                    StrategyDecision(signal.action, signal.targetPrice, signal.signalStrength, signal.reasoning)
                 }
             paperTradingService.recordVariantDecision(cycleId, ticker, timeframe, variant, version = variantVersion)
         }

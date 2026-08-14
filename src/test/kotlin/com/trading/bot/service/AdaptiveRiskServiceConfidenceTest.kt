@@ -19,7 +19,7 @@ import java.math.BigDecimal
 
 /**
  * Онлайн-калибровка порога уверенности (roadmap 13.11.8): по закрытым сделкам
- * тикера и уверенности стратега на входе подбирается порог, при недостатке
+ * тикера и силе сигнала стратега на входе подбирается порог, при недостатке
  * данных — fallback на правила по win rate.
  */
 class AdaptiveRiskServiceConfidenceTest {
@@ -86,8 +86,8 @@ class AdaptiveRiskServiceConfidenceTest {
         Mockito.`when`(positionRepo.findClosedByTickerSince(any(), any())).thenReturn(positions)
     }
 
-    private suspend fun stubConfidence(map: Map<String, Double>) {
-        Mockito.`when`(agentLogRepo.findStrategyConfidenceByCycleIds(any())).thenReturn(map)
+    private suspend fun stubSignalStrengths(map: Map<String, Double>) {
+        Mockito.`when`(agentLogRepo.findStrategySignalStrengthByCycleIds(any())).thenReturn(map)
     }
 
     private suspend fun stubStats(winRate: Double?) {
@@ -98,7 +98,7 @@ class AdaptiveRiskServiceConfidenceTest {
     private fun fallbackCounter(): Double = meterRegistry.counter("adaptive.confidence_fallback", "ticker", "SBER").count()
 
     @Test
-    fun `calibration lowers threshold when high confidence trades win`() =
+    fun `calibration lowers threshold when high signal strength trades win`() =
         runBlocking {
             riskConfig.confidenceCalibrationMinTrades = 5
             stubClosed(
@@ -113,7 +113,7 @@ class AdaptiveRiskServiceConfidenceTest {
                     closedPos("c8", false),
                 ),
             )
-            stubConfidence(
+            stubSignalStrengths(
                 mapOf(
                     "c1" to 0.85,
                     "c2" to 0.85,
@@ -178,7 +178,7 @@ class AdaptiveRiskServiceConfidenceTest {
         }
 
     @Test
-    fun `positions without strategy confidence are excluded from calibration`() {
+    fun `positions without strategy signal strength are excluded from calibration`() {
         runBlocking {
             riskConfig.confidenceCalibrationMinTrades = 5
             stubClosed(
@@ -191,14 +191,14 @@ class AdaptiveRiskServiceConfidenceTest {
                     closedPos("c6", false),
                 ),
             )
-            stubConfidence(mapOf("c1" to 0.85, "c2" to 0.85, "c3" to 0.80, "c4" to 0.80))
+            stubSignalStrengths(mapOf("c1" to 0.85, "c2" to 0.85, "c3" to 0.80, "c4" to 0.80))
             stubStats(0.50)
 
             val threshold = service.getAdaptiveConfidenceThreshold("SBER")
 
             // Только 4 сделки имеют лог стратега < minTrades 5 -> fallback (winRate 0.5 -> 0.60).
             assertEquals(0.60, threshold, 1e-9)
-            Mockito.verify(agentLogRepo).findStrategyConfidenceByCycleIds(listOf("c1", "c2", "c3", "c4", "c5", "c6"))
+            Mockito.verify(agentLogRepo).findStrategySignalStrengthByCycleIds(listOf("c1", "c2", "c3", "c4", "c5", "c6"))
         }
     }
 
@@ -222,7 +222,7 @@ class AdaptiveRiskServiceConfidenceTest {
 
             // Только 4 сделки с pnl < minTrades 5 -> fallback без запроса agent_logs.
             assertEquals(0.60, threshold, 1e-9)
-            Mockito.verify(agentLogRepo, Mockito.never()).findStrategyConfidenceByCycleIds(any())
+            Mockito.verify(agentLogRepo, Mockito.never()).findStrategySignalStrengthByCycleIds(any())
         }
     }
 }

@@ -34,7 +34,7 @@ import java.util.UUID
  * - Симулирует исполнение: комиссия 0.05% на оборот, проскальзывание 0.1% (market)
  * - Проверяет SL/TP по внутрисвечному диапазону (high/low)
  * - При `bt.ml-filter-enabled=true` гейтит входы ML-фильтром ([MlEntryFilter],
- *   roadmap 13.11.6): признаки на момент бара, confidence=null; блокировки
+ *   roadmap 13.11.6): признаки на момент бара, signalStrength=null; блокировки
  *   считаются в метрику `bt_ml_blocked_total{ticker}` (live-гейт не затрагивается)
  * - При `bt.mtf-filter-enabled=true` гейтит входы multi-timeframe фильтром
  *   ([HigherTfTrendFilter], roadmap v2.5): тренд ресемплированных в старший ТФ
@@ -257,7 +257,7 @@ class BacktestEngine(
             val curPos = position
             val entering = curPos == null || isOpposite(curPos.direction, signal)
             if (entering && backtestConfig.mlFilterEnabled && mlEntryFilter != null) {
-                // ML-фильтр входа (раздел 13.11.6): признаки на момент бара, confidence
+                // ML-фильтр входа (раздел 13.11.6): признаки на момент бара, signalStrength
                 // у детерминированного генератора отсутствует → null (отдельная категория).
                 val blockReason = mlEntryFilter.shouldBlock(ticker, signal, null, current.time, requireEnabled = false)
                 if (blockReason != null) {

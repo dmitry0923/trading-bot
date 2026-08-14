@@ -59,11 +59,11 @@ class TrendFollowingStrategy : Strategy {
         }
 
         val macdFraction = abs(indicators.macdHistogram) / maxOf(price.toDouble() * 0.01, 1e-9)
-        val confidence = (0.45 + (macdFraction / 0.5).coerceIn(0.0, 1.0) * 0.45).coerceIn(0.0, 0.9)
+        val signalStrength = (0.45 + (macdFraction / 0.5).coerceIn(0.0, 1.0) * 0.45).coerceIn(0.0, 0.9)
         val reasoning =
             "Trend=${indicators.trend}, MACD-hist=${round(indicators.macdHistogram)}, " +
                 "RSI=${round(indicators.rsi)} -> $direction"
-        return StrategyDecision(direction, price, confidence, reasoning)
+        return StrategyDecision(direction, price, signalStrength, reasoning)
     }
 
     private fun round(v: Double): String = v.toBigDecimal().setScale(3, RoundingMode.HALF_UP).toPlainString()

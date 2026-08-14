@@ -67,7 +67,7 @@ class TechnicalAnalysisAgent(
                         rsi = 50.0,
                         atr = 0.0,
                         conclusion = "INSUFFICIENT_DATA",
-                        confidence = 0.0,
+                        signalStrength = 0.0,
                         reasoning = "Not enough candles (need >= 30, got ${candles.size})",
                     ),
                     ticker,
@@ -86,7 +86,7 @@ class TechnicalAnalysisAgent(
                 bbUpper = indicators.bbUpper,
                 bbLower = indicators.bbLower,
                 conclusion = indicators.conclusion,
-                confidence = 0.55,
+                signalStrength = 0.55,
                 reasoning =
                     "RSI=${round2(indicators.rsi)}, MACD=${round2(indicators.macdHistogram)}, " +
                         "BB=[${indicators.bbLower}..${indicators.bbUpper}], trend=${indicators.trend}",
@@ -154,7 +154,7 @@ class TechnicalAnalysisAgent(
                         j.path("conclusion").asString("NEUTRAL").uppercase().let {
                             if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
                         },
-                    confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                    signalStrength = j.path("signalStrength").asDouble(0.0).coerceIn(0.0, 1.0),
                     reasoning = j.path("reasoning").asString(baseline.reasoning),
                 )
             logAndReturn(
@@ -215,7 +215,7 @@ class TechnicalAnalysisAgent(
                 agentName = "Agent-1-Technical",
                 ticker = ticker,
                 action = report.conclusion,
-                confidence = report.confidence,
+                signalStrength = report.signalStrength,
                 reasoning = report.reasoning,
                 rawOutput = raw,
                 latencyMs = System.currentTimeMillis() - startMs,

@@ -44,7 +44,7 @@ class StrategyAgent(
     data class Draft(
         val action: StrategyAction,
         val targetPrice: BigDecimal,
-        val confidence: Double,
+        val signalStrength: Double,
         val reasoning: String,
     )
 
@@ -80,9 +80,9 @@ class StrategyAgent(
         val start = System.currentTimeMillis()
 
         // GUARDRAIL: недостаточно данных → HOLD без LLM-вызова
-        if (tech.conclusion == "INSUFFICIENT_DATA" || tech.confidence < 0.5) {
+        if (tech.conclusion == "INSUFFICIENT_DATA" || tech.signalStrength < 0.5) {
             return logAndReturn(
-                hold(snapshot.currentPrice, "Insufficient technical data (conf=${tech.confidence})"),
+                hold(snapshot.currentPrice, "Insufficient technical data (conf=${tech.signalStrength})"),
                 ticker,
                 cycleId,
                 start,
@@ -105,12 +105,12 @@ class StrategyAgent(
                 "ticker" to ticker,
                 "currentPrice" to snapshot.currentPrice.toPlainString(),
                 "techConclusion" to tech.conclusion,
-                "techConfidence" to tech.confidence,
+                "techSignalStrength" to tech.signalStrength,
                 "techTrend" to tech.trend,
                 "techRsi" to tech.rsi,
                 "techReasoning" to (techDelta ?: tech.reasoning),
                 "fundConclusion" to fund.conclusion,
-                "fundConfidence" to fund.confidence,
+                "fundSignalStrength" to fund.signalStrength,
                 "fundReasoning" to (fundDelta ?: fund.reasoning),
             )
 
@@ -155,7 +155,7 @@ class StrategyAgent(
                 Draft(
                     action = action,
                     targetPrice = rawPrice,
-                    confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                    signalStrength = j.path("signalStrength").asDouble(0.0).coerceIn(0.0, 1.0),
                     reasoning = j.path("reasoning").asString(""),
                 )
             } catch (e: Exception) {
@@ -180,7 +180,7 @@ class StrategyAgent(
                     Guardrails.Signal(
                         action = draft.action,
                         targetPrice = draft.targetPrice,
-                        confidence = draft.confidence,
+                        signalStrength = draft.signalStrength,
                     ),
                 marketPrice = snapshot.currentPrice,
                 adaptiveThreshold = adaptiveThreshold,
@@ -192,7 +192,7 @@ class StrategyAgent(
                 draft.copy(
                     action = guarded.signal.action,
                     targetPrice = guarded.signal.targetPrice,
-                    confidence = guarded.signal.confidence,
+                    signalStrength = guarded.signal.signalStrength,
                     reasoning = draft.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]",
                 )
             } else {
@@ -234,7 +234,7 @@ class StrategyAgent(
                 agentName = "Agent-3-Strategist",
                 ticker = ticker,
                 action = draft.action.name,
-                confidence = draft.confidence,
+                signalStrength = draft.signalStrength,
                 reasoning = draft.reasoning,
                 rawOutput = raw,
                 latencyMs = System.currentTimeMillis() - startMs,

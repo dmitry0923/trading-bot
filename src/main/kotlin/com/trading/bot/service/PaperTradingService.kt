@@ -80,7 +80,7 @@ class PaperTradingService(
                 quantity = 0,
                 stopLoss = null,
                 takeProfit = null,
-                confidence = signal.confidence,
+                signalStrength = signal.signalStrength,
                 reasoning = signal.reasoning,
                 isPaper = false,
                 version = PromptRegistry.DEFAULT_VERSION,
@@ -126,7 +126,7 @@ class PaperTradingService(
                 quantity = 0,
                 stopLoss = null,
                 takeProfit = null,
-                confidence = variant.confidence,
+                signalStrength = variant.signalStrength,
                 reasoning = variant.reasoning,
                 isPaper = true,
                 version = version ?: "shadow-copy",
@@ -137,7 +137,7 @@ class PaperTradingService(
         meterRegistry.counter("experiment.variant.llm", Tags.of("mode", if (version != null) "LLM" else "COPY")).increment()
         logger.info {
             "Experiment ${experimentConfig.experimentId}: $ticker/$timeframe variant=${variant.action} " +
-                "conf=${String.format("%.2f", variant.confidence)} (${if (version != null) "LLM v$version" else "shadow copy"})"
+                "conf=${String.format("%.2f", variant.signalStrength)} (${if (version != null) "LLM v$version" else "shadow copy"})"
         }
         return decision
     }

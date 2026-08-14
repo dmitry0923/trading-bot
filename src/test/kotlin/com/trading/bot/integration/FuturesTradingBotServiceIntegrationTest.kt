@@ -256,7 +256,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
             ticker = "Si",
             action = StrategyAction.BUY,
             targetPrice = target,
-            confidence = 0.9,
+            signalStrength = 0.9,
             reasoning = "integration test",
             timeframe = "MINUTE_10",
             cycleId = "test-cycle",

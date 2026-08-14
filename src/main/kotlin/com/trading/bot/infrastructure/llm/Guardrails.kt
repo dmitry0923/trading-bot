@@ -13,7 +13,7 @@ import java.math.RoundingMode
  *
  * Правила (только направление сделки — размер и стопы вычисляет риск-этап):
  * 1. riskLevel == CRITICAL → HOLD (детерминированный override)
- * 2. confidence < adaptiveThreshold → HOLD
+ * 2. signalStrength < adaptiveThreshold → HOLD
  * 3. отклонение цены от рыночной > 3% → корректировать targetPrice до рыночной
  *
  * Дневной лимит убытка / Shadow-режим / количество позиций — этап RiskEngine
@@ -27,14 +27,14 @@ class Guardrails(
     data class Signal(
         val action: StrategyAction,
         val targetPrice: BigDecimal,
-        val confidence: Double,
+        val signalStrength: Double,
     ) {
         companion object {
             fun hold(marketPrice: BigDecimal): Signal =
                 Signal(
                     action = StrategyAction.HOLD,
                     targetPrice = marketPrice,
-                    confidence = 0.0,
+                    signalStrength = 0.0,
                 )
         }
     }
@@ -70,9 +70,9 @@ class Guardrails(
             )
         }
 
-        if (current.confidence < adaptiveThreshold) {
+        if (current.signalStrength < adaptiveThreshold) {
             recordOverride("LOW_CONFIDENCE")
-            applied += "confidence=${current.confidence} < threshold=$adaptiveThreshold -> HOLD"
+            applied += "signalStrength=${current.signalStrength} < threshold=$adaptiveThreshold -> HOLD"
             current = current.copy(action = StrategyAction.HOLD)
             return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: LOW_CONFIDENCE", appliedRules = applied)
         }

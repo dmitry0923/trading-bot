@@ -45,7 +45,7 @@ class ArbitrageStrategyTest {
         val decision =
             runBlocking { strategy.evaluate(context(price = BigDecimal("102.0"), relatedQuote = BigDecimal("100.0"))) }
         assertEquals(StrategyAction.SELL, decision.action)
-        assertTrue(decision.confidence in 0.5..0.9, "confidence=${decision.confidence}")
+        assertTrue(decision.signalStrength in 0.5..0.9, "signalStrength=${decision.signalStrength}")
     }
 
     @Test
@@ -60,13 +60,13 @@ class ArbitrageStrategyTest {
         val decision =
             runBlocking { strategy.evaluate(context(price = BigDecimal("100.1"), relatedQuote = BigDecimal("100.0"))) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 
     @Test
     fun `HOLD without related quote`() {
         val decision = runBlocking { strategy.evaluate(context(price = BigDecimal("102.0"), relatedQuote = null)) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 }

@@ -48,10 +48,10 @@ class ArbitrageStrategy : Strategy {
         }
 
         val excess = abs(basis) / threshold
-        val confidence = (0.5 + excess.coerceIn(0.0, 1.0) * 0.4).coerceIn(0.0, 0.9)
+        val signalStrength = (0.5 + excess.coerceIn(0.0, 1.0) * 0.4).coerceIn(0.0, 0.9)
         val reasoning =
             "Basis=${round(basis)} vs related=$related (threshold=$threshold) -> $direction"
-        return StrategyDecision(direction, price, confidence, reasoning)
+        return StrategyDecision(direction, price, signalStrength, reasoning)
     }
 
     private fun round(v: Double): String = v.toBigDecimal().setScale(4, RoundingMode.HALF_UP).toPlainString()

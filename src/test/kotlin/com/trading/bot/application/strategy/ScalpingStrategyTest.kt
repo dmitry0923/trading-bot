@@ -64,7 +64,7 @@ class ScalpingStrategyTest {
         val decision =
             runBlocking { strategy.evaluate(context(prevClose = BigDecimal("100.0"), lastClose = BigDecimal("105.0"))) }
         assertEquals(StrategyAction.BUY, decision.action)
-        assertTrue(decision.confidence in 0.4..0.8, "confidence=${decision.confidence}")
+        assertTrue(decision.signalStrength in 0.4..0.8, "signalStrength=${decision.signalStrength}")
     }
 
     @Test
@@ -79,7 +79,7 @@ class ScalpingStrategyTest {
         val decision =
             runBlocking { strategy.evaluate(context(prevClose = BigDecimal("100.0"), lastClose = BigDecimal("100.2"))) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 
     @Test

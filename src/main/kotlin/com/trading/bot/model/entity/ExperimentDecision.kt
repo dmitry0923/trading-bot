@@ -22,7 +22,7 @@ import java.time.LocalDateTime
  * @param quantity объём
  * @param stopLoss стоп-лосс
  * @param takeProfit тейк-профит
- * @param confidence уверенность
+ * @param signalStrength сила сигнала
  * @param reasoning обоснование
  * @param isPaper true — решение только для наблюдения, не исполняется
  * @param version версия промпта вариантной руки ("shadow-copy" для копии контроля)
@@ -44,7 +44,7 @@ data class ExperimentDecision(
     val quantity: Int = 0,
     val stopLoss: BigDecimal? = null,
     val takeProfit: BigDecimal? = null,
-    val confidence: Double? = null,
+    val signalStrength: Double? = null,
     val reasoning: String? = null,
     val isPaper: Boolean,
     val version: String? = null,

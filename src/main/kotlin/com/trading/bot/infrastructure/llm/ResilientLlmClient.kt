@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
  * - Таймаут HTTP 30 секунд
  * - response_format = {"type":"json_object"} — принудительный JSON
  * - Semantic Cache (Redis) поверх вызовов
- * - Fallback: JSON с conclusion=NEUTRAL, confidence=0.0 при недоступности LLM
+ * - Fallback: JSON с conclusion=NEUTRAL, signalStrength=0.0 при недоступности LLM
  * - Метрики: llm.latency, llm.tokens.used, llm.fallback.activated, llm.cache.hit/miss
  */
 @Component

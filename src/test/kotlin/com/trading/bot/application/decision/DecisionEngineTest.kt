@@ -131,7 +131,7 @@ class DecisionEngineTest {
             ticker = "Si",
             action = action,
             targetPrice = BigDecimal("101"),
-            confidence = 0.8,
+            signalStrength = 0.8,
             reasoning = "test",
             timeframe = "MINUTE_10",
             cycleId = "cycle-1",

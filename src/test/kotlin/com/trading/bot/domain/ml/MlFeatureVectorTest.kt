@@ -16,7 +16,7 @@ class MlFeatureVectorTest {
         assertEquals(MlFeatureVector.NUMERIC_COUNT, numeric.size)
         // Порядок NUMERIC_FEATURES из ml/train.py: rsi14, atr_percent, macd_hist_percent,
         // bb_percent_b, ema_slope_percent, volatility20_percent, ret_3, ret_10, ret_20,
-        // cbr_rate, brent, usd_rub, strategy_confidence, in_blind_spot_hour, hour_of_day.
+        // cbr_rate, brent, usd_rub, strategy_signal_strength, in_blind_spot_hour, hour_of_day.
         val expected =
             floatArrayOf(
                 65.0f,
@@ -50,8 +50,8 @@ class MlFeatureVectorTest {
     }
 
     @Test
-    fun `missing strategy confidence maps to NaN for screening`() {
-        val vector = vector(strategyConfidence = null, strategyAction = "")
+    fun `missing strategy signalStrength maps to NaN for screening`() {
+        val vector = vector(strategySignalStrength = null, strategyAction = "")
 
         val numeric = vector.numericFeatures()
 
@@ -83,7 +83,7 @@ class MlFeatureVectorTest {
                 inBlindSpotHour = true,
                 hourOfDay = 9,
                 strategyAction = "",
-                strategyConfidence = null,
+                strategySignalStrength = null,
                 direction = "SHORT",
             )
 
@@ -98,7 +98,7 @@ class MlFeatureVectorTest {
     }
 
     private fun vector(
-        strategyConfidence: Double? = 0.85,
+        strategySignalStrength: Double? = 0.85,
         strategyAction: String = "BUY",
     ): MlFeatureVector =
         MlFeatureVector(
@@ -114,7 +114,7 @@ class MlFeatureVectorTest {
             cbrRate = 16.0,
             brentPrice = 75.0,
             usdRub = 90.0,
-            strategyConfidence = strategyConfidence,
+            strategySignalStrength = strategySignalStrength,
             inBlindSpotHour = 1,
             hourOfDay = 14,
             strategyAction = strategyAction,

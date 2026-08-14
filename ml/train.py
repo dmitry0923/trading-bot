@@ -12,7 +12,7 @@
   сплита, который «заглядывал бы в будущее» (lookahead).
 - **Модель**: CatBoost (по умолчанию, `--model catboost`) или LightGBM
   (`--model lightgbm`). Категориальные признаки (`strategy_action`,
-  `direction`) объявляются как categorical; пропуски (`strategy_confidence`,
+  `direction`) объявляются как categorical; пропуски (`strategy_signal_strength`,
   пустой `strategy_action`) обрабатываются нативно.
 - **Метрика M3**: сравнение profit factor на OOS между ML-выборкой
   (строки с `p >= --threshold`), LLM-baseline (строки, где стратег сказал
@@ -56,7 +56,7 @@ HEADER_COLUMNS = [
     "macd_hist_percent", "bb_percent_b", "ema_slope_percent",
     "volatility20_percent", "ret_3", "ret_10", "ret_20", "cbr_rate",
     "brent", "usd_rub", "macro_source", "strategy_action",
-    "strategy_confidence", "in_blind_spot_hour",
+    "strategy_signal_strength", "in_blind_spot_hour",
 ]
 
 # Признаки (см. раздел 13.11.1 roadmap). Мета-колонки (id, даты, цены,
@@ -64,7 +64,7 @@ HEADER_COLUMNS = [
 NUMERIC_FEATURES = [
     "rsi14", "atr_percent", "macd_hist_percent", "bb_percent_b",
     "ema_slope_percent", "volatility20_percent", "ret_3", "ret_10",
-    "ret_20", "cbr_rate", "brent", "usd_rub", "strategy_confidence",
+    "ret_20", "cbr_rate", "brent", "usd_rub", "strategy_signal_strength",
     "in_blind_spot_hour", "hour_of_day",
 ]
 CATEGORICAL_FEATURES = ["strategy_action", "direction"]
@@ -103,9 +103,9 @@ def load_dataset(path: str) -> pd.DataFrame:
     if missing:
         sys.exit(f"Ошибка: в датасете нет колонок: {', '.join(missing)}")
     df[TIME_COLUMN] = pd.to_datetime(df[TIME_COLUMN], errors="coerce")
-    df["strategy_confidence"] = pd.to_numeric(df["strategy_confidence"], errors="coerce")
+    df["strategy_signal_strength"] = pd.to_numeric(df["strategy_signal_strength"], errors="coerce")
     for col in NUMERIC_FEATURES:
-        if col not in ("strategy_confidence",):
+        if col not in ("strategy_signal_strength",):
             df[col] = pd.to_numeric(df[col], errors="coerce")
     # Категориальные колонки приводим к pandas `category`: read_csv превращает
     # пустые strategy_action в NaN (float-dtype), а в pandas 3.x строки получают

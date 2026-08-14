@@ -75,7 +75,7 @@ class MlDatasetServiceTest {
                 .thenReturn(candles(60, openedAt.plusDays(1)))
             Mockito
                 .`when`(agentLogRepository.findStrategyDecision("c1"))
-                .thenReturn(AgentLog(cycleId = "c1", agentName = "Agent-3-Strategist", action = "BUY", confidence = 0.85))
+                .thenReturn(AgentLog(cycleId = "c1", agentName = "Agent-3-Strategist", action = "BUY", signalStrength = 0.85))
             Mockito
                 .`when`(blindSpotRepository.findByIsActiveTrue())
                 .thenReturn(
@@ -122,7 +122,7 @@ class MlDatasetServiceTest {
         assertEquals(500.0, win.pnlRub.toDouble(), 0.0)
         assertEquals(14, win.hourOfDay)
         assertEquals("BUY", win.strategyAction)
-        assertEquals(0.85, win.strategyConfidence!!, 1e-9)
+        assertEquals(0.85, win.strategySignalStrength!!, 1e-9)
         assertEquals(1, win.inBlindSpotHour)
         assertEquals(16.0, win.cbrRate.toDouble(), 0.0)
         assertEquals("SNAPSHOT", win.macroSource)
@@ -132,7 +132,7 @@ class MlDatasetServiceTest {
         assertEquals(2L, loss.positionId)
         assertEquals(0, loss.win)
         assertNull(loss.strategyAction)
-        assertNull(loss.strategyConfidence)
+        assertNull(loss.strategySignalStrength)
         assertEquals(0, loss.inBlindSpotHour)
         assertEquals("SNAPSHOT", loss.macroSource)
 

@@ -42,7 +42,7 @@ data class MlDatasetRow(
     val usdRub: BigDecimal,
     val macroSource: String,
     val strategyAction: String?,
-    val strategyConfidence: Double?,
+    val strategySignalStrength: Double?,
     val inBlindSpotHour: Int,
 ) {
     fun toCsvLine(): String {
@@ -75,7 +75,7 @@ data class MlDatasetRow(
                 usdRub.toPlainString(),
                 macroSource,
                 esc(strategyAction),
-                strategyConfidence?.let(::fmt) ?: "",
+                strategySignalStrength?.let(::fmt) ?: "",
                 inBlindSpotHour.toString(),
             )
         return parts.joinToString(",")
@@ -111,7 +111,7 @@ data class MlDatasetRow(
                 "usd_rub",
                 "macro_source",
                 "strategy_action",
-                "strategy_confidence",
+                "strategy_signal_strength",
                 "in_blind_spot_hour",
             ).joinToString(",")
 

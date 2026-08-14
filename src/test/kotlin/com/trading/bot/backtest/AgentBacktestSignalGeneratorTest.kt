@@ -77,11 +77,11 @@ class AgentBacktestSignalGeneratorTest {
             rsi = 45.0,
             atr = 1.0,
             conclusion = "BULLISH",
-            confidence = 0.7,
+            signalStrength = 0.7,
             reasoning = "uptrend",
         )
 
-    private val fund = FundamentalReport(conclusion = "NEUTRAL", confidence = 0.5, reasoning = "macro ok")
+    private val fund = FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.5, reasoning = "macro ok")
 
     private val draft = StrategyAgent.Draft(StrategyAction.BUY, BigDecimal("102"), 0.65, "buy")
 
@@ -90,7 +90,7 @@ class AgentBacktestSignalGeneratorTest {
             isValid = true,
             riskLevel = "LOW",
             critique = "looks fine",
-            confidence = 0.8,
+            signalStrength = 0.8,
         )
 
     private val final =

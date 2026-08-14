@@ -11,7 +11,7 @@ import java.math.BigDecimal
  * в [numericFeatures]/[categoricalFeatures].
  *
  * На скрининге решение стратега ещё не принято: [strategyAction] = "" и
- * [strategyConfidence] = null (кодируется как NaN) — отдельные категории/пропуск,
+ * [strategySignalStrength] = null (кодируется как NaN) — отдельные категории/пропуск,
  * как в [MlFeatureVector.from].
  */
 data class MlFeatureVector(
@@ -27,7 +27,7 @@ data class MlFeatureVector(
     val cbrRate: Double,
     val brentPrice: Double,
     val usdRub: Double,
-    val strategyConfidence: Double?,
+    val strategySignalStrength: Double?,
     val inBlindSpotHour: Int,
     val hourOfDay: Int,
     val strategyAction: String,
@@ -48,7 +48,7 @@ data class MlFeatureVector(
             cbrRate.toFloat(),
             brentPrice.toFloat(),
             usdRub.toFloat(),
-            strategyConfidence?.toFloat() ?: Float.NaN,
+            strategySignalStrength?.toFloat() ?: Float.NaN,
             inBlindSpotHour.toFloat(),
             hourOfDay.toFloat(),
         )
@@ -63,8 +63,8 @@ data class MlFeatureVector(
         /**
          * Сборка вектора из технических признаков [MlFeatureExtractor.Features] + контекста.
          *
-         * [strategyAction]=""/[strategyConfidence]=null соответствуют «решение стратега
-         * ещё не принято» (скрининг): категория пустого действия и пропуск confidence.
+         * [strategyAction]=""/[strategySignalStrength]=null соответствуют «решение стратега
+         * ещё не принято» (скрининг): категория пустого действия и пропуск сигнала.
          */
         fun from(
             features: MlFeatureExtractor.Features,
@@ -74,7 +74,7 @@ data class MlFeatureVector(
             inBlindSpotHour: Boolean,
             hourOfDay: Int,
             strategyAction: String,
-            strategyConfidence: Double?,
+            strategySignalStrength: Double?,
             direction: String,
         ): MlFeatureVector =
             MlFeatureVector(
@@ -90,7 +90,7 @@ data class MlFeatureVector(
                 cbrRate = cbrRate.toDouble(),
                 brentPrice = brentPrice.toDouble(),
                 usdRub = usdRub.toDouble(),
-                strategyConfidence = strategyConfidence,
+                strategySignalStrength = strategySignalStrength,
                 inBlindSpotHour = if (inBlindSpotHour) 1 else 0,
                 hourOfDay = hourOfDay,
                 strategyAction = strategyAction,

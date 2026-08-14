@@ -63,7 +63,7 @@ class GridStrategyTest {
     fun `BUY near lower band of the range`() {
         val decision = runBlocking { strategy.evaluate(context(BigDecimal("92.0"))) }
         assertEquals(StrategyAction.BUY, decision.action)
-        assertTrue(decision.confidence in 0.5..0.85, "confidence=${decision.confidence}")
+        assertTrue(decision.signalStrength in 0.5..0.85, "signalStrength=${decision.signalStrength}")
     }
 
     @Test
@@ -76,7 +76,7 @@ class GridStrategyTest {
     fun `HOLD inside the range`() {
         val decision = runBlocking { strategy.evaluate(context(BigDecimal("100.0"))) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 
     @Test

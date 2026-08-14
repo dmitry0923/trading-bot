@@ -133,7 +133,7 @@ class MlTrendForecastService(
                         inBlindSpotHour = inBlindSpot,
                         hourOfDay = hourOfDay,
                         strategyAction = "",
-                        strategyConfidence = null,
+                        strategySignalStrength = null,
                         direction = direction,
                     )
                 val probability = model.probability(vector.numericFeatures(), vector.categoricalFeatures())

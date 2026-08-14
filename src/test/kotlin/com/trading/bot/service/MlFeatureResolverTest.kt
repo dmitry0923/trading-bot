@@ -78,7 +78,7 @@ class MlFeatureResolverTest {
 
         assertTrue(vector != null)
         assertEquals("BUY", vector!!.strategyAction)
-        assertEquals(0.85, vector.strategyConfidence!!, 1e-9)
+        assertEquals(0.85, vector.strategySignalStrength!!, 1e-9)
         assertEquals("LONG", vector.direction)
         assertEquals(17.5, vector.cbrRate, 1e-9)
         assertEquals(95.0, vector.usdRub, 1e-9)

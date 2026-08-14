@@ -22,7 +22,7 @@ class AgentLogRepository(
             agentName = row.require("agent_name", String::class.java),
             ticker = row.get("ticker", String::class.java),
             action = row.require("action", String::class.java),
-            confidence = row.get("confidence", BigDecimal::class.java)?.toDouble(),
+            signalStrength = row.get("signal_strength", BigDecimal::class.java)?.toDouble(),
             reasoning = row.get("reasoning", String::class.java),
             rawOutput = row.get("raw_output", String::class.java),
             latencyMs = row.get("latency_ms", Long::class.javaObjectType)?.takeIf { it != 0L },
@@ -61,7 +61,7 @@ class AgentLogRepository(
 
     /**
      * Решение LLM-стратега (Agent-3-Strategist) для [cycleId] — последняя запись.
-     * Используется экспортом ML-датасета (roadmap v2.4): action + confidence
+     * Используется экспортом ML-датасета (roadmap v2.4): action + signalStrength
      * стратега на входе в позицию.
      */
     suspend fun findStrategyDecision(cycleId: String): AgentLog? =
@@ -76,14 +76,14 @@ class AgentLogRepository(
             .awaitSingleOrNull()
 
     /**
-     * Батч-получение уверенности стратега (Agent-3-Strategist) по списку cycleId.
+     * Батч-получение силы сигнала стратега (Agent-3-Strategist) по списку cycleId.
      *
      * Используется онлайн-калибровкой порога уверенности (roadmap 13.11.8): для закрытых
-     * позиций тикера одним запросом поднимаются уверенности на входе. Возвращает map
-     * cycleId -> confidence; cycleId без лога стратега (детерминированные стратегии без
+     * позиций тикера одним запросом поднимаются силы сигнала на входе. Возвращает map
+     * cycleId -> signalStrength; cycleId без лога стратега (детерминированные стратегии без
      * LLM-контура) отсутствуют в результате.
      */
-    suspend fun findStrategyConfidenceByCycleIds(cycleIds: Collection<String>): Map<String, Double> {
+    suspend fun findStrategySignalStrengthByCycleIds(cycleIds: Collection<String>): Map<String, Double> {
         val ids = cycleIds.map { it.trim() }.distinct().filter { it.isNotEmpty() }
         if (ids.isEmpty()) return emptyMap()
         val placeholders = ids.indices.joinToString(",") { ":id$it" }
@@ -91,7 +91,7 @@ class AgentLogRepository(
             databaseClient
                 .sql(
                     """
-                    SELECT cycle_id, confidence
+                    SELECT cycle_id, signal_strength
                     FROM agent_logs
                     WHERE cycle_id IN ($placeholders) AND agent_name = :agentName
                     """.trimIndent(),
@@ -99,7 +99,7 @@ class AgentLogRepository(
         ids.forEachIndexed { i, id -> spec = spec.bind("id$i", id) }
         return spec
             .map { row, _ ->
-                row.require("cycle_id", String::class.java) to (row.get("confidence", BigDecimal::class.java)?.toDouble() ?: 0.0)
+                row.require("cycle_id", String::class.java) to (row.get("signal_strength", BigDecimal::class.java)?.toDouble() ?: 0.0)
             }.all()
             .collectList()
             .awaitSingle()
@@ -109,9 +109,9 @@ class AgentLogRepository(
     suspend fun save(log: AgentLog): AgentLog {
         val sql =
             """
-            INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, confidence, reasoning, raw_output,
+            INSERT INTO agent_logs (cycle_id, agent_name, ticker, action, signal_strength, reasoning, raw_output,
                                     latency_ms, tokens_used, is_cached, override_reason, storage_key, created_at)
-            VALUES (:cycleId, :agentName, :ticker, :action, :confidence, :reasoning, :rawOutput,
+            VALUES (:cycleId, :agentName, :ticker, :action, :signalStrength, :reasoning, :rawOutput,
                     :latencyMs, :tokensUsed, :isCached, :overrideReason, :storageKey, :createdAt)
             RETURNING id
             """.trimIndent()
@@ -122,7 +122,7 @@ class AgentLogRepository(
                 .bind("agentName", log.agentName)
                 .bindOrNull("ticker", log.ticker)
                 .bind("action", log.action)
-                .bindOrNull("confidence", log.confidence)
+                .bindOrNull("signalStrength", log.signalStrength)
                 .bindOrNull("reasoning", log.reasoning)
                 .bindOrNull("rawOutput", log.rawOutput)
                 .bindOrNull("latencyMs", log.latencyMs)

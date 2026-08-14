@@ -7,7 +7,7 @@ import java.math.BigDecimal
 /**
  * Решение стратегического этапа пайплайна.
  *
- * Содержит ТОЛЬКО направление (BUY/SELL/HOLD), целевую цену и уверенность.
+ * Содержит ТОЛЬКО направление (BUY/SELL/HOLD), целевую цену и силу сигнала.
  * Размер позиции, SL/TP, плечо и прочие параметры заявки вычисляются позже
  * (RiskEngine → PositionSizer → OrderBuilder) и переносятся в
  * [com.trading.bot.domain.order.OrderParams].
@@ -16,7 +16,7 @@ data class Signal(
     val ticker: String,
     val action: StrategyAction,
     val targetPrice: BigDecimal,
-    val confidence: Double,
+    val signalStrength: Double,
     val reasoning: String,
     val timeframe: String,
     val cycleId: String,
@@ -34,7 +34,7 @@ fun Strategy.toSignal(): Signal =
         ticker = ticker,
         action = action,
         targetPrice = targetPrice,
-        confidence = confidence,
+        signalStrength = signalStrength,
         reasoning = reasoning,
         timeframe = timeframe,
         cycleId = cycleId,

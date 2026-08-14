@@ -24,7 +24,7 @@ import org.testcontainers.junit.jupiter.Testcontainers
  * Проверяют, что при недоступном LLM-провайдере бот не падает:
  *   - пустой API-ключ → мгновенный fallback NO_API_KEY (без сетевого вызова);
  *   - недоступный endpoint → fallback CALL_ERROR (после ошибки соединения);
- *   - fallback-ответ детерминирован (NEUTRAL / confidence 0.0) и фиксируется
+ *   - fallback-ответ детерминирован (NEUTRAL / signalStrength 0.0) и фиксируется
  *     метрикой `llm.fallback.activated{reason=...}`.
  *
  * Retry/CircuitBreaker/RateLimiter отключены, чтобы сценарий был детерминированным

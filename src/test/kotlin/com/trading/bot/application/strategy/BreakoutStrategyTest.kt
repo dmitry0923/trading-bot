@@ -69,7 +69,7 @@ class BreakoutStrategyTest {
         val decision = runBlocking { strategy.evaluate(context(lastClose = BigDecimal("112.0"))) }
         assertEquals(StrategyAction.BUY, decision.action)
         assertEquals(BigDecimal("112.0"), decision.targetPrice)
-        assertTrue(decision.confidence in 0.45..0.9, "confidence=${decision.confidence}")
+        assertTrue(decision.signalStrength in 0.45..0.9, "signalStrength=${decision.signalStrength}")
     }
 
     @Test
@@ -82,7 +82,7 @@ class BreakoutStrategyTest {
     fun `HOLD when close inside range`() {
         val decision = runBlocking { strategy.evaluate(context(lastClose = BigDecimal("100.0"))) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 
     @Test

@@ -59,7 +59,7 @@ class MeanReversionStrategyTest {
         val decision = runBlocking { strategy.evaluate(context(rsi = 25.0, close = BigDecimal("89.0"))) }
         assertEquals(StrategyAction.BUY, decision.action)
         assertEquals(price, decision.targetPrice)
-        assertTrue(decision.confidence in 0.5..0.9, "confidence=${decision.confidence}")
+        assertTrue(decision.signalStrength in 0.5..0.9, "signalStrength=${decision.signalStrength}")
     }
 
     @Test
@@ -72,7 +72,7 @@ class MeanReversionStrategyTest {
     fun `HOLD in neutral zone`() {
         val decision = runBlocking { strategy.evaluate(context(rsi = 50.0, close = BigDecimal("100.0"))) }
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(0.0, decision.confidence)
+        assertEquals(0.0, decision.signalStrength)
     }
 
     @Test

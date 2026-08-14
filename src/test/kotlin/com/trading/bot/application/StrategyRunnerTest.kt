@@ -56,7 +56,7 @@ class StrategyRunnerTest {
     ) = PerTickerRegime(direction, volatility, liquidity, event)
 
     @Test
-    fun `winner is the strategy with maximum confidence`() {
+    fun `winner is the strategy with maximum signalStrength`() {
         val runner =
             runner(
                 listOf(
@@ -83,7 +83,7 @@ class StrategyRunnerTest {
         val result = runBlocking { runner.runAll(context) }
         assertEquals("GOOD", result.winnerId)
         assertEquals(StrategyAction.HOLD, result.all["FAILING"]?.action)
-        assertEquals(0.0, result.all["FAILING"]?.confidence)
+        assertEquals(0.0, result.all["FAILING"]?.signalStrength)
     }
 
     @Test
@@ -126,7 +126,7 @@ class StrategyRunnerTest {
     }
 
     @Test
-    fun `fit score weights confidence among eligible strategies`() {
+    fun `fit score weights signalStrength among eligible strategies`() {
         val runner =
             runner(
                 listOf(
@@ -138,8 +138,8 @@ class StrategyRunnerTest {
         val result = runBlocking { runner.runAll(trendContext) }
         // BREAKOUT весится 0.85 * 0.8 = 0.68 < 0.8 (TREND_FOLLOWING) -> побеждает TREND_FOLLOWING.
         assertEquals("TREND_FOLLOWING", result.winnerId)
-        assertEquals(0.68, result.all["BREAKOUT"]?.confidence)
-        assertTrue(result.all["TREND_FOLLOWING"]!!.confidence > result.all["BREAKOUT"]!!.confidence)
+        assertEquals(0.68, result.all["BREAKOUT"]?.signalStrength)
+        assertTrue(result.all["TREND_FOLLOWING"]!!.signalStrength > result.all["BREAKOUT"]!!.signalStrength)
     }
 
     @Test

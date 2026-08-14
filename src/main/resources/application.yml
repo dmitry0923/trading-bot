@@ -305,7 +305,7 @@ bt:
   tp-percent: ${BT_TP_PERCENT:4.0}
   capital-slice: ${BT_CAPITAL_SLICE:0.20}
   # ML-фильтр входа в бэктесте (roadmap 13.11.6): признаки на момент бара,
-  # confidence=null. Требует доступной модели; не влияет на live-гейт ml.filter.enabled.
+  # signalStrength=null. Требует доступной модели; не влияет на live-гейт ml.filter.enabled.
   ml-filter-enabled: ${BT_ML_FILTER_ENABLED:false}
   # Multi-timeframe фильтр тренда в бэктесте (roadmap v2.5): вход гейтится трендом
   # старшего ТФ (mtf.filter.higher-timeframe) на момент бара; не влияет на live-гейт mtf.filter.enabled.

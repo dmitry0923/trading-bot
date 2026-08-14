@@ -113,7 +113,7 @@ class ChaosRedisIntegrationTest {
             action = StrategyAction.BUY,
             targetPrice = BigDecimal("101"),
             quantity = 10,
-            confidence = 0.8,
+            signalStrength = 0.8,
             reasoning = "chaos",
             cycleId = "chaos-1",
             validUntil = LocalDateTime.now().plusMinutes(5),

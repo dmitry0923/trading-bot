@@ -43,10 +43,10 @@ class MeanReversionStrategy : Strategy {
         }
 
         val extremity = if (direction == StrategyAction.BUY) (30.0 - indicators.rsi) / 30.0 else (indicators.rsi - 70.0) / 30.0
-        val confidence = (0.5 + extremity.coerceIn(0.0, 1.0) * 0.4).coerceIn(0.0, 0.9)
+        val signalStrength = (0.5 + extremity.coerceIn(0.0, 1.0) * 0.4).coerceIn(0.0, 0.9)
         val reasoning =
             "RSI=${round(indicators.rsi)} at ${if (direction == StrategyAction.BUY) "lower" else "upper"} Bollinger band -> $direction"
-        return StrategyDecision(direction, price, confidence, reasoning)
+        return StrategyDecision(direction, price, signalStrength, reasoning)
     }
 
     private fun round(v: Double): String = v.toBigDecimal().setScale(3, RoundingMode.HALF_UP).toPlainString()

@@ -318,7 +318,7 @@ class LlmCycleLoadTest {
                                     mapOf(
                                         "message" to
                                             mapOf(
-                                                "content" to """{"conclusion":"BULLISH","confidence":0.7,"reasoning":"load-test"}""",
+                                                "content" to """{"conclusion":"BULLISH","signalStrength":0.7,"reasoning":"load-test"}""",
                                             ),
                                     ),
                                 ),

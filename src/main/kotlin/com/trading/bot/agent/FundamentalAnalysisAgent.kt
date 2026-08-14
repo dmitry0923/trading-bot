@@ -84,7 +84,7 @@ class FundamentalAnalysisAgent(
         val report =
             if (resp.isFallback) {
                 logger.info { "LLM unavailable for fundamental analysis of $ticker" }
-                FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "LLM unavailable")
+                FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.0, reasoning = "LLM unavailable")
             } else {
                 try {
                     val j = objectMapper.readTree(resp.content)
@@ -93,12 +93,12 @@ class FundamentalAnalysisAgent(
                             j.path("conclusion").asString("NEUTRAL").uppercase().let {
                                 if (it in setOf("BULLISH", "BEARISH", "NEUTRAL")) it else "NEUTRAL"
                             },
-                        confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+                        signalStrength = j.path("signalStrength").asDouble(0.0).coerceIn(0.0, 1.0),
                         reasoning = j.path("reasoning").asString(""),
                     )
                 } catch (e: Exception) {
                     logger.warn(e) { "Fundamental LLM parse error for $ticker" }
-                    FundamentalReport(conclusion = "NEUTRAL", confidence = 0.0, reasoning = "Parse error")
+                    FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.0, reasoning = "Parse error")
                 }
             }
 
@@ -108,7 +108,7 @@ class FundamentalAnalysisAgent(
                 agentName = "Agent-2-Fundamental",
                 ticker = ticker,
                 action = report.conclusion,
-                confidence = report.confidence,
+                signalStrength = report.signalStrength,
                 reasoning = report.reasoning,
                 rawOutput = resp.content,
                 latencyMs = System.currentTimeMillis() - start,

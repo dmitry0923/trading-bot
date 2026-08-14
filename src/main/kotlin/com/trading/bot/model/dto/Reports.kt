@@ -11,13 +11,13 @@ data class TechnicalReport(
     val bbUpper: BigDecimal? = null,
     val bbLower: BigDecimal? = null,
     val conclusion: String = "NEUTRAL",
-    val confidence: Double = 0.0,
+    val signalStrength: Double = 0.0,
     val reasoning: String = "",
 )
 
 data class FundamentalReport(
     val conclusion: String,
-    val confidence: Double = 0.0,
+    val signalStrength: Double = 0.0,
     val reasoning: String = "",
 )
 

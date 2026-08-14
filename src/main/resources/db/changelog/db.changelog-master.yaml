@@ -45,3 +45,5 @@ databaseChangeLog:
       file: db/changelog/changes/022-backtest-results.sql
   - include:
       file: db/changelog/changes/023-macro-snapshots.sql
+  - include:
+      file: db/changelog/changes/024-signal-strength-rename.sql

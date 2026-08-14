@@ -113,7 +113,7 @@ class SemanticCacheTest {
     fun `put then get returns stored response`() {
         val resp =
             LlmResponse(
-                content = """{"conclusion":"BULLISH","confidence":0.8,"reasoning":"trend up"}""",
+                content = """{"conclusion":"BULLISH","signalStrength":0.8,"reasoning":"trend up"}""",
                 tokensUsed = 123,
                 latencyMs = 456,
                 model = "kimi-k3",

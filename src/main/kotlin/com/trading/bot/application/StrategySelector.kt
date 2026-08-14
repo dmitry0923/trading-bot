@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component
  *     импульсные/дискреционные) и понижает веса.
  *
  * Выбор победителя по-прежнему делает [com.trading.bot.application.StrategyRunner],
- * но только среди [eligibleStrategyIds], умножая confidence на [fitScore].
+ * но только среди [eligibleStrategyIds], умножая signalStrength на [fitScore].
  */
 @Component
 class StrategySelector {

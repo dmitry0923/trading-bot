@@ -38,7 +38,7 @@ import java.time.LocalDateTime
  *
  * Покрывают деградированные ветки, которые живут только внутри приватных
  * parse-методов агентов: битый JSON, невалидный action/conclusion, выход
- * confidence за границы, fenced-блоки ```json, fallback-ответы и метрики
+ * signalStrength за границы, fenced-блоки ```json, fallback-ответы и метрики
  * parse.error.
  *
  * LLM-клиент заменяется на [StubLlmClient] — реальную реализацию интерфейса
@@ -111,12 +111,12 @@ class AgentResponseParsingTest {
 
     @Test
     fun `technical agent parses bullish json into enhanced report`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BEARISH","confidence":0.9,"reasoning":"oversold"}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BEARISH","signalStrength":0.9,"reasoning":"oversold"}""")))
 
         val report = runBlocking { techAgent(llm).analyze("SBER", candles(30), snapshot, "c1") }
 
         assertEquals("BEARISH", report.conclusion)
-        assertEquals(0.9, report.confidence)
+        assertEquals(0.9, report.signalStrength)
         assertEquals("oversold", report.reasoning)
         assertEquals(
             1.0,
@@ -129,17 +129,17 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `technical agent coerces confidence into zero to one`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BULLISH","confidence":5.0}""")))
+    fun `technical agent coerces signalStrength into zero to one`() {
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BULLISH","signalStrength":5.0}""")))
 
         val report = runBlocking { techAgent(llm).analyze("SBER", candles(30), snapshot, "c1") }
 
-        assertEquals(1.0, report.confidence)
+        assertEquals(1.0, report.signalStrength)
     }
 
     @Test
     fun `technical agent sanitizes unknown conclusion to neutral`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"WEIRD","confidence":0.8}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"WEIRD","signalStrength":0.8}""")))
 
         val report = runBlocking { techAgent(llm).analyze("SBER", candles(30), snapshot, "c1") }
 
@@ -154,7 +154,7 @@ class AgentResponseParsingTest {
 
         // Константные свечи дают детерминированный baseline (RSI=100 -> BEARISH)
         assertEquals("BEARISH", report.conclusion)
-        assertEquals(0.55, report.confidence)
+        assertEquals(0.55, report.signalStrength)
     }
 
     @Test
@@ -164,7 +164,7 @@ class AgentResponseParsingTest {
         val report = runBlocking { techAgent(llm).analyze("SBER", candles(30), snapshot, "c1") }
 
         assertEquals("BEARISH", report.conclusion)
-        assertEquals(0.55, report.confidence)
+        assertEquals(0.55, report.signalStrength)
         assertTrue(report.reasoning.startsWith("RSI="))
     }
 
@@ -196,20 +196,20 @@ class AgentResponseParsingTest {
 
     @Test
     fun `fundamental agent parses bullish json`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BULLISH","confidence":0.75,"reasoning":"rate cut"}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BULLISH","signalStrength":0.75,"reasoning":"rate cut"}""")))
 
         runBlocking { stubMacro() }
 
         val report = runBlocking { fundAgent(llm).analyze("SBER", "c1") }
 
         assertEquals("BULLISH", report.conclusion)
-        assertEquals(0.75, report.confidence)
+        assertEquals(0.75, report.signalStrength)
         assertEquals("rate cut", report.reasoning)
     }
 
     @Test
     fun `fundamental agent sanitizes unknown conclusion`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"moon","confidence":0.5}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"moon","signalStrength":0.5}""")))
 
         runBlocking { stubMacro() }
 
@@ -227,7 +227,7 @@ class AgentResponseParsingTest {
         val report = runBlocking { fundAgent(llm).analyze("SBER", "c1") }
 
         assertEquals("NEUTRAL", report.conclusion)
-        assertEquals(0.0, report.confidence)
+        assertEquals(0.0, report.signalStrength)
     }
 
     @Test
@@ -257,11 +257,11 @@ class AgentResponseParsingTest {
             rsi = 55.0,
             atr = 1.0,
             conclusion = "BULLISH",
-            confidence = 0.8,
+            signalStrength = 0.8,
             reasoning = "uptrend",
         )
 
-    private val fundReport = FundamentalReport(conclusion = "NEUTRAL", confidence = 0.5, reasoning = "macro ok")
+    private val fundReport = FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.5, reasoning = "macro ok")
 
     @Test
     fun `strategy agent holds without llm when tech data insufficient`() {
@@ -279,21 +279,21 @@ class AgentResponseParsingTest {
             }
 
         assertEquals(StrategyAction.HOLD, draft.action)
-        assertEquals(0.0, draft.confidence)
+        assertEquals(0.0, draft.signalStrength)
         runBlocking {
             verify(llm, never()).complete(any(), any(), any(), any(), any(), any(), any())
         }
     }
 
     @Test
-    fun `strategy agent holds without llm when tech confidence low`() {
+    fun `strategy agent holds without llm when tech signalStrength low`() {
         val llm = mock<ResilientLlmClient>()
 
         val draft =
             runBlocking {
                 stratAgent(llm).formulate(
                     "SBER",
-                    techReport.copy(confidence = 0.3),
+                    techReport.copy(signalStrength = 0.3),
                     fundReport,
                     snapshot,
                     "c1",
@@ -304,9 +304,9 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `strategy agent parses buy draft and coerces confidence`() {
+    fun `strategy agent parses buy draft and coerces signalStrength`() {
         val llm =
-            StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","confidence":1.7,"reasoning":"go"}""")))
+            StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","signalStrength":1.7,"reasoning":"go"}""")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
             passthrough(it.getArgument(0))
@@ -316,12 +316,12 @@ class AgentResponseParsingTest {
 
         assertEquals(StrategyAction.BUY, draft.action)
         assertEquals(BigDecimal("102.5"), draft.targetPrice)
-        assertEquals(1.0, draft.confidence)
+        assertEquals(1.0, draft.signalStrength)
     }
 
     @Test
     fun `strategy agent falls back to snapshot price when target missing`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","confidence":0.7}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","signalStrength":0.7}""")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
             passthrough(it.getArgument(0))
@@ -334,7 +334,7 @@ class AgentResponseParsingTest {
 
     @Test
     fun `strategy agent maps unknown action to hold`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"YOLO","confidence":0.7}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"YOLO","signalStrength":0.7}""")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
             passthrough(it.getArgument(0))
@@ -373,14 +373,14 @@ class AgentResponseParsingTest {
 
     @Test
     fun `strategy agent applies guardrail override on top of parsed draft`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","confidence":0.7}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","signalStrength":0.7}""")))
         val guardrails: Guardrails = mock()
         val overridden =
             Guardrails.GuardedSignal(
                 signal = Guardrails.Signal(StrategyAction.HOLD, snapshot.currentPrice, 0.0),
                 overridden = true,
                 overrideReason = "GUARDRAIL: LOW_CONFIDENCE",
-                appliedRules = listOf("confidence < threshold -> HOLD"),
+                appliedRules = listOf("signalStrength < threshold -> HOLD"),
             )
         whenever(guardrails.apply(any(), any(), any(), any())).thenReturn(overridden)
 
@@ -415,7 +415,7 @@ class AgentResponseParsingTest {
 
         assertEquals(true, report.isValid)
         assertEquals("LOW", report.riskLevel)
-        assertEquals(1.0, report.confidence)
+        assertEquals(1.0, report.signalStrength)
         runBlocking {
             verify(llm, never()).complete(any(), any(), any(), any(), any(), any(), any())
         }
@@ -424,14 +424,21 @@ class AgentResponseParsingTest {
     @Test
     fun `contrarian agent parses challenge and sanitizes risk level`() {
         val llm =
-            StubLlmClient(listOf(LlmResponse(content = """{"isValid":false,"riskLevel":"EXTREME","critique":"risky","confidence":0.9}""")))
+            StubLlmClient(
+                listOf(
+                    LlmResponse(
+                        content =
+                            """{"isValid":false,"riskLevel":"EXTREME","critique":"risky","signalStrength":0.9}""",
+                    ),
+                ),
+            )
 
         val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
 
         assertEquals(false, report.isValid)
         assertEquals("LOW", report.riskLevel)
         assertEquals("risky", report.critique)
-        assertEquals(0.9, report.confidence)
+        assertEquals(0.9, report.signalStrength)
     }
 
     @Test
@@ -443,7 +450,7 @@ class AgentResponseParsingTest {
         assertEquals(true, report.isValid)
         assertEquals("LOW", report.riskLevel)
         assertEquals("Parse error", report.critique)
-        assertEquals(0.5, report.confidence)
+        assertEquals(0.5, report.signalStrength)
     }
 
     @Test
@@ -454,7 +461,7 @@ class AgentResponseParsingTest {
 
         assertEquals(true, report.isValid)
         assertEquals("LOW", report.riskLevel)
-        assertEquals(0.5, report.confidence)
+        assertEquals(0.5, report.signalStrength)
     }
 
     // ===== ArbitratorAgent =====
@@ -467,12 +474,12 @@ class AgentResponseParsingTest {
     ): ArbitratorAgent = ArbitratorAgent(llm, mock(), guardrails, mock(), mock(), arbMeter, objectMapper)
 
     private val lowRiskChallenge =
-        ContrarianAgent.ChallengeReport(isValid = true, riskLevel = "LOW", critique = "ok", confidence = 0.8)
+        ContrarianAgent.ChallengeReport(isValid = true, riskLevel = "LOW", critique = "ok", signalStrength = 0.8)
 
     @Test
     fun `arbitrator blocks on critical challenge without llm`() {
         val llm = mock<ResilientLlmClient>()
-        val critical = ContrarianAgent.ChallengeReport(isValid = false, riskLevel = "CRITICAL", critique = "danger", confidence = 1.0)
+        val critical = ContrarianAgent.ChallengeReport(isValid = false, riskLevel = "CRITICAL", critique = "danger", signalStrength = 1.0)
 
         val decision = runBlocking { arbAgent(llm).adjudicate(buyDraft, critical, techReport, fundReport, snapshot, "c1") }
 
@@ -493,9 +500,9 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `arbitrator holds on low draft confidence`() {
+    fun `arbitrator holds on low draft signalStrength`() {
         val llm = mock<ResilientLlmClient>()
-        val weakDraft = buyDraft.copy(confidence = 0.4)
+        val weakDraft = buyDraft.copy(signalStrength = 0.4)
 
         val decision = runBlocking { arbAgent(llm).adjudicate(weakDraft, lowRiskChallenge, techReport, fundReport, snapshot, "c1") }
 
@@ -507,7 +514,7 @@ class AgentResponseParsingTest {
     fun `arbitrator parses fenced json decision`() {
         val fenced =
             """```json
-{"action":"BUY","targetPrice":"102.5","confidence":0.8,"reasoning":"go long"}
+{"action":"BUY","targetPrice":"102.5","signalStrength":0.8,"reasoning":"go long"}
 ```"""
         val llm = StubLlmClient(listOf(LlmResponse(content = fenced)))
         val guardrails: Guardrails = mock()
@@ -523,12 +530,12 @@ class AgentResponseParsingTest {
 
         assertEquals(StrategyAction.BUY, decision.action)
         assertEquals(BigDecimal("102.5"), decision.targetPrice)
-        assertEquals(0.8, decision.confidence)
+        assertEquals(0.8, decision.signalStrength)
     }
 
     @Test
     fun `arbitrator falls back to draft target when target missing`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","confidence":0.8}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","signalStrength":0.8}""")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
             passthrough(it.getArgument(0))
@@ -545,7 +552,7 @@ class AgentResponseParsingTest {
 
     @Test
     fun `arbitrator maps unknown action to hold`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"MOON","confidence":0.9}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"MOON","signalStrength":0.9}""")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
             passthrough(it.getArgument(0))
@@ -577,7 +584,7 @@ class AgentResponseParsingTest {
 
     @Test
     fun `arbitrator applies post-processing guardrail`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"150.0","confidence":0.8}""")))
+        val llm = StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"150.0","signalStrength":0.8}""")))
         val guardrails: Guardrails = mock()
         val overridden =
             Guardrails.GuardedSignal(
@@ -641,7 +648,7 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `rule based feedback raises confidence threshold on low win rate`() {
+    fun `rule based feedback raises confidence adjustment on low win rate`() {
         val feedback = perfAgent(mock()).ruleBasedFeedback("SBER", stats(winRate = 0.30))
 
         assertEquals(0.15, feedback.confidenceAdjustment)

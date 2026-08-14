@@ -47,7 +47,7 @@ class ArbitratorAgent(
     data class Final(
         val action: StrategyAction,
         val targetPrice: BigDecimal,
-        val confidence: Double,
+        val signalStrength: Double,
         val reasoning: String,
         val overrideReason: String? = null,
     )
@@ -110,12 +110,12 @@ class ArbitratorAgent(
                 )
             }
 
-            if (draft.confidence < adaptiveConfidence) {
+            if (draft.signalStrength < adaptiveConfidence) {
                 meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "LOW_DRAFT_CONFIDENCE")).increment()
                 return@coroutineScope logAndReturn(
                     hold(
                         snapshot.currentPrice,
-                        "Draft confidence ${draft.confidence} < threshold $adaptiveConfidence",
+                        "Draft signalStrength ${draft.signalStrength} < threshold $adaptiveConfidence",
                         "DETERMINISTIC: LOW_DRAFT_CONFIDENCE",
                     ),
                     snapshot.ticker,
@@ -131,7 +131,7 @@ class ArbitratorAgent(
                 mapOf(
                     "action" to draft.action.name,
                     "targetPrice" to draft.targetPrice.toPlainString(),
-                    "confidence" to String.format("%.2f", draft.confidence),
+                    "signalStrength" to String.format("%.2f", draft.signalStrength),
                     "strategyReasoning" to draft.reasoning,
                     "riskLevel" to challenge.riskLevel,
                     "critique" to challenge.critique,
@@ -194,7 +194,7 @@ class ArbitratorAgent(
                         Guardrails.Signal(
                             action = dec.action,
                             targetPrice = dec.targetPrice,
-                            confidence = dec.confidence,
+                            signalStrength = dec.signalStrength,
                         ),
                     marketPrice = snapshot.currentPrice,
                     adaptiveThreshold = adaptiveConfidence,
@@ -206,7 +206,7 @@ class ArbitratorAgent(
                     dec.copy(
                         action = guarded.signal.action,
                         targetPrice = guarded.signal.targetPrice,
-                        confidence = guarded.signal.confidence,
+                        signalStrength = guarded.signal.signalStrength,
                         reasoning = dec.reasoning + " [GUARDRAIL: ${guarded.overrideReason}]",
                         overrideReason = guarded.overrideReason,
                     )
@@ -230,7 +230,7 @@ class ArbitratorAgent(
         return Final(
             action = action,
             targetPrice = j.path("targetPrice").asString().toBigDecimalOrNull() ?: fallback.targetPrice,
-            confidence = j.path("confidence").asDouble(0.0).coerceIn(0.0, 1.0),
+            signalStrength = j.path("signalStrength").asDouble(0.0).coerceIn(0.0, 1.0),
             reasoning = j.path("reasoning").asString(fallback.reasoning),
         )
     }
@@ -257,7 +257,7 @@ class ArbitratorAgent(
                 agentName = "Agent-5-Arbitrator",
                 ticker = ticker,
                 action = dec.action.name,
-                confidence = dec.confidence,
+                signalStrength = dec.signalStrength,
                 reasoning = dec.reasoning,
                 rawOutput = raw,
                 latencyMs = System.currentTimeMillis() - startMs,
@@ -269,7 +269,8 @@ class ArbitratorAgent(
         )
         meterRegistry.counter("agent.arbitrator.decision", Tags.of("action", dec.action.name)).increment()
         logger.info {
-            "Agent 5 FINAL: ${dec.action} @ ${dec.targetPrice} conf=${String.format("%.2f", dec.confidence)} override=${dec.overrideReason}"
+            "Agent 5 FINAL: ${dec.action} @ ${dec.targetPrice} " +
+                "conf=${String.format("%.2f", dec.signalStrength)} override=${dec.overrideReason}"
         }
         return dec
     }

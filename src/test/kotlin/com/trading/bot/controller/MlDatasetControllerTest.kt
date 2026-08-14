@@ -86,7 +86,7 @@ class MlDatasetControllerTest {
         val response = runBlocking { controller.dataset(null, "SBER", 10) }
 
         assertEquals(
-            "position_id,ticker,direction,opened_at,closed_at,duration_min,entry_price,exit_price,pnl_rub,pnl_percent,close_reason,win,hour_of_day,rsi14,atr_percent,macd_hist_percent,bb_percent_b,ema_slope_percent,volatility20_percent,ret_3,ret_10,ret_20,cbr_rate,brent,usd_rub,macro_source,strategy_action,strategy_confidence,in_blind_spot_hour",
+            "position_id,ticker,direction,opened_at,closed_at,duration_min,entry_price,exit_price,pnl_rub,pnl_percent,close_reason,win,hour_of_day,rsi14,atr_percent,macd_hist_percent,bb_percent_b,ema_slope_percent,volatility20_percent,ret_3,ret_10,ret_20,cbr_rate,brent,usd_rub,macro_source,strategy_action,strategy_signal_strength,in_blind_spot_hour",
             response.body,
         )
     }
@@ -133,7 +133,7 @@ class MlDatasetControllerTest {
             usdRub = BigDecimal("90"),
             macroSource = "SNAPSHOT",
             strategyAction = "BUY",
-            strategyConfidence = 0.85,
+            strategySignalStrength = 0.85,
             inBlindSpotHour = 1,
         )
 }

@@ -41,8 +41,8 @@ def make_synthetic_csv(path: Path, n_rows: int = 300) -> None:
     base = rng.normal(size=n_rows)
     data["win"] = (base > 0).astype(int)
     data["pnl_rub"] = np.where(data["win"] == 1, abs(base) * 100, -abs(base) * 100)
-    data["strategy_confidence"] = rng.uniform(0, 1, n_rows)
-    data["strategy_confidence"][::5] = np.nan
+    data["strategy_signal_strength"] = rng.uniform(0, 1, n_rows)
+    data["strategy_signal_strength"][::5] = np.nan
     data["strategy_action"] = rng.choice(["BUY", "SELL", "HOLD", "CLOSE"], n_rows)
     data["strategy_action"][::7] = ""
     data["direction"] = rng.choice(["LONG", "SHORT"], n_rows)
@@ -57,7 +57,7 @@ def make_synthetic_csv(path: Path, n_rows: int = 300) -> None:
     df["cbr_rate"] = rng.uniform(0, 20, n_rows)
     df["brent"] = rng.uniform(40, 120, n_rows)
     df["usd_rub"] = rng.uniform(60, 120, n_rows)
-    df["strategy_confidence"] = df["strategy_confidence"].astype(float)
+    df["strategy_signal_strength"] = df["strategy_signal_strength"].astype(float)
     df.to_csv(path, index=False)
 
 

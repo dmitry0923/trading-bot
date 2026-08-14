@@ -157,7 +157,7 @@ class MlEntryFilterTest {
     }
 
     @Test
-    fun `uses signal action confidence and direction in prediction`() {
+    fun `uses signal action signalStrength and direction in prediction`() {
         config.enabled = true
         config.filter.enabled = true
         val model = RecordingModel(0.9)
@@ -172,7 +172,7 @@ class MlEntryFilterTest {
         // categorical[0] = strategy_action, categorical[1] = direction.
         assertEquals("BUY", model.calls.first().second[0])
         assertEquals("LONG", model.calls.first().second[1])
-        // numeric[12] = strategy_confidence.
+        // numeric[12] = strategy_signal_strength.
         assertEquals(0.8f, model.calls.first().first[12])
     }
 
@@ -232,7 +232,7 @@ class MlEntryFilterTest {
             ticker = "SBER",
             action = action,
             targetPrice = BigDecimal("100"),
-            confidence = 0.8,
+            signalStrength = 0.8,
             reasoning = "test",
             timeframe = "MINUTE_10",
             cycleId = "cycle-1",
@@ -252,7 +252,7 @@ class MlEntryFilterTest {
             cbrRate = 16.0,
             brentPrice = 75.0,
             usdRub = 90.0,
-            strategyConfidence = 0.8,
+            strategySignalStrength = 0.8,
             inBlindSpotHour = 0,
             hourOfDay = 14,
             strategyAction = "BUY",

@@ -56,10 +56,10 @@ class ScalpingStrategy : Strategy {
             )
         }
 
-        val confidence = (0.4 + (abs(momentum).coerceIn(0.5, 2.0) - 0.5) / 1.5 * 0.4).coerceIn(0.0, 0.8)
+        val signalStrength = (0.4 + (abs(momentum).coerceIn(0.5, 2.0) - 0.5) / 1.5 * 0.4).coerceIn(0.0, 0.8)
         val reasoning =
             "Momentum=${round(momentum)}xATR, MACD-hist=${round(macd)}, vol confirmed -> $direction"
-        return StrategyDecision(direction, price, confidence, reasoning)
+        return StrategyDecision(direction, price, signalStrength, reasoning)
     }
 
     private fun round(v: Double): String = v.toBigDecimal().setScale(3, RoundingMode.HALF_UP).toPlainString()

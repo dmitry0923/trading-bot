@@ -31,7 +31,7 @@ class ExperimentDecisionRepository(
             quantity = row.require("quantity", Int::class.javaObjectType),
             stopLoss = row.get("stop_loss", BigDecimal::class.java),
             takeProfit = row.get("take_profit", BigDecimal::class.java),
-            confidence = row.get("confidence", BigDecimal::class.java)?.toDouble(),
+            signalStrength = row.get("signal_strength", BigDecimal::class.java)?.toDouble(),
             reasoning = row.get("reasoning", String::class.java),
             isPaper = row.require("is_paper", Boolean::class.javaObjectType),
             version = row.get("version", String::class.java),
@@ -46,10 +46,10 @@ class ExperimentDecisionRepository(
         val sql =
             """
             INSERT INTO experiment_decisions (cycle_id, experiment_id, arm, ticker, timeframe, action,
-                target_price, quantity, stop_loss, take_profit, confidence, reasoning, is_paper, version,
+                target_price, quantity, stop_loss, take_profit, signal_strength, reasoning, is_paper, version,
                 raw_output, executed, result_pnl, closed, decided_at)
             VALUES (:cycleId, :experimentId, :arm, :ticker, :timeframe, :action,
-                :targetPrice, :quantity, :stopLoss, :takeProfit, :confidence, :reasoning, :isPaper, :version,
+                :targetPrice, :quantity, :stopLoss, :takeProfit, :signalStrength, :reasoning, :isPaper, :version,
                 :rawOutput, :executed, :resultPnl, :closed, :decidedAt)
             RETURNING id
             """.trimIndent()
@@ -66,7 +66,7 @@ class ExperimentDecisionRepository(
                 .bind("quantity", decision.quantity)
                 .bindOrNull("stopLoss", decision.stopLoss)
                 .bindOrNull("takeProfit", decision.takeProfit)
-                .bindOrNull("confidence", decision.confidence)
+                .bindOrNull("signalStrength", decision.signalStrength)
                 .bindOrNull("reasoning", decision.reasoning)
                 .bind("isPaper", decision.isPaper)
                 .bindOrNull("version", decision.version)

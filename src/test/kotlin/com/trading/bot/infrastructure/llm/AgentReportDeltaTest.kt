@@ -21,7 +21,7 @@ class AgentReportDeltaTest {
             rsi = 45.0,
             atr = 1.0,
             conclusion = "BULLISH",
-            confidence = 0.7,
+            signalStrength = 0.7,
             reasoning = "strong momentum above MA",
         )
 
@@ -66,13 +66,13 @@ class AgentReportDeltaTest {
     }
 
     @Test
-    fun `fundamental delta reports conclusion confidence and reasoning changes`() {
+    fun `fundamental delta reports conclusion signalStrength and reasoning changes`() {
         val prev = FundamentalReport("NEUTRAL", 0.5, "macro ok")
         val current = FundamentalReport("BULLISH", 0.6, "rate cut expected")
         val delta = AgentReportDelta.fundamental(prev, current)
 
         assertTrue(delta!!.contains("conclusion: NEUTRAL→BULLISH"))
-        assertTrue(delta.contains("confidence: 0.50→0.60"))
+        assertTrue(delta.contains("signalStrength: 0.50→0.60"))
         assertTrue(delta.contains("reasoning: macro ok→rate cut expected"))
     }
 }

@@ -9,7 +9,7 @@ import java.util.Locale
  *
  * Сокращает число входных токенов у стратега/контрариана: вместо полного текста
  * `reasoning` каждого анализа в промпт уходит только то, что ИЗМЕНИЛОСЬ с прошлой
- * оценки того же тикера. Числовые поля (conclusion/confidence/trend/rsi/atr/macd)
+ * оценки того же тикера. Числовые поля (conclusion/signalStrength/trend/rsi/atr/macd)
  * приводятся всегда — они короткие и несут основной сигнал.
  *
  * Семантика возвращаемого значения:
@@ -30,7 +30,7 @@ object AgentReportDelta {
             val parts =
                 listOfNotNull(
                     changed("conclusion", it.conclusion, current.conclusion),
-                    changed("confidence", fmt(it.confidence), fmt(current.confidence)),
+                    changed("signalStrength", fmt(it.signalStrength), fmt(current.signalStrength)),
                     changed("trend", it.trend, current.trend),
                     changed("rsi", fmt(it.rsi), fmt(current.rsi)),
                     changed("atr", fmt(it.atr), fmt(current.atr)),
@@ -48,7 +48,7 @@ object AgentReportDelta {
             val parts =
                 listOfNotNull(
                     changed("conclusion", it.conclusion, current.conclusion),
-                    changed("confidence", fmt(it.confidence), fmt(current.confidence)),
+                    changed("signalStrength", fmt(it.signalStrength), fmt(current.signalStrength)),
                     changed("reasoning", truncate(it.reasoning), truncate(current.reasoning)),
                 )
             join(parts)

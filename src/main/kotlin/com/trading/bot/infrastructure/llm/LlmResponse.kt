@@ -24,7 +24,7 @@ data class LlmResponse(
             message: String? = null,
         ): LlmResponse =
             LlmResponse(
-                content = """{"conclusion":"NEUTRAL","confidence":0.0,"reasoning":"LLM unavailable: $reason"}""",
+                content = """{"conclusion":"NEUTRAL","signalStrength":0.0,"reasoning":"LLM unavailable: $reason"}""",
                 isFallback = true,
                 errorMessage = message ?: reason,
                 latencyMs = 0,

@@ -7,6 +7,7 @@ import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.RiskVerdict
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -207,12 +208,13 @@ class DecisionEngine(
 
         // Портфельный риск (агрегат): VaR95 / эффективное число ставок / направленная
         // концентрация. ENFORCED — блок/уменьшение размера; READ_ONLY — только метрики.
-        val portfolioNotional = entryPrice.multiply(BigDecimal(params.quantity))
+        val initialDecision = TradeRiskDecision.from(signal, request, size, params)
+        val portfolioNotional = (initialDecision.entryPrice ?: entryPrice).multiply(BigDecimal(initialDecision.quantity))
         val portfolioReport =
             portfolioRiskEngine.evaluate(
                 PortfolioRiskRequest(
-                    candidateTicker = ticker,
-                    candidateDirection = direction,
+                    candidateTicker = initialDecision.ticker,
+                    candidateDirection = initialDecision.direction,
                     candidateNotionalRub = portfolioNotional,
                     openPositions = openPositions,
                     aum = request.portfolioMoney,
@@ -267,16 +269,26 @@ class DecisionEngine(
             }
         }
 
+        // Финальное риск-решение сделки: сигнал + риск-вход + размер + параметры
+        // заявки схлопываются в [TradeRiskDecision] и прогоняются через исполнение
+        // (position/логи/история стратегии) без дублирования полей.
+        val decision = TradeRiskDecision.from(signal, request, size, params)
         val opened =
-            gateway.placeEntryOrder(ticker, direction, params.quantity, entryPrice, accountId) { orderId, pending, fillPrice, qty ->
-                profile.buildPosition(signal, params, orderId, pending, fillPrice, qty)
+            gateway.placeEntryOrder(
+                decision.ticker,
+                decision.direction,
+                decision.quantity,
+                decision.entryPrice ?: entryPrice,
+                accountId,
+            ) { orderId, pending, fillPrice, qty ->
+                profile.buildPosition(decision, orderId, pending, fillPrice, qty)
             }
         if (opened != null) {
-            orderBuilder.recordStrategyExecution(signal, params)
-            profile.onOpened(signal, opened, params, size)
+            orderBuilder.recordStrategyExecution(decision)
+            profile.onOpened(decision, opened)
             logger.info {
-                "Opened $ticker ${direction.name} qty=${opened.quantity} @ ${opened.entryPrice} " +
-                    "sl=${params.stopLossPrice} tp=${params.takeProfitPrice}"
+                "Opened ${decision.ticker} ${decision.direction.name} qty=${opened.quantity} @ ${opened.entryPrice} " +
+                    "sl=${decision.stopLoss} tp=${decision.takeProfit}"
             }
         }
     }

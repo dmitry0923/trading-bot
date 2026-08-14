@@ -8,6 +8,7 @@ import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.RiskEngine
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
@@ -153,44 +154,41 @@ class StockEntryProfile(
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 
     override fun buildPosition(
-        signal: Signal,
-        params: OrderParams,
+        decision: TradeRiskDecision,
         orderId: String?,
         pending: Boolean,
         fillPrice: BigDecimal,
         qty: Int,
     ): Position =
         Position(
-            ticker = signal.ticker,
-            direction = params.direction,
+            ticker = decision.ticker,
+            direction = decision.direction,
             quantity = qty,
             entryPrice = fillPrice,
             currentPrice = fillPrice,
-            stopLoss = params.stopLossPrice,
-            takeProfit = params.takeProfitPrice,
-            trailingStopPrice = params.trailingStopPrice,
+            stopLoss = decision.stopLoss,
+            takeProfit = decision.takeProfit,
+            trailingStopPrice = if (decision.trailingStop) decision.stopLoss else null,
             alorOrderId = orderId,
             pendingEntry = pending,
-            cycleId = signal.cycleId,
+            cycleId = decision.cycleId,
         )
 
     override suspend fun onOpened(
-        signal: Signal,
+        decision: TradeRiskDecision,
         opened: Position,
-        params: OrderParams,
-        size: PositionSizeResult,
     ) {
         risk.updateDailyPnL(BigDecimal.ZERO, opened.accountId)
         agentLogRepo.save(
             AgentLog(
-                cycleId = signal.cycleId,
+                cycleId = decision.cycleId,
                 agentName = "TradingBot",
-                ticker = signal.ticker,
+                ticker = decision.ticker,
                 action = "OPEN",
-                signalStrength = signal.signalStrength,
+                signalStrength = decision.signalStrength,
                 reasoning =
-                    "Opened ${opened.direction.name} ${params.quantity} @ ${opened.entryPrice} " +
-                        "(target=${signal.targetPrice}, adaptive qty=${params.quantity}, kelly=${size.quantity})",
+                    "Opened ${opened.direction.name} ${decision.quantity} @ ${opened.entryPrice} " +
+                        "(target=${decision.targetPrice}, adaptive qty=${decision.quantity}, kelly=${decision.requestedQuantity})",
             ),
         )
     }

@@ -5,7 +5,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.risk.PositionSizeResult
-import com.trading.bot.domain.signal.Signal
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.repository.StrategyRepository
@@ -98,29 +98,26 @@ class OrderBuilder(
     /**
      * Фиксирует фактические риск-параметры заявки в историю стратегий
      * (БД + Redis): quantity/SL/TP/trailing заполняются после исполнения входа.
-     * До этого момента стратегия хранится как чистое направление (Signal).
+     * До этого момента стратегия хранится как чистое направление ([TradeRiskDecision.of]).
      */
-    suspend fun recordStrategyExecution(
-        signal: Signal,
-        params: OrderParams,
-    ) {
-        if (params.quantity <= 0) return
+    suspend fun recordStrategyExecution(decision: TradeRiskDecision) {
+        if (decision.quantity <= 0) return
         strategyRepo.updateOrderParams(
-            cycleId = signal.cycleId,
-            ticker = signal.ticker,
-            quantity = params.quantity,
-            stopLoss = params.stopLossPrice,
-            takeProfit = params.takeProfitPrice,
-            trailingStop = params.trailingStopPrice != null,
+            cycleId = decision.cycleId,
+            ticker = decision.ticker,
+            quantity = decision.quantity,
+            stopLoss = decision.stopLoss,
+            takeProfit = decision.takeProfit,
+            trailingStop = decision.trailingStop,
         )
-        val existing = BlockingDb.io { redis.getStrategy(signal.ticker) }
+        val existing = BlockingDb.io { redis.getStrategy(decision.ticker) }
         if (existing != null) {
             val updated =
                 existing.copy(
-                    quantity = params.quantity,
-                    stopLoss = params.stopLossPrice,
-                    takeProfit = params.takeProfitPrice,
-                    trailingStop = params.trailingStopPrice != null,
+                    quantity = decision.quantity,
+                    stopLoss = decision.stopLoss,
+                    takeProfit = decision.takeProfit,
+                    trailingStop = decision.trailingStop,
                 )
             BlockingDb.io { redis.saveStrategy(updated) }
         }

@@ -12,6 +12,7 @@ import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.RiskEngine
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.InstrumentType
@@ -158,31 +159,30 @@ class FuturesEntryProfile(
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 
     override fun buildPosition(
-        signal: Signal,
-        params: OrderParams,
+        decision: TradeRiskDecision,
         orderId: String?,
         pending: Boolean,
         fillPrice: BigDecimal,
         qty: Int,
     ): Position =
         Position(
-            ticker = signal.ticker,
-            direction = params.direction,
+            ticker = decision.ticker,
+            direction = decision.direction,
             quantity = qty,
             entryPrice = fillPrice,
             currentPrice = fillPrice,
-            stopLoss = params.stopLossPrice,
-            takeProfit = params.takeProfitPrice,
-            trailingStopPrice = params.trailingStopPrice,
+            stopLoss = decision.stopLoss,
+            takeProfit = decision.takeProfit,
+            trailingStopPrice = if (decision.trailingStop) decision.stopLoss else null,
             instrumentType = InstrumentType.FUTURES,
-            leverage = params.leverage ?: leverageConfig.effective(),
-            goPerContract = params.goPerContract,
-            marginUsed = params.marginRequired,
-            liquidationPrice = params.liquidationPrice,
+            leverage = decision.leverage ?: leverageConfig.effective(),
+            goPerContract = decision.goPerContract,
+            marginUsed = decision.marginRequired,
+            liquidationPrice = decision.liquidationPrice,
             variationMargin = BigDecimal.ZERO,
-            stopLossPoints = params.stopLossPoints,
+            stopLossPoints = decision.stopLossPoints,
             alorOrderId = orderId,
             pendingEntry = pending,
-            cycleId = signal.cycleId,
+            cycleId = decision.cycleId,
         )
 }

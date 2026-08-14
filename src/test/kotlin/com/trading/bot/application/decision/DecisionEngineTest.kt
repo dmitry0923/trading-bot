@@ -12,6 +12,7 @@ import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.RiskEngine
 import com.trading.bot.domain.risk.RiskVerdict
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
@@ -393,7 +394,7 @@ class DecisionEngineTest {
         assertEquals(0, BigDecimal("100").compareTo(gatewayPrice))
         assertEquals(1, profile.onOpenedCalls)
         runBlocking {
-            Mockito.verify(orderBuilder).recordStrategyExecution(any(), any())
+            Mockito.verify(orderBuilder).recordStrategyExecution(any())
         }
     }
 
@@ -546,16 +547,15 @@ class DecisionEngineTest {
         override fun portfolioMode(): PortfolioMode = mode
 
         override fun buildPosition(
-            signal: Signal,
-            params: OrderParams,
+            decision: TradeRiskDecision,
             orderId: String?,
             pending: Boolean,
             fillPrice: BigDecimal,
             qty: Int,
         ): Position =
             Position(
-                ticker = signal.ticker,
-                direction = params.direction,
+                ticker = decision.ticker,
+                direction = decision.direction,
                 quantity = qty,
                 entryPrice = fillPrice,
                 instrumentType = instrumentType,
@@ -563,10 +563,8 @@ class DecisionEngineTest {
             )
 
         override suspend fun onOpened(
-            signal: Signal,
+            decision: TradeRiskDecision,
             opened: Position,
-            params: OrderParams,
-            size: PositionSizeResult,
         ) {
             onOpenedCalls++
         }

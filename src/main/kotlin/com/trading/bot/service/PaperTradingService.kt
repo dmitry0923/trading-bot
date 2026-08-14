@@ -1,8 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.ExperimentConfig
-import com.trading.bot.domain.signal.Signal
-import com.trading.bot.domain.strategy.StrategyDecision
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.model.entity.ExperimentDecision
@@ -58,43 +57,42 @@ class PaperTradingService(
     /**
      * Записывает контрольное решение эксперимента.
      *
+     * @param decision единое риск-решение (стратегическая стадия — риск-поля пусты;
+     *   при входе запись обогащается фактическим объёмом/SL/TP)
      * @param executed фактически исполнено (false — полный shadow)
      */
     suspend fun recordControlDecision(
-        cycleId: String,
-        ticker: String,
-        timeframe: String,
-        signal: Signal,
+        decision: TradeRiskDecision,
         rawJson: String?,
         executed: Boolean,
     ): ExperimentDecision {
-        val decision =
+        val record =
             ExperimentDecision(
-                cycleId = cycleId,
+                cycleId = decision.cycleId,
                 experimentId = experimentConfig.experimentId,
                 arm = "CONTROL",
-                ticker = ticker,
-                timeframe = timeframe,
-                action = signal.action.name,
-                targetPrice = signal.targetPrice,
-                quantity = 0,
-                stopLoss = null,
-                takeProfit = null,
-                signalStrength = signal.signalStrength,
-                reasoning = signal.reasoning,
+                ticker = decision.ticker,
+                timeframe = decision.timeframe,
+                action = decision.action.name,
+                targetPrice = decision.targetPrice,
+                quantity = decision.quantity,
+                stopLoss = decision.stopLoss,
+                takeProfit = decision.takeProfit,
+                signalStrength = decision.signalStrength,
+                reasoning = decision.reasoning,
                 isPaper = false,
                 version = PromptRegistry.DEFAULT_VERSION,
                 rawOutput = rawJson,
                 executed = executed,
             )
-        decisionRepository.save(decision)
-        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "CONTROL", "action", signal.action.name)).increment()
+        decisionRepository.save(record)
+        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "CONTROL", "action", decision.action.name)).increment()
         if (executed) {
             meterRegistry.counter("experiment.control.executed").increment()
         } else {
             meterRegistry.counter("experiment.control.shadowed").increment()
         }
-        return decision
+        return record
     }
 
     /** Версия промпта вариантной руки; null — вариант = теневая копия контроля. */
@@ -103,43 +101,40 @@ class PaperTradingService(
     /**
      * Записывает вариантное (paper) решение эксперимента. Никогда не исполняется.
      *
-     * @param variant решение вариантной руки: LLM-пересчёт Арбитра
+     * @param decision решение вариантной руки: LLM-пересчёт Арбитра
      *                (DiscretionaryStrategy.produceVariant) либо теневая копия контроля
      * @param version версия промпта вариантной руки (null — теневая копия)
      */
     suspend fun recordVariantDecision(
-        cycleId: String,
-        ticker: String,
-        timeframe: String,
-        variant: StrategyDecision,
+        decision: TradeRiskDecision,
         version: String?,
     ): ExperimentDecision {
-        val decision =
+        val record =
             ExperimentDecision(
-                cycleId = cycleId,
+                cycleId = decision.cycleId,
                 experimentId = experimentConfig.experimentId,
                 arm = "VARIANT",
-                ticker = ticker,
-                timeframe = timeframe,
-                action = variant.action.name,
-                targetPrice = variant.targetPrice,
-                quantity = 0,
-                stopLoss = null,
-                takeProfit = null,
-                signalStrength = variant.signalStrength,
-                reasoning = variant.reasoning,
+                ticker = decision.ticker,
+                timeframe = decision.timeframe,
+                action = decision.action.name,
+                targetPrice = decision.targetPrice,
+                quantity = decision.quantity,
+                stopLoss = decision.stopLoss,
+                takeProfit = decision.takeProfit,
+                signalStrength = decision.signalStrength,
+                reasoning = decision.reasoning,
                 isPaper = true,
                 version = version ?: "shadow-copy",
                 executed = false,
             )
-        decisionRepository.save(decision)
-        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "VARIANT", "action", variant.action.name)).increment()
+        decisionRepository.save(record)
+        meterRegistry.counter("experiment.decision.logged", Tags.of("arm", "VARIANT", "action", decision.action.name)).increment()
         meterRegistry.counter("experiment.variant.llm", Tags.of("mode", if (version != null) "LLM" else "COPY")).increment()
         logger.info {
-            "Experiment ${experimentConfig.experimentId}: $ticker/$timeframe variant=${variant.action} " +
-                "conf=${String.format("%.2f", variant.signalStrength)} (${if (version != null) "LLM v$version" else "shadow copy"})"
+            "Experiment ${experimentConfig.experimentId}: ${decision.ticker}/${decision.timeframe} variant=${decision.action} " +
+                "conf=${String.format("%.2f", decision.signalStrength)} (${if (version != null) "LLM v$version" else "shadow copy"})"
         }
-        return decision
+        return record
     }
 
     /**

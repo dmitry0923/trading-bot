@@ -4,6 +4,7 @@ import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.RiskEngine
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
@@ -102,8 +103,7 @@ interface EntryProfile {
     /** Построение сущности позиции для [DecisionEngine] (аргументы те же, что в
      *  [com.trading.bot.application.OrderExecutionEngine.placeEntryOrder]). */
     fun buildPosition(
-        signal: Signal,
-        params: OrderParams,
+        decision: TradeRiskDecision,
         orderId: String?,
         pending: Boolean,
         fillPrice: BigDecimal,
@@ -112,9 +112,7 @@ interface EntryProfile {
 
     /** Побочные эффекты после успешного открытия (agent log, дневной P&L reset). */
     suspend fun onOpened(
-        signal: Signal,
+        decision: TradeRiskDecision,
         opened: Position,
-        params: OrderParams,
-        size: PositionSizeResult,
     ) = Unit
 }

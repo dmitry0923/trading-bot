@@ -11,6 +11,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.PerTickerRegime
 import com.trading.bot.domain.risk.RegimeDetector
+import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.strategy.StrategyDecision
@@ -362,17 +363,26 @@ class StrategyService(
         val inExperiment = experimentEnabled && paperTradingService.inExperiment(cycleId)
         val shadowExecution = inExperiment && paperTradingService.isShadowExecution()
         if (inExperiment) {
-            paperTradingService.recordControlDecision(cycleId, ticker, timeframe, signal, strategy.rawJson, executed = !shadowExecution)
+            // Единое риск-решение (стратегическая стадия — риск-поля пусты, они
+            // заполняются при входе) — прогон через A/B-эксперимент.
+            val control = TradeRiskDecision.of(signal)
+            paperTradingService.recordControlDecision(control, strategy.rawJson, executed = !shadowExecution)
             // Вариант = повторный вызов Арбитра с другим промптом (LLM A/B) либо
             // теневая копия контроля. Входы варианта берутся из DiscretionaryStrategy.
             val variantVersion = paperTradingService.variantVersion()
-            val variant =
+            val variantDecision =
                 if (variantVersion != null) {
-                    discretionaryStrategy.produceVariant(context, variantVersion)
+                    val variant = discretionaryStrategy.produceVariant(context, variantVersion)
+                    control.copy(
+                        action = variant.action,
+                        targetPrice = variant.targetPrice,
+                        signalStrength = variant.signalStrength,
+                        reasoning = variant.reasoning,
+                    )
                 } else {
-                    StrategyDecision(signal.action, signal.targetPrice, signal.signalStrength, signal.reasoning)
+                    control
                 }
-            paperTradingService.recordVariantDecision(cycleId, ticker, timeframe, variant, version = variantVersion)
+            paperTradingService.recordVariantDecision(variantDecision, version = variantVersion)
         }
 
         if (shadowExecution) {

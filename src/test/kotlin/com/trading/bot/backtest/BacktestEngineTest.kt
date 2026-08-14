@@ -370,6 +370,30 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `stock fallback size is capped by risk per trade`() {
+        // capitalSlice = 1.0 → slice дал бы 1000 акций; риск-кап (1% портфеля против
+        // 2% стопа, как StockEntryProfile) ограничивает qty = (100000*0.01)/(100*0.02) = 500.
+        // entry fill = 100.1, exit fill = 99.9, qty = 500:
+        // gross = (99.9-100.1)*500 = -100; комиссии = (100.1+99.9)*500*0.0005 = 50
+        // equity = 100000 - 150 = 99850 (без капа при qty=1000 было бы 99700).
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        capitalSlice = 1.0
+                    },
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val result = runBlocking { engine.simulate("SBER", flatCandles()) }
+
+        assertEquals(1, result.totalTrades)
+        assertEquals(-150.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("99850").compareTo(result.equityCurve.last()))
+    }
+
+    @Test
     fun `backtest sizes futures through the production PositionSizer`() {
         // Si @ 92000: старый fallback capitalSlice (20% от 100k = 20k) давал бы
         // qty = 0 (92000 > 20000) → 0 сделок. Production-сайзер (риск на сделку)

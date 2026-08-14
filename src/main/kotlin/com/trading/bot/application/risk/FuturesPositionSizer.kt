@@ -2,6 +2,8 @@ package com.trading.bot.application.risk
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.EstimatedLiquidationPriceProvider
+import com.trading.bot.domain.risk.LiquidationPriceProvider
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.PositionDirection
@@ -30,7 +32,9 @@ import java.math.RoundingMode
  *   6. maxContractsByMargin= marginBudget / marginPerContract = 15000 / 15000 = 1
  *   7. finalQty            = floor(min(maxContractsByRisk, maxContractsByMargin, maxContractsPerPosition))
  *
- * Ликвидация (guardrail) — ОЦЕНОЧНАЯ дистанция для предварительного риск-чека:
+ * Ликвидация (guardrail) — ОЦЕНОЧНАЯ дистанция для предварительного риск-чека,
+ * считается через [LiquidationPriceProvider] (по умолчанию
+ * [EstimatedLiquidationPriceProvider]):
  *   pointValue = priceStepCost / priceStep = 10 / 0.01 = 1000 ₽ на 1.0 цены
  *   bufferPrice = currentGo / pointValue = 15000 / 1000 = 15 ₽
  *   estimatedLiquidationPrice (LONG)  = entryPrice - bufferPrice
@@ -38,7 +42,8 @@ import java.math.RoundingMode
  *
  * Это упрощённая модель (потеря вариационной маржи = GO, без maintenance margin,
  * комиссий и режима позиции биржи). Для production использовать официальную
- * liquidation price биржи, если она предоставляется.
+ * liquidation price биржи, если она предоставляется (реализация
+ * [LiquidationPriceProvider] с биржевым источником).
  *
  * Если finalQty < 1 → возвращаем quantity = 0 с причиной отказа (вход запрещён).
  */
@@ -46,6 +51,7 @@ import java.math.RoundingMode
 class FuturesPositionSizer(
     private val riskConfig: RiskConfig,
     private val instrumentsConfig: InstrumentsConfig,
+    private val liquidationPriceProvider: LiquidationPriceProvider = EstimatedLiquidationPriceProvider(),
 ) : PositionSizer {
     override fun calculateContracts(
         ticker: String,
@@ -130,7 +136,14 @@ class FuturesPositionSizer(
         }
 
         val marginRequired = marginPerContract.multiply(BigDecimal(finalQty))
-        val liquidationPrice = calculateLiquidationPrice(entryPrice, direction, marginPerContract, instrument)
+        val liquidationPrice =
+            liquidationPriceProvider.liquidationPrice(
+                entryPrice,
+                direction,
+                marginPerContract,
+                instrument.priceStep,
+                instrument.priceStepCost,
+            )
 
         return PositionSizeResult(
             quantity = finalQty,
@@ -139,40 +152,5 @@ class FuturesPositionSizer(
             liquidationPrice = liquidationPrice,
             reason = null,
         )
-    }
-
-    /**
-     * ОЦЕНОЧНАЯ ликвидационная цена для LONG/SHORT (guardrail, не биржевая).
-     *
-     * pointValue = priceStepCost / priceStep (для Si: 1000 ₽/цена)
-     * bufferPrice = marginPerContract / pointValue = GO / pointValue
-     *   Si: 15000 / 1000 = 15 ₽ — при таком движении против позиции теряется
-     *       вся маржа контракта (вариационная маржа ≈ GO).
-     *
-     * Плечо здесь НЕ участвует: пользовательское leverage не влияет ни на требуемую
-     * биржей маржу, ни на дистанцию до ликвидации.
-     *
-     * Формула упрощена (без maintenance margin, комиссий и режима позиции) —
-     * использовать только для предварительного риск-чека; при наличии официальной
-     * liquidation price биржи — предпочитать её.
-     */
-    private fun calculateLiquidationPrice(
-        entryPrice: BigDecimal?,
-        direction: PositionDirection?,
-        marginPerContract: BigDecimal,
-        instrument: InstrumentsConfig.InstrumentSpec,
-    ): BigDecimal? {
-        if (entryPrice == null || direction == null) return null
-        val pointValue = instrument.priceStepCost.divide(instrument.priceStep, 6, RoundingMode.HALF_UP)
-        if (pointValue <= BigDecimal.ZERO) return null
-
-        val bufferPrice =
-            marginPerContract
-                .divide(pointValue, 6, RoundingMode.HALF_UP)
-
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.subtract(bufferPrice)
-            PositionDirection.SHORT -> entryPrice.add(bufferPrice)
-        }
     }
 }

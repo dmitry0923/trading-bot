@@ -170,6 +170,65 @@ class FuturesRiskEngineTest {
     }
 
     @Test
+    fun `long below liquidation price is critical not safe`() {
+        // Регрессия abs(): |91980-91985|/15 = 33% выглядело как SAFE, хотя цена
+        // УЖЕ прошла уровень ликвидации (91985). Направленная дистанция: -5 → CRITICAL.
+        val e = engine()
+        val pos =
+            Position(
+                ticker = "Si",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("92000"),
+                currentPrice = BigDecimal("92000"),
+                liquidationPrice = BigDecimal("91985"),
+                instrumentType = InstrumentType.FUTURES,
+            )
+
+        assertEquals(
+            FuturesRiskEngine.LiquidationStatus.CRITICAL,
+            e.checkLiquidationDistance(pos, BigDecimal("91980")),
+        )
+        // Ровно на уровне ликвидации — тоже CRITICAL
+        assertEquals(
+            FuturesRiskEngine.LiquidationStatus.CRITICAL,
+            e.checkLiquidationDistance(pos, BigDecimal("91985")),
+        )
+    }
+
+    @Test
+    fun `short below liquidation price is critical not safe`() {
+        // SHORT: ликвидация выше входа (92015). Цена 92016 уже прошла уровень —
+        // abs() давал бы 1/15 = 6.7% (CRITICAL), но 92020 давал бы 33% (SAFE).
+        // Направленная дистанция: liq - current < 0 → CRITICAL в обоих случаях.
+        val e = engine()
+        val pos =
+            Position(
+                ticker = "Si",
+                direction = PositionDirection.SHORT,
+                quantity = 1,
+                entryPrice = BigDecimal("92000"),
+                currentPrice = BigDecimal("92000"),
+                liquidationPrice = BigDecimal("92015"),
+                instrumentType = InstrumentType.FUTURES,
+            )
+
+        assertEquals(
+            FuturesRiskEngine.LiquidationStatus.CRITICAL,
+            e.checkLiquidationDistance(pos, BigDecimal("92020")),
+        )
+        assertEquals(
+            FuturesRiskEngine.LiquidationStatus.CRITICAL,
+            e.checkLiquidationDistance(pos, BigDecimal("92015")),
+        )
+        // Остаток 4/15 = 26.7% → SAFE (нормальный случай до пересечения)
+        assertEquals(
+            FuturesRiskEngine.LiquidationStatus.SAFE,
+            e.checkLiquidationDistance(pos, BigDecimal("92011")),
+        )
+    }
+
+    @Test
     fun `futures trailing stop moves only in profit and never below hard stop`() {
         val pos =
             Position(

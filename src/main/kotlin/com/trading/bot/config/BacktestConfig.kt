@@ -19,7 +19,9 @@ import java.math.BigDecimal
  * @property tpPercent тейк-профит в процентах от цены входа (например 4.0 = 4%).
  * @property capitalSlice доля текущего капитала на одну позицию (0.20 = 20%).
  *   Используется ТОЛЬКО как fallback для не-фьючерсных тикеров (или при отсутствии
- *   PositionSizer). Для фьючерсных тикеров размер позиции считает production-сайзер
+ *   PositionSizer) и ограничивается сверху риск-капом на сделку
+ *   (risk.risk-per-trade-percent% портфеля против убытка на risk.default-stop-loss-percent%).
+ *   Для фьючерсных тикеров размер позиции считает production-сайзер
  *   [com.trading.bot.domain.risk.PositionSizer] (единый алгоритм с live).
  * @property mlFilterEnabled применять ML-фильтр входа (раздел 13.11.6) в бэктесте.
  *   При `true` бэктест прогоняет модель на входе каждого бара (требуется

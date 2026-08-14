@@ -4,6 +4,7 @@ import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.Atr
+import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PositionSizer
 import com.trading.bot.model.PositionDirection
@@ -50,7 +51,9 @@ import java.util.UUID
  * [PositionSizer] (тот же [com.trading.bot.application.risk.FuturesPositionSizer],
  * что и в production-пайплайне), SL/TP — по пунктам ([RiskConfig.defaultStopLossPoints]/
  * [RiskConfig.defaultTakeProfitPoints]), как в [com.trading.bot.application.OrderBuilder].
- * Для акций (и при отсутствии sizer) используется fallback `bt.capital-slice`.
+ * Для акций (и при отсутствии sizer) используется fallback `bt.capital-slice`,
+ * ограниченный риск-капом на сделку ([RiskConfig.riskPerTradePercent] против убытка
+ * на [RiskConfig.defaultStopLossPercent]) — аналог [com.trading.bot.application.decision.StockEntryProfile].
  * GO в бэктесте берётся из [InstrumentsConfig] (в non-live так же делает
  * [com.trading.bot.infrastructure.alor.AlorFuturesClient]).
  *
@@ -503,7 +506,11 @@ class BacktestEngine(
      * - фьючерс + [PositionSizer] → сайзинг через production-алгоритм
      *   (риск на сделку / маржинальный бюджет / лимит контрактов). GO берётся из
      *   [InstrumentsConfig] — то же значение, что использует live в non-live режиме.
-     * - иначе (акции / нет sizer) → fallback `bt.capital-slice`.
+     * - акции / нет sizer → fallback: бюджет `bt.capital-slice` от капитала,
+     *   ограниченный сверху риск-капом на сделку (как
+     *   [com.trading.bot.application.decision.StockEntryProfile]): убыток
+     *   при срабатывании стопа (defaultStopLossPercent%) не может превысить
+     *   riskPerTradePercent% портфеля.
      */
     private fun sizeQuantity(
         ticker: String,
@@ -529,8 +536,28 @@ class BacktestEngine(
             }
             return size.quantity
         }
-        val capitalSlice = cash.multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
-        return capitalSlice.divide(price, 0, RoundingMode.DOWN).toInt()
+        val sliceQty =
+            cash
+                .multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
+                .divide(price, 0, RoundingMode.DOWN)
+                .toInt()
+        // Риск-кап на сделку (аналог StockEntryProfile.sizePosition): потеря при
+        // стопе не должна превысить riskPerTradePercent% портфеля.
+        val riskAmount =
+            cash
+                .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
+                .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
+        val lossPerShare =
+            price
+                .multiply(BigDecimal(riskConfig.defaultStopLossPercent.toString()))
+                .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+        val riskCapQty =
+            if (lossPerShare > BigDecimal.ZERO) {
+                riskAmount.divide(lossPerShare, 4, RoundingMode.DOWN).toInt()
+            } else {
+                Int.MAX_VALUE
+            }
+        return minOf(sliceQty, riskCapQty)
     }
 
     /**
@@ -554,7 +581,8 @@ class BacktestEngine(
      * Стоп-лосс: для фьючерсов — отступ в пунктах от цены входа ([stopPoints]
      * при ATR-стопе или [RiskConfig.defaultStopLossPoints]; как live
      * [com.trading.bot.application.OrderBuilder.buildFuturesOrderParams]),
-     * для акций — процент от цены входа (`slPercent`).
+     * для акций — процент от цены входа через [ExitRules.calcSL] (тот же код,
+     * что в live [com.trading.bot.application.OrderBuilder.buildStockOrderParams]).
      */
     private fun stopPrice(
         ticker: String,
@@ -572,11 +600,7 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.add(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        val sl = BigDecimal.valueOf(slPercent)
-        return when (direction) {
-            PositionDirection.LONG -> fillPrice.multiply(BigDecimal.ONE.subtract(sl))
-            PositionDirection.SHORT -> fillPrice.multiply(BigDecimal.ONE.add(sl))
-        }.setScale(2, RoundingMode.HALF_UP)
+        return ExitRules.calcSL(fillPrice, direction, slPercent * 100.0)
     }
 
     /** Тейк-профит: для фьючерсов — пункты, для акций — процент (см. [stopPrice]). */
@@ -594,11 +618,7 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.subtract(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        val tp = BigDecimal.valueOf(tpPercent)
-        return when (direction) {
-            PositionDirection.LONG -> fillPrice.multiply(BigDecimal.ONE.add(tp))
-            PositionDirection.SHORT -> fillPrice.multiply(BigDecimal.ONE.subtract(tp))
-        }.setScale(2, RoundingMode.HALF_UP)
+        return ExitRules.calcTP(fillPrice, direction, tpPercent * 100.0)
     }
 
     /**

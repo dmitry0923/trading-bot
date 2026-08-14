@@ -11,6 +11,7 @@ import com.trading.bot.domain.risk.RiskEngine
 import com.trading.bot.domain.risk.RiskVerdict
 import com.trading.bot.domain.risk.TradingCalendar
 import com.trading.bot.domain.risk.VolatilityFilter
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -90,14 +91,20 @@ class FuturesRiskEngine(
     /**
      * Проверка приближения к ликвидации.
      *
-     * Формула расстояния (в % от остаточного буфера маржи):
-     *   totalBuffer     = |entryPrice - liquidationPrice|  (движение цены до ликвидации)
-     *   remainingBuffer = |currentPrice - liquidationPrice|
-     *   distanceToLiquidation % = remainingBuffer / totalBuffer * 100
+     * Формула расстояния (в % от остаточного буфера маржи), НАПРАВЛЕННАЯ по
+     * направлению позиции (LONG/SHORT). |abs()| здесь недопустим: цена, уже
+     * прошедшая уровень ликвидации, не может выглядеть «безопасной».
+     *
+     *   totalBuffer = |entryPrice - liquidationPrice|  (движение цены до ликвидации)
+     *   remaining:
+     *     LONG  -> currentPrice - liquidationPrice
+     *     SHORT -> liquidationPrice - currentPrice
+     *   distanceToLiquidation % = remaining / totalBuffer * 100
      *
      * На входе distance = 100%. По мере убытка буфер тает:
-     *   < minLiquidationDistancePercent → WARNING
+     *   remaining <= 0 (цена прошла уровень ликвидации) → CRITICAL
      *   < criticalLiquidationDistancePercent → CRITICAL (немедленное закрытие)
+     *   < minLiquidationDistancePercent → WARNING
      */
     fun checkLiquidationDistance(
         position: Position,
@@ -110,7 +117,25 @@ class FuturesRiskEngine(
         val totalBuffer = position.entryPrice.subtract(liq).abs()
         if (totalBuffer <= BigDecimal.ZERO) return LiquidationStatus.CRITICAL
 
-        val distancePercent = distanceToLiquidation(position.entryPrice, liq, currentPrice)
+        // Направленный остаток буфера: отрицательный — цена УЖЕ прошла ликвидацию.
+        val remaining =
+            when (position.direction) {
+                PositionDirection.LONG -> currentPrice.subtract(liq)
+                PositionDirection.SHORT -> liq.subtract(currentPrice)
+            }
+        if (remaining <= BigDecimal.ZERO) {
+            meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), 0.0)
+            logger.warn {
+                "${position.ticker} ${position.direction} LIQUIDATED price=$currentPrice liq=$liq"
+            }
+            return LiquidationStatus.CRITICAL
+        }
+
+        val distancePercent =
+            remaining
+                .divide(totalBuffer, 6, RoundingMode.HALF_UP)
+                .multiply(BigDecimal("100"))
+                .toDouble()
         meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), distancePercent)
 
         val status =
@@ -126,20 +151,6 @@ class FuturesRiskEngine(
             }
         }
         return status
-    }
-
-    private fun distanceToLiquidation(
-        entry: BigDecimal,
-        liq: BigDecimal,
-        current: BigDecimal,
-    ): Double {
-        val totalBuffer = entry.subtract(liq).abs()
-        if (totalBuffer <= BigDecimal.ZERO) return 0.0
-        val remaining = current.subtract(liq).abs()
-        return remaining
-            .divide(totalBuffer, 6, RoundingMode.HALF_UP)
-            .multiply(BigDecimal("100"))
-            .toDouble()
     }
 
     enum class LiquidationStatus { SAFE, WARNING, CRITICAL }

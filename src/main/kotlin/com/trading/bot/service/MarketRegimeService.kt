@@ -7,9 +7,11 @@ import com.trading.bot.domain.risk.MarketRegimeClassifier
 import com.trading.bot.domain.risk.MarketRegimeProvider
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -41,6 +43,12 @@ class MarketRegimeService(
 ) : MarketRegimeProvider {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
+
     private val cacheTtl: Duration = Duration.ofMinutes(15)
 
     @Volatile

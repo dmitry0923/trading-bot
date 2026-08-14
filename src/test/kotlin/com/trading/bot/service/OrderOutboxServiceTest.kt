@@ -140,7 +140,7 @@ class OrderOutboxServiceTest {
     private suspend fun stubRetryable(rows: List<OrderOutbox>) {
         Mockito
             .`when`(
-                outboxRepo.findRetryable(
+                outboxRepo.claimRetryable(
                     Mockito.anyInt(),
                     Mockito.anyInt(),
                     Mockito.anyInt(),
@@ -535,7 +535,7 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
-                .findRetryable(eq(3), Mockito.anyInt(), eq(10), eq(120), Mockito.anyInt())
+                .claimRetryable(eq(3), Mockito.anyInt(), eq(10), eq(120), Mockito.anyInt())
         }
     }
 
@@ -761,6 +761,31 @@ class OrderOutboxServiceTest {
     @Test
     fun `rabbit redispatch on FAILED skips - DB worker owns retries`() {
         val outbox = outboxRow(retryCount = 1, key = "idem-rabbit3", type = "limit", price = "92000")
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
+
+            val result = service.redispatchById(checkNotNull(outbox.id))
+
+            assertFalse(result.success)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                )
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `rabbit redispatch on PROCESSING skips - row is in-flight by DB worker`() {
+        val outbox =
+            outboxRow(retryCount = 0, key = "idem-rabbit4", type = "limit", price = "92000")
+                .copy(status = OutboxStatus.PROCESSING)
         runBlocking {
             Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
 
@@ -1046,7 +1071,7 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
-                .findRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
+                .claimRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
             Mockito.verify(outboxRepo, Mockito.never()).markFailed(anyUuid(), Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -1237,11 +1262,11 @@ class OrderOutboxServiceTest {
     }
 
     @Test
-    fun `worker catches exception from findRetryable`() {
+    fun `worker catches exception from claimRetryable`() {
         runBlocking {
             Mockito
                 .`when`(
-                    outboxRepo.findRetryable(
+                    outboxRepo.claimRetryable(
                         Mockito.anyInt(),
                         Mockito.anyInt(),
                         Mockito.anyInt(),
@@ -1254,7 +1279,7 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
-                .findRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
+                .claimRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
         }
     }
 }

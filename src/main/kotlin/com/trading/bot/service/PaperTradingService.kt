@@ -9,9 +9,11 @@ import com.trading.bot.repository.ExperimentDecisionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
@@ -45,6 +47,11 @@ class PaperTradingService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
 
     fun isExperimentEnabled(): Boolean = experimentConfig.enabled
 

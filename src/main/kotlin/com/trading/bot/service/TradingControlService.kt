@@ -6,9 +6,11 @@ import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -37,6 +39,12 @@ class TradingControlService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
+
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 
     fun isTradingEnabled(): Boolean = tradingGate.isTradingEnabled()

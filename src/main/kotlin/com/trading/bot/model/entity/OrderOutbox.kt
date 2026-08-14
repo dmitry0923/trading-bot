@@ -5,6 +5,7 @@ import java.util.UUID
 
 enum class OutboxStatus {
     PENDING,
+    PROCESSING,
     SENT,
     FAILED,
 }

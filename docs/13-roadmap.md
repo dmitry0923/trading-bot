@@ -1402,10 +1402,34 @@ blocked не инкрементится, forced_market инкрементитс�
 `OrderExecutionEngineProtectionReplaceTest` (UNCERTAIN сохраняет pending, ретрай с
 тем же ключом).
 
-### 13.19.7. Очередь EXEC-MR
+### 13.19.7. MR-G: P2 — scope lifecycle + outbox SKIP LOCKED ✅
 
-| # | Проблема | Статус |
-|---|---|---|
-| P2 | CoroutineScope lifecycle (scope-ы @PostConstruct без stop/close) | pending |
-| P2 | outbox: SELECT ... FOR UPDATE SKIP LOCKED (конкурентные worker'ы) | pending |
+Проблемы:
+- scope lifecycle: 14 сервисов создавали `CoroutineScope` (SupervisorJob + Dispatchers)
+  и запускали корутины без stop/close — при graceful shutdown воркеры (reconcile,
+  outbox, стратегии) продолжали работать, канал RabbitMQ/R2DBC закрывался под ними.
+- outbox: `findRetryable` (SELECT) без блокировок + distributed-lock no-op при
+  `distributed-lock.enabled=false` → два параллельных `processPending`
+  (multi-replica / наложение @Scheduled) забирали одну и ту же строку → двойной
+  ордер на бирже.
+
+Решение:
+- `@PreDestroy fun close() { scope.cancel() }` во всех 14 owned-скоупах
+  (паттерн уже был в `AsyncTraceStorage`); внешние scope-ы (`WsOrderTransport`,
+  `LlmRequestQueue`) не тронуты — владение неоднозначно.
+- `OutboxStatus.PROCESSING` + `OrderOutboxRepository.claimRetryable`:
+  `UPDATE ... WHERE id IN (SELECT ... FOR UPDATE SKIP LOCKED) RETURNING *` —
+  атомарный захват строки в одной транзакции; повторный claim пропускает
+  захваченные; зависшие PROCESSING (краш во время доставки) снова доступны
+  после 60 сек; повторная отправка идемпотентна (idempotencyKey).
+- `redispatchById` (rabbit): PROCESSING-строка скипается (в доставке у воркера).
+- `countPendingByAccount` учитывает PROCESSING (блокировка удаления аккаунта).
+
+Тесты: `OrderOutboxRepositoryIntegrationTest` (+3: claim → PROCESSING, повторный
+claim пропускает, stale PROCESSING перезахват, fresh PROCESSING скипается);
+`OrderOutboxServiceTest` (+1 rabbit-skip PROCESSING, rename stubs на claimRetryable).
+
+### 13.19.8. Очередь EXEC-MR
+
+Очередь пуста — следующий MR по мере выявления новых проблем в аудите исполнения.
 | P2 | CoroutineScope lifecycle, distributed outbox claim (SKIP LOCKED) | pending |

@@ -13,9 +13,11 @@ import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -77,6 +79,11 @@ class OrderOutboxService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
 
     data class PlaceOrderResult(
         val outboxId: UUID,
@@ -194,6 +201,12 @@ class OrderOutboxService(
         return when (outbox.status) {
             OutboxStatus.PENDING -> {
                 dispatch(outbox)
+            }
+
+            OutboxStatus.PROCESSING -> {
+                // Строка уже захвачена DB-worker'ом (claim) и находится в доставке.
+                logger.info { "Outbox ${outbox.id} PROCESSING — in-flight by worker, rabbit skip" }
+                PlaceOrderResult(outboxId, null, success = false)
             }
 
             OutboxStatus.SENT -> {
@@ -466,8 +479,10 @@ class OrderOutboxService(
             )
 
     /**
-     * Worker: переотправляет PENDING старше 30 сек и FAILED с retryCount < maxOrderRetries.
-     * Каждая повторная отправка предваряется State Reconciliation (см. [dispatch]).
+     * Worker: атомарно забирает (claim) PENDING старше 30 сек, FAILED с
+     * retryCount < maxOrderRetries и зависшие PROCESSING (FOR UPDATE SKIP LOCKED —
+     * конкурентные worker'ы не получат одну и ту же строку). Каждая повторная
+     * отправка предваряется State Reconciliation (см. [dispatch]).
      */
     @Scheduled(fixedDelay = 10000)
     fun processPending() {
@@ -480,7 +495,7 @@ class OrderOutboxService(
                     // Экспоненциальный backoff + jitter между повторными доставками:
                     // каждая следующая попытка откладывается дольше (LEAST(2^retry * base, max) + jitter).
                     val pending =
-                        outboxRepo.findRetryable(
+                        outboxRepo.claimRetryable(
                             maxRetries = alorConfig.maxOrderRetries,
                             backoffBaseSeconds = alorConfig.outboxBackoffBaseSeconds,
                             backoffMaxSeconds = alorConfig.outboxBackoffMaxSeconds,

@@ -6,9 +6,11 @@ import com.trading.bot.domain.risk.Black76Calculator
 import com.trading.bot.domain.risk.OptionQuote
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -35,6 +37,11 @@ class ImpliedVolatilityService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
 
     /** Текущий ATM-срез Si (IV в % + параметры выбранного опциона). */
     data class SiIvSnapshot(

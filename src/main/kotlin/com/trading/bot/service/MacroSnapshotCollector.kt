@@ -5,9 +5,11 @@ import com.trading.bot.model.entity.MacroSnapshot
 import com.trading.bot.repository.MacroSnapshotRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -34,6 +36,11 @@ class MacroSnapshotCollector(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
 
     /** Собственно сбор: не-suspend обёртка обязательна, @Scheduled не запускает корутины. */
     @Scheduled(fixedDelayString = "#{@macroConfig.snapshotIntervalMs}", initialDelay = 60_000L)

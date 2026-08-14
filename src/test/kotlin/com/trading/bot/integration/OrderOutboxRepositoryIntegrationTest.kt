@@ -16,9 +16,11 @@ import java.time.LocalDateTime
  *
  * - уникальный idempotency_key (Gap C): повторный save с тем же ключом возвращает
  *   существующую строку и НЕ создаёт второй ряд (защита от двойного ордера);
- * - findRetryable с экспоненциальным backoff (Gap D): FAILED-строка подбирается
+ * - claimRetryable с экспоненциальным backoff (Gap D): FAILED-строка подбирается
  *   только после истечения LEAST(2^retry_count * base, max) + jitter;
- * - PENDING-строки старше cutoff подбираются независимо от backoff.
+ * - PENDING-строки старше cutoff подбираются независимо от backoff;
+ * - claim переводит строку в PROCESSING (вторая попытка её не забирает), а зависшие
+ *   PROCESSING (краш во время доставки) снова подбираются после 60 сек.
  */
 class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
@@ -53,7 +55,7 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
 
             assertEquals(first.id, second.id)
             assertEquals("idem-dup-1", second.idempotencyKey)
-            val all = repo.findRetryable(5, olderThanSeconds = 0)
+            val all = repo.claimRetryable(5, olderThanSeconds = 0)
             assertEquals(1, all.size)
         }
     }
@@ -65,12 +67,12 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
             val b = repo.save(row("idem-b"))
 
             assertTrue(a.id != b.id)
-            assertEquals(2, repo.findRetryable(5, olderThanSeconds = 0).size)
+            assertEquals(2, repo.claimRetryable(5, olderThanSeconds = 0).size)
         }
     }
 
     @Test
-    fun `findRetryable skips FAILED row before exponential backoff elapses`() {
+    fun `claimRetryable skips FAILED row before exponential backoff elapses`() {
         runBlocking {
             // retry_count=1 → интервал = LEAST(2^1 * 10, 120) = 20s (без jitter).
             val staleProcessed = LocalDateTime.now().minusSeconds(5)
@@ -84,13 +86,13 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
                 ),
             )
 
-            val ready = repo.findRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
+            val ready = repo.claimRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
             assertTrue(ready.none { it.idempotencyKey == "idem-backoff-1" })
         }
     }
 
     @Test
-    fun `findRetryable picks FAILED row after backoff window`() {
+    fun `claimRetryable picks FAILED row after backoff window`() {
         runBlocking {
             // retry_count=1 → интервал 20s; прошло 40s → готов к повторной доставке.
             val oldProcessed = LocalDateTime.now().minusSeconds(40)
@@ -104,13 +106,13 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
                 ),
             )
 
-            val ready = repo.findRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
+            val ready = repo.claimRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
             assertTrue(ready.any { it.idempotencyKey == "idem-backoff-2" })
         }
     }
 
     @Test
-    fun `findRetryable picks FAILED row after exponential backoff growth`() {
+    fun `claimRetryable picks FAILED row after exponential backoff growth`() {
         runBlocking {
             // retry_count=4 → интервал = LEAST(16 * 10, 120) = 120s.
             val oldProcessed = LocalDateTime.now().minusSeconds(130)
@@ -124,13 +126,13 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
                 ),
             )
 
-            val ready = repo.findRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
+            val ready = repo.claimRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
             assertTrue(ready.any { it.idempotencyKey == "idem-backoff-3" })
         }
     }
 
     @Test
-    fun `findRetryable skips FAILED row at max retries`() {
+    fun `claimRetryable skips FAILED row at max retries`() {
         runBlocking {
             val oldProcessed = LocalDateTime.now().minusSeconds(200)
             repo.save(
@@ -143,19 +145,69 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
                 ),
             )
 
-            val ready = repo.findRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
+            val ready = repo.claimRetryable(5, backoffBaseSeconds = 10, backoffMaxSeconds = 120, jitterSeconds = 0)
             assertTrue(ready.none { it.idempotencyKey == "idem-exhausted" })
         }
     }
 
     @Test
-    fun `findRetryable picks stale PENDING regardless of retries`() {
+    fun `claimRetryable picks stale PENDING regardless of retries`() {
         runBlocking {
             val oldCreated = LocalDateTime.now().minusMinutes(10)
             repo.save(row("idem-pending", status = OutboxStatus.PENDING, createdAt = oldCreated))
 
-            val ready = repo.findRetryable(5, olderThanSeconds = 30)
+            val ready = repo.claimRetryable(5, olderThanSeconds = 30)
             assertTrue(ready.any { it.idempotencyKey == "idem-pending" })
+        }
+    }
+
+    @Test
+    fun `claimRetryable marks rows as PROCESSING so second claim skips them`() {
+        runBlocking {
+            val oldCreated = LocalDateTime.now().minusMinutes(10)
+            repo.save(row("idem-claimed", status = OutboxStatus.PENDING, createdAt = oldCreated))
+
+            val first = repo.claimRetryable(5, olderThanSeconds = 30)
+            assertEquals(1, first.size)
+            assertEquals(OutboxStatus.PROCESSING, first[0].status)
+
+            val second = repo.claimRetryable(5, olderThanSeconds = 30)
+            assertTrue(second.none { it.idempotencyKey == "idem-claimed" })
+        }
+    }
+
+    @Test
+    fun `claimRetryable reclaims stale PROCESSING rows after 60 seconds`() {
+        runBlocking {
+            val staleProcessed = LocalDateTime.now().minusMinutes(5)
+            repo.save(
+                row(
+                    "idem-stale-processing",
+                    status = OutboxStatus.PROCESSING,
+                    createdAt = LocalDateTime.now().minusMinutes(10),
+                    processedAt = staleProcessed,
+                ),
+            )
+
+            val reclaimed = repo.claimRetryable(5, olderThanSeconds = 30)
+            assertTrue(reclaimed.any { it.idempotencyKey == "idem-stale-processing" })
+        }
+    }
+
+    @Test
+    fun `claimRetryable skips fresh PROCESSING rows`() {
+        runBlocking {
+            repo.save(
+                row(
+                    "idem-fresh-processing",
+                    status = OutboxStatus.PROCESSING,
+                    createdAt = LocalDateTime.now().minusMinutes(1),
+                    processedAt = LocalDateTime.now(),
+                ),
+            )
+
+            val reclaimed = repo.claimRetryable(5, olderThanSeconds = 30)
+            assertTrue(reclaimed.none { it.idempotencyKey == "idem-fresh-processing" })
         }
     }
 }

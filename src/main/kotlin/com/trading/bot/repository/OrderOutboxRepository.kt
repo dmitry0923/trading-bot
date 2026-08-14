@@ -113,7 +113,7 @@ class OrderOutboxRepository(
             .sql(
                 """
                 SELECT COUNT(*) AS cnt FROM order_outbox
-                WHERE account_id = :accountId AND status IN ('PENDING', 'FAILED')
+                WHERE account_id = :accountId AND status IN ('PENDING', 'PROCESSING', 'FAILED')
                 """.trimIndent(),
             ).bind("accountId", accountId)
             .map { row, _ -> row.get("cnt", Long::class.javaObjectType)?.toInt() ?: 0 }
@@ -122,12 +122,23 @@ class OrderOutboxRepository(
             ?: 0
 
     /**
-     * Строки для (повторной) доставки:
+     * Строки для (повторной) доставки. Атомарно «забирает» их у конкурентных
+     * worker'ов: `SELECT ... FOR UPDATE SKIP LOCKED` в подзапросе + `UPDATE ...
+     * RETURNING` переводят строку в PROCESSING за одну транзакцию — два параллельных
+     * [com.trading.bot.service.OrderOutboxService.processPending] не получат одну
+     * и ту же строку (второй пропустит захваченные, т.к. они уже PROCESSING).
+     *
+     * Выборка:
      * - PENDING старше cutoff (краш между save и dispatch, либо после рестарта);
      * - FAILED с retry_count < maxRetries, ожидающие экспоненциальный backoff:
-     *   интервал = LEAST(2^retry_count * base, max) секунд (+ jitter) с последней попытки.
+     *   интервал = LEAST(2^retry_count * base, max) секунд (+ jitter) с последней попытки;
+     * - PROCESSING, зависшие дольше 60 сек (краш во время доставки) — повторный захват.
+     *
+     * Захваченная строка считается «в доставке» до markSent/markFailed; при падении
+     * процесса она станет доступна снова после 60 сек (страховка: повторная отправка
+     * идемпотентна — биржа дедуплицирует по idempotency key).
      */
-    suspend fun findRetryable(
+    suspend fun claimRetryable(
         maxRetries: Int,
         olderThanSeconds: Int = 30,
         backoffBaseSeconds: Int = 10,
@@ -136,17 +147,24 @@ class OrderOutboxRepository(
     ): List<OrderOutbox> {
         val sql =
             """
-            SELECT * FROM order_outbox
-            WHERE
-                (status = 'PENDING' AND created_at < :cutoff) OR
-                (status = 'FAILED' AND retry_count < :maxRetries AND
-                 COALESCE(processed_at, created_at) < now() - make_interval(
-                     secs => LEAST(power(2, retry_count) * :backoffBase, :backoffMax) + :jitter))
-            ORDER BY created_at ASC
-            LIMIT 100
+            UPDATE order_outbox SET status = 'PROCESSING', processed_at = :now
+            WHERE id IN (
+                SELECT id FROM order_outbox
+                WHERE
+                    (status = 'PENDING' AND created_at < :cutoff) OR
+                    (status = 'FAILED' AND retry_count < :maxRetries AND
+                     COALESCE(processed_at, created_at) < now() - make_interval(
+                         secs => LEAST(power(2, retry_count) * :backoffBase, :backoffMax) + :jitter)) OR
+                    (status = 'PROCESSING' AND processed_at < now() - interval '60 seconds')
+                ORDER BY created_at ASC
+                LIMIT 100
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING *
             """.trimIndent()
         return databaseClient
             .sql(sql)
+            .bind("now", LocalDateTime.now())
             .bind("cutoff", LocalDateTime.now().minusSeconds((olderThanSeconds + jitterSeconds).toLong()))
             .bind("maxRetries", maxRetries)
             .bind("backoffBase", backoffBaseSeconds)
@@ -238,7 +256,7 @@ class OrderOutboxRepository(
     /**
      * Помечает доставку как неудачную и инкрементирует retry_count.
      * Одна и та же строка может переотправляться (с тем же idempotencyKey),
-     * но не более maxRetries раз — см. [findRetryable].
+     * но не более maxRetries раз — см. [claimRetryable].
      */
     suspend fun markFailed(
         id: UUID,

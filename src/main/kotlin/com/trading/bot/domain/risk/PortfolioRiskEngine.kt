@@ -37,6 +37,10 @@ data class PortfolioRiskRequest(
  * @param effectivePositions эффективное число позиций (1 / HHI), 1 = одна ставка
  * @param directionalConcentrationPercent |net| / gross * 100
  * @param maxPairCorrelation максимальная попарная корреляция в портфеле
+ * @param volatilityDataQuality качество данных о волатильности
+ * @param correlationDataQuality качество данных о корреляциях
+ * @param dataQualityScale множитель размера по качеству данных
+ *   (1.0 = полные данные, <1.0 = оценённые/отсутствующие данные)
  */
 data class PortfolioRiskReport(
     val allowed: Boolean,
@@ -47,6 +51,38 @@ data class PortfolioRiskReport(
     val effectivePositions: BigDecimal = BigDecimal.ZERO,
     val directionalConcentrationPercent: BigDecimal = BigDecimal.ZERO,
     val maxPairCorrelation: Double = 0.0,
+    val volatilityDataQuality: PortfolioDataQuality = PortfolioDataQuality.KNOWN,
+    val correlationDataQuality: PortfolioDataQuality = PortfolioDataQuality.KNOWN,
+    val dataQualityScale: BigDecimal = BigDecimal.ONE,
+)
+
+/**
+ * Качество данных, на которых рассчитан портфельный риск.
+ *
+ * - [KNOWN] — полные данные (дневная realized-vol, все пары корреляций рассчитаны);
+ * - [ESTIMATED] — часть данных оценена (например, волатильность из внутридневных
+ *   свечей, масштабированная sqrt(свечей в сессии));
+ * - [INSUFFICIENT] — данных нет вовсе; размер кандидата стремится к нулю, а в
+ *   режиме жёсткой блокировки портфельного риска вход запрещается
+ *   (PORTFOLIO_DATA_INSUFFICIENT).
+ */
+enum class PortfolioDataQuality {
+    KNOWN,
+    ESTIMATED,
+    INSUFFICIENT,
+}
+
+/**
+ * Разрешённая матрица корреляций с качеством данных.
+ *
+ * @param matrix матрица (индекс = позиция в списке тикеров); отсутствующие пары
+ *   заменены консервативным fallback (максимальная наблюдаемая корреляция)
+ * @param quality качество данных: [PortfolioDataQuality.KNOWN] — все пары
+ *   рассчитаны, [PortfolioDataQuality.INSUFFICIENT] — есть пары без данных
+ */
+data class ResolvedCorrelationMatrix(
+    val matrix: List<List<Double>>,
+    val quality: PortfolioDataQuality,
 )
 
 /**

@@ -307,6 +307,27 @@ class RiskConfig {
     /** Глубина расчёта корреляций портфеля (свечей). */
     var portfolioCorrelationLookbackPeriod: Int = 50
 
+    /**
+     * Множитель размера при ОЦЕНЁННОЙ волатильности (внутридневная × sqrt(свечей
+     * в сессии)) вместо дневной realized-vol. 0.5 = половина позиции.
+     * Полные данные (KNOWN) -> 1.0.
+     */
+    var portfolioEstimatedVolScale: Double = 0.5
+
+    /**
+     * Множитель размера при ПОЛНОМ отсутствии данных о волатильности тикера.
+     * 0.0 = вход не допускается (fail-closed): в режиме [portfolioRiskBlocked]
+     * даёт жёсткий запрет PORTFOLIO_DATA_INSUFFICIENT вместо прежнего fail-open
+     * «пропустить портфельную проверку без данных».
+     */
+    var portfolioInsufficientVolScale: Double = 0.0
+
+    /**
+     * Множитель размера при недостатке данных для корреляционной матрицы
+     * (часть пар заменена консервативным fallback). 0.25 = четверть размера.
+     */
+    var portfolioInsufficientCorrelationScale: Double = 0.25
+
     // ===== Volatility Engine 2.0 (Market Regime + Implied Volatility) =====
 
     /** Включён ли движок рыночного режима волатильности. */

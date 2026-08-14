@@ -1,7 +1,9 @@
 package com.trading.bot.application.risk
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.domain.risk.PortfolioRiskRequest
+import com.trading.bot.domain.risk.ResolvedCorrelationMatrix
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import com.trading.bot.service.CandleCacheService
@@ -57,10 +59,14 @@ class PortfolioRiskEngineClusterTest {
         tickers: List<String>,
         corr: Double?,
     ) {
-        Mockito.`when`(correlationProvider.resolved(tickers, "MINUTE_10", 50)).thenReturn(
-            tickers.map { a ->
-                tickers.map { b -> if (a == b) 1.0 else (corr ?: 0.0) }
-            },
+        Mockito.`when`(correlationProvider.resolvedWithQuality(tickers, "MINUTE_10", 50)).thenReturn(
+            ResolvedCorrelationMatrix(
+                matrix =
+                    tickers.map { a ->
+                        tickers.map { b -> if (a == b) 1.0 else (corr ?: 0.0) }
+                    },
+                quality = if (corr == null) PortfolioDataQuality.INSUFFICIENT else PortfolioDataQuality.KNOWN,
+            ),
         )
     }
 
@@ -136,7 +142,7 @@ class PortfolioRiskEngineClusterTest {
     fun `single position is baseline and not blocked by concentration`() =
         runBlocking {
             stubVols(listOf("A"), 1.0)
-            stubCorrelations(listOf("A"), null)
+            stubCorrelations(listOf("A"), 1.0)
 
             val report =
                 engine.evaluate(
@@ -151,6 +157,8 @@ class PortfolioRiskEngineClusterTest {
 
             assertTrue(report.allowed)
             assertTrue(report.reasons.isEmpty())
+            assertEquals(1.0, report.dataQualityScale.toDouble(), 1e-9)
+            assertEquals(1.0, report.scaleDownFactor.toDouble(), 1e-9)
         }
 
     @Test
@@ -219,5 +227,129 @@ class PortfolioRiskEngineClusterTest {
 
             assertTrue(report.allowed)
             assertTrue(abs(report.scaleDownFactor.toDouble() - 1.0) < 1e-9)
+        }
+
+    @Test
+    fun `no volatility data blocks instead of fail open`() =
+        runBlocking {
+            // Прежний fail-open (allowed=true при пустых данных о волатильности) запрещён.
+            Mockito
+                .`when`(candleCache.calculateRealizedVolatility(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+                .thenReturn(null)
+            stubCorrelations(listOf("A"), 1.0)
+
+            val report =
+                engine.evaluate(
+                    PortfolioRiskRequest(
+                        candidateTicker = "A",
+                        candidateDirection = PositionDirection.LONG,
+                        candidateNotionalRub = BigDecimal("100"),
+                        openPositions = emptyList(),
+                        aum = BigDecimal("1000"),
+                    ),
+                )
+
+            assertFalse(report.allowed)
+            assertTrue("PORTFOLIO_DATA_INSUFFICIENT" in report.reasons)
+            assertEquals(PortfolioDataQuality.INSUFFICIENT, report.volatilityDataQuality)
+            assertEquals(0.0, report.dataQualityScale.toDouble(), 1e-9)
+            assertEquals(0.0, report.scaleDownFactor.toDouble(), 1e-9)
+        }
+
+    @Test
+    fun `no volatility data in soft mode scales to zero instead of fail open`() =
+        runBlocking {
+            riskConfig.portfolioRiskBlocked = false
+            Mockito
+                .`when`(candleCache.calculateRealizedVolatility(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+                .thenReturn(null)
+            stubCorrelations(listOf("A"), 1.0)
+
+            val report =
+                engine.evaluate(
+                    PortfolioRiskRequest(
+                        candidateTicker = "A",
+                        candidateDirection = PositionDirection.LONG,
+                        candidateNotionalRub = BigDecimal("100"),
+                        openPositions = emptyList(),
+                        aum = BigDecimal("1000"),
+                    ),
+                )
+
+            assertTrue(report.allowed)
+            assertEquals(PortfolioDataQuality.INSUFFICIENT, report.volatilityDataQuality)
+            assertEquals(0.0, report.scaleDownFactor.toDouble(), 1e-9)
+        }
+
+    @Test
+    fun `estimated intraday volatility scales size to half`() =
+        runBlocking {
+            Mockito.`when`(candleCache.calculateRealizedVolatility("A", "DAY_1", 20)).thenReturn(null)
+            Mockito.`when`(candleCache.calculateRealizedVolatility("A", "MINUTE_10", 20)).thenReturn(2.0)
+            stubCorrelations(listOf("A"), 1.0)
+
+            val report =
+                engine.evaluate(
+                    PortfolioRiskRequest(
+                        candidateTicker = "A",
+                        candidateDirection = PositionDirection.LONG,
+                        candidateNotionalRub = BigDecimal("100"),
+                        openPositions = emptyList(),
+                        aum = BigDecimal("1000"),
+                    ),
+                )
+
+            assertTrue(report.allowed)
+            assertEquals(PortfolioDataQuality.ESTIMATED, report.volatilityDataQuality)
+            assertEquals(0.5, report.dataQualityScale.toDouble(), 1e-9)
+            assertEquals(0.5, report.scaleDownFactor.toDouble(), 1e-9)
+        }
+
+    @Test
+    fun `insufficient correlation data scales size to a quarter`() =
+        runBlocking {
+            stubVols(listOf("A", "B"), 1.0)
+            // Пара A-B без данных — качество корреляций INSUFFICIENT.
+            stubCorrelations(listOf("A", "B"), null)
+
+            val report =
+                engine.evaluate(
+                    PortfolioRiskRequest(
+                        candidateTicker = "B",
+                        candidateDirection = PositionDirection.LONG,
+                        candidateNotionalRub = BigDecimal("100"),
+                        openPositions = listOf(position("A", BigDecimal("100"))),
+                        aum = BigDecimal("1000"),
+                    ),
+                )
+
+            assertTrue(report.allowed)
+            assertEquals(PortfolioDataQuality.INSUFFICIENT, report.correlationDataQuality)
+            assertEquals(0.25, report.dataQualityScale.toDouble(), 1e-9)
+            assertEquals(0.25, report.scaleDownFactor.toDouble(), 1e-9)
+        }
+
+    @Test
+    fun `estimated vol and insufficient correlation take the worse data quality scale`() =
+        runBlocking {
+            Mockito.`when`(candleCache.calculateRealizedVolatility("A", "DAY_1", 20)).thenReturn(null)
+            Mockito.`when`(candleCache.calculateRealizedVolatility("A", "MINUTE_10", 20)).thenReturn(2.0)
+            stubCorrelations(listOf("A"), null)
+
+            val report =
+                engine.evaluate(
+                    PortfolioRiskRequest(
+                        candidateTicker = "A",
+                        candidateDirection = PositionDirection.LONG,
+                        candidateNotionalRub = BigDecimal("100"),
+                        openPositions = emptyList(),
+                        aum = BigDecimal("1000"),
+                    ),
+                )
+
+            assertTrue(report.allowed)
+            assertEquals(PortfolioDataQuality.ESTIMATED, report.volatilityDataQuality)
+            assertEquals(PortfolioDataQuality.INSUFFICIENT, report.correlationDataQuality)
+            assertEquals(0.25, report.dataQualityScale.toDouble(), 1e-9)
         }
 }

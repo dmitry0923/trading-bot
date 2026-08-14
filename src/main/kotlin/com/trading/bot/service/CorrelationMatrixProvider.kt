@@ -1,5 +1,7 @@
 package com.trading.bot.service
 
+import com.trading.bot.domain.risk.PortfolioDataQuality
+import com.trading.bot.domain.risk.ResolvedCorrelationMatrix
 import org.springframework.stereotype.Service
 import kotlin.math.sqrt
 
@@ -98,5 +100,33 @@ class CorrelationMatrixProvider(
         return tickers.map { a ->
             tickers.map { b -> if (a == b) 1.0 else raw[a]?.get(b) ?: fallback }
         }
+    }
+
+    /**
+     * Разрешённая матрица корреляций с качеством данных.
+     *
+     * Аналог [resolved], но дополнительно сообщает, есть ли в матрице пары без
+     * данных: [PortfolioDataQuality.INSUFFICIENT] — как минимум одна пара
+     * заменена консервативным fallback, [PortfolioDataQuality.KNOWN] — все пары
+     * рассчитаны по данным. Используется портфельным риск-движком для
+     * масштабирования размера при неполных данных.
+     */
+    fun resolvedWithQuality(
+        tickers: List<String>,
+        timeframe: String = "MINUTE_10",
+        period: Int = 50,
+    ): ResolvedCorrelationMatrix {
+        val distinct = tickers.distinct()
+        val raw = correlations(distinct, timeframe, period)
+        val missingPair = distinct.any { a -> distinct.any { b -> a != b && raw[a]?.get(b) == null } }
+        val observed = distinct.flatMap { a -> distinct.map { b -> raw[a]?.get(b) } }.filterNotNull()
+        val fallback = observed.maxOrNull() ?: 0.0
+        val matrix =
+            tickers.map { a ->
+                tickers.map { b -> if (a == b) 1.0 else raw[a]?.get(b) ?: fallback }
+            }
+        val quality =
+            if (missingPair) PortfolioDataQuality.INSUFFICIENT else PortfolioDataQuality.KNOWN
+        return ResolvedCorrelationMatrix(matrix, quality)
     }
 }

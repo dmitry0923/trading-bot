@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.model.entity.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -81,5 +82,28 @@ class CorrelationMatrixProviderTest {
         val corr = provider.correlationOf("A", "B")
 
         assertEquals(0.0, corr!!, 0.5)
+    }
+
+    @Test
+    fun `resolvedWithQuality is known when all pairs have data`() {
+        stubSeries("A", (1..50).map { i -> 100.0 + i })
+        stubSeries("B", (1..50).map { i -> 200.0 - i })
+
+        val result = provider.resolvedWithQuality(listOf("A", "B"))
+
+        assertEquals(PortfolioDataQuality.KNOWN, result.quality)
+        assertEquals(-1.0, result.matrix[0][1], 1e-6)
+        assertEquals(-1.0, result.matrix[1][0], 1e-6)
+    }
+
+    @Test
+    fun `resolvedWithQuality is insufficient when a pair has no data`() {
+        stubSeries("A", (1..10).map { i -> 100.0 + i })
+        stubSeries("B", (1..10).map { i -> 100.0 + i })
+
+        val result = provider.resolvedWithQuality(listOf("A", "B"))
+
+        assertEquals(PortfolioDataQuality.INSUFFICIENT, result.quality)
+        assertEquals(1.0, result.matrix[0][1], 1e-9)
     }
 }

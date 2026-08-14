@@ -1,9 +1,11 @@
 package com.trading.bot.application.risk
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskReport
 import com.trading.bot.domain.risk.PortfolioRiskRequest
+import com.trading.bot.domain.risk.ResolvedCorrelationMatrix
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import com.trading.bot.service.CandleCacheService
@@ -25,7 +27,10 @@ import kotlin.math.sqrt
  *
  * 1. Веса по нотионалу (long > 0, short < 0; |веса| суммируются к 1 по gross).
  * 2. Дневная волатильность каждого тикера — realized-vol по DAY_1 (fallback:
- *    внутридневная * sqrt(свечей в сессии); без данных — консервативный max по портфелю).
+ *    внутридневная * sqrt(свечей в сессии)). Качество данных отслеживается
+ *    три-состоянием [PortfolioDataQuality] (KNOWN / ESTIMATED / INSUFFICIENT) и
+ *    масштабирует размер кандидата через [PortfolioRiskReport.dataQualityScale]:
+ *    KNOWN -> 100%, ESTIMATED -> *0.5, INSUFFICIENT -> *0.0 (fail-closed).
  * 3. Портфельная дисперсия: σp² = Σ wᵢ²σᵢ² + 2·Σᵢ<ⱼ wᵢwⱼσᵢσⱼρᵢⱼ.
  * 4. VaR95 = 1.645 · σp · grossExposure.
  * 5. effectivePositions = (Σ|wᵢ|)² / Σᵢⱼ|wᵢ||wⱼ|ρᵢⱼ — эффективное число НЕЗАВИСИМЫХ
@@ -36,9 +41,12 @@ import kotlin.math.sqrt
  * Режимы реакции (BLOCK + SCALE):
  * - BLOCK ([RiskConfig.portfolioRiskBlocked]): VaR95 > [RiskConfig.maxPortfolioVaRPercent]%
  *   AUM; effectivePositions < [RiskConfig.minEffectivePositions]; направленная
- *   концентрация > [RiskConfig.maxDirectionalConcentrationPercent]% -> запрет входа.
+ *   концентрация > [RiskConfig.maxDirectionalConcentrationPercent]%; отсутствие
+ *   данных о волатильности -> PORTFOLIO_DATA_INSUFFICIENT (вместо прежнего
+ *   fail-open «пропустить портфельную проверку без данных»).
  * - SCALE: при умеренном превышении warn-порогов размер кандидата умножается на
- *   scaleDownFactor (линейная интерполяция warn -> block -> minPortfolioScaleFactor).
+ *   scaleDownFactor (линейная интерполяция warn -> block -> minPortfolioScaleFactor),
+ *   затем на [PortfolioRiskReport.dataQualityScale] (качество данных).
  *
  * Провайдеры данных — [CorrelationMatrixProvider] и [CandleCacheService] (без БД).
  */
@@ -68,10 +76,12 @@ class PortfolioRiskEngineImpl(
         val weights = notionals.map { it / gross }
         val absWeights = weights.map { abs(it) }
 
-        val dailyVols = resolveDailyVolPercent(tickers)
-        if (dailyVols.isEmpty()) return PortfolioRiskReport(allowed = true)
+        val (dailyVols, perTickerVolQuality) = resolveDailyVolPercent(tickers)
+        val volQuality = aggregateQuality(perTickerVolQuality.values)
+        val resolvedCorr = resolveCorrelationMatrix(tickers)
+        val corrMatrix = resolvedCorr.matrix
+        val corrQuality = resolvedCorr.quality
 
-        val corrMatrix = resolveCorrelationMatrix(tickers)
         val maxPairCorrelation =
             tickers.indices
                 .flatMap { i -> tickers.indices.map { j -> corrMatrix[i][j] } }
@@ -105,8 +115,16 @@ class PortfolioRiskEngineImpl(
                 )
         }
 
+        // Качество данных: KNOWN -> 1.0, ESTIMATED -> 0.5, INSUFFICIENT -> 0.0 (vol)
+        // или 0.25 (corr). Отсутствие данных о волатильности = fail-closed, а не fail-open.
+        val dataQuality = dataQualityScale(volQuality, corrQuality)
+        factor *= dataQuality
+
         // BLOCK.
         val reasons = mutableListOf<String>()
+        if (riskConfig.portfolioRiskBlocked && volQuality == PortfolioDataQuality.INSUFFICIENT) {
+            reasons += "PORTFOLIO_DATA_INSUFFICIENT"
+        }
         if (riskConfig.portfolioRiskBlocked && varPercent > riskConfig.maxPortfolioVaRPercent) reasons += "PORTFOLIO_VAR"
         if (riskConfig.portfolioRiskBlocked && tickers.size >= 2 && effectivePositions < riskConfig.minEffectivePositions) {
             reasons += "PORTFOLIO_CONCENTRATION"
@@ -118,7 +136,7 @@ class PortfolioRiskEngineImpl(
         val scaleDown =
             BigDecimal(factor.toString())
                 .setScale(4, RoundingMode.HALF_UP)
-                .coerceIn(BigDecimal(riskConfig.minPortfolioScaleFactor.toString()), BigDecimal.ONE)
+                .coerceIn(BigDecimal.ZERO, BigDecimal.ONE)
 
         val allowed = reasons.isEmpty()
         when {
@@ -127,7 +145,8 @@ class PortfolioRiskEngineImpl(
                 logger.warn {
                     "Portfolio risk BLOCK ${request.candidateTicker}: ${reasons.joinToString("|")} " +
                         "var95=${"%.2f".format(varPercent)}% eff=${"%.2f".format(effectivePositions)} " +
-                        "conc=${"%.2f".format(directionalConcentration)}% maxCorr=${"%.2f".format(maxPairCorrelation)}"
+                        "conc=${"%.2f".format(directionalConcentration)}% maxCorr=${"%.2f".format(maxPairCorrelation)} " +
+                        "data=$volQuality/$corrQuality"
                 }
             }
 
@@ -135,7 +154,7 @@ class PortfolioRiskEngineImpl(
                 logger.info {
                     "Portfolio risk SCALE ${request.candidateTicker}: factor=$scaleDown " +
                         "var95=${"%.2f".format(varPercent)}% eff=${"%.2f".format(effectivePositions)} " +
-                        "conc=${"%.2f".format(directionalConcentration)}%"
+                        "conc=${"%.2f".format(directionalConcentration)}% data=$volQuality/$corrQuality"
                 }
             }
         }
@@ -154,6 +173,9 @@ class PortfolioRiskEngineImpl(
             effectivePositions = BigDecimal(effectivePositions).setScale(4, RoundingMode.HALF_UP),
             directionalConcentrationPercent = BigDecimal(directionalConcentration).setScale(4, RoundingMode.HALF_UP),
             maxPairCorrelation = maxPairCorrelation,
+            volatilityDataQuality = volQuality,
+            correlationDataQuality = corrQuality,
+            dataQualityScale = BigDecimal(dataQuality.toString()).setScale(4, RoundingMode.HALF_UP),
         )
     }
 
@@ -164,22 +186,49 @@ class PortfolioRiskEngineImpl(
 
     private fun directionSign(direction: PositionDirection): Double = if (direction == PositionDirection.LONG) 1.0 else -1.0
 
+    /** Волатильности тикеров + качество данных по каждому из них. */
+    private data class VolatilityData(
+        val dailyVolPercent: Map<String, Double>,
+        val perTickerQuality: Map<String, PortfolioDataQuality>,
+    )
+
     /**
-     * Дневная волатильность (%) для каждого тикера: DAY_1 realized-vol; fallback —
-     * внутридневная * sqrt(свечей в сессии); при отсутствии данных у тикера —
-     * консервативный max по доступным. Пустая карта — если данных нет вовсе.
+     * Дневная волатильность (%) и качество данных по каждому тикеру:
+     * KNOWN — DAY_1 realized-vol; ESTIMATED — внутридневная * sqrt(свечей в сессии);
+     * INSUFFICIENT — данных нет вовсе. Для тикеров без данных волатильность
+     * заменяется консервативным максимумом по доступным (расчёт VaR не ломается),
+     * но качество помечается INSUFFICIENT и масштабирует размер в 0.
      */
-    private fun resolveDailyVolPercent(tickers: List<String>): Map<String, Double> {
-        val raw =
+    private fun resolveDailyVolPercent(tickers: List<String>): VolatilityData {
+        val day1 =
             tickers.distinct().associateWith { t ->
                 candleCache.calculateRealizedVolatility(t, "DAY_1", riskConfig.volatilityLookbackDays)
-                    ?: intradayScaledVol(t)
             }
-        val available = raw.values.filterNotNull()
-        if (available.isEmpty()) return emptyMap()
-        val fallback = available.maxOrNull() ?: 0.0
-        return raw.mapValues { it.value ?: fallback }
+        val intraday = day1.mapValues { (t, v) -> v ?: intradayScaledVol(t) }
+        val perTickerQuality =
+            day1.mapValues { (t, v) ->
+                when {
+                    v != null -> PortfolioDataQuality.KNOWN
+                    intraday[t] != null -> PortfolioDataQuality.ESTIMATED
+                    else -> PortfolioDataQuality.INSUFFICIENT
+                }
+            }
+        val available = intraday.values.filterNotNull()
+        if (available.isEmpty()) return VolatilityData(emptyMap(), perTickerQuality)
+        val fallback = available.maxOrNull()!!
+        return VolatilityData(intraday.mapValues { it.value ?: fallback }, perTickerQuality)
     }
+
+    /**
+     * Агрегированное качество по всем тикерам: INSUFFICIENT, если хоть у одного
+     * данных нет; иначе ESTIMATED, если хоть у одного данные оценены; иначе KNOWN.
+     */
+    private fun aggregateQuality(qualities: Collection<PortfolioDataQuality>): PortfolioDataQuality =
+        when {
+            qualities.any { it == PortfolioDataQuality.INSUFFICIENT } -> PortfolioDataQuality.INSUFFICIENT
+            qualities.any { it == PortfolioDataQuality.ESTIMATED } -> PortfolioDataQuality.ESTIMATED
+            else -> PortfolioDataQuality.KNOWN
+        }
 
     private fun intradayScaledVol(ticker: String): Double? {
         val n = riskConfig.volatilityFallbackCandlesPerDay.coerceAtLeast(1)
@@ -188,11 +237,38 @@ class PortfolioRiskEngineImpl(
     }
 
     /**
-     * Матрица корреляций (индекс = позиция в списке тикеров) с консервативным fallback:
-     * отсутствующая пара заменяется максимальной наблюдаемой корреляцией (без данных — 0).
+     * Матрица корреляций (индекс = позиция в списке тикеров) с консервативным
+     * fallback и качеством данных ([CorrelationMatrixProvider.resolvedWithQuality]).
      */
-    private fun resolveCorrelationMatrix(tickers: List<String>): List<List<Double>> =
-        correlationProvider.resolved(tickers, "MINUTE_10", riskConfig.portfolioCorrelationLookbackPeriod)
+    private fun resolveCorrelationMatrix(tickers: List<String>): ResolvedCorrelationMatrix =
+        correlationProvider.resolvedWithQuality(tickers, "MINUTE_10", riskConfig.portfolioCorrelationLookbackPeriod)
+
+    /**
+     * Множитель размера по качеству данных — минимум шкалы волатильности и шкалы
+     * корреляций: KNOWN -> 1.0; ESTIMATED (волатильность) ->
+     * [RiskConfig.portfolioEstimatedVolScale]; INSUFFICIENT (волатильность) ->
+     * [RiskConfig.portfolioInsufficientVolScale] (0.0 = fail-closed); INSUFFICIENT
+     * (корреляции) -> [RiskConfig.portfolioInsufficientCorrelationScale].
+     */
+    private fun dataQualityScale(
+        volQuality: PortfolioDataQuality,
+        corrQuality: PortfolioDataQuality,
+    ): Double {
+        val volScale =
+            when (volQuality) {
+                PortfolioDataQuality.KNOWN -> 1.0
+                PortfolioDataQuality.ESTIMATED -> riskConfig.portfolioEstimatedVolScale
+                PortfolioDataQuality.INSUFFICIENT -> riskConfig.portfolioInsufficientVolScale
+            }
+        // ESTIMATED-уровень качества корреляций пока не используется (зарезервирован).
+        val corrScale =
+            when (corrQuality) {
+                PortfolioDataQuality.KNOWN -> 1.0
+                PortfolioDataQuality.ESTIMATED -> 1.0
+                PortfolioDataQuality.INSUFFICIENT -> riskConfig.portfolioInsufficientCorrelationScale
+            }
+        return minOf(volScale, corrScale)
+    }
 
     /**
      * Портфельная дисперсия (десятичные доли):

@@ -12,10 +12,10 @@ data class RegimeDetectionConfig(
     val directionWindowBars: Int = 10,
     /** Окно (свечей) для определения Crash/Pump по движению цены. */
     val moveWindowBars: Int = 6,
-    /** Падение за [moveWindowBars] свечей (%), при котором режим = CRASH. */
-    val crashPercent: Double = 2.5,
-    /** Рост за [moveWindowBars] свечей (%), при котором режим = PUMP. */
-    val pumpPercent: Double = 2.5,
+    /** Падение за [moveWindowBars] свечей в единицах ATR(14), при котором режим = CRASH. */
+    val crashAtrMultiplier: Double = 2.0,
+    /** Рост за [moveWindowBars] свечей в единицах ATR(14), при котором режим = PUMP. */
+    val pumpAtrMultiplier: Double = 2.0,
     /** Перцентиль объёма, ниже которого ликвидность = THIN. */
     val lowVolumePercentile: Double = 10.0,
     /** Перцентиль ATR%, ниже которого волатильность = LOW. */
@@ -40,8 +40,10 @@ data class RegimeDetectionConfig(
  *     барах — >= (N-2) баров вверх → TREND_UP, <= 2 → TREND_DOWN, иначе RANGE;
  *   - волатильность: перцентильный ранг текущего ATR% относительно скользящего
  *     распределения ATR% (аналог логики [MarketRegimeClassifier], но per-ticker);
- *   - событие Crash/Pump: движение цены за [RegimeDetectionConfig.moveWindowBars] баров
- *     ниже -crashPercent / выше pumpPercent;
+ *   - событие Crash/Pump: движение цены за [RegimeDetectionConfig.moveWindowBars] баров,
+ *     нормализованное по ATR(14) (единая шкала для разных волатильностей и
+ *     таймфреймов): падение ниже -crashAtrMultiplier·ATR / рост выше
+ *     pumpAtrMultiplier·ATR;
  *   - ликвидность: перцентильный ранг последнего объёма в распределении окна.
  */
 object RegimeDetector {
@@ -131,14 +133,16 @@ object RegimeDetector {
     ): MarketEvent {
         val window = candles.takeLast(config.moveWindowBars)
         if (window.size < config.moveWindowBars) return MarketEvent.NONE
+        val atr = IndicatorCalculator.atr(candles.takeLast(15), 14)
+        if (atr <= 0.0) return MarketEvent.NONE
         val start = window.first().openPrice.toDouble()
         val end = window.last().closePrice.toDouble()
         if (start <= 0.0) return MarketEvent.NONE
 
-        val movePercent = (end - start) / start * 100.0
+        val moveAtr = (end - start) / atr
         return when {
-            movePercent <= -config.crashPercent -> MarketEvent.CRASH
-            movePercent >= config.pumpPercent -> MarketEvent.PUMP
+            moveAtr <= -config.crashAtrMultiplier -> MarketEvent.CRASH
+            moveAtr >= config.pumpAtrMultiplier -> MarketEvent.PUMP
             else -> MarketEvent.NONE
         }
     }

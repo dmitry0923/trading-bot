@@ -32,15 +32,17 @@ class RegimeDetectorTest {
             time = LocalDateTime.of(2026, 1, 1, 10, 0).plusMinutes(10L * index),
         )
 
-    /** Ряд свечей без гэпов: open = предыдущее закрытие, волатильность бара малая. */
+    /** Ряд свечей без гэпов: open = предыдущее закрытие, вики баров ±[wickPercent]%. */
     private fun series(
         closes: List<Double>,
         volumes: List<Long> = List(closes.size) { 1000L },
+        wickPercent: Double = 0.5,
     ): List<Candle> =
         closes.mapIndexed { i, close ->
             val open = if (i == 0) close else closes[i - 1]
-            val high = maxOf(open, close) * 1.001
-            val low = minOf(open, close) * 0.999
+            val wick = wickPercent / 100.0
+            val high = maxOf(open, close) * (1.0 + wick)
+            val low = minOf(open, close) * (1.0 - wick)
             candle(open, high, low, close, volumes[i], i)
         }
 
@@ -92,6 +94,24 @@ class RegimeDetectorTest {
         assertEquals(MarketEvent.PUMP, regime.event)
         assertTrue(regime.blocksEntry)
         assertEquals("PUMP", regime.blockReason())
+    }
+
+    @Test
+    fun `crash triggered by small percent move exceeding two ATR`() {
+        val closes =
+            (0 until 60).map { 100.0 } +
+                listOf(99.9, 99.8, 99.7, 99.6, 99.5, 99.3)
+        val regime = RegimeDetector.detect(series(closes, risingVolumes(closes.size), wickPercent = 0.1), config)
+        assertEquals(MarketEvent.CRASH, regime.event)
+    }
+
+    @Test
+    fun `wide bars absorb large percent move below two ATR`() {
+        val closes =
+            (0 until 60).map { 100.0 } +
+                listOf(99.5, 99.0, 98.5, 98.0, 97.5, 97.0)
+        val regime = RegimeDetector.detect(series(closes, risingVolumes(closes.size), wickPercent = 5.0), config)
+        assertEquals(MarketEvent.NONE, regime.event)
     }
 
     @Test

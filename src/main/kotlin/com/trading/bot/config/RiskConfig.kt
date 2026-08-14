@@ -395,11 +395,11 @@ class RiskConfig {
     /** Окно (свечей) для определения Crash/Pump по движению цены. */
     var regimeMoveWindowBars: Int = 6
 
-    /** Падение за окно (%), при котором режим = CRASH. */
-    var regimeCrashPercent: Double = 2.5
+    /** Падение за окно в единицах ATR(14), при котором режим = CRASH (2.0 = два ATR). */
+    var regimeCrashAtrMultiplier: Double = 2.0
 
-    /** Рост за окно (%), при котором режим = PUMP. */
-    var regimePumpPercent: Double = 2.5
+    /** Рост за окно в единицах ATR(14), при котором режим = PUMP (2.0 = два ATR). */
+    var regimePumpAtrMultiplier: Double = 2.0
 
     /** Перцентиль объёма, ниже которого ликвидность = THIN. */
     var regimeLowVolumePercentile: Double = 10.0
@@ -435,8 +435,8 @@ class RiskConfig {
         RegimeDetectionConfig(
             directionWindowBars = regimeDirectionWindowBars,
             moveWindowBars = regimeMoveWindowBars,
-            crashPercent = regimeCrashPercent,
-            pumpPercent = regimePumpPercent,
+            crashAtrMultiplier = regimeCrashAtrMultiplier,
+            pumpAtrMultiplier = regimePumpAtrMultiplier,
             lowVolumePercentile = regimeLowVolumePercentile,
             lowVolatilityPercentile = regimeLowVolatilityPercentile,
             normalVolatilityPercentile = regimeNormalVolatilityPercentile,

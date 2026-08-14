@@ -126,6 +126,17 @@ class OrderExecutionEngine(
         accountId: Long? = null,
         buildPosition: (orderId: String?, pending: Boolean, fillPrice: BigDecimal, qty: Int) -> Position,
     ): Position? {
+        // Атомарная резервация слота (EXEC-002, MR-B): ДО отправки ордера. Уникальный
+        // индекс entry_reservations (ticker, account) гарантирует, что из конкурентных
+        // входов по одному слоту выигрывает один — остальные не создают второй
+        // entry-ордер (distributed lock выключен по умолчанию, см. DistributedLockConfig).
+        val reservedId = positionRepo.reserveEntry(ticker, direction, accountId)
+        if (reservedId == null) {
+            logger.warn { "Duplicate entry blocked $ticker (${direction.name}) — slot already reserved or position OPEN" }
+            meterRegistry.counter("$metricPrefix.entry.duplicate", Tags.of("ticker", ticker)).increment()
+            return null
+        }
+
         val side = if (direction == PositionDirection.LONG) "buy" else "sell"
         val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit", accountId = accountId)
         if (!placed.success || placed.alorOrderId == null) {
@@ -138,6 +149,8 @@ class OrderExecutionEngine(
                 meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
             } else {
                 logger.error { "Order failed for $ticker" }
+                // Определённый отказ — ордер НЕ создан: освобождаем слот входа.
+                positionRepo.releaseEntry(ticker, accountId)
                 meterRegistry.counter("$metricPrefix.order.failed", Tags.of("ticker", ticker)).increment()
             }
             return null
@@ -885,6 +898,7 @@ class OrderExecutionEngine(
         cancelProtectionOrders(pos)
         tradeEventService.recordPositionClosed(pos, reason)
         onPositionClosed(pos)
+        positionRepo.releaseEntry(pos.ticker, pos.accountId)
         meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
         logger.info { "Closed ${pos.ticker} reason=$reason P&L=$totalPnl" }
     }
@@ -1044,6 +1058,7 @@ class OrderExecutionEngine(
         pos.closeReason = reason
         pos.closedAt = LocalDateTime.now()
         positionRepo.save(pos)
+        positionRepo.releaseEntry(pos.ticker, pos.accountId)
         meterRegistry.counter("$metricPrefix.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
     }
 }

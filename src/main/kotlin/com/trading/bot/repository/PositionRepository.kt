@@ -2,6 +2,7 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
+import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
 import io.r2dbc.spi.Row
@@ -484,6 +485,96 @@ class PositionRepository(
             .bind("id", position.id!!)
             .then()
             .awaitSingleOrNull()
+    }
+
+    /**
+     * Атомарная резервация слота входа (EXEC-002, MR-B): защита от двойного входа
+     * в позицию по одному (ticker, account).
+     *
+     * `positions` партиционирована по RANGE(opened_at), поэтому глобальный
+     * partial UNIQUE INDEX на ней невозможен — слот держится в отдельной таблице
+     * `entry_reservations` с уникальным индексом (ticker, COALESCE(account_id, 0)).
+     * INSERT с ON CONFLICT атомарен: из конкурентных входов побеждает один, остальные
+     * получают null и НЕ создают entry-ордер.
+     *
+     * Дополнительно резервация не создаётся, если по тому же (ticker, account) уже
+     * есть OPEN-позиция (fast-path для позиций, открытых до ввода резерваций).
+     *
+     * @return id резервации, либо null — слот занят (уже резервирован / есть OPEN-позиция).
+     */
+    suspend fun reserveEntry(
+        ticker: String,
+        direction: PositionDirection,
+        accountId: Long?,
+    ): Long? {
+        val sql =
+            """
+            INSERT INTO entry_reservations (ticker, account_id, direction)
+            SELECT :ticker, :accountId, :direction
+            WHERE NOT EXISTS (
+                SELECT 1 FROM entry_reservations er
+                WHERE er.ticker = :ticker AND COALESCE(er.account_id, 0) = COALESCE(:accountId, 0)
+            ) AND NOT EXISTS (
+                SELECT 1 FROM positions p
+                WHERE p.status = 'OPEN' AND p.ticker = :ticker
+                  AND COALESCE(p.account_id, 0) = COALESCE(:accountId, 0)
+            )
+            ON CONFLICT DO NOTHING
+            RETURNING id
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("ticker", ticker)
+            .bind("direction", direction.name)
+            .bindOrNull("accountId", accountId)
+            .map { row, _ -> row.get("id", Long::class.javaObjectType)!! }
+            .one()
+            .awaitSingleOrNull()
+    }
+
+    /**
+     * Освобождение слота входа (EXEC-002): закрытие позиции, определённый отказ биржи,
+     * abandonEntry или cleanup. Резервация одна на (ticker, account) — удаление по ключу.
+     */
+    suspend fun releaseEntry(
+        ticker: String,
+        accountId: Long?,
+    ) {
+        val sql =
+            """
+            DELETE FROM entry_reservations
+            WHERE ticker = :ticker AND COALESCE(account_id, 0) = COALESCE(:accountId, 0)
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
+            .bind("ticker", ticker)
+            .bindOrNull("accountId", accountId)
+            .then()
+            .awaitSingleOrNull()
+    }
+
+    /**
+     * Уборка «осиротевших» резерваций (краш бота между резервацией и созданием позиции):
+     * снимает резервации старше [maxAgeMs], для которых нет открытой позиции.
+     */
+    suspend fun cleanupStaleEntryReservations(maxAgeMs: Long = 30 * 60 * 1000): Int {
+        val sql =
+            """
+            DELETE FROM entry_reservations er
+            WHERE er.created_at < :threshold
+              AND NOT EXISTS (
+                  SELECT 1 FROM positions p
+                  WHERE p.status = 'OPEN' AND p.ticker = er.ticker
+                    AND COALESCE(p.account_id, 0) = COALESCE(er.account_id, 0)
+              )
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("threshold", LocalDateTime.now().minusNanos(maxAgeMs * 1_000_000))
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
+            .toInt()
     }
 
     suspend fun deleteAll() {

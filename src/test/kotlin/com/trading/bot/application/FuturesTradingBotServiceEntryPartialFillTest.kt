@@ -266,6 +266,14 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         runBlocking {
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
+                .`when`(
+                    positionRepo.reserveEntry(
+                        Mockito.anyString(),
+                        anyDirection(),
+                        Mockito.nullable(Long::class.java),
+                    ),
+                ).thenReturn(1L)
+            Mockito
                 .`when`(alorClient.getLastPrice(Mockito.anyString()))
                 .thenReturn(BigDecimal("92000"))
             Mockito

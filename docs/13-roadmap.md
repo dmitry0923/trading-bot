@@ -1284,11 +1284,42 @@ flowchart LR
 двойная финализация — одно событие). Обновлён `FuturesTradingBotServicePartialCloseTest`
 (стабы claimForClose/findById/transitionToClosed).
 
-### 13.19.2. Очередь EXEC-MR
+### 13.19.2. MR-B: атомарная резервация слота входа (EXEC-002) ✅
+
+Проблема: между проверкой «есть ли открытая позиция» и отправкой entry-ордера было окно
+гонки — конкурентные входы по одному тикеру могли создать два entry-ордера. Распределённый
+замок выключен по умолчанию (`DistributedLockConfig.enabled=false`), поэтому требовалась
+DB-резервация. Глобальный частичный unique-индекс на `(ticker, account)` в `positions`
+невозможен — таблица партиционирована по `opened_at` (Postgres требует partition key
+в unique-индексах).
+
+Решение:
+- новая таблица `entry_reservations` (миграция 025) с unique-индексом
+  `(ticker, COALESCE(account_id, 0))` — не более одной резервации на слот;
+- `PositionRepository.reserveEntry(ticker, direction, accountId): Long?` —
+  `INSERT ... SELECT ... ON CONFLICT DO NOTHING RETURNING id` с NOT EXISTS-гардами
+  (свободный слот + нет OPEN-позиции); null → слот занят;
+- `PositionRepository.releaseEntry(ticker, accountId)` — освобождение по ключу слота;
+- `PositionRepository.cleanupStaleEntryReservations(maxAgeMs)` — чистка осиротевших
+  записей (бот упал между резервацией и созданием позиции);
+- `OrderExecutionEngine.placeEntryOrder`: резервация ДО `placeOrder`; слот занят →
+  метрика `entry.duplicate`, ордер не создаётся; определённый отказ биржи → `releaseEntry`;
+  UNCERTAIN/PARTIAL → резервация удерживается до подтверждения реконсилятором;
+- `finalizeClosePosition` и `abandonEntry` освобождают резервацию (все close-пути
+  сходятся в `finalizeClosePosition`);
+- `EntryReservationMaintenanceService` — `@Scheduled` чистка осиротевших резерваций
+  старше 30 мин без OPEN-позиции.
+
+Тесты: `OrderExecutionEngineEntryReservationTest` (6 сценариев: занятый слот блокирует
+вход без ордера; полное исполнение открывает позицию и удерживает резервацию;
+определённый отказ освобождает слот; UNCERTAIN держит резервацию + pendingEntry;
+PARTIAL держит резервацию; закрытие освобождает резервацию). Обновлён
+`FuturesTradingBotServiceEntryPartialFillTest` (стаб reserveEntry).
+
+### 13.19.3. Очередь EXEC-MR
 
 | # | Проблема | Статус |
 |---|---|---|
-| EXEC-002 | Атомарная защита от дубля входа (unique-резервация позиции до отправки ордера) | pending |
 | EXEC-003 | Настоящее emergency-исполнение (обход spread-guard 0.5% для ликвидационных закрытий) | pending |
 | EXEC-004 | Emergency-закрытие не должно блокироваться spread-guard | pending |
 | EXEC-005 | LIVE не должен использовать fallback капитал (defaultPortfolioMoney 50k) | pending |

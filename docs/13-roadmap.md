@@ -1358,11 +1358,29 @@ blocked не инкрементится, forced_market инкрементитс�
 Тесты: `AlorFuturesClientTest` (parse moneyAmount/money, missing/malformed → null);
 `DecisionEngineTest` (null entry request блокирует вход + метрика).
 
-### 13.19.5. Очередь EXEC-MR
+### 13.19.5. MR-E: fail-closed при неизвестном состоянии биржи и direction mismatch (EXEC-006/007) ✅
+
+Проблема:
+- EXEC-006: при недоступности REST (сверка не выполнима) состояние биржи НЕИЗВЕСТНО,
+  но торговля продолжалась «вслепую» (fetch failure просто прерывал сверку без halt).
+- EXEC-007: direction mismatch (локальный LONG, на бирже SHORT) помечал позицию CLOSED —
+  бот терял контроль над реально открытой на бирже позицией и мог удвоить вход.
+
+Решение:
+- EXEC-006: `ReconcileResult.Failed` по любой выборке → `ReconcileOutcome(halted = true)`
+  → `TradingHaltedEvent(STATE_DESYNC)`. Торговля останавливается, пока состояние
+  биржи неизвестно (fail-closed).
+- EXEC-007: новый статус `PositionStatus.RECONCILIATION_REQUIRED`: direction mismatch
+  НЕ закрывает позицию, а переводит её в статус «вне управления ботом» + hard halt
+  до ручного вмешательства. Метрика `alor.reconcile.discrepancy{DIRECTION_MISMATCH}`.
+
+Тесты: `StateReconciliationServiceTest` (fetch failure → halt без мутации локального
+стейта; direction mismatch → RECONCILIATION_REQUIRED + halt).
+
+### 13.19.6. Очередь EXEC-MR
 
 | # | Проблема | Статус |
 |---|---|---|
-| EXEC-006 | UNKNOWN состояние биржи → hard trading halt | pending |
-| EXEC-007 | Direction mismatch → reconciliation/halt, не CLOSED | pending |
 | P1 | fallback GO, risk recalc после reconcile qty, cancel idempotency (CANCEL_UNKNOWN) | pending |
+| P2 | CoroutineScope lifecycle, outbox SKIP LOCKED | pending |
 | P2 | CoroutineScope lifecycle, distributed outbox claim (SKIP LOCKED) | pending |

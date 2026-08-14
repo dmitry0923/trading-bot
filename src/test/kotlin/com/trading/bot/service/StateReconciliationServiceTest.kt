@@ -166,7 +166,7 @@ class StateReconciliationServiceTest {
     }
 
     @Test
-    fun `reconciliation is aborted on fetch failure without mutating local state`() {
+    fun `reconciliation is aborted on fetch failure without mutating local state but halts trading`() {
         stubOpenPositions(openPos("SBER", 10))
         runBlocking {
             Mockito.`when`(alorClient.getOpenOrders(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
@@ -177,7 +177,30 @@ class StateReconciliationServiceTest {
         runBlocking { service.reconcile() }
 
         runBlocking { verify(positionRepo, never()).save(anyPosition()) }
-        verify(eventPublisher, never()).publishTradingHalted(anyTradingHaltedEvent())
+        verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
+    }
+
+    @Test
+    fun `direction mismatch marks position reconciliation required and halts`() {
+        val pos = openPos("SBER", 10)
+        stubOpenPositions(pos)
+        stubReconcileOk(
+            positions =
+                listOf(
+                    AlorClient.ExchangePosition(
+                        ticker = "SBER",
+                        qty = -10,
+                        avgPrice = BigDecimal("100"),
+                    ),
+                ),
+        )
+
+        runBlocking { service.reconcile() }
+
+        val captor = argumentCaptor<Position>()
+        runBlocking { verify(positionRepo).save(captor.capture()) }
+        assertEquals(PositionStatus.RECONCILIATION_REQUIRED, captor.firstValue.status)
+        verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
     }
 
     @Test

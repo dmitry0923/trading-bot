@@ -38,14 +38,18 @@ import java.util.concurrent.atomic.AtomicLong
  *   устарели — остальная система может переключиться на fallback-поллинг).
  *
  * Правила сверки (fail-safe — при недоступности REST локальный стейт НЕ мутируется):
- * - [ReconcileResult.Failed] по любой из трёх выборок → сверка прерывается
- *   (отсутствие ответа != отсутствие позиции).
+ * - [ReconcileResult.Failed] по любой из трёх выборок → состояние биржи НЕИЗВЕСТНО →
+ *   сверка прерывается И торговля останавливается (hard halt, EXEC-006): нельзя
+ *   открывать новые позиции вслепую.
  * - Локальная OPEN-позиция без позиции на бирже и без «рабочих» заявок по тикеру —
  *   «фантомная»: закрыта на бирже во время разрыва, WS-fill потерян → помечается CLOSED.
  * - Локальная OPEN-позиция с расхождением qty (например, частичное закрытие в окне
  *   разрыва) → quantity приводится к биржевому значению.
- * - Расхождение направления (локальный LONG, на бирже SHORT) — несоответствие,
- *   которое нельзя безопасно скорректировать → позиция помечается CLOSED.
+ * - Расхождение направления (локальный LONG, на бирже SHORT) — критический
+ *   рассинхрон: позиция реально открыта на бирже в противоположную сторону.
+ *   НЕ закрывается локально (мы не можем подтвердить исполнение) → статус
+ *   [PositionStatus.RECONCILIATION_REQUIRED] + hard halt (EXEC-007) до ручного
+ *   вмешательства.
  * - Позиция на бирже, которой нет в локальном OPEN-наборе — критический рассинхрон
  *   (бот мог открыть второй вход по тому же тикеру) → алерт [TradingHaltedEvent].
  * - pendingEntry/pendingClose позиции со «живыми» заявками на бирже не трогаются —
@@ -53,7 +57,7 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Метрики:
  * - alor.reconcile.run{closed,adjusted,unknown} — завершённая сверка
- * - alor.reconcile.aborted{reason=FETCH_FAILED} — REST недоступен
+ * - alor.reconcile.aborted{reason=FETCH_FAILED} — REST недоступен (+ hard halt)
  * - alor.reconcile.discrepancy{kind, ticker} — PHANTOM / DIRECTION_MISMATCH / UNKNOWN_POSITION
  * - alor.reconcile.fetch_error{kind} — ошибка отдельной выборки (в AlorClient)
  * - alor.ws.disconnect_window{stream} — зафиксирован разрыв WS
@@ -189,10 +193,10 @@ class StateReconciliationService(
                     "(orders=${ordersResult is ReconcileResult.Failed}, " +
                     "positions=${positionsResult is ReconcileResult.Failed}, " +
                     "trades=${tradesResult is ReconcileResult.Failed}); " +
-                    "no local state mutated (fail-safe)"
+                    "no local state mutated (fail-safe), trading halted (EXEC-006: exchange state UNKNOWN)"
             }
             meterRegistry.counter("alor.reconcile.aborted", Tags.of("reason", "FETCH_FAILED")).increment()
-            return ReconcileOutcome()
+            return ReconcileOutcome(halted = true)
         }
 
         val orders = (ordersResult as ReconcileResult.Ok).items
@@ -212,6 +216,7 @@ class StateReconciliationService(
         var closed = 0
         var adjusted = 0
         var unknown = 0
+        var reconciliationRequired = 0
 
         for (pos in localOpen) {
             try {
@@ -269,10 +274,12 @@ class StateReconciliationService(
                 if (exchangeDirection != pos.direction) {
                     logger.error {
                         "Reconcile ${pos.ticker}: direction mismatch local=${pos.direction} " +
-                            "exchange=$exchangeDirection (qty=$exchangeQty) -> marking CLOSED"
+                            "exchange=$exchangeDirection (qty=$exchangeQty) -> RECONCILIATION_REQUIRED " +
+                            "(not closed: exchange position real, manual intervention required)"
                     }
-                    finalizePhantom(pos, "RECONCILE_DIRECTION_MISMATCH")
-                    closed++
+                    markReconciliationRequired(pos)
+                    meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "DIRECTION_MISMATCH", "ticker", key)).increment()
+                    reconciliationRequired++
                     continue
                 }
                 val exchangeAbsQty = kotlin.math.abs(exchangeQty)
@@ -302,7 +309,12 @@ class StateReconciliationService(
             unknown++
         }
 
-        return ReconcileOutcome(closed = closed, adjusted = adjusted, unknown = unknown, halted = closed > 0 || unknown > 0)
+        return ReconcileOutcome(
+            closed = closed,
+            adjusted = adjusted,
+            unknown = unknown,
+            halted = closed > 0 || unknown > 0 || reconciliationRequired > 0,
+        )
     }
 
     /**
@@ -320,6 +332,20 @@ class StateReconciliationService(
         pos.pendingEntry = false
         positionRepo.save(pos)
         meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "PHANTOM", "ticker", pos.ticker.uppercase())).increment()
+    }
+
+    /**
+     * Direction mismatch (EXEC-007): позиция реально открыта на бирже в
+     * противоположную сторону, локальное «закрытие» без подтверждённого
+     * исполнения опасно (бот потеряет контроль и может удвоить позицию).
+     * Статус [PositionStatus.RECONCILIATION_REQUIRED] — вне управления ботом,
+     * требуется ручное вмешательство.
+     */
+    private suspend fun markReconciliationRequired(pos: Position) {
+        pos.status = PositionStatus.RECONCILIATION_REQUIRED
+        pos.pendingClose = false
+        pos.pendingEntry = false
+        positionRepo.save(pos)
     }
 
     /**

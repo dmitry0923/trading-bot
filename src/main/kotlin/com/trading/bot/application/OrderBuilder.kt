@@ -31,6 +31,9 @@ class OrderBuilder(
     /**
      * Параметры заявки для фьючерса: SL/TP в ценах от [PositionSizeResult],
      * маржа, ликвидация, плечо, стоп в пунктах.
+     *
+     * @param stopLossPoints дистанция стопа в пунктах (ATR-адаптивная в live,
+     *   fallback — [RiskConfig.defaultStopLossPoints]); ТП остаётся фиксированным.
      */
     fun buildFuturesOrderParams(
         ticker: String,
@@ -39,11 +42,11 @@ class OrderBuilder(
         currentGo: BigDecimal,
         size: PositionSizeResult,
         leverage: BigDecimal,
+        stopLossPoints: Int,
     ): OrderParams {
         val instrument =
             instrumentsConfig.find(ticker)
                 ?: return OrderParams(direction = direction, quantity = 0)
-        val stopLossPoints = riskConfig.defaultStopLossPoints
         val takeProfitPoints = riskConfig.defaultTakeProfitPoints
         val slOffset = BigDecimal(stopLossPoints).multiply(instrument.priceStep)
         val tpOffset = BigDecimal(takeProfitPoints).multiply(instrument.priceStep)

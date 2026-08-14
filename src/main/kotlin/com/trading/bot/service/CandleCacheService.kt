@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.domain.risk.Atr
 import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -90,6 +91,8 @@ class CandleCacheService(
      * ATR(period) по закрытым свечам из кэша.
      *
      * TR(i) = max(high-low, |high-prevClose|, |low-prevClose|); ATR = среднее TR.
+     * Математика — в чистом [com.trading.bot.domain.risk.Atr] (единый источник
+     * с backtest).
      *
      * @return ATR в единицах цены или null, если недостаточно данных
      */
@@ -97,23 +100,7 @@ class CandleCacheService(
         ticker: String,
         timeframe: String,
         period: Int = 14,
-    ): BigDecimal? {
-        val candles = getRecentCandles(ticker, timeframe, period + 1)
-        if (candles.size < period + 1) return null
-        var sum = BigDecimal.ZERO
-        for (i in 1 until candles.size) {
-            val c = candles[i]
-            val prevClose = candles[i - 1].closePrice
-            val tr =
-                listOf(
-                    c.highPrice.subtract(c.lowPrice),
-                    c.highPrice.subtract(prevClose).abs(),
-                    c.lowPrice.subtract(prevClose).abs(),
-                ).maxByOrNull { it } ?: BigDecimal.ZERO
-            sum = sum.add(tr)
-        }
-        return sum.divide(BigDecimal(period), 4, RoundingMode.HALF_UP)
-    }
+    ): BigDecimal? = Atr.calculate(getRecentCandles(ticker, timeframe, period + 1), period)
 
     /**
      * SMA(period) по ценам закрытия из кэша.

@@ -31,6 +31,7 @@ import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
@@ -103,6 +104,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             instrumentsConfig,
             meterRegistry,
             tradingAccountService,
+            Mockito.mock(CandleCacheService::class.java),
         )
     private val decisionEngine =
         DecisionEngine(
@@ -305,6 +307,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                         anyBigDecimal(),
                         anyPositionSizeResult(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenReturn(
                     OrderParams(

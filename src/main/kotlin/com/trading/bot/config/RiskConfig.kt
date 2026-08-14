@@ -190,6 +190,16 @@ class RiskConfig {
     /** Тейк-профит по умолчанию в пунктах. R:R = 1:2. */
     var defaultTakeProfitPoints: Int = 100
 
+    /** Адаптивный стоп-лосс фьючерсов по ATR: дистанция = ATR(period) × multiplier
+     *  в пунктах (fallback — [defaultStopLossPoints] при нехватке данных).
+     *  Используется в live (FuturesEntryProfile → sizer/OrderBuilder) и в backtest —
+     *  единый источник истины [com.trading.bot.domain.risk.Atr]. */
+    var futuresAtrStopEnabled: Boolean = true
+    var futuresAtrStopPeriod: Int = 14
+    var futuresAtrStopMultiplier: Double = 2.0
+    var futuresAtrStopMinPoints: Int = 10
+    var futuresAtrStopMaxPoints: Int = 100
+
     /** Если расстояние до ликвидации < X% от буфера маржи — срочное закрытие. */
     var minLiquidationDistancePercent: Double = 25.0
 

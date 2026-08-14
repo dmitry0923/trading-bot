@@ -30,7 +30,7 @@ class AlorFuturesClientTest {
         runBlocking {
             val go = client().getFuturesGO("Si")
 
-            assertEquals(0, BigDecimal("15000").compareTo(go))
+            assertEquals(0, BigDecimal("15000").compareTo(go!!))
         }
 
     @Test
@@ -74,8 +74,29 @@ class AlorFuturesClientTest {
         runBlocking {
             val go = client().getFuturesGO("UNKNOWN")
 
-            assertEquals(0, BigDecimal("15000").compareTo(go))
+            assertEquals(0, BigDecimal("15000").compareTo(go!!))
         }
+
+    @Test
+    fun `futures go parsed from long initialMargin`() {
+        val go = client().parseFuturesGo("""{"long": {"initialMargin": "12500"}, "short": {"initialMargin": "13000"}}""")
+
+        assertEquals(0, BigDecimal("12500").compareTo(go!!))
+    }
+
+    @Test
+    fun `futures go missing initialMargin yields null`() {
+        val go = client().parseFuturesGo("""{"long": {}, "short": {"initialMargin": "13000"}}""")
+
+        assertEquals(null, go)
+    }
+
+    @Test
+    fun `futures go malformed json yields null`() {
+        val go = client().parseFuturesGo("not json")
+
+        assertEquals(null, go)
+    }
 
     @Test
     fun `point value derived from price step and cost`() {

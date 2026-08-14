@@ -41,9 +41,13 @@ class AlorFuturesClient(
     private val defaultPortfolioMoney: BigDecimal = BigDecimal("50000")
 
     /**
-     * Текущее GO фьючерса Si. Fallback на конфиг при любой ошибке.
+     * Текущее GO фьючерса.
+     *
+     * @return конфиг-GO в SIMULATION; реальное GO в LIVE; null в LIVE при ошибке
+     *   API или отсутствии поля initialMargin (P1: нельзя сайзить от устаревшего
+     *   конфиг-GO — вход блокируется, как при недоступном капитале EXEC-005).
      */
-    suspend fun getFuturesGO(ticker: String): BigDecimal {
+    suspend fun getFuturesGO(ticker: String): BigDecimal? {
         val configGo = instrumentsConfig.find(ticker)?.go ?: BigDecimal("15000")
         if (!isLive) return configGo
 
@@ -58,24 +62,34 @@ class AlorFuturesClient(
                     .timeout(Duration.ofSeconds(10))
                     .awaitSingle()
 
-            val j = objectMapper.readTree(raw)
-            val go =
-                j
-                    .path("long")
-                    .path("initialMargin")
-                    .asString()
-                    .takeIf { it.isNotBlank() }
-                    ?.toBigDecimalOrNull()
-                    ?: configGo
+            val go = parseFuturesGo(raw)
+            if (go == null) {
+                logger.warn { "getFuturesGO: initialMargin field missing for $ticker" }
+                return null
+            }
 
             meterRegistry.gauge("futures.go", Tags.of("ticker", ticker), go.toDouble())
             logger.info { "Futures GO for $ticker = $go ₽" }
             go
         } catch (e: Exception) {
-            logger.warn(e) { "getFuturesGO failed for $ticker, using config fallback $configGo" }
-            configGo
+            logger.warn(e) { "getFuturesGO failed for $ticker (no config fallback in LIVE)" }
+            null
         }
     }
+
+    /** Разбор GO из /md/v2/Securities/{exchange}/{ticker}/risk. null при отсутствии поля. */
+    internal fun parseFuturesGo(raw: String): BigDecimal? =
+        runCatching {
+            val j = objectMapper.readTree(raw)
+            val initialMargin =
+                j
+                    .path("long")
+                    .path("initialMargin")
+                    .asString()
+            initialMargin
+                .takeIf { it.isNotBlank() }
+                ?.toBigDecimalOrNull()
+        }.getOrNull()
 
     /**
      * Свободные средства портфеля (buying power).

@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.springframework.stereotype.Service
+import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -288,7 +289,12 @@ class StateReconciliationService(
                         "Reconcile ${pos.ticker}: qty mismatch local=${pos.quantity} " +
                             "exchange=$exchangeAbsQty (partial close during WS gap) -> adjusting"
                     }
-                    pos.quantity = exchangeAbsQty.toInt()
+                    val newQty = exchangeAbsQty.toInt()
+                    pos.quantity = newQty
+                    // P1: риск-поля пересчитываются после изменения qty — marginUsed
+                    // линейно зависит от количества (GO * qty), без рекалка exposure
+                    // и drawdown-лимиты считаются от устаревшей маржи.
+                    pos.goPerContract?.let { pos.marginUsed = it.multiply(BigDecimal(newQty)) }
                     positionRepo.save(pos)
                     meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "QTY_ADJUSTED", "ticker", key)).increment()
                     adjusted++

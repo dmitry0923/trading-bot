@@ -142,8 +142,8 @@ class StateReconciliationServiceTest {
     }
 
     @Test
-    fun `quantity is adjusted to exchange value on partial close during gap`() {
-        val pos = openPos("SBER", 10)
+    fun `quantity is adjusted to exchange value on partial close during gap and margin recalculated`() {
+        val pos = openPos("SBER", 10).apply { goPerContract = BigDecimal("15000") }
         stubOpenPositions(pos)
         stubReconcileOk(
             positions =
@@ -161,6 +161,7 @@ class StateReconciliationServiceTest {
         val captor = argumentCaptor<Position>()
         runBlocking { verify(positionRepo).save(captor.capture()) }
         assertEquals(4, captor.firstValue.quantity)
+        assertEquals(0, BigDecimal("60000").compareTo(captor.firstValue.marginUsed!!))
         assertEquals(PositionStatus.OPEN, captor.firstValue.status)
         verify(eventPublisher, never()).publishTradingHalted(anyTradingHaltedEvent())
     }

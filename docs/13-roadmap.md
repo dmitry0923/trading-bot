@@ -1377,10 +1377,35 @@ blocked не инкрементится, forced_market инкрементитс�
 Тесты: `StateReconciliationServiceTest` (fetch failure → halt без мутации локального
 стейта; direction mismatch → RECONCILIATION_REQUIRED + halt).
 
-### 13.19.6. Очередь EXEC-MR
+### 13.19.6. MR-F: P1 — fail-closed GO, risk recalc, cancel idempotency ✅
+
+Проблемы:
+- fallback GO: `getFuturesGO` в LIVE при ошибке API возвращал конфиг-GO (15000) —
+  сайзинг от устаревшего GO (неверная маржа), тот же класс бага, что и EXEC-005.
+- risk recalc: reconcile (QTY_ADJUSTED) менял quantity, но не пересчитывал
+  marginUsed → exposure/drawdown-лимиты считали от устаревшей маржи.
+- cancel idempotency: `finishProtectionReplacement` на каждый ретрай отмены SL/TP
+  генерировал НОВЫЙ idempotency-ключ — биржа не могла дедуплицировать повторную
+  отмену при UNKNOWN/UNCERTAIN.
+
+Решение:
+- `AlorFuturesClient.getFuturesGO` → `BigDecimal?`: LIVE возвращает null при ошибке
+  API / отсутствии initialMargin (fail-closed, вход блокируется через
+  `FuturesEntryProfile.buildEntryRequest`, как EXEC-005); SIMULATION — конфиг-GO.
+- `StateReconciliationService` QTY_ADJUSTED: `marginUsed = goPerContract * newQty`.
+- `OrderExecutionEngine.finishProtectionReplacement`: стабильный idempotency-ключ
+  `prot-cancel-<orderId>` — ретраи при UNKNOWN/UNCERTAIN идут с тем же ключом,
+  биржа дедуплицирует; UNCERTAIN не снимает флаг перевыставления.
+
+Тесты: `AlorFuturesClientTest` (parse initialMargin, missing/malformed → null);
+`StateReconciliationServiceTest` (marginUsed пересчитан после qty-аджаста);
+`OrderExecutionEngineProtectionReplaceTest` (UNCERTAIN сохраняет pending, ретрай с
+тем же ключом).
+
+### 13.19.7. Очередь EXEC-MR
 
 | # | Проблема | Статус |
 |---|---|---|
-| P1 | fallback GO, risk recalc после reconcile qty, cancel idempotency (CANCEL_UNKNOWN) | pending |
-| P2 | CoroutineScope lifecycle, outbox SKIP LOCKED | pending |
+| P2 | CoroutineScope lifecycle (scope-ы @PostConstruct без stop/close) | pending |
+| P2 | outbox: SELECT ... FOR UPDATE SKIP LOCKED (конкурентные worker'ы) | pending |
 | P2 | CoroutineScope lifecycle, distributed outbox claim (SKIP LOCKED) | pending |

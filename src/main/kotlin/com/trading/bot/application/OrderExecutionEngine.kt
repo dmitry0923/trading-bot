@@ -3,7 +3,6 @@ package com.trading.bot.application
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.domain.risk.ExitRules
-import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -570,11 +569,17 @@ class OrderExecutionEngine(
                 pos.slPendingReplace = false
                 dirty = true
             } else {
+                // P1: стабильный idempotency-ключ — ретраи при UNKNOWN/UNCERTAIN идут с
+                // тем же ключом, биржа дедуплицирует повторную отмену (CANCEL_UNKNOWN
+                // безопасен: либо отменится, либо REJECTED -> verifyOrder разрешит).
+                val cancelIdem = "prot-cancel-$oldId"
                 val result =
                     try {
-                        alorClient.cancelOrder(oldId, UuidV7.uuidString(), portfolio = portfolioResolver(pos.accountId))
+                        alorClient.cancelOrder(oldId, cancelIdem, portfolio = portfolioResolver(pos.accountId))
                     } catch (e: Exception) {
-                        logger.warn(e) { "SL replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId) — retry next cycle" }
+                        logger.warn(e) {
+                            "SL replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId idem=$cancelIdem) — retry next cycle"
+                        }
                         return
                     }
                 if (result == AlorClient.CancelResult.REJECTED) {
@@ -603,11 +608,14 @@ class OrderExecutionEngine(
                 pos.tpPendingReplace = false
                 dirty = true
             } else {
+                val cancelIdem = "prot-cancel-$oldId"
                 val result =
                     try {
-                        alorClient.cancelOrder(oldId, UuidV7.uuidString(), portfolio = portfolioResolver(pos.accountId))
+                        alorClient.cancelOrder(oldId, cancelIdem, portfolio = portfolioResolver(pos.accountId))
                     } catch (e: Exception) {
-                        logger.warn(e) { "TP replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId) — retry next cycle" }
+                        logger.warn(e) {
+                            "TP replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId idem=$cancelIdem) — retry next cycle"
+                        }
                         return
                     }
                 if (result == AlorClient.CancelResult.REJECTED) {

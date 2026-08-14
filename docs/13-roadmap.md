@@ -1160,7 +1160,11 @@ flowchart LR
 - `FuturesTradingBotServiceIntegrationTest` — починена интеграция с fail-closed портфельным
   риском: в `setup()` сеются 70 DAY_1 свечей Si (realized vol → KNOWN, вход не блокируется
   `PORTFOLIO_DATA_INSUFFICIENT`); MINUTE_10 не сеется, чтобы `stopLossPoints` оставался
-  дефолтным 50. Итог полного прогона: 906 тестов, 0 failed, 2 skipped.
+  дефолтным 50. Итог полного прогона: 906 тестов, 0 failed, 2 skipped. Полный `./gradlew build`
+  (compile + test + ktlintCheck + koverVerify + koverGenerateArtifact) зелёный — прежний обрыв
+  на `koverGenerateArtifact` был следствием падающего интеграционного теста. Фактическое
+  покрытие (koverXmlReport): lines 74.8%, instructions 71.4%, branches 55.5%, methods 74.2%,
+  classes 83.1% при пороге `minBound(50)` в `koverVerify`.
 
 ## 13.18. Наблюдаемость LLM-агента (3 фазы) — реализовано
 

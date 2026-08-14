@@ -218,7 +218,7 @@ curl http://localhost:8080/actuator/prometheus
 | **Sector concentration** | Ограничение числа открытых позиций в одном секторе (`risk.max-sector-exposure`) |
 | **Volatility guard** | Запрет входа при ATR% от цены > `risk.max-volatility-percent` |
 | **Backtest** | Прогон стратегии на исторических свечах с симуляцией исполнения и метриками |
-| **isPassable** | Критерии приёма бэктеста: Sharpe > 1.2, MDD < 15%, PF > 1.3, ≥ 100 сделок |
+| **isPassable** | Критерии приёма бэктеста: Sharpe > 1.2, MDD < 15%, PF > 1.3, ≥ 200 сделок |
 | **SimulatedExecution** | Симуляция комиссии/проскальзывания/лотности в бэктесте |
 
 ## 14.11. Пример последовательности (полный цикл)

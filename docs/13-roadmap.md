@@ -223,7 +223,7 @@ slippage control 0.5% в `placeMarketOrder`) делегирует в `Degenerate
 **Идея:** перед продвижением каждой новой стратегии — панельный бэктест ВСЕХ
 тикеров портфеля (`trading.tickers`) по критериям раздела 11.5
 (`isPassable()`: sharpe > 1.2, drawdown < 0.15, profit factor > 1.3,
-≥ 100 сделок) с приёмкой по большинству (раздел 14.9): доля PASS ≥ 0.5.
+≥ 200 сделок) с приёмкой по большинству (раздел 14.9): доля PASS ≥ 0.5.
 
 **Гейт:** `PortfolioBacktestGate.evaluate(summary, minPassShare = 0.5)` — чистая
 логика вердикта `PortfolioBacktestVerdict.accepted` (пустой портфель — REJECT,

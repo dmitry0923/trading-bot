@@ -260,7 +260,7 @@ data class BacktestResult(
         sharpeRatio > 1.2 &&
         maxDrawdown < 0.15 &&
         profitFactor > 1.3 &&
-        totalTrades >= 100
+        totalTrades >= 200
 }
 ```
 
@@ -275,7 +275,7 @@ data class BacktestResult(
 | `maxDrawdown` | `max(1 - equity/peak)` по кривой | < 15% |
 | `winRate` | `wins / totalTrades` | — |
 | `profitFactor` | `grossProfit / |grossLoss|` (∞, если потерь нет) | > 1.3 |
-| `totalTrades` | `tradeReturns.size` | >= 100 |
+| `totalTrades` | `tradeReturns.size` | >= 200 |
 
 Особенности:
 
@@ -291,7 +291,7 @@ data class BacktestResult(
 sharpeRatio > 1.2 &&
 maxDrawdown < 0.15 &&
 profitFactor > 1.3 &&
-totalTrades >= 100
+totalTrades >= 200
 ```
 
 Логика логов движка:

@@ -73,6 +73,71 @@ class BacktestValidatorTest {
         assertFalse(result.isRobust())
     }
 
+    @Test
+    fun `tuneParams prefers infinite profit factor candidate over mediocre finite`() {
+        // Кандидат (0.02, 0.04): 30 сделок без убыточных -> PF = +Inf (нет потерь).
+        val infinitePf =
+            BacktestMetrics.compute(
+                "SBER",
+                List(31) { BigDecimal("100000").add(BigDecimal.valueOf(it * 100L)) },
+                List(30) { 100.0 },
+            )
+        // Остальные пары сетки: PF конечный и ниже.
+        val mediocre =
+            BacktestMetrics.compute(
+                "SBER",
+                List(31) { BigDecimal("100000").add(BigDecimal.valueOf(it * 10L)) },
+                List(30) { if (it % 2 == 0) 30.0 else -20.0 },
+            )
+        val result =
+            runBlocking {
+                whenever(
+                    engine.simulate(
+                        anyString(),
+                        any(),
+                        any(),
+                        anyInt(),
+                        Mockito.eq(0.02),
+                        Mockito.eq(0.04),
+                        any(),
+                        any(),
+                    ),
+                ).thenReturn(infinitePf)
+                whenever(
+                    engine.simulate(
+                        anyString(),
+                        any(),
+                        any(),
+                        anyInt(),
+                        Mockito.eq(0.01),
+                        Mockito.eq(0.02),
+                        any(),
+                        any(),
+                    ),
+                ).thenReturn(mediocre)
+                whenever(
+                    engine.simulate(
+                        anyString(),
+                        any(),
+                        any(),
+                        anyInt(),
+                        Mockito.eq(0.03),
+                        Mockito.eq(0.06),
+                        any(),
+                        any(),
+                    ),
+                ).thenReturn(mediocre)
+                validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
+            }
+        // Fold 0: train пуст -> дефолт первой пары сетки. Fold 1/2: train >= 60 -> тюнинг,
+        // и выбирается кандидат с бесконечным PF (0.02, 0.04), а не посредственный конечный.
+        assertEquals(0.01, result.folds[0].chosenSlPercent)
+        assertEquals(0.02, result.folds[1].chosenSlPercent)
+        assertEquals(0.04, result.folds[1].chosenTpPercent)
+        assertEquals(0.02, result.folds[2].chosenSlPercent)
+        assertEquals(0.04, result.folds[2].chosenTpPercent)
+    }
+
     private companion object {
         const val OOS_TRADES = 3
     }

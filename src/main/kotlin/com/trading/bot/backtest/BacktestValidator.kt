@@ -154,7 +154,7 @@ class BacktestValidator(
         val best =
             candidates.maxWithOrNull(
                 compareBy<Candidate>(
-                    { it.result.profitFactor.isFinite() && it.result.totalTrades >= 30 },
+                    { it.result.totalTrades >= 30 },
                     { it.result.profitFactor },
                     { it.result.sharpeRatio },
                 ),

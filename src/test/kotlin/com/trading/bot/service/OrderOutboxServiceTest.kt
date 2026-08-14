@@ -233,6 +233,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyInt(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        Mockito.anyBoolean(),
                     ),
                 ).thenReturn("ord-m")
             stubMarkSentRecording(sentOrders)
@@ -253,6 +254,105 @@ class OrderOutboxServiceTest {
                 )
         }
         assertEquals(listOf("ord-m"), sentOrders)
+    }
+
+    @Test
+    fun `liquidation market close passes forceMarket true`() {
+        val outboxId = UUID.randomUUID()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.eq(true),
+                    ),
+                ).thenReturn("ord-m")
+            stubMarkSentRecording(mutableListOf())
+
+            val result =
+                service.placeOrder(
+                    "Si",
+                    "sell",
+                    1,
+                    null,
+                    "market",
+                    closeReason = "LIQUIDATION_CRITICAL",
+                )
+
+            assertTrue(result.success)
+            assertEquals("ord-m", result.alorOrderId)
+        }
+    }
+
+    @Test
+    fun `emergency stop market close passes forceMarket true`() {
+        val outboxId = UUID.randomUUID()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.eq(true),
+                    ),
+                ).thenReturn("ord-m")
+            stubMarkSentRecording(mutableListOf())
+
+            val result =
+                service.placeOrder(
+                    "Si",
+                    "sell",
+                    1,
+                    null,
+                    "market",
+                    closeReason = "EMERGENCY_STOP",
+                )
+
+            assertTrue(result.success)
+            assertEquals("ord-m", result.alorOrderId)
+        }
+    }
+
+    @Test
+    fun `regular stop loss market close does not force market`() {
+        val outboxId = UUID.randomUUID()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.eq(false),
+                    ),
+                ).thenReturn("ord-m")
+            stubMarkSentRecording(mutableListOf())
+
+            val result =
+                service.placeOrder(
+                    "Si",
+                    "sell",
+                    1,
+                    null,
+                    "market",
+                    closeReason = "STOP_LOSS",
+                )
+
+            assertTrue(result.success)
+            assertEquals("ord-m", result.alorOrderId)
+        }
     }
 
     @Test
@@ -331,7 +431,14 @@ class OrderOutboxServiceTest {
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
         }
         assertEquals(listOf("ord-9"), sentOrders)
     }
@@ -360,7 +467,14 @@ class OrderOutboxServiceTest {
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }
@@ -442,7 +556,14 @@ class OrderOutboxServiceTest {
                 .getPositions(Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .markSent(anyUuid(), Mockito.anyString())
@@ -466,7 +587,14 @@ class OrderOutboxServiceTest {
                 .getPositions(Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }
@@ -487,6 +615,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyInt(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        Mockito.anyBoolean(),
                     ),
                 ).thenReturn("ord-c3")
             stubMarkSentRecording(sentOrders)
@@ -495,7 +624,14 @@ class OrderOutboxServiceTest {
 
             Mockito
                 .verify(alorClient, Mockito.timeout(3000))
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .markSent(anyUuid(), Mockito.anyString())
@@ -521,7 +657,14 @@ class OrderOutboxServiceTest {
                 .getPositions(Mockito.anyString())
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
     }
@@ -705,7 +848,14 @@ class OrderOutboxServiceTest {
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
         }
         assertEquals(listOf("ord-stop"), sentOrders)
     }
@@ -854,7 +1004,14 @@ class OrderOutboxServiceTest {
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
-                .placeMarketOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(), Mockito.anyString())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                )
             Mockito
                 .verify(alorClient, Mockito.never())
                 .placeStopOrder(

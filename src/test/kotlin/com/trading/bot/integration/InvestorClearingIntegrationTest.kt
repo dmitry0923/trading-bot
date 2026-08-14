@@ -94,6 +94,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyInt(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        Mockito.anyBoolean(),
                     ),
                 ).thenReturn("ord-close-${System.nanoTime()}")
             Mockito
@@ -281,6 +282,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyInt(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        Mockito.anyBoolean(),
                     ),
                 ).thenReturn("ord-si-${System.nanoTime()}")
         }

@@ -119,6 +119,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyInt(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        Mockito.anyBoolean(),
                     ),
                 ).thenReturn("ord-market-1")
         }

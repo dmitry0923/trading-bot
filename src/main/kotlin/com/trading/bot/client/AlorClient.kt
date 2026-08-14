@@ -151,7 +151,11 @@ class AlorClient(
     ): String? = orderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio)
 
     /**
-     * Маркет-ордер (через лимитный по лучшему ask/bid). Запрещён при спреде > 0.5% (slippage control).
+     * Маркет-ордер (через лимитный по лучшему ask/bid). Запрещён при спреде > 0.5%
+     * (slippage control) — кроме [forceMarket] (ликвидационные/emergency-закрытия,
+     * EXEC-003/004): там блокировка опаснее проскальзывания, поэтому ордер исполняется
+     * по лучшему ask/bid (slippage ограничен стаканом), но факт флага логируется и
+     * считает метрику [alor.order.forced_market].
      * Использует тот же [idempotencyKey], что и базовый лимитный ордер.
      */
     suspend fun placeMarketOrder(
@@ -160,15 +164,23 @@ class AlorClient(
         qty: Int,
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
+        forceMarket: Boolean = false,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
         val snapshot = getMarketSnapshot(ticker) ?: return null
 
         val spread = spreadPercent(snapshot)
         if (spread > BigDecimal("0.005")) {
-            logger.warn { "Market order BLOCKED for $ticker: spread ${spread.movePointRight(2)}% > 0.5%" }
-            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "WIDE_SPREAD")).increment()
-            return null
+            if (!forceMarket) {
+                logger.warn { "Market order BLOCKED for $ticker: spread ${spread.movePointRight(2)}% > 0.5%" }
+                meterRegistry.counter("alor.order.blocked", Tags.of("reason", "WIDE_SPREAD")).increment()
+                return null
+            }
+            logger.warn {
+                "Market order FORCED for $ticker (emergency/liquidation close): " +
+                    "spread ${spread.movePointRight(2)}% > 0.5% — executing at best ${if (side == "buy") "ask" else "bid"}"
+            }
+            meterRegistry.counter("alor.order.forced_market", Tags.of("ticker", ticker)).increment()
         }
 
         val price =

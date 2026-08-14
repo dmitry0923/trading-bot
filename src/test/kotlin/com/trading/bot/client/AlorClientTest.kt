@@ -393,6 +393,23 @@ class AlorClientTest {
         }
 
     @Test
+    fun `market order forced on wide spread for emergency close`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                val (c, registry) = clientWithMetrics(server)
+                server.quotesResponse = """{"lastPrice":"100","bid":"99.9","ask":"100.6","volume":100000}"""
+                stubPlaceLimit("ord-force-1")
+
+                val orderId = c.placeMarketOrder("SBER", "buy", 1, "idem-1", forceMarket = true)
+
+                assertEquals("ord-force-1", orderId)
+                verify(orderTransport).placeLimit("SBER", "buy", 1, BigDecimal("100.6"), "idem-1", "P1")
+                assertEquals(0.0, registry.counter("alor.order.blocked", "reason", "WIDE_SPREAD").count())
+                assertEquals(1.0, registry.counter("alor.order.forced_market", "ticker", "SBER").count())
+            }
+        }
+
+    @Test
     fun `market order placed at ask on narrow spread`() =
         runBlocking {
             FakeAlorServer().use { server ->

@@ -1316,12 +1316,33 @@ DB-резервация. Глобальный частичный unique-инде
 PARTIAL держит резервацию; закрытие освобождает резервацию). Обновлён
 `FuturesTradingBotServiceEntryPartialFillTest` (стаб reserveEntry).
 
-### 13.19.3. Очередь EXEC-MR
+### 13.19.3. MR-C: emergency-закрытие не блокируется spread-guard (EXEC-003/004) ✅
+
+Проблема: `AlorClient.placeMarketOrder` запрещал market-ордер при спреде > 0.5%.
+Для ликвидационных (LIQUIDATION_CRITICAL) и аварийных (EMERGENCY_STOP, FORCE_CLOSE)
+закрытий блокировка ордера = незакрытая позиция при ликвидации/панике — опаснее
+проскальзывания по широкому спреду.
+
+Решение:
+- `AlorClient.placeMarketOrder(..., forceMarket: Boolean = false)` — при `forceMarket=true`
+  спред-гард 0.5% пропускается, ордер исполняется по лучшему ask/bid (slippage ограничен
+  стаканом), метрика `alor.order.forced_market`;
+- `OrderOutboxService.dispatch`: для market-close читает `closeReason` из payload и
+  прокидывает `forceMarket = isEmergencyClose(closeReason)` — флаг работает и при
+  re-dispatch (payload сохраняется в outbox-строке);
+- `isEmergencyClose`: reason начинается с `LIQUIDATION`, равен `EMERGENCY_STOP`
+  или начинается с `FORCE_CLOSE`; обычные SL/TP-закрытия по-прежнему блокируются
+  спред-гардом.
+
+Тесты: `AlorClientTest` (forced market на широком спреде: ордер размещается по ask,
+blocked не инкрементится, forced_market инкрементится); `OrderOutboxServiceTest`
+(LIQUIDATION_CRITICAL/EMERGENCY_STOP → forceMarket=true, STOP_LOSS → false).
+Обновлены 5-арг стабы `placeMarketOrder` во всех тестах (добавлен 6-й параметр).
+
+### 13.19.4. Очередь EXEC-MR
 
 | # | Проблема | Статус |
 |---|---|---|
-| EXEC-003 | Настоящее emergency-исполнение (обход spread-guard 0.5% для ликвидационных закрытий) | pending |
-| EXEC-004 | Emergency-закрытие не должно блокироваться spread-guard | pending |
 | EXEC-005 | LIVE не должен использовать fallback капитал (defaultPortfolioMoney 50k) | pending |
 | EXEC-006 | UNKNOWN состояние биржи → hard trading halt | pending |
 | EXEC-007 | Direction mismatch → reconciliation/halt, не CLOSED | pending |

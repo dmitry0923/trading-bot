@@ -300,7 +300,16 @@ class OrderOutboxService(
                     }
 
                     "market" -> {
-                        alorClient.placeMarketOrder(ticker, side, qty, idempotencyKey, portfolio)
+                        // EXEC-003/004: ликвидационные/emergency-закрытия обходят
+                        // spread-guard 0.5% (block при широком спреде опаснее проскальзывания).
+                        alorClient.placeMarketOrder(
+                            ticker,
+                            side,
+                            qty,
+                            idempotencyKey,
+                            portfolio,
+                            forceMarket = isEmergencyClose(payload.path("closeReason").asString(null)),
+                        )
                     }
 
                     "stop" -> {
@@ -442,6 +451,19 @@ class OrderOutboxService(
         }
         return tradingAccountService.portfolioOf(accountId)
     }
+
+    /**
+     * Является ли close-ордер emergency/ликвидационным (EXEC-003/004): такие закрытия
+     * обходят spread-guard 0.5% — при ликвидации/аварийной остановке блокировка
+     * ордера (незакрытая позиция) опаснее проскальзывания по широкому спреду.
+     */
+    private fun isEmergencyClose(closeReason: String?): Boolean =
+        closeReason != null &&
+            (
+                closeReason.startsWith("LIQUIDATION") ||
+                    closeReason == "EMERGENCY_STOP" ||
+                    closeReason.startsWith("FORCE_CLOSE")
+            )
 
     /**
      * Worker: переотправляет PENDING старше 30 сек и FAILED с retryCount < maxOrderRetries.

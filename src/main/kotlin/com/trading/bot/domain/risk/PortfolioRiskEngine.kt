@@ -37,6 +37,14 @@ data class PortfolioRiskRequest(
  * @param effectivePositions эффективное число позиций (1 / HHI), 1 = одна ставка
  * @param directionalConcentrationPercent |net| / gross * 100
  * @param maxPairCorrelation максимальная попарная корреляция в портфеле
+ * @param historicalVar95Rub Historical VaR95 (квантиль 0.05 исторических дневных
+ *   лог-доходностей портфеля, руб.); 0, если истории недостаточно
+ * @param cvar95Rub CVaR95 / Expected Shortfall (средний убыток в хвосте хуже
+ *   quantile-порога, руб.); 0, если истории недостаточно
+ * @param stressLossRub Stress Loss: каждый актив двигается против позиции на
+ *   k·σ (полная корреляция), руб.
+ * @param effectiveVar95Rub худшая из метрик: max(var95Rub, historicalVar95Rub,
+ *   cvar95Rub, stressLossRub) — именно она участвует в BLOCK/SCALE
  * @param volatilityDataQuality качество данных о волатильности
  * @param correlationDataQuality качество данных о корреляциях
  * @param dataQualityScale множитель размера по качеству данных
@@ -51,6 +59,10 @@ data class PortfolioRiskReport(
     val effectivePositions: BigDecimal = BigDecimal.ZERO,
     val directionalConcentrationPercent: BigDecimal = BigDecimal.ZERO,
     val maxPairCorrelation: Double = 0.0,
+    val historicalVar95Rub: BigDecimal = BigDecimal.ZERO,
+    val cvar95Rub: BigDecimal = BigDecimal.ZERO,
+    val stressLossRub: BigDecimal = BigDecimal.ZERO,
+    val effectiveVar95Rub: BigDecimal = BigDecimal.ZERO,
     val volatilityDataQuality: PortfolioDataQuality = PortfolioDataQuality.KNOWN,
     val correlationDataQuality: PortfolioDataQuality = PortfolioDataQuality.KNOWN,
     val dataQualityScale: BigDecimal = BigDecimal.ONE,

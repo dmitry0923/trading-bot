@@ -328,6 +328,28 @@ class RiskConfig {
      */
     var portfolioInsufficientCorrelationScale: Double = 0.25
 
+    // ===== Historical VaR / CVaR / Stress Loss (MR-007) =====
+
+    /**
+     * Глубина истории (дневных лог-доходностей) для Historical VaR95 / CVaR95.
+     * 60 торговых дней. Худшая из метрик (parametric / historical / CVaR / stress)
+     * определяет лимит VaR портфеля (BLOCK + SCALE).
+     */
+    var portfolioHistoricalLookbackDays: Int = 60
+
+    /** Минимум дневных лог-доходностей для расчёта Historical VaR / CVaR (иначе метрика не считается). */
+    var portfolioHistoricalMinSamples: Int = 20
+
+    /** Квантиль Historical VaR / CVaR (0.05 = 5% худших дней). */
+    var portfolioHistoricalQuantile: Double = 0.05
+
+    /**
+     * Множитель дневного шока для Stress Loss: каждый актив двигается против
+     * позиции на k·σ (полная корреляция, диверсификация не спасает).
+     * 2.5σ ≈ 99.4% дневное движение. Stress Loss = Σ|wᵢ|·k·σᵢ·gross.
+     */
+    var portfolioStressSigma: Double = 2.5
+
     // ===== Volatility Engine 2.0 (Market Regime + Implied Volatility) =====
 
     /** Включён ли движок рыночного режима волатильности. */

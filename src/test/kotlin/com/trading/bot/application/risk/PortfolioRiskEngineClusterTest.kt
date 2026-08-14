@@ -5,6 +5,7 @@ import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.ResolvedCorrelationMatrix
 import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.Position
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.CorrelationMatrixProvider
@@ -16,6 +17,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.time.LocalDateTime
+import java.time.Month
 import kotlin.math.abs
 
 /**
@@ -167,6 +170,8 @@ class PortfolioRiskEngineClusterTest {
             riskConfig.portfolioVarWarnPercent = 3.0
             riskConfig.maxPortfolioVaRPercent = 5.0
             riskConfig.minPortfolioScaleFactor = 0.25
+            // Stress Loss отключён — тест интерполяции SCALE по parametric VaR.
+            riskConfig.portfolioStressSigma = 0.0
             stubVols(listOf("A", "B", "C"), 5.0)
             stubCorrelations(listOf("A", "B", "C"), 0.0)
 
@@ -284,6 +289,8 @@ class PortfolioRiskEngineClusterTest {
     @Test
     fun `estimated intraday volatility scales size to half`() =
         runBlocking {
+            // Stress Loss отключён — тест шкалы качества данных ESTIMATED.
+            riskConfig.portfolioStressSigma = 0.0
             Mockito.`when`(candleCache.calculateRealizedVolatility("A", "DAY_1", 20)).thenReturn(null)
             Mockito.`when`(candleCache.calculateRealizedVolatility("A", "MINUTE_10", 20)).thenReturn(2.0)
             stubCorrelations(listOf("A"), 1.0)
@@ -351,5 +358,104 @@ class PortfolioRiskEngineClusterTest {
             assertEquals(PortfolioDataQuality.ESTIMATED, report.volatilityDataQuality)
             assertEquals(PortfolioDataQuality.INSUFFICIENT, report.correlationDataQuality)
             assertEquals(0.25, report.dataQualityScale.toDouble(), 1e-9)
+        }
+
+    private fun singlePositionRequest(ticker: String = "A"): PortfolioRiskRequest =
+        PortfolioRiskRequest(
+            candidateTicker = ticker,
+            candidateDirection = PositionDirection.LONG,
+            candidateNotionalRub = BigDecimal("100"),
+            openPositions = emptyList(),
+            aum = BigDecimal("1000"),
+        )
+
+    private fun stubDailyCandles(
+        ticker: String,
+        closes: List<Double>,
+    ) {
+        var t = LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)
+        Mockito.`when`(candleCache.getRecentCandles(ticker, "DAY_1", 61)).thenReturn(
+            closes.map { v ->
+                Candle(
+                    ticker = ticker,
+                    timeframe = "DAY_1",
+                    openPrice = BigDecimal(v),
+                    highPrice = BigDecimal(v),
+                    lowPrice = BigDecimal(v),
+                    closePrice = BigDecimal(v),
+                    volume = 0,
+                    time = t,
+                ).also { t = t.plusDays(1) }
+            },
+        )
+    }
+
+    @Test
+    fun `historical var and cvar reflect worst historical day and drive effective var`() =
+        runBlocking {
+            stubVols(listOf("A"), 0.5)
+            stubCorrelations(listOf("A"), 1.0)
+            // 8 дней падения по 2%, затем 52 дня роста по 1%: 5%-квантиль в зоне убытков.
+            val closes =
+                buildList {
+                    add(100.0)
+                    repeat(8) { add(last() * 0.98) }
+                    repeat(52) { add(last() * 1.01) }
+                }
+            stubDailyCandles("A", closes)
+
+            val report = engine.evaluate(singlePositionRequest())
+
+            assertTrue(report.allowed)
+            assertEquals(0.82, report.var95Rub.toDouble(), 0.05) // parametric 1.645*0.005*100
+            assertEquals(2.02, report.historicalVar95Rub.toDouble(), 0.05)
+            assertEquals(2.02, report.cvar95Rub.toDouble(), 0.05)
+            assertEquals(1.25, report.stressLossRub.toDouble(), 0.05) // 100*0.025*0.5
+            assertEquals(2.02, report.effectiveVar95Rub.toDouble(), 0.05) // worst of the four
+        }
+
+    @Test
+    fun `stress loss assumes fully correlated shock and drives effective var without history`() =
+        runBlocking {
+            stubVols(listOf("A"), 10.0)
+            stubCorrelations(listOf("A"), 1.0)
+            // История не стабится -> historical/cvar = 0, worst = stress.
+            val report = engine.evaluate(singlePositionRequest())
+
+            assertEquals(16.45, report.var95Rub.toDouble(), 0.1) // 1.645*0.1*100
+            assertEquals(25.0, report.stressLossRub.toDouble(), 0.1) // 100*0.025*10
+            assertEquals(0.0, report.historicalVar95Rub.toDouble(), 1e-9)
+            assertEquals(25.0, report.effectiveVar95Rub.toDouble(), 0.1)
+        }
+
+    @Test
+    fun `historical series blends signed weights so a hedged book nets to zero`() =
+        runBlocking {
+            stubVols(listOf("A", "B"), 1.0)
+            stubCorrelations(listOf("A", "B"), 0.0)
+            val closes =
+                buildList {
+                    add(100.0)
+                    repeat(8) { add(last() * 0.98) }
+                    repeat(52) { add(last() * 1.01) }
+                }
+            stubDailyCandles("A", closes)
+            stubDailyCandles("B", closes)
+
+            val report =
+                engine.evaluate(
+                    PortfolioRiskRequest(
+                        candidateTicker = "B",
+                        candidateDirection = PositionDirection.SHORT,
+                        candidateNotionalRub = BigDecimal("100"),
+                        openPositions = listOf(position("A", BigDecimal("100"))),
+                        aum = BigDecimal("1000"),
+                    ),
+                )
+
+            assertTrue(report.allowed)
+            assertEquals(0.0, report.historicalVar95Rub.toDouble(), 0.05) // хедж 0.5/-0.5
+            assertEquals(0.0, report.cvar95Rub.toDouble(), 0.05)
+            assertEquals(5.0, report.stressLossRub.toDouble(), 0.1) // 200*0.025*(0.5+0.5)
         }
 }

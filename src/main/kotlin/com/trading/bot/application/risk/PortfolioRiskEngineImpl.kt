@@ -17,6 +17,9 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.ln
 import kotlin.math.sqrt
 
 /**
@@ -32,14 +35,18 @@ import kotlin.math.sqrt
  *    масштабирует размер кандидата через [PortfolioRiskReport.dataQualityScale]:
  *    KNOWN -> 100%, ESTIMATED -> *0.5, INSUFFICIENT -> *0.0 (fail-closed).
  * 3. Портфельная дисперсия: σp² = Σ wᵢ²σᵢ² + 2·Σᵢ<ⱼ wᵢwⱼσᵢσⱼρᵢⱼ.
- * 4. VaR95 = 1.645 · σp · grossExposure.
+ * 4. VaR95 = 1.645 · σp · grossExposure (parametric normal). Дополнительно считается
+ *    Historical VaR95 и CVaR95 по историческим дневным лог-доходностям портфеля
+ *    (если истории достаточно) и Stress Loss (полная корреляция: каждый актив
+ *    двигается на k·σ против позиции). Итоговый лимит — по ХУДШЕЙ из метрик
+ *    [PortfolioRiskReport.effectiveVar95Rub] = max(parametric, historical, CVaR, stress).
  * 5. effectivePositions = (Σ|wᵢ|)² / Σᵢⱼ|wᵢ||wⱼ|ρᵢⱼ — эффективное число НЕЗАВИСИМЫХ
  *    ставок: идеально коррелированный кластер -> 1 («три позиции = одна ставка на
  *    рынок»), независимые инструменты -> число позиций.
  * 6. Направленная концентрация = |net| / gross · 100%.
  *
  * Режимы реакции (BLOCK + SCALE):
- * - BLOCK ([RiskConfig.portfolioRiskBlocked]): VaR95 > [RiskConfig.maxPortfolioVaRPercent]%
+ * - BLOCK ([RiskConfig.portfolioRiskBlocked]): effectiveVaR95 > [RiskConfig.maxPortfolioVaRPercent]%
  *   AUM; effectivePositions < [RiskConfig.minEffectivePositions]; направленная
  *   концентрация > [RiskConfig.maxDirectionalConcentrationPercent]%; отсутствие
  *   данных о волатильности -> PORTFOLIO_DATA_INSUFFICIENT (вместо прежнего
@@ -94,7 +101,31 @@ class PortfolioRiskEngineImpl(
         val effectivePositions = effectiveBets(absWeights, corrMatrix)
         val directionalConcentration = abs(notionals.sum()) / gross * 100.0
 
-        val varPercent = var95Rub / request.aum.toDouble() * 100.0
+        // Historical VaR95 / CVaR95 по дневным лог-доходностям портфеля (null —
+        // истории недостаточно) и Stress Loss (полная корреляция k·σ). Итоговый
+        // лимит — по худшей из метрик (fail-closed при шоке в истории).
+        val weightsByTicker =
+            tickers.distinct().associateWith { t ->
+                entries.indices.filter { entries[it].first == t }.sumOf { weights[it] }
+            }
+        val historicalSeries = historicalPortfolioReturnSeries(tickers.distinct(), weightsByTicker)
+        val historicalVar95Rub =
+            historicalSeries?.let { series ->
+                (-percentile(series.sorted(), riskConfig.portfolioHistoricalQuantile) * gross).coerceAtLeast(0.0)
+            } ?: 0.0
+        val cvar95Rub =
+            historicalSeries?.let { s ->
+                val sorted = s.sorted()
+                val threshold = percentile(sorted, riskConfig.portfolioHistoricalQuantile)
+                val tail = sorted.filter { it <= threshold }
+                if (tail.isEmpty()) 0.0 else (-tail.average() * gross).coerceAtLeast(0.0)
+            } ?: 0.0
+        val stressLossRub =
+            gross * (riskConfig.portfolioStressSigma / 100.0) *
+                tickers.distinct().sumOf { t -> abs(weightsByTicker[t] ?: 0.0) * (dailyVols[t] ?: 0.0) }
+        val effectiveVar95Rub = maxOf(var95Rub, historicalVar95Rub, cvar95Rub, stressLossRub)
+
+        val varPercent = effectiveVar95Rub / request.aum.toDouble() * 100.0
 
         // SCALE: минимум факторов по всем метрикам (1.0 = без изменений).
         var factor = scaleHigherIsWorse(varPercent, riskConfig.portfolioVarWarnPercent, riskConfig.maxPortfolioVaRPercent)
@@ -160,6 +191,9 @@ class PortfolioRiskEngineImpl(
         }
 
         meterRegistry.gauge("portfolio.var95_rub", var95Rub)
+        meterRegistry.gauge("portfolio.effective_var95_rub", effectiveVar95Rub)
+        meterRegistry.gauge("portfolio.cvar95_rub", cvar95Rub)
+        meterRegistry.gauge("portfolio.stress_loss_rub", stressLossRub)
         meterRegistry.gauge("portfolio.daily_vol_percent", dailyVol * 100.0)
         meterRegistry.gauge("portfolio.effective_positions", effectivePositions)
         meterRegistry.gauge("portfolio.directional_concentration", directionalConcentration)
@@ -173,6 +207,10 @@ class PortfolioRiskEngineImpl(
             effectivePositions = BigDecimal(effectivePositions).setScale(4, RoundingMode.HALF_UP),
             directionalConcentrationPercent = BigDecimal(directionalConcentration).setScale(4, RoundingMode.HALF_UP),
             maxPairCorrelation = maxPairCorrelation,
+            historicalVar95Rub = BigDecimal(historicalVar95Rub).setScale(2, RoundingMode.HALF_UP),
+            cvar95Rub = BigDecimal(cvar95Rub).setScale(2, RoundingMode.HALF_UP),
+            stressLossRub = BigDecimal(stressLossRub).setScale(2, RoundingMode.HALF_UP),
+            effectiveVar95Rub = BigDecimal(effectiveVar95Rub).setScale(2, RoundingMode.HALF_UP),
             volatilityDataQuality = volQuality,
             correlationDataQuality = corrQuality,
             dataQualityScale = BigDecimal(dataQuality.toString()).setScale(4, RoundingMode.HALF_UP),
@@ -268,6 +306,61 @@ class PortfolioRiskEngineImpl(
                 PortfolioDataQuality.INSUFFICIENT -> riskConfig.portfolioInsufficientCorrelationScale
             }
         return minOf(volScale, corrScale)
+    }
+
+    /**
+     * Исторический портфельный ряд дневных лог-доходностей: p[t] = Σ wᵢ·rᵢ[t]
+     * (веса — подписанные, хедж long/short учитывается). Серии выравниваются по
+     * хвосту (минимальная длина). Возвращает null, если истории недостаточно
+     * ([RiskConfig.portfolioHistoricalMinSamples]) — метрики Historical VaR/CVaR
+     * тогда не считаются.
+     */
+    private fun historicalPortfolioReturnSeries(
+        distinctTickers: List<String>,
+        weightsByTicker: Map<String, Double>,
+    ): List<Double>? {
+        val series = distinctTickers.map { t -> dailyLogReturns(t) }
+        val nonNull = series.filterNotNull()
+        if (nonNull.size != distinctTickers.size) return null
+        val n = nonNull.minOf { it.size }
+        if (n < riskConfig.portfolioHistoricalMinSamples) return null
+        val aligned = nonNull.map { it.takeLast(n) }
+        return (0 until n).map { t ->
+            aligned.indices.sumOf { i -> aligned[i][t] * (weightsByTicker[distinctTickers[i]] ?: 0.0) }
+        }
+    }
+
+    /**
+     * Дневные лог-доходности тикера по DAY_1 свечам из кэша (источник тот же,
+     * что и для realized-vol). null — данных недостаточно.
+     */
+    private fun dailyLogReturns(ticker: String): List<Double>? {
+        val candles = candleCache.getRecentCandles(ticker, "DAY_1", riskConfig.portfolioHistoricalLookbackDays + 1)
+        if (candles.size < riskConfig.portfolioHistoricalMinSamples + 1) return null
+        val returns = ArrayList<Double>(candles.size - 1)
+        for (i in 1 until candles.size) {
+            val prev = candles[i - 1].closePrice
+            val curr = candles[i].closePrice
+            if (prev <= BigDecimal.ZERO || curr <= BigDecimal.ZERO) continue
+            returns.add(ln(curr.divide(prev, 8, RoundingMode.HALF_UP).toDouble()))
+        }
+        if (returns.size < riskConfig.portfolioHistoricalMinSamples) return null
+        return returns
+    }
+
+    /**
+     * Квантиль отсортированного по возрастанию ряда (линейная интерполяция).
+     * q = 0.5 -> медиана.
+     */
+    private fun percentile(
+        sorted: List<Double>,
+        q: Double,
+    ): Double {
+        if (sorted.isEmpty()) return 0.0
+        val index = (sorted.size - 1) * q
+        val lower = floor(index).toInt()
+        val upper = ceil(index).toInt()
+        return if (lower == upper) sorted[lower] else sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower)
     }
 
     /**

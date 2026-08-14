@@ -1089,7 +1089,7 @@ flowchart LR
 | `service.RiskManagementService` | пороговые сценарии: maxPositionRub, daily loss limit, sector/volatility, restart-resume daily PnL — ✅ раздел 13.17.1 | P0 |
 | `agent.PerformanceFeedbackAgent` (мета-агент обратной связи) | feedback-парсинг, rule-based fallback (мало сделок / LLM-сбой / битый JSON), клампинг границ, кэш — ✅ раздел 13.17.2 | P1 |
 | `service.SelfLearning` (TradeAnalysisService, AdaptiveRiskService, DrawdownProtectionService) | обучение агентов — ✅ раздел 13.17.2 (unit + integration `SelfLearningIntegrationTest`) | P1 |
-| `service.StrategyService` | HOLD при `confidence < 0.5`, учёт sector/volatility guard | P1 |
+| `service.StrategyService` | HOLD при `confidence < 0.5`, учёт sector/volatility guard — guardrail «недостаточно данных → HOLD» и постобработка Guardrails живут в `agent.StrategyAgent` → ✅ `StrategyAgentTest`, раздел 13.17.2 | P1 |
 | `service.SettingsService` | применённые настройки → RiskConfig/LeverageConfig/ExperimentConfig (runtime), валидация — ✅ раздел 13.17.2 | P1 |
 | `controller.*` | `@WebMvcTest` для всех endpoints (роли ADMIN/ANALYTICS, в т.ч. запрет POST для ANALYTICS) — роли покрыты `AuthControllerIntegrationTest` (401/403/200), unit-тесты контроллеров (`MlDatasetControllerTest`, `MlScreeningControllerTest`, `MlTrendControllerTest`, `TradingAccountControllerTest`) | P1 |
 | `infrastructure.*` (UuidV7, outbox poller, промпты) | краевые случаи, retry, таймауты | P2 |
@@ -1137,6 +1137,14 @@ flowchart LR
   отдаёт in-memory снапшот без обращения к БД. (Контроллер-роли ADMIN/ANALYTICS покрыты
   `AuthControllerIntegrationTest`; `StrategyService` — HOLD-правило живёт в `StrategyAgent`,
   переноса в сервис не требуется.)
+- `StrategyAgentTest` — formulate() без реального LLM (`StubLlmClient`): guardrail
+  «INSUFFICIENT_DATA / signalStrength < 0.5 → HOLD без LLM-вызова» (метрика
+  `agent.strategy.decision{action=HOLD}`, `overrideReason=GUARDRAIL: INSUFFICIENT_TECH_DATA`);
+  парсинг LLM-ответа (BUY/SELL, клампинг signalStrength в 0..1, неизвестный action →
+  HOLD, непарсимая цена → текущая рыночная); fallback-ответ LLM → HOLD «LLM unavailable»;
+  битый JSON → HOLD + `strategy.agent.parse.error`; постобработка Guardrails (LOW_CONFIDENCE
+  и PRICE_DEVIATION коррекция targetPrice) с реальным `Guardrails`; запись `AgentLog`
+  (rawOutput, isCached, tokensUsed, storageKey, cycleId) через `RecordingLogRepo` без БД.
 - `BacktestEngineTest` — edge-кейсы: ровно одна точка equity-кривой на бар при стоп-ауте
   (фикстура `stopOutCandles`, стоп → re-entry → закрытие в конце периода), пустой вход →
   non-passable, одна свеча → без открытий, неположительный стартовый капитал → без деления

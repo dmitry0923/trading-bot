@@ -58,7 +58,7 @@ class MlTrendForecastServiceTest {
         runBlocking {
             Mockito.`when`(modelProvider.model).thenReturn(model)
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(risingCandles(60, now))
                 .thenReturn(fallingCandles(60, now))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
@@ -93,7 +93,7 @@ class MlTrendForecastServiceTest {
         runBlocking {
             Mockito.`when`(modelProvider.model).thenReturn(model)
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(risingCandles(60, now))
                 .thenReturn(fallingCandles(60, now))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
@@ -119,7 +119,7 @@ class MlTrendForecastServiceTest {
         runBlocking {
             Mockito.`when`(modelProvider.model).thenReturn(RecordingModel(0.7, 0.3, 0.4, 0.6))
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(risingCandles(60, now))
                 .thenReturn(fallingCandles(5, now))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
@@ -145,7 +145,7 @@ class MlTrendForecastServiceTest {
         runBlocking {
             Mockito.`when`(modelProvider.model).thenReturn(model)
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(risingCandles(60, now))
             Mockito
                 .`when`(blindSpotRepository.findByIsActiveTrue())
@@ -215,7 +215,7 @@ class MlTrendForecastServiceTest {
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.statusCode)
         runBlocking {
-            Mockito.verify(candleRepository, Mockito.never()).findByTickerAndTimeframeAndTimeBetween(any(), any(), any(), any())
+            Mockito.verify(candleRepository, Mockito.never()).findByTickerAndTimeframeAndTimeBefore(any(), any(), any(), any())
         }
     }
 
@@ -227,7 +227,7 @@ class MlTrendForecastServiceTest {
         runBlocking {
             Mockito.`when`(modelProvider.model).thenReturn(RecordingModel(0.7, 0.3, 0.4, 0.6))
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(risingCandles(60, now))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())

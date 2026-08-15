@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -45,7 +46,7 @@ class MlFeatureResolverTest {
         val at = LocalDateTime.of(2026, 2, 1, 14, 0)
         runBlocking {
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, at))
             Mockito
                 .`when`(blindSpotRepository.findByIsActiveTrue())
@@ -92,7 +93,7 @@ class MlFeatureResolverTest {
         val at = LocalDateTime.of(2026, 2, 1, 14, 0)
         runBlocking {
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, at))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
@@ -117,7 +118,7 @@ class MlFeatureResolverTest {
         val at = LocalDateTime.of(2026, 2, 1, 14, 0)
         runBlocking {
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(5, at))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
@@ -132,6 +133,40 @@ class MlFeatureResolverTest {
         assertNull(vector)
         runBlocking {
             Mockito.verify(macroContextService, Mockito.never()).fetch()
+        }
+    }
+
+    @Test
+    fun `candle window is exclusive of at so the forming entry bar is not used`() {
+        config.dataset.timeframe = "MINUTE_10"
+        config.dataset.lookbackBars = 30
+        val at = LocalDateTime.of(2026, 2, 1, 14, 0)
+        // LOOKBACK_WARMUP_BARS = 30 (companion приватный, дублируем значение).
+        val expectedFrom = at.minusMinutes((30 + 30) * 10L)
+        runBlocking {
+            Mockito
+                .`when`(
+                    candleRepository.findByTickerAndTimeframeAndTimeBefore(
+                        eq("SBER"),
+                        eq("MINUTE_10"),
+                        eq(expectedFrom),
+                        eq(at),
+                    ),
+                ).thenReturn(candles(60, at))
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
+            Mockito
+                .`when`(
+                    macroContextService.fetch(),
+                ).thenReturn(MacroContextService.MacroContext(BigDecimal("16"), BigDecimal("75"), BigDecimal("90")))
+        }
+
+        val vector = runBlocking { resolver.resolve("SBER", at, "BUY", 0.85, "LONG") }
+
+        assertTrue(vector != null)
+        runBlocking {
+            Mockito.verify(candleRepository).findByTickerAndTimeframeAndTimeBefore(eq("SBER"), eq("MINUTE_10"), eq(expectedFrom), eq(at))
+            Mockito.verify(candleRepository, Mockito.never()).findByTickerAndTimeframeAndTimeBetween(any(), any(), any(), any())
         }
     }
 

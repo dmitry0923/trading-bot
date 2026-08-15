@@ -166,11 +166,11 @@ class MlDatasetService(
         barMinutes: Long,
     ): MlFeatureExtractor.Features? {
         val candles =
-            candleRepository.findByTickerAndTimeframeAndTimeBetween(
+            candleRepository.findByTickerAndTimeframeAndTimeBefore(
                 ticker = position.ticker,
                 timeframe = timeframe,
                 from = position.openedAt.minusMinutes((lookbackBars + LOOKBACK_WARMUP_BARS) * barMinutes),
-                to = position.openedAt,
+                toExclusive = position.openedAt,
             )
         return MlFeatureExtractor.extract(candles, lookbackBars)
     }

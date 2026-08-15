@@ -69,11 +69,11 @@ class MlScreeningService(
         for (ticker in requested) {
             val features =
                 MlFeatureExtractor.extract(
-                    candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                    candleRepository.findByTickerAndTimeframeAndTimeBefore(
                         ticker = ticker,
                         timeframe = timeframe,
                         from = candlesFrom,
-                        to = generatedAt,
+                        toExclusive = generatedAt,
                     ),
                     lookbackBars,
                 ) ?: run {

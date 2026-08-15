@@ -50,6 +50,38 @@ class CandleRepository(
     }
 
     /**
+     * Свечи с СТРОГО закрытыми к моменту [toExclusive] барами: `time < :toExclusive`.
+     *
+     * Point-in-time выборка для ML-признаков: бар, начавшийся в `toExclusive` (и позже),
+     * ещё не закрыт и не должен попадать в признаки (иначе lookahead — его close
+     * известен только в конце бара). Используется ML-путями ([MlFeatureResolver],
+     * скрининг/тренд/датасет), где `toExclusive = at`/`openedAt`.
+     */
+    suspend fun findByTickerAndTimeframeAndTimeBefore(
+        ticker: String,
+        timeframe: String,
+        from: LocalDateTime,
+        toExclusive: LocalDateTime,
+    ): List<Candle> {
+        val sql =
+            """
+            SELECT * FROM candles
+            WHERE ticker = :ticker AND timeframe = :timeframe AND time >= :from AND time < :toExclusive
+            ORDER BY time
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("ticker", ticker)
+            .bind("timeframe", timeframe)
+            .bind("from", from)
+            .bind("toExclusive", toExclusive)
+            .map { row, _ -> toCandle(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
+    /**
      * Массовая идемпотентная запись свечей одним multi-row INSERT
      * (ON CONFLICT DO NOTHING вместо паттерна exists + save на каждую строку).
      *

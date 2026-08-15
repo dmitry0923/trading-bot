@@ -38,11 +38,11 @@ class MlFeatureResolver(
         val timeframe = mlConfig.dataset.timeframe
         val lookbackBars = mlConfig.dataset.lookbackBars
         val candles =
-            candleRepository.findByTickerAndTimeframeAndTimeBetween(
+            candleRepository.findByTickerAndTimeframeAndTimeBefore(
                 ticker = ticker,
                 timeframe = timeframe,
                 from = at.minusMinutes((lookbackBars + LOOKBACK_WARMUP_BARS) * barMinutes(timeframe)),
-                to = at,
+                toExclusive = at,
             )
         val features = MlFeatureExtractor.extract(candles, lookbackBars) ?: return null
 

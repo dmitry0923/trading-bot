@@ -70,7 +70,7 @@ class MlDatasetServiceTest {
         runBlocking {
             Mockito.`when`(positionRepository.findClosed(null, null)).thenReturn(listOf(p1, p2))
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, openedAt))
                 .thenReturn(candles(60, openedAt.plusDays(1)))
             Mockito
@@ -151,7 +151,7 @@ class MlDatasetServiceTest {
         runBlocking {
             Mockito.`when`(positionRepository.findClosed(null, null)).thenReturn(listOf(p1, p2))
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, openedAt))
                 .thenReturn(candles(15, openedAt.plusDays(1)))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
@@ -180,7 +180,7 @@ class MlDatasetServiceTest {
         runBlocking {
             Mockito.`when`(positionRepository.findClosed(null, null)).thenReturn(positions)
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, openedAt))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
@@ -207,7 +207,7 @@ class MlDatasetServiceTest {
         runBlocking {
             Mockito.`when`(positionRepository.findClosed(null, null)).thenReturn(listOf(p1, p2))
             Mockito
-                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBetween(any<String>(), any<String>(), any(), any()))
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
                 .thenReturn(candles(60, openedAt))
                 .thenReturn(candles(60, openedAt.plusHours(2)))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())

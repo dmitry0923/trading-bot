@@ -641,7 +641,7 @@ ktlint чист.
 | Оценка вероятности продолжения тренда | StrategyAgent (LLM) | бинарный классификатор (тренд вверх/вниз) |
 | Порог уверенности | AdaptiveRiskService (правила) | онлайн-калибровка по исходам сделок (✅ 13.11.8) |
 
-**Признаки** (features): RSI, ATR%, MACD-гистограмма, Bollinger %B, EMA-наклон, волатильность, winRate/чac, слепые зоны тикера, макро (ставка, нефть, курс).
+**Признаки** (features): RSI, ATR%, MACD-гистограмма, Bollinger %B, EMA-наклон, волатильность, слепые зоны тикера, макро (ставка, нефть, курс), направление, час входа, сила сигнала стратега (23 числовых + категориальные).
 
 **Pipeline**:
 
@@ -665,13 +665,13 @@ ktlint чист.
 - `GET /api/v1/ml/dataset/stats?since=&ticker=` — качество данных: число позиций,
   win rate, разбивка по тикерам/направлениям, суммарный P&L.
 
-**Строка датасета** (`MlDatasetRow`, 28 колонок):
+**Строка датасета** (`MlDatasetRow`, 29 колонок):
 
 - **Метка**: `win` (pnl > 0), `pnl_rub`, `pnl_percent`, `close_reason`, `duration_min`, `hour_of_day`;
-- **Признаки на входе** (без lookahead, по свечам до `openedAt`, `MlFeatureExtractor`):
+- **Признаки на входе** (без lookahead, по свечам строго до `openedAt`, `MlFeatureExtractor`):
   `rsi14`, `atr_percent`, `macd_hist_percent`, `bb_percent_b`, `ema_slope_percent`,
   `volatility20_percent`, `ret_3`, `ret_10`, `ret_20`;
-- **Макро**: `cbr_rate`, `brent`, `usd_rub`;
+- **Макро**: `cbr_rate`, `brent`, `usd_rub`, `macro_source` (SNAPSHOT/CURRENT);
 - **LLM-агент** (`agent_logs` по `cycleId`): `strategy_action`, `strategy_confidence`
   (Agent-3-Strategist, последняя запись цикла);
 - **Слепая зона**: `in_blind_spot_hour` — активная слепая зона тикера
@@ -1635,3 +1635,67 @@ live-контуру `DiscretionaryStrategy.runChain` для закрытия P1 
   null без исключения; 0/отрицательный priceStepCost → null; LONG = entry − буфер,
   SHORT = entry + буфер.
 - Правка KDoc `maxDailyLossPercent` (percent-only).
+
+## 13.22. Аудит корректности ML-модуля (ML)
+
+Аудит ML-модуля (v2.4, 13.11): датасет/признаки (`MlDatasetService`,
+`MlFeatureExtractor`, `MlFeatureResolver`), модель (`MlModelProvider`),
+скрининг/тренд-прогноз (`MlScreeningService`, `MlTrendForecastService`),
+entry-фильтр и тренд-гейт (`MlEntryFilter`, `MlTrendScore`), интеграция
+с бэктестом (`BacktestEngine`). Фокус — point-in-time корректность признаков
+(отсутствие lookahead) и fail-open пути.
+
+### 13.22.1. Находки аудита
+
+**Исправлено (MR-M, 13.22.2):**
+- ML-CRIT-1 (lookahead в бэктесте): `BacktestEngine.simulate` передавал
+  ML-фильтру `at = время входа` (бар i), а `MlFeatureResolver` тянул свечи
+  `to = at` ИНКЛЮЗИВНО — close входящего бара попадал в признаки, хотя известен
+  только в конце бара (сигнальный слой при этом видел `sorted[0..i-1]`).
+- ML-CRIT-2 (течь бара входа в датасет): `MlDatasetService.entryFeatures` брала
+  свечи `to = openedAt` инклюзивно — включался бар, в котором произошёл вход.
+- ML-MED-1 (fail-open на NaN): `probability.isFinite()` не проверялся; `NaN <
+  threshold` = false → фильтр ПРОПУСКАЛ вход при деградации модели (NaN из
+  дегенеративных признаков). Тренд-гейт тоже проходил (NaN < minScore = false).
+
+**Зафиксировано как открытые решения (не фиксы в MR-M):**
+- ML-MED-2: fallback `macroContextService.fetch()` (CURRENT) при отсутствии
+  снапшота ≤ at подмешивает ТЕКУЩИЙ макро в историческую оценку: в датасете
+  кэшируется за экспорт и помечается `macro_source=CURRENT`, в бэктесте резолвер
+  дергает fetch на каждый вход (HTTP + недетерминизм по периодам до начала
+  сбора снапшотов). Фикс требует решения по историческому макро (отказ от
+  fallback в бэктесте/датасете — разрыв с live-веткой).
+- ML-MED-3: бэктест строит признаки через `CandleRepository` (БД), а не из
+  фикстуры `sorted` — при усечённой фикстуре признаки отличаются от сигнального
+  слоя. Согласовано с live (тоже БД) — конвенция, не баг.
+- ML-LOW: `meterRegistry.gauge(name, value)` регистрирует константные значения и
+  не обновляется (диагностика «застывает»); `round()` через `BigDecimal(NaN)`
+  может кинуть исключение в скрининге/тренде при NaN-модели (fail-closed защита
+  добавлена только в entry-фильтр).
+
+### 13.22.2. MR-M: ML point-in-time признаки + fail-closed на NaN ✅
+
+Решение:
+- `CandleRepository.findByTickerAndTimeframeAndTimeBefore(ticker, timeframe,
+  from, toExclusive)`: `time >= :from AND time < :toExclusive` — СТРОГО закрытые
+  бары (KDoc объясняет point-in-time инвариант). Инклюзивный
+  `findByTickerAndTimeframeAndTimeBetween` сохранён для non-ML путей (API/MTF/
+  бэктест-загрузка), где `to = now` легитимен.
+- Переведены все 4 ML-call-сайта: `MlFeatureResolver` (live + бэктест),
+  `MlScreeningService`/`MlTrendForecastService` (исключён формирующийся бар —
+  скрининг теперь работает по последнему закрытому бару), `MlDatasetService.
+  entryFeatures` (исключён бар входа).
+- `MlEntryFilter.shouldBlock`: guard `!probability.isFinite()` → FAIL_CLOSED
+  перед проверкой порога (независимо от `ml.enabled` в бэктест-режиме).
+
+Тесты (954 total, 0 failed):
+- `CandleRepositoryIntegrationTest` (новый, Postgres): `timeBefore` исключает
+  бар, начавшийся в `toExclusive`, и более поздние; нижняя граница инклюзивна;
+  `timeBetween` остаётся инклюзивным сверху.
+- `MlFeatureResolverTest`: «candle window is exclusive of at so the forming
+  entry bar is not used» — verify вызова `TimeBefore` с `toExclusive = at` и
+  окном `(lookbackBars + 30) * barMinutes` + `never()` инклюзивного метода.
+- `MlEntryFilterTest`: «blocks fail closed when model returns non-finite
+  probability» (NaN → FAIL_CLOSED).
+- Документация: признаки без фиктивного «winRate/чac»; `MlDatasetRow` — 29
+  колонок (добавлена `macro_source`).

@@ -134,6 +134,22 @@ class MlEntryFilterTest {
     }
 
     @Test
+    fun `blocks fail closed when model returns non-finite probability`() {
+        config.enabled = true
+        config.filter.enabled = true
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(RecordingModel(Double.NaN))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), any(), any())).thenReturn(vector())
+        }
+
+        val reason = runBlocking { filter.shouldBlock(signal()) }
+
+        assertTrue(reason != null)
+        assertTrue(reason!!.contains("non-finite"))
+        assertEquals(1.0, filterResultCount("FAIL_CLOSED"))
+    }
+
+    @Test
     fun `blocks when probability below threshold and passes above`() {
         config.enabled = true
         config.filter.enabled = true

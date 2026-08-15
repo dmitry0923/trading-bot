@@ -92,6 +92,9 @@ class MlEntryFilter(
             ) ?: return blocked(ticker, action, "insufficient candle data for ML features")
 
         val probability = model.probability(vector.numericFeatures(), vector.categoricalFeatures())
+        if (!probability.isFinite()) {
+            return blocked(ticker, action, "ML model returned non-finite win probability")
+        }
         val threshold = mlConfig.filter.threshold
         if (probability < threshold) {
             meterRegistry.counter("ml.entry.filter", Tags.of("ticker", ticker, "result", "REJECT")).increment()

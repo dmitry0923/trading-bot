@@ -330,7 +330,14 @@ class AlorClient(
             val execution =
                 OrderExecution(
                     status = j.path("status").asString("UNKNOWN"),
-                    filledQuantity = j.path("filledQty").asInt(0),
+                    // EXEC-2 (roadmap 13.27): fallback на filledQuantity, если Alor не
+                    // вернул filledQty (единый парсинг с reconcileOrderByIdempotencyKey,
+                    // getOpenOrders, parseExecution).
+                    filledQuantity =
+                        j
+                            .path("filledQty")
+                            .asInt(0)
+                            .let { if (it == 0) j.path("filledQuantity").asInt(0) else it },
                     avgPrice = j.path("filledPrice").asString().toBigDecimalOrNull(),
                 )
             if (expectedPrice != null && execution.avgPrice != null) {

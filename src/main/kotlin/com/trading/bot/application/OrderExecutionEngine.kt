@@ -157,8 +157,24 @@ class OrderExecutionEngine(
 
         val orderId = placed.alorOrderId
         val execution = alorClient.verifyOrder(orderId, portfolio = portfolioResolver(accountId))
-        val fillPrice = execution?.avgPrice ?: entryPrice
-        val filledQty = execution?.filledQuantity?.takeIf { it in 1 until qty }
+        if (execution == null) {
+            // EXEC-3 (roadmap 13.27): verifyOrder недоступен — факт исполнения входа НЕ
+            // подтверждён. Раньше сбой трактовался как полное исполнение (non-pending OPEN
+            // позиция по цене входа): локальный стейт завышался, SL/TP армовались на полный
+            // qty, а пришедший позже fill уходил в ложное закрытие (EXEC-1). Теперь позиция
+            // создаётся в pendingEntry (как при UNCERTAIN-доставке): fill подтвердит
+            // handleExecutionReport (WS), отмену/режект/незаполненность — resolveEntryViaOutbox
+            // и State Reconciliation.
+            logger.warn {
+                "verifyOrder UNKNOWN for $ticker (order=$orderId) — entry kept as pendingEntry until confirmed"
+            }
+            val unknownPos = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
+            positionRepo.save(unknownPos)
+            meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
+            return null
+        }
+        val fillPrice = execution.avgPrice ?: entryPrice
+        val filledQty = execution.filledQuantity.takeIf { it in 1 until qty }
 
         if (filledQty != null) {
             // Частичное исполнение входа: остаток лимитки ещё «висит» на бирже.

@@ -2095,3 +2095,34 @@ pendingEntry-ветка); close-филы по-прежнему обрабаты�
   closePrice, closeReason=EXECUTION_FILL, updateDailyPnL + recordPositionClosed).
 
 Полный прогон: 977 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+### 13.27.5. MR-S: EXEC-2/EXEC-3 — подтверждение исполнения входа ✅
+
+Оба фикса закрывают рассинхрон локального стейта входа с биржей, когда
+`placeEntryOrder` не получил подтверждения исполнения.
+
+**EXEC-2 — единый парсинг `filledQty`/`filledQuantity`** (`AlorClient.verifyOrder`,
+AlorClient.kt): при отсутствии `filledQty` в ответе биржи теперь берётся fallback
+на `filledQuantity` — как уже делают `reconcileOrderByIdempotencyKey`,
+`getOpenOrders` и `parseExecution`. Раньше частичный/полный fill при форме
+`filledQuantity` не распознавался: `placeEntryOrder` создавал non-pending позицию
+на полный qty, а `confirmCloseFill` не видел частичное закрытие.
+
+**EXEC-3 — сбой `verifyOrder` → `pendingEntry`, а не ложное полное исполнение**
+(`OrderExecutionEngine.placeEntryOrder`): при `execution == null` (сетевая ошибка
+проверки) позиция больше НЕ открывается non-pending по цене входа — создаётся
+в `pendingEntry` (как при UNCERTAIN-доставке), `alorOrderId` сохраняется. Подтверждение:
+WS-fill (`handleExecutionReport`, pendingEntry-ветка) либо `resolveEntryViaOutbox`
+(full-fill → фиксация; остаток → отмена после порога; reject/cancel → `abandonEntry`).
+Устраняет корень, из-за которого пришедший позже fill входа уходил в ложное
+закрытие EXEC-1 и SL/TP армовались на несуществующий объём.
+
+Тесты (2 targeted + 977 регресс, 0 failed; полный прогон ниже):
+- `AlorClientTest.verifyOrder falls back to filledQuantity when filledQty absent (EXEC-2)`
+  (новый): ответ только с `filledQuantity` парсится корректно.
+- `OrderExecutionEngineEntryReservationTest.verifyOrder failure creates pendingEntry
+  instead of assumed full open (EXEC-3)` (новый): резервация удерживается,
+  `recordPositionOpened` не вызывается, позиция `pendingEntry` с сохранённым
+  `alorOrderId` и полным qty, метрика `entry.uncertain` +1.
+
+Полный прогон: 979 tests, 0 failed, 2 skipped; ktlintCheck чист.

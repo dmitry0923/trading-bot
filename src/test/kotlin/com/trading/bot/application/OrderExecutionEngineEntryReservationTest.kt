@@ -337,6 +337,31 @@ class OrderExecutionEngineEntryReservationTest {
     }
 
     @Test
+    fun `verifyOrder failure creates pendingEntry instead of assumed full open (EXEC-3)`() {
+        stubReserve(1L)
+        stubEntryPlaceOrder(successResult("e1"))
+        stubEntryFill(null)
+        stubSaveReturnsArg()
+
+        val result =
+            runBlocking {
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                    buildPos(o, p, pr, q)
+                }
+            }
+
+        assertNull(result)
+        assertTrue(savedPos!!.pendingEntry)
+        assertEquals(3, savedPos!!.quantity)
+        assertEquals("e1", savedPos!!.alorOrderId)
+        verifyRelease(0)
+        runBlocking {
+            Mockito.verify(tradeEventService, never()).recordPositionOpened(anyPosition())
+        }
+        assertEquals(1.0, meterRegistry.counter("test.entry.uncertain", Tags.of("ticker", "Si")).count())
+    }
+
+    @Test
     fun `closing an open position releases its entry reservation`() {
         val pos = entryPos()
         runBlocking {

@@ -183,6 +183,21 @@ class AlorClientTest {
         }
 
     @Test
+    fun `verifyOrder falls back to filledQuantity when filledQty absent (EXEC-2)`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                val c = client(server)
+                server.orderByIdResponse = """{"status":"FILLED","filledQuantity":2,"filledPrice":"99.5"}"""
+
+                val execution = c.verifyOrder("ord-1", expectedPrice = BigDecimal("100"))
+
+                assertEquals("FILLED", execution?.status)
+                assertEquals(2, execution?.filledQuantity)
+                assertEquals(0, BigDecimal("99.5").compareTo(execution?.avgPrice))
+            }
+        }
+
+    @Test
     fun `getOpenOrders parses orders with fallback fields`() =
         runBlocking {
             FakeAlorServer().use { server ->

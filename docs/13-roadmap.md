@@ -1903,3 +1903,60 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
 - `InvestorClearingIntegrationTest.settleWithdrawal is idempotent...` (новый, на
   реальной Postgres): повторный клиринг за тот же день не меняет баланс,
   totalWithdrawn и оставляет одну транзакцию CLEARING.
+
+## 13.26. Аудит живых gauge-метрик (GAUGE)
+
+Аудит всех регистраций `meterRegistry.gauge(name, tags, constant)` в main-коде
+(замороженные метрики, 4-я фиксация constantNumber-ловушек, см. F-15 в 13.25.1,
+13.22.1, 13.23.1, 13.24.1).
+
+### 13.26.1. Находки аудита
+
+**Механика бага:** `meterRegistry.gauge(name, tags, value)` регистрирует
+`constantNumber`-gaugue — первое значение замораживается на всё время жизни метра;
+повторный вызов (периодический refresh) возвращает уже зарегистрированный meter
+и НЕ обновляет значение. Prometheus/Grafana показывает устаревшее число.
+
+**Исправлено (MR-Q, 13.26.2):** введён общий хелпер
+`MutableGauges` (`com.trading.bot.infrastructure.metrics`) — значение держится в
+`AtomicReference<Double>`, в Micrometer регистрируется функция-читатель
+(`meterRegistry.gauge(name, tags, ref) { it.get() }`), каждый `set` обновляет
+референс. Хранилище сегментировано по `MeterRegistry` (в тестах каждый
+`SimpleMeterRegistry` изолирован), ключ — (имя, упорядоченный список тегов),
+поэтому per-account/per-ticker метрики не конфликтуют.
+
+Найдено и переведено на `MutableGauges` (29 имён, 40 вызовов):
+- `DrawdownProtectionService`: `risk.daily.pnl`, `risk.daily.limit.reached`
+  (untagged + per-account), `drawdown.*` ×10.
+- `AdaptiveRiskService`: `adaptive.position_size`, `adaptive.confidence_factor`,
+  `adaptive.confidence_threshold` (per ticker), `adaptive.drawdown_recovery`,
+  `adaptive.pause`.
+- `MarketRegimeService`: `risk.market.regime.stress`, `risk.market.regime.level`.
+- `VolatilityIndexService`: `risk.volatility.index`, `risk.volatility.anomalous`.
+- `ImpliedVolatilityService`: `risk.implied.volatility`.
+- `MacroContextService`: `macro.usd_rub`, `macro.cbr_rate`, `macro.brent`.
+- ML: `ml.dataset.export.*` ×3, `ml.trend.candidates/skipped`, `ml.screening.candidates/skipped`.
+- `PortfolioBacktestGuard`: `bt.portfolio.pass_share`.
+- `PortfolioRiskEngineImpl`: `portfolio.*` ×7 (var95, effective_var95, cvar95,
+  stress_loss, daily_vol_percent, effective_positions, directional_concentration).
+- `FuturesRiskEngine`: `risk.futures.entry.allowed`, `futures.liquidation.distance` (per ticker).
+- `StockRiskEngine`: `risk.stock.entry.allowed`.
+- `AlorFuturesClient`: `futures.go` (per ticker), `futures.portfolio.money`.
+- `TradingBotService`: `bot.pnl` (per ticker, в callback `onPositionClosed`).
+- `StrategyService`: `market.regime.level` (per ticker).
+
+**Не трогали (уже живые — reader-lambda паттерн):** `MarketDataGate:103`,
+`WebSocketManager:123`, `AsyncTraceStorage:54`, `RiskExposureService:58-62,311`,
+`TradingBotService:358`, `RagErrorAnalyzer:86`.
+
+### 13.26.2. MR-Q: MutableGauges ✅
+
+Тесты (4 targeted + 970 регресс, 0 failed; полный прогон ниже):
+- `MutableGaugesTest` (новый): публикация начального значения; `set` обновляет
+  gauge вместо заморозки (ядро фикса); tagged/untagged метрики с одним именем
+  независимы; разные `MeterRegistry` изолированы.
+- Регресс-гарантии точности double: `PortfolioBacktestGuardTest` (`pass_share == 0.7`),
+  `AdaptiveRiskServiceConfidenceTest` (0.55), `AdaptiveRiskServiceConfidenceSizingTest`
+  (0.75) — `AtomicReference<Double>`, а не `AtomicLong`, чтобы не терять точность.
+
+Полный прогон: 974 tests, 0 failed, 2 skipped; ktlintCheck чист.

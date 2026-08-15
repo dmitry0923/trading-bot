@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.config.MlConfig
 import com.trading.bot.domain.ml.MlFeatureExtractor
 import com.trading.bot.domain.ml.MlFeatureVector
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.dto.MlScreeningCandidate
 import com.trading.bot.model.dto.MlScreeningResult
 import com.trading.bot.model.entity.MacroSnapshot
@@ -91,8 +92,8 @@ class MlScreeningService(
 
         candidates.sortByDescending { it.probability }
         val top = candidates.take(limit)
-        meterRegistry.gauge("ml.screening.candidates", top.size)
-        meterRegistry.gauge("ml.screening.skipped", skipped.size)
+        MutableGauges.set(meterRegistry, "ml.screening.candidates", top.size.toDouble())
+        MutableGauges.set(meterRegistry, "ml.screening.skipped", skipped.size.toDouble())
         meterRegistry.counter("ml.screening", Tags.of("status", "OK")).increment()
         return MlScreeningResult(
             mode = "OK",

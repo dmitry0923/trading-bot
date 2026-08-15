@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.MacroConfig
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -49,9 +50,9 @@ class MacroContextService(
                 brentPrice = macroConfig.brentPrice,
                 usdRub = liveUsdRub ?: macroConfig.usdRub,
             )
-        meterRegistry.gauge("macro.usd_rub", ctx.usdRub.toDouble())
-        meterRegistry.gauge("macro.cbr_rate", ctx.cbrRate.toDouble())
-        meterRegistry.gauge("macro.brent", ctx.brentPrice.toDouble())
+        MutableGauges.set(meterRegistry, "macro.usd_rub", ctx.usdRub.toDouble())
+        MutableGauges.set(meterRegistry, "macro.cbr_rate", ctx.cbrRate.toDouble())
+        MutableGauges.set(meterRegistry, "macro.brent", ctx.brentPrice.toDouble())
         return ctx
     }
 

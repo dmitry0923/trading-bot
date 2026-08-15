@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.VolatilityFilter
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import jakarta.annotation.PreDestroy
@@ -57,7 +58,7 @@ class VolatilityIndexService(
         lastFetchedAt = Instant.now()
         if (value != null && value > BigDecimal.ZERO) {
             lastValue = value
-            meterRegistry.gauge("risk.volatility.index", value.toDouble())
+            MutableGauges.set(meterRegistry, "risk.volatility.index", value.toDouble())
         } else {
             logger.warn { "Volatility index unavailable; keeping last known value=$lastValue" }
         }
@@ -71,7 +72,7 @@ class VolatilityIndexService(
         if (!riskConfig.volatilityIndexEnabled) return false
         val value = lastValue ?: return false
         val anomalous = value.toDouble() > riskConfig.maxVolatilityIndexPercent
-        meterRegistry.gauge("risk.volatility.anomalous", if (anomalous) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "risk.volatility.anomalous", if (anomalous) 1.0 else 0.0)
         if (anomalous) {
             logger.warn { "VOLATILITY INDEX PAUSE: $value > ${riskConfig.maxVolatilityIndexPercent}%" }
         }

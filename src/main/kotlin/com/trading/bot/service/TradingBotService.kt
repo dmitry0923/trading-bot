@@ -18,6 +18,7 @@ import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.signal.toSignal
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
@@ -108,7 +109,7 @@ class TradingBotService(
             metricPrefix = "bot",
             onPositionClosed = { pos ->
                 risk.updateDailyPnL(pos.pnl ?: BigDecimal.ZERO, pos.accountId)
-                meterRegistry.gauge("bot.pnl", Tags.of("ticker", pos.ticker), pos.pnl?.toDouble() ?: 0.0)
+                MutableGauges.set(meterRegistry, "bot.pnl", pos.pnl?.toDouble() ?: 0.0, Tags.of("ticker", pos.ticker))
             },
             protectionOrdersEnabled = alorClient.isLiveMode,
             portfolioResolver = { accountId -> tradingAccountService.portfolioOf(accountId) },

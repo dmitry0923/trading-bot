@@ -8,6 +8,7 @@ import com.trading.bot.domain.risk.RiskEngine
 import com.trading.bot.domain.risk.RiskVerdict
 import com.trading.bot.domain.risk.TradingCalendar
 import com.trading.bot.domain.risk.VolatilityFilter
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
@@ -60,7 +61,7 @@ class StockRiskEngine(
         if (exceedsSectorExposure(request.ticker, request.openPositions)) return reject("SECTOR_EXPOSURE")
         if (isVolatilityTooHigh(request.atr, request.entryPrice)) return reject("VOLATILITY_GUARD")
 
-        meterRegistry.gauge("risk.stock.entry.allowed", 1.0)
+        MutableGauges.set(meterRegistry, "risk.stock.entry.allowed", 1.0)
         logger.info { "Entry ALLOWED ${request.ticker} ${request.direction}" }
         return RiskVerdict.Allowed
     }

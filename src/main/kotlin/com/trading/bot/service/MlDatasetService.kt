@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.config.MlConfig
 import com.trading.bot.domain.ml.MlFeatureExtractor
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.dto.MlDatasetExport
 import com.trading.bot.model.dto.MlDatasetRow
 import com.trading.bot.model.dto.positionDurationMinutes
@@ -111,9 +112,9 @@ class MlDatasetService(
                 )
         }
 
-        meterRegistry.gauge("ml.dataset.export.rows", rows.size)
-        meterRegistry.gauge("ml.dataset.export.skipped", skipped)
-        meterRegistry.gauge("ml.dataset.export.positions", closed.size)
+        MutableGauges.set(meterRegistry, "ml.dataset.export.rows", rows.size.toDouble())
+        MutableGauges.set(meterRegistry, "ml.dataset.export.skipped", skipped.toDouble())
+        MutableGauges.set(meterRegistry, "ml.dataset.export.positions", closed.size.toDouble())
         return MlDatasetExport(
             mode = "OK",
             positionsCount = closed.size,

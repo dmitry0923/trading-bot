@@ -4,6 +4,7 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.DailyRiskGuard
 import com.trading.bot.event.PositionClosedEvent
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -253,8 +254,8 @@ class DrawdownProtectionService(
             logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$todayPnl <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
         }
         persistDailyState()
-        meterRegistry.gauge("risk.daily.pnl", todayPnl.toDouble())
-        meterRegistry.gauge("risk.daily.limit.reached", if (todayDailyLossReached) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "risk.daily.pnl", todayPnl.toDouble())
+        MutableGauges.set(meterRegistry, "risk.daily.limit.reached", if (todayDailyLossReached) 1.0 else 0.0)
         // Синхронное обновление кэша — входы блокируются немедленно, без ожидания цикла.
         cachedStatus?.let { s ->
             val updated = s.copy(dailyPnlRub = todayPnl, dailyLimitBreached = todayDailyLossReached)
@@ -283,17 +284,12 @@ class DrawdownProtectionService(
             logger.error { "DAILY LOSS LIMIT reached (account=$accountId): dailyPnL=$newPnl <= -$dailyLimit" }
         }
         persistDailyState(accountId)
-        meterRegistry.gauge("risk.daily.pnl", Tags.of("account", accountId.toString()), newPnl.toDouble())
-        meterRegistry.gauge(
+        MutableGauges.set(meterRegistry, "risk.daily.pnl", newPnl.toDouble(), Tags.of("account", accountId.toString()))
+        MutableGauges.set(
+            meterRegistry,
             "risk.daily.limit.reached",
+            if (accountLossReached[accountId] == true) 1.0 else 0.0,
             Tags.of("account", accountId.toString()),
-            if (accountLossReached[accountId] ==
-                true
-            ) {
-                1.0
-            } else {
-                0.0
-            },
         )
     }
 
@@ -578,16 +574,16 @@ class DrawdownProtectionService(
     }
 
     private fun recordMetrics(status: DrawdownStatus) {
-        meterRegistry.gauge("drawdown.aum", status.aum.toDouble())
-        meterRegistry.gauge("drawdown.peak_aum", status.peakAum.toDouble())
-        meterRegistry.gauge("drawdown.percent", status.drawdownPercent)
-        meterRegistry.gauge("drawdown.daily.pnl", Tags.of("unit", "rub"), status.dailyPnlRub.toDouble())
-        meterRegistry.gauge("drawdown.daily.percent", percentOf(status.dailyPnlRub, status.aum))
-        meterRegistry.gauge("drawdown.rolling7d.percent", percentOf(status.rolling7dPnlRub, status.aum))
-        meterRegistry.gauge("drawdown.rolling30d.percent", percentOf(status.rolling30dPnlRub, status.aum))
-        meterRegistry.gauge("drawdown.consecutive.losses", status.consecutiveLosses.toDouble())
-        meterRegistry.gauge("drawdown.shadow.mode", if (status.shadowModeActive) 1.0 else 0.0)
-        meterRegistry.gauge("drawdown.blocked", if (status.blocking()) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "drawdown.aum", status.aum.toDouble())
+        MutableGauges.set(meterRegistry, "drawdown.peak_aum", status.peakAum.toDouble())
+        MutableGauges.set(meterRegistry, "drawdown.percent", status.drawdownPercent)
+        MutableGauges.set(meterRegistry, "drawdown.daily.pnl", status.dailyPnlRub.toDouble(), Tags.of("unit", "rub"))
+        MutableGauges.set(meterRegistry, "drawdown.daily.percent", percentOf(status.dailyPnlRub, status.aum))
+        MutableGauges.set(meterRegistry, "drawdown.rolling7d.percent", percentOf(status.rolling7dPnlRub, status.aum))
+        MutableGauges.set(meterRegistry, "drawdown.rolling30d.percent", percentOf(status.rolling30dPnlRub, status.aum))
+        MutableGauges.set(meterRegistry, "drawdown.consecutive.losses", status.consecutiveLosses.toDouble())
+        MutableGauges.set(meterRegistry, "drawdown.shadow.mode", if (status.shadowModeActive) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "drawdown.blocked", if (status.blocking()) 1.0 else 0.0)
     }
 
     /**

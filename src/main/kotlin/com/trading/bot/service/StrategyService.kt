@@ -18,6 +18,7 @@ import com.trading.bot.domain.strategy.StrategyDecision
 import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.MarketSnapshot
@@ -429,7 +430,7 @@ class StrategyService(
         ticker: String,
         regime: PerTickerRegime,
     ) {
-        meterRegistry.gauge("market.regime.level", Tags.of("ticker", ticker), regime.encodedLevel())
+        MutableGauges.set(meterRegistry, "market.regime.level", regime.encodedLevel().toDouble(), Tags.of("ticker", ticker))
         regime.blockReason()?.let { reason ->
             meterRegistry.counter("market.regime.blocked", Tags.of("ticker", ticker, "reason", reason)).increment()
         }

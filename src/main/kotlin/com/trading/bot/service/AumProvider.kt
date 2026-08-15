@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Service
@@ -70,11 +71,12 @@ class AumProvider(
                     if (money != null && money > BigDecimal.ZERO) money else riskConfig.maxPositionRub
                 }
             cache[k] = CacheEntry(effective, System.currentTimeMillis())
-            meterRegistry.gauge(
+            MutableGauges.set(
+                meterRegistry,
                 "portfolio.aum",
+                effective.toDouble(),
                 io.micrometer.core.instrument.Tags
                     .of("account", accountId?.toString() ?: "default"),
-                effective.toDouble(),
             )
             effective
         } catch (e: Exception) {

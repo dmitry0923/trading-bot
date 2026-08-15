@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -53,7 +54,7 @@ class PortfolioBacktestGuard(
                 "bt.portfolio.gate",
                 Tags.of("verdict", if (verdict.accepted) "PASS" else "REJECT"),
             ).increment()
-        meterRegistry.gauge("bt.portfolio.pass_share", verdict.passShare)
+        MutableGauges.set(meterRegistry, "bt.portfolio.pass_share", verdict.passShare)
         return verdict
     }
 }

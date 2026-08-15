@@ -11,6 +11,7 @@ import com.trading.bot.domain.risk.RiskEngine
 import com.trading.bot.domain.risk.RiskVerdict
 import com.trading.bot.domain.risk.TradingCalendar
 import com.trading.bot.domain.risk.VolatilityFilter
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -79,7 +80,7 @@ class FuturesRiskEngine(
             return reject("INVALID_INPUT")
         }
 
-        meterRegistry.gauge("risk.futures.entry.allowed", 1.0)
+        MutableGauges.set(meterRegistry, "risk.futures.entry.allowed", 1.0)
         logger.info { "Entry ALLOWED ${request.ticker} ${request.direction}" }
         return RiskVerdict.Allowed
     }
@@ -124,7 +125,7 @@ class FuturesRiskEngine(
                 PositionDirection.SHORT -> liq.subtract(currentPrice)
             }
         if (remaining <= BigDecimal.ZERO) {
-            meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), 0.0)
+            MutableGauges.set(meterRegistry, "futures.liquidation.distance", 0.0, Tags.of("ticker", position.ticker))
             logger.warn {
                 "${position.ticker} ${position.direction} LIQUIDATED price=$currentPrice liq=$liq"
             }
@@ -136,7 +137,7 @@ class FuturesRiskEngine(
                 .divide(totalBuffer, 6, RoundingMode.HALF_UP)
                 .multiply(BigDecimal("100"))
                 .toDouble()
-        meterRegistry.gauge("futures.liquidation.distance", Tags.of("ticker", position.ticker), distancePercent)
+        MutableGauges.set(meterRegistry, "futures.liquidation.distance", distancePercent, Tags.of("ticker", position.ticker))
 
         val status =
             when {

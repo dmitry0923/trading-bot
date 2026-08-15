@@ -3,6 +3,7 @@ package com.trading.bot.infrastructure.alor
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -68,7 +69,7 @@ class AlorFuturesClient(
                 return null
             }
 
-            meterRegistry.gauge("futures.go", Tags.of("ticker", ticker), go.toDouble())
+            MutableGauges.set(meterRegistry, "futures.go", go.toDouble(), Tags.of("ticker", ticker))
             logger.info { "Futures GO for $ticker = $go ₽" }
             go
         } catch (e: Exception) {
@@ -118,7 +119,7 @@ class AlorFuturesClient(
                 return null
             }
 
-            meterRegistry.gauge("futures.portfolio.money", money.toDouble())
+            MutableGauges.set(meterRegistry, "futures.portfolio.money", money.toDouble())
             logger.info { "Portfolio money = $money ₽" }
             money
         } catch (e: Exception) {

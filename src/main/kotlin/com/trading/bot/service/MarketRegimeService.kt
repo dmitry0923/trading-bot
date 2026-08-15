@@ -5,6 +5,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.MarketRegime
 import com.trading.bot.domain.risk.MarketRegimeClassifier
 import com.trading.bot.domain.risk.MarketRegimeProvider
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import jakarta.annotation.PreDestroy
@@ -106,8 +107,8 @@ class MarketRegimeService(
             }
         regime = newRegime
 
-        meterRegistry.gauge("risk.market.regime.stress", if (newRegime == MarketRegime.STRESS) 1.0 else 0.0)
-        meterRegistry.gauge("risk.market.regime.level", newRegime.ordinal.toDouble())
+        MutableGauges.set(meterRegistry, "risk.market.regime.stress", if (newRegime == MarketRegime.STRESS) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "risk.market.regime.level", newRegime.ordinal.toDouble())
         logger.info {
             "Market regime: $newRegime (history=${history.size} samples, current=${current ?: "N/A"})"
         }

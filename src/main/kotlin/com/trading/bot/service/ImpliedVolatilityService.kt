@@ -4,6 +4,7 @@ import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.Black76Calculator
 import com.trading.bot.domain.risk.OptionQuote
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import jakarta.annotation.PreDestroy
@@ -84,7 +85,7 @@ class ImpliedVolatilityService(
         val selected = selectAtm(target, LocalDate.now(), riskConfig.regimeMinOpenPosition)
         if (selected != null) {
             snapshot = selected
-            meterRegistry.gauge("risk.implied.volatility", selected.ivPercent)
+            MutableGauges.set(meterRegistry, "risk.implied.volatility", selected.ivPercent)
             logger.info {
                 "${riskConfig.impliedVolatilityTicker} IV = ${selected.ivPercent}% " +
                     "(strike=${selected.atmStrike}, expiry=${selected.expiry}, OI=${selected.openInterest}, " +

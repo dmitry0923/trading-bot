@@ -6,6 +6,7 @@ import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskReport
 import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.ResolvedCorrelationMatrix
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import com.trading.bot.service.CandleCacheService
@@ -190,13 +191,13 @@ class PortfolioRiskEngineImpl(
             }
         }
 
-        meterRegistry.gauge("portfolio.var95_rub", var95Rub)
-        meterRegistry.gauge("portfolio.effective_var95_rub", effectiveVar95Rub)
-        meterRegistry.gauge("portfolio.cvar95_rub", cvar95Rub)
-        meterRegistry.gauge("portfolio.stress_loss_rub", stressLossRub)
-        meterRegistry.gauge("portfolio.daily_vol_percent", dailyVol * 100.0)
-        meterRegistry.gauge("portfolio.effective_positions", effectivePositions)
-        meterRegistry.gauge("portfolio.directional_concentration", directionalConcentration)
+        MutableGauges.set(meterRegistry, "portfolio.var95_rub", var95Rub)
+        MutableGauges.set(meterRegistry, "portfolio.effective_var95_rub", effectiveVar95Rub)
+        MutableGauges.set(meterRegistry, "portfolio.cvar95_rub", cvar95Rub)
+        MutableGauges.set(meterRegistry, "portfolio.stress_loss_rub", stressLossRub)
+        MutableGauges.set(meterRegistry, "portfolio.daily_vol_percent", dailyVol * 100.0)
+        MutableGauges.set(meterRegistry, "portfolio.effective_positions", effectivePositions)
+        MutableGauges.set(meterRegistry, "portfolio.directional_concentration", directionalConcentration)
 
         return PortfolioRiskReport(
             allowed = allowed,

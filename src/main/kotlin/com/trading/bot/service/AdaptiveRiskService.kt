@@ -6,6 +6,7 @@ import com.trading.bot.domain.risk.MarketRegime
 import com.trading.bot.domain.risk.MarketRegimeProvider
 import com.trading.bot.domain.risk.PerTickerRegime
 import com.trading.bot.domain.risk.RegimeDetector
+import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.repository.PositionRepository
@@ -215,7 +216,7 @@ class AdaptiveRiskService(
         size = size.multiply(BigDecimal(regimeFactor))
 
         val finalSize = size.coerceAtLeast(BigDecimal.ZERO)
-        meterRegistry.gauge("adaptive.position_size", Tags.of("ticker", ticker), finalSize.toDouble())
+        MutableGauges.set(meterRegistry, "adaptive.position_size", finalSize.toDouble(), Tags.of("ticker", ticker))
         logger.info {
             "Kelly size for $ticker: ${finalSize.toInt()} (base=$base, volTarget=${volMultiplier ?: "N/A"}, " +
                 "confidenceFactor=$confidenceFactor, drawdownFactor=$drawdownFactor, regimeFactor=$regimeFactor)"
@@ -308,7 +309,7 @@ class AdaptiveRiskService(
         val span = riskConfig.confidenceSizingCeiling - threshold
         // Порог близко к ceiling (строгая калибровка) — любой прошедший сигнал полный.
         if (span <= 1e-9) {
-            meterRegistry.gauge("adaptive.confidence_factor", Tags.of("ticker", ticker), 1.0)
+            MutableGauges.set(meterRegistry, "adaptive.confidence_factor", 1.0, Tags.of("ticker", ticker))
             return riskConfig.confidenceSizingMaxFactor
         }
         val t = ((normalized - threshold) / span).coerceIn(0.0, 1.0)
@@ -316,7 +317,7 @@ class AdaptiveRiskService(
             riskConfig.confidenceSizingMinFactor +
                 (riskConfig.confidenceSizingMaxFactor - riskConfig.confidenceSizingMinFactor) * t
         val clamped = factor.coerceIn(0.0, 1.0)
-        meterRegistry.gauge("adaptive.confidence_factor", Tags.of("ticker", ticker), clamped)
+        MutableGauges.set(meterRegistry, "adaptive.confidence_factor", clamped, Tags.of("ticker", ticker))
         return clamped
     }
 
@@ -431,7 +432,7 @@ class AdaptiveRiskService(
     suspend fun getAdaptiveConfidenceThreshold(ticker: String): Double {
         val calibrated = calibrateConfidenceThreshold(ticker)
         if (calibrated != null) {
-            meterRegistry.gauge("adaptive.confidence_threshold", Tags.of("ticker", ticker), calibrated)
+            MutableGauges.set(meterRegistry, "adaptive.confidence_threshold", calibrated, Tags.of("ticker", ticker))
             meterRegistry.counter("adaptive.confidence_calibrated", Tags.of("ticker", ticker)).increment()
             return calibrated
         }
@@ -444,7 +445,7 @@ class AdaptiveRiskService(
                 stats.winRate > 0.60 -> 0.55
                 else -> 0.60
             }
-        meterRegistry.gauge("adaptive.confidence_threshold", Tags.of("ticker", ticker), fallback)
+        MutableGauges.set(meterRegistry, "adaptive.confidence_threshold", fallback, Tags.of("ticker", ticker))
         meterRegistry.counter("adaptive.confidence_fallback", Tags.of("ticker", ticker)).increment()
         return fallback
     }
@@ -506,7 +507,7 @@ class AdaptiveRiskService(
                     (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO
                 }.count()
         val result = consecutiveLosses >= 3
-        meterRegistry.gauge("adaptive.drawdown_recovery", if (result) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "adaptive.drawdown_recovery", if (result) 1.0 else 0.0)
         return result
     }
 
@@ -525,7 +526,7 @@ class AdaptiveRiskService(
                 stats.profitFactor in 0.0..0.5 && stats.totalTrades >= 5 -> true
                 else -> false
             }
-        meterRegistry.gauge("adaptive.pause", Tags.of("ticker", ticker), if (result) 1.0 else 0.0)
+        MutableGauges.set(meterRegistry, "adaptive.pause", if (result) 1.0 else 0.0, Tags.of("ticker", ticker))
         return result
     }
 }

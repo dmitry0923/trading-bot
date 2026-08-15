@@ -19,6 +19,7 @@ import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.Strategy
@@ -326,16 +327,23 @@ class StrategyService(
                 )
             }
 
-        // Сигнал стратегического этапа — чистое направление (без quantity/SL/TP).
-        val effectiveSignalStrength = decision.signalStrength.coerceAtLeast(adaptiveConf)
+        // Адаптивный порог (13.11.8) — ГЕЙТ, а не инфлятор: BUY/SELL ниже порога
+        // или с non-finite силой (NaN из LLM-советника) -> HOLD. Раньше
+        // `coerceAtLeast` раздувал слабые сигналы до порога — гейт не блокировал
+        // ничего, а сила сигнала в истории/Kelly-сайзинге была фальшивой.
+        val gated = StrategyDecision.gatedByConfidence(decision, snapshot.currentPrice, adaptiveConf)
+        if (gated.action == StrategyAction.HOLD && decision.action != StrategyAction.HOLD) {
+            meterRegistry.counter("strategy.low_confidence", Tags.of("ticker", ticker)).increment()
+            logger.info { "Holding $ticker/$timeframe — decision below adaptive confidence threshold $adaptiveConf" }
+        }
         val signal =
             Signal(
                 ticker = ticker,
-                action = decision.action,
-                targetPrice = decision.targetPrice,
-                signalStrength = effectiveSignalStrength,
+                action = gated.action,
+                targetPrice = gated.targetPrice,
+                signalStrength = gated.signalStrength,
                 reasoning =
-                    decision.reasoning +
+                    gated.reasoning +
                         " | Regime: ${regime.describe()} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}" +
                         " | Advisor: ${advisorVerdict.verdict} (confAdj=${advisorVerdict.confidenceAdjustment}, risk=${advisorVerdict.riskLevel})",
                 timeframe = timeframe,
@@ -364,7 +372,12 @@ class StrategyService(
             )
 
         strategyRepo.save(strategy)
-        BlockingDb.io { redis.saveStrategy(strategy) }
+        // Redis хранит ПОСЛЕДНЮЮ действующую стратегию тикера: HOLD не перезаписывает
+        // последний BUY/SELL (иначе OrderBuilder.recordStrategyExecution и REST
+        // «последняя стратегия» видели HOLD-строку без риск-полей).
+        if (signal.action != StrategyAction.HOLD) {
+            BlockingDb.io { redis.saveStrategy(strategy) }
+        }
 
         val experimentEnabled = paperTradingService.isExperimentEnabled()
         val inExperiment = experimentEnabled && paperTradingService.inExperiment(cycleId)
@@ -400,10 +413,10 @@ class StrategyService(
         meterRegistry
             .counter(
                 "strategy.saved",
-                Tags.of("ticker", ticker, "timeframe", timeframe, "action", decision.action.name, "strategy", result.winnerId),
+                Tags.of("ticker", ticker, "timeframe", timeframe, "action", gated.action.name, "strategy", result.winnerId),
             ).increment()
         logger.info {
-            "Strategy $ticker/$timeframe: ${decision.action} @ ${decision.targetPrice} " +
+            "Strategy $ticker/$timeframe: ${gated.action} @ ${gated.targetPrice} " +
                 "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime.describe()}, advisor=${advisorVerdict.verdict})"
         }
     }

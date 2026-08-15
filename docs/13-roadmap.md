@@ -1699,3 +1699,77 @@ entry-фильтр и тренд-гейт (`MlEntryFilter`, `MlTrendScore`), и�
   probability» (NaN → FAIL_CLOSED).
 - Документация: признаки без фиктивного «winRate/чac»; `MlDatasetRow` — 29
   колонок (добавлена `macro_source`).
+
+## 13.23. Аудит корректности стратегического цикла (CYCLE)
+
+Аудит «мозга» бота: оркестрация цикла (`StrategyService`), выбор сигнала
+(`StrategyRunner`/`StrategySelector`), LLM-советник (`LlmAdvisor`), агентный
+контур (`DiscretionaryStrategy`, 6 агентов), guardrails, конвейер входа
+(`DecisionEngine`), привязка риск-полей (`OrderBuilder`). Подтверждена
+архитектура C-001: LLM-цепочка advisory-only (A/B-вариант), единственный
+источник сигнала — детерминированные стратегии; изоляция ошибок per-ticker
+реальна (coroutineScope + try/catch в `executeCycle`).
+
+### 13.23.1. Находки аудита
+
+**Исправлено (MR-N, 13.23.2):**
+- CYCLE-01 (баг, HIGH): адаптивный порог уверенности работал как ИНФЛЯТОР, а не
+  гейт — `StrategyService` `signalStrength.coerceAtLeast(adaptiveConf)` поднимал
+  слабый сигнал (0.42) ДО порога (0.60) вместо HOLD. Порог (13.11.8) на
+  детерминированном пути ничего не блокировал; сила сигнала в истории и
+  Kelly-сайзинге была фальшивой; A/B-контроль получал раздутое значение, а
+  вариант — сырое (смещение эксперимента).
+- CYCLE-05 (механизм, MEDIUM): NaN-отрава — `LlmAdvisor.parseVerdict` мапит
+  текстовый `"NaN"` от LLM в `Double.NaN`, а Kotlin `coerceIn`/`coerceAtLeast`
+  NaN не обрезают → сила сигнала NaN утекала в Signal/БД (в Kelly-сайзинге
+  `BigDecimal.valueOf(NaN)` → NumberFormatException при входе). NaN теперь
+  трактуется как «ниже порога» → HOLD (fail-closed).
+- CYCLE-06 (LOW): HOLD-решения перезаписывали в Redis последнюю действующую
+  стратегию тикера — `OrderBuilder.recordStrategyExecution` и REST «последняя
+  стратегия» могли видеть HOLD-строку без риск-полей (БД по cycleId была
+  корректна).
+
+**Зафиксировано как открытые решения (не фиксы в MR-N):**
+- CYCLE-02 (stale gauges): `meterRegistry.gauge(name, constantNumber)`
+  регистрирует значение один раз — dashboards навсегда видят первое значение
+  (`market.regime.level`, `adaptive.position_size`/`confidence_factor`/
+  `confidence_threshold`/`drawdown_recovery`/`pause`, `risk.futures.entry.allowed`,
+  `futures.liquidation.distance`). Та же механика, что ML-LOW (13.22.1). Нужны
+  mutable-референсы (AtomicLong/AtomicReference).
+- CYCLE-03: `ContrarianAgent` при недоступности LLM разрешает сделку
+  (isValid=true, riskLevel=LOW) — задокументировано в докстринге агента.
+  Асимметрично остальным агентам (fail-closed), но цепочка advisory-only →
+  риск ограничен A/B-вариантом.
+- CYCLE-07: `OrderBuilder.buildFuturesOrderParams` ставит
+  `trailingStopPrice = stopLoss` БЕЗУСЛОВНО (стоковый путь гейтится
+  `trailingStopEnabled`, фьючерсный — нет).
+- CYCLE-08: entryPrice = `getLastPrice ?: signal.targetPrice` — при недоступности
+  живой цены SL/TP считаются от индикаторной цели, а не от рыночной цены.
+- CYCLE-09: distributed lock «scheduler:strategy-cycle» fail-open при сбое Redis
+  — задокументированный трейд-офф (дублирование LLM-вызовов/строк на репликах,
+  но вход защищён fail-closed локом в DecisionEngine).
+- CYCLE-10: ти-брейк победителя `StrategyRunner` — порядок регистрации
+  (детерминирован, задокументирован).
+- Калибровка 13.11.8 обучается по позициям LLM-стратега (agent_logs
+  Agent-3-Strategist), а гейт применяется к ДЕТЕРМИНИРОВАННЫМ стратегиям —
+  распределения силы сигнала разные, порог может быть не оптимален для
+  детерминированного пути.
+
+### 13.23.2. MR-N: CYCLE-01/05/06 — порог уверенности стал гейтом ✅
+
+Решение:
+- `StrategyDecision.gatedByConfidence(decision, marketPrice, adaptiveConfidence)`
+  — чистая функция: BUY/SELL ниже порога ИЛИ с non-finite силой → HOLD (сила
+  0.0, reason с порогом); существующий HOLD не трогается. Семантика приведена к
+  дизайну 13.11.8 (guardrail LOW_CONFIDENCE / deterministic-override Арбитра).
+- `StrategyService.processTicker`: `coerceAtLeast(adaptiveConf)` удалён; Signal
+  строится от гейтнутого решения; метрика `strategy.low_confidence` при
+  блокировке; счётчик/лог `strategy.saved` отражают фактический action.
+- Redis: `redis.saveStrategy` вызывается только для BUY/SELL — HOLD не
+  перезаписывает последнюю действующую стратегию тикера; БД хранит всю историю
+  решений (включая HOLD).
+
+Тесты (960 total, 0 failed):
+- `StrategyDecisionTest` (новый, 6 кейсов): ≥ порога — без изменений; ровно на
+  пороге — проходит; ниже порога — HOLD с силой 0.0 и reason; SELL ниже порога —
+  HOLD; NaN-сила — HOLD (fail-closed); существующий HOLD не перегейтится.

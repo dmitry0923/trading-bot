@@ -145,6 +145,16 @@ class DecisionEngine(
         // null = legacy single-account (таблица пуста) или все аккаунты переполнены.
         val accountId = tradingAccountService.selectAccount()
 
+        // Если аккаунты сконфигурированы, но все переполнены — отклоняем вход,
+        // а не утекаем в дефолтный (legacy) портфель.
+        if (accountId == null && tradingAccountService.hasEnabledAccounts()) {
+            logger.warn { "Entry rejected $ticker: all accounts at capacity (ACCOUNTS_FULL)" }
+            meterRegistry
+                .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "ACCOUNTS_FULL"))
+                .increment()
+            return
+        }
+
         // Риск-этап: Да/Нет (дневной лимит, drawdown, волатильность, дубли,
         // лимиты позиций/секторов, ATR%, STRESS, валидность входных данных).
         val request = profile.buildEntryRequest(signal, entryPrice, openPositions, accountId)

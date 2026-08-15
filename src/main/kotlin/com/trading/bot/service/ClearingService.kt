@@ -107,11 +107,25 @@ class ClearingService(
     /**
      * Исполнение клиринга: списание рассчитанной суммы со счёта инвестора
      * с фиксацией транзакции CLEARING и снимка доли/equity.
+     *
+     * Идемпотентна: повторный вызов для уже проведённого дня (по метке даты в
+     * description существующей транзакции CLEARING) не списывает средства повторно.
      */
     suspend fun settleWithdrawal(
         investorId: UUID,
         requestedDate: LocalDateTime = LocalDateTime.now(),
     ): ClearingQuote {
+        val dateKey = requestedDate.toLocalDate().toString()
+        val alreadySettled =
+            investorRepo.findTransactionsByInvestor(investorId).any { t ->
+                t.type == InvestorTransactionType.CLEARING.name &&
+                    t.description?.contains(dateKey) == true
+            }
+        if (alreadySettled) {
+            logger.info { "Clearing for $investorId on $dateKey already settled — skipped (idempotent)" }
+            return calculateWithdrawal(investorId, requestedDate)
+        }
+
         val quote = calculateWithdrawal(investorId, requestedDate)
         val account =
             investorRepo.findAccountByInvestor(investorId)

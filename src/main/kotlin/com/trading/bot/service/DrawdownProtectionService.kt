@@ -121,7 +121,9 @@ class DrawdownProtectionService(
     suspend fun computeStatus(): DrawdownStatus {
         resetDailyStateIfNewDay()
         aumProvider.currentAum() // обновление баланса из Alor перед расчётом лимитов
-        val now = LocalDateTime.now()
+        // МСК, а не серверный LocalDateTime.now() — иначе граница дня в computeStatus
+        // может разойтись с аккумулятором (resetDailyStateIfNewDay/updateDailyPnl).
+        val now = LocalDateTime.now(moscowZone)
         val todayStart = now.toLocalDate().atStartOfDay()
         // Оконные запросы вместо полного сканирования всех закрытых позиций.
         val closedSince30d = positionRepo.findClosedSince(now.minusDays(30))
@@ -314,11 +316,15 @@ class DrawdownProtectionService(
 
     /**
      * Достигнут ли дневной лимит убытка (кэш, без БД).
+     * При рестарте в течение дня для аккаунта восстанавливает снапшот из БД
+     * (по аналогии с [getDailyPnl]) — до этого возвращала false без проверки.
      */
     override fun isDailyLossLimitReached(accountId: Long?): Boolean {
         if (accountId == null) return cachedOrNeutral().dailyLimitBreached
         val day = LocalDate.now(moscowZone)
-        if (accountLoadedDate[accountId] != day) return false
+        if (accountLoadedDate[accountId] != day) {
+            loadAccountDailyState(accountId, day)
+        }
         return (accountLossReached[accountId] ?: false) || cachedOrNeutral().dailyLimitBreached
     }
 

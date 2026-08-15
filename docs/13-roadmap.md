@@ -1839,3 +1839,67 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   → пустая map.
 - `AdaptiveRiskServiceConfidenceTest`: обновлён под новую сигнатуру
   (`eq("SBER"), any()`).
+
+## 13.25. Аудит аккаунтов и инвесторов (ACCT)
+
+Аудит модулей multi-account (`TradingAccountService`, `DecisionEngine`),
+распределения входов, per-account риск-состояния и инвестиционного клиринга
+(`ClearingService`, `InvestorService`, `InvestorRepository`).
+
+### 13.25.1. Находки аудита
+
+**Исправлено (MR-P, 13.25.2):**
+- F-6 (баг, HIGH): `selectAccount()` возвращает null и при legacy (пустая
+  таблица), и при переполнении ВСЕХ аккаунтов; `DecisionEngine` передавал null
+  дальше → ордер утекал в дефолтный портфель `AlorConfig.portfolio` поверх
+  конфигурируемых аккаунтов. Исправлено: если аккаунты есть, но все полны —
+  вход отклоняется с `ACCOUNTS_FULL` (новый `TradingAccountService.hasEnabledAccounts()`).
+- F-7 (баг, MEDIUM): `isDailyLossLimitReached(accountId)` при рестарте в течение
+  дня возвращал false без загрузки per-account снапшота из `daily_risk_snapshot`
+  (в отличие от `getDailyPnl`) — после рестарта лимит аккаунта «забывался».
+  Исправлено: on-demand `loadAccountDailyState(accountId, day)` (паттерн `getDailyPnl`).
+- F-8 (баг, MEDIUM): `ClearingService.settleWithdrawal` не идемпотентен —
+  повторный вызов за тот же день списывал средства повторно. Исправлено:
+  пре-проверка существующей транзакции CLEARING по дате в description.
+- F-9 (баг, LOW): `computeStatus` использовал серверный `LocalDateTime.now()`
+  против `moscowZone` в аккумуляторе/снапшотах — граница «сегодня» могла
+  разойтись. Исправлено: `LocalDateTime.now(moscowZone)`.
+- F-5 (баг, MEDIUM): WS-путь закрытия акции `handleRegularStockFill` фиксировал
+  P&L, но не вызывал `risk.updateDailyPnL` (в отличие от engine-пути через
+  callback `onPositionClosed`) — дневной лимит убытка не видел такие закрытия.
+  Исправлено: учёт P&L на закрытии. (Осторожно: публиковать `PositionClosedEvent`
+  здесь нельзя — двойной счёт через `DailyLossCircuitBreaker`.)
+
+**Зафиксировано как открытые решения:**
+- F-3 (AUM double-count): `currentAum = latestAum() + totalRealized + unrealized`,
+  но `latestAum()` = Alor `moneyAmount` (свободные средства) уже содержит
+  реализованный P&L → реализованный P&L учитывается дважды в AUM и дневном
+  лимите. Требует решения модели equity (средства vs счёт).
+- F-4 (механика обновления статуса): `computeStatus` пересчитывается только при
+  закрытии фьючерса (`PositionClosedEvent` публикует только
+  `FuturesTradingBotService`) и через REST; закрытие акции не обновляет
+  multi-tier статус. Единое решение конфликтует с F-1 и F-5 (двойной счёт).
+- F-1/F-2/F-13/F-14 (кросс-аккаунтное смешивание): `findClosedSince`/
+  `findClosedAggregates` не фильтруют по accountId, глобальный halt без
+  accountId, `cachedOrNeutral` игнорирует accountId — при нескольких аккаунтах
+  лимиты считаются по пулу. Нужна архитектурная работа по привязке к accountId.
+- F-11/F-12 (глобальные лимиты): `MAX_POSITIONS` для фьючерсов и Kelly/AUM для
+  акций считаются глобально, не per-account.
+- F-10 (lookahead инвестора): `ProfitForecastService` считает прогноз на будущий
+  период по реальным закрытым сделкам, включая сделки после даты вывода — уже
+  задокументировано (эвристика клиринга, не точка входа).
+- F-15 (stale gauges): 4-я фиксация constantNumber-ловушек
+  (`bot.ws.fill_applied`-стиль см. 13.22.1/13.23.1/13.24.1) — требуется отдельный
+  MR на mutable-референсы.
+
+### 13.25.2. MR-P: F-5/F-6/F-7/F-8/F-9 ✅
+
+Тесты (37 targeted, 0 failed; полный прогон ниже):
+- `TradingAccountServiceTest.hasEnabledAccounts...` (новый): legacy-пустая
+  таблица → false; сконфигурированный аккаунт → true.
+- `DrawdownProtectionServiceTest.isDailyLossLimitReached restores per-account
+  snapshot on demand...` (новый): снапшот с limitReached=true за сегодня
+  загружается после рестарта → лимит восстановлен.
+- `InvestorClearingIntegrationTest.settleWithdrawal is idempotent...` (новый, на
+  реальной Postgres): повторный клиринг за тот же день не меняет баланс,
+  totalWithdrawn и оставляет одну транзакцию CLEARING.

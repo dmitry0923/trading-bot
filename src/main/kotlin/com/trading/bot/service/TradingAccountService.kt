@@ -92,6 +92,13 @@ class TradingAccountService(
     fun cachedPortfolioFor(accountId: Long?): String? = accountId?.let { id -> cachedEnabled?.firstOrNull { it.id == id }?.alorPortfolio }
 
     /**
+     * Есть ли вообще включённые аккаунты (в отличие от legacy-режима с пустой таблицей).
+     * Используется, чтобы отличить «все аккаунты переполнены» (вход нужно отклонить)
+     * от «таблица пуста» (legacy single-account, вход на конфиг-портфель).
+     */
+    suspend fun hasEnabledAccounts(): Boolean = findEnabled().isNotEmpty()
+
+    /**
      * Выбор аккаунта для нового входа: весовой round-robin по включённым аккаунтам
      * с ёмкостью (открытых позиций < персонального лимита). Возвращает null, если
      * таблица пуста (legacy single-account) или все аккаунты переполнены.

@@ -249,6 +249,24 @@ class DrawdownProtectionServiceTest {
     }
 
     @Test
+    fun `isDailyLossLimitReached restores per-account snapshot on demand after restart`() {
+        val s = service()
+        val today = LocalDate.now(ZoneId.of("Europe/Moscow"))
+        Mockito
+            .`when`(snapshotRepo.findByDate(today, 7L))
+            .thenReturn(
+                DailyRiskSnapshot(
+                    tradeDate = today,
+                    dailyPnl = BigDecimal("-9000"),
+                    limitReached = true,
+                    maxDrawdownToday = BigDecimal("-9000"),
+                ),
+            )
+
+        assertTrue(s.isDailyLossLimitReached(7L))
+    }
+
+    @Test
     fun `drawdown percent is measured from peak aum`() =
         runBlocking {
             stubNoOpenPositions()

@@ -92,6 +92,7 @@ class DecisionEngineTest {
             Mockito.`when`(mlEntryFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(higherTfTrendFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(degenerateCaseGuard.blockReason(any(), any())).thenReturn(null)
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("100"))
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
@@ -179,6 +180,18 @@ class DecisionEngineTest {
                 .counter("test.entry.rejected", Tags.of("ticker", "Si", "reason", "STALE_DATA"))
                 .count(),
         )
+    }
+
+    @Test
+    fun `all accounts full rejects entry instead of leaking to default portfolio`() {
+        runBlocking {
+            Mockito.`when`(tradingAccountService.selectAccount()).thenReturn(null)
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(true)
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("ACCOUNTS_FULL"))
     }
 
     @Test

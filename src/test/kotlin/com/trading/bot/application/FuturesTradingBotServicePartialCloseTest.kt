@@ -124,6 +124,7 @@ class FuturesTradingBotServicePartialCloseTest {
             Mockito
                 .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
                 .thenReturn("D12345")
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
             Mockito
                 .`when`(positionRepo.findByStatus(PositionStatus.OPEN))
                 .thenReturn(listOf(pos))

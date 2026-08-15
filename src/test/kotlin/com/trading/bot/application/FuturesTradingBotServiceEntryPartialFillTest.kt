@@ -154,6 +154,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             Mockito
                 .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
                 .thenReturn(alorConfig.portfolio)
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
         }
     }
 

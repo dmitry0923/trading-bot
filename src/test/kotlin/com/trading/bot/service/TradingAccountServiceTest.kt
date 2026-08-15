@@ -7,6 +7,7 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.TradingAccountRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -139,6 +140,23 @@ class TradingAccountServiceTest {
         assertEquals(BigDecimal("5000"), service.cachedMaxDailyLossRubFor(1L))
         assertNull(service.cachedMaxDailyLossRubFor(null))
         assertNull(service.cachedMaxDailyLossRubFor(999L))
+    }
+
+    @Test
+    fun `hasEnabledAccounts distinguishes legacy empty table from configured accounts`() {
+        runBlocking {
+            assertFalse(
+                TradingAccountService(repository, positionRepository, alorConfig, riskConfig)
+                    .hasEnabledAccounts(),
+            )
+        }
+        runBlocking {
+            Mockito.`when`(repository.findEnabled()).thenReturn(listOf(account(1L, "A", "PA")))
+            assertTrue(
+                TradingAccountService(repository, positionRepository, alorConfig, riskConfig)
+                    .hasEnabledAccounts(),
+            )
+        }
     }
 
     private fun account(

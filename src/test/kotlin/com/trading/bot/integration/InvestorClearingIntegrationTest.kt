@@ -200,6 +200,26 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `settleWithdrawal is idempotent for the same settlement date`() {
+        val view = runBlocking { investorService.createInvestor("Вкладчик", null, BigDecimal("1000000")) }
+        saveClosedPosition("SBER", BigDecimal("100"), BigDecimal("110"))
+        saveClosedPosition("SBER", BigDecimal("100"), BigDecimal("115"))
+
+        val first = runBlocking { clearingService.settleWithdrawal(view.investor.id) }
+        val balanceAfterFirst = runBlocking { investorService.getInvestor(view.investor.id) }.account.balance
+        assertTrue(first.estimatedWithdrawalAmount > BigDecimal.ZERO)
+
+        runBlocking { clearingService.settleWithdrawal(view.investor.id) }
+
+        val afterSecond = runBlocking { investorService.getInvestor(view.investor.id) }
+        val txns = runBlocking { investorService.transactions(view.investor.id) }
+        // повторный клиринг за тот же день не списывает средства повторно
+        assertEquals(0, balanceAfterFirst.compareTo(afterSecond.account.balance))
+        assertEquals(0, first.estimatedWithdrawalAmount.compareTo(afterSecond.account.totalWithdrawn))
+        assertEquals(1, txns.count { it.type == "CLEARING" })
+    }
+
+    @Test
     fun `settings roundtrip persists to database`() {
         val custom =
             BotSettings(

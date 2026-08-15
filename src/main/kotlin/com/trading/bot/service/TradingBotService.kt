@@ -401,6 +401,9 @@ class TradingBotService(
         positionRepo.save(pos)
         if (pos.status == PositionStatus.CLOSED) {
             tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
+            // Дневной P&L фиксируется и здесь (WS-путь закрытия минует callback
+            // OrderExecutionEngine.onPositionClosed — иначе дневной лимит не увидит убыток).
+            risk.updateDailyPnL(pnl, pos.accountId)
         }
         alorClient.recordSlippage(pos.entryPrice, fillPrice, pos.quantity)
         meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()

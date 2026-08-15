@@ -66,7 +66,16 @@ class TradeAnalysisService(
             trades
                 .filter { (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO }
                 .sumOf { kotlin.math.abs((it.pnl ?: BigDecimal.ZERO).toDouble()) }
-        val profitFactor = if (grossLoss > 0) grossProfit.toDouble() / grossLoss else 0.0
+        // PF = grossProfit / grossLoss. НЕТ проигрышей (grossLoss == 0) при наличии
+        // прибыли -> +Infinity (не 0.0!): иначе shouldPauseTrading ставит 100%-прибыльный
+        // тикер на паузу (profitFactor 0.0 попадает в диапазон 0.0..0.5). Конвенция
+        // Infinity уже принята в BacktestResult.
+        val profitFactor =
+            when {
+                grossLoss > 0 -> grossProfit.toDouble() / grossLoss
+                grossProfit > BigDecimal.ZERO -> Double.POSITIVE_INFINITY
+                else -> 0.0
+            }
 
         val avgWin = if (wins > 0) grossProfit.divide(BigDecimal(wins), 2, RoundingMode.HALF_UP) else BigDecimal.ZERO
         val avgLossVal = if (losses > 0) BigDecimal(grossLoss / losses).setScale(2, RoundingMode.HALF_UP) else BigDecimal.ZERO

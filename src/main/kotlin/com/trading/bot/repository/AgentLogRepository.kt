@@ -76,14 +76,25 @@ class AgentLogRepository(
             .awaitSingleOrNull()
 
     /**
-     * Батч-получение силы сигнала стратега (Agent-3-Strategist) по списку cycleId.
+     * Батч-получение силы сигнала стратега (Agent-3-Strategist) по списку cycleId тикера.
      *
      * Используется онлайн-калибровкой порога уверенности (roadmap 13.11.8): для закрытых
      * позиций тикера одним запросом поднимаются силы сигнала на входе. Возвращает map
-     * cycleId -> signalStrength; cycleId без лога стратега (детерминированные стратегии без
-     * LLM-контура) отсутствуют в результате.
+     * cycleId -> signalStrength; cycleId без лога стратега отсутствует в результате.
+     *
+     * Детерминизм выборки (roadmap 13.23/13.24, FIND-MECH-1):
+     * - фильтр по [ticker] — в одном цикле стратег логируется на КАЖДЫЙ (ticker, timeframe),
+     *   без фильтра в map могла попасть сила сигнала ДРУГОГО тикера того же цикла;
+     * - `signal_strength IS NOT NULL` — NULL-сила не превращается в 0.0 (мусорная точка
+     *   0.0 искажала калибровку);
+     * - `MAX(signal_strength)` + `GROUP BY cycle_id` — при нескольких таймфреймах тикера
+     *   в цикле (несколько строк на cycleId) выбор детерминирован, а не «последняя
+     *   строка результата БД» (раньше: unordered SELECT + toMap()).
      */
-    suspend fun findStrategySignalStrengthByCycleIds(cycleIds: Collection<String>): Map<String, Double> {
+    suspend fun findStrategySignalStrengthByCycleIds(
+        ticker: String,
+        cycleIds: Collection<String>,
+    ): Map<String, Double> {
         val ids = cycleIds.map { it.trim() }.distinct().filter { it.isNotEmpty() }
         if (ids.isEmpty()) return emptyMap()
         val placeholders = ids.indices.joinToString(",") { ":id$it" }
@@ -91,15 +102,18 @@ class AgentLogRepository(
             databaseClient
                 .sql(
                     """
-                    SELECT cycle_id, signal_strength
+                    SELECT cycle_id, MAX(signal_strength) AS signal_strength
                     FROM agent_logs
                     WHERE cycle_id IN ($placeholders) AND agent_name = :agentName
+                      AND ticker = :ticker AND signal_strength IS NOT NULL
+                    GROUP BY cycle_id
                     """.trimIndent(),
                 ).bind("agentName", STRATEGY_AGENT)
+                .bind("ticker", ticker)
         ids.forEachIndexed { i, id -> spec = spec.bind("id$i", id) }
         return spec
             .map { row, _ ->
-                row.require("cycle_id", String::class.java) to (row.get("signal_strength", BigDecimal::class.java)?.toDouble() ?: 0.0)
+                row.require("cycle_id", String::class.java) to row.require("signal_strength", BigDecimal::class.java).toDouble()
             }.all()
             .collectList()
             .awaitSingle()

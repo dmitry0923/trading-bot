@@ -1773,3 +1773,69 @@ entry-фильтр и тренд-гейт (`MlEntryFilter`, `MlTrendScore`), и�
 - `StrategyDecisionTest` (новый, 6 кейсов): ≥ порога — без изменений; ровно на
   пороге — проходит; ниже порога — HOLD с силой 0.0 и reason; SELL ниже порога —
   HOLD; NaN-сила — HOLD (fail-closed); существующий HOLD не перегейтится.
+
+## 13.24. Аудит self-learning модуля (LEARN)
+
+Аудит контура обучения по результатам торговли: фидбек-конвейер
+(`TradeAnalysisService` → `PerformanceFeedbackAgent` Agent-6), адаптивный риск
+(`AdaptiveRiskService`), онлайн-калибровка порога (13.11.8, `ConfidenceCalibrator`),
+кэши (`CandleCacheService`, Redis-фидбек), персист (`strategies`, `agent_logs`,
+`blind_spots`, `strategy_adjustments`). Подтверждено: ML-путь point-in-time
+exclusive (MR-M), фидбек-запись `recordStrategyExecution` консистентна
+(риск-поля по cycle_id+ticker дописываются корректно), `findClosedSince`
+newest-first (разворота в `isInDrawdownRecovery` нет).
+
+### 13.24.1. Находки аудита
+
+**Исправлено (MR-O, 13.24.2):**
+- LEARN-BUG-1 (баг, HIGH): `profitFactor` = 0.0 при `grossLoss == 0` — тикер со
+  100% прибыльных сделок (≥5 сделок) попадал в диапазон `0.0..0.5` в
+  `shouldPauseTrading` и СТАВИЛСЯ НА ПАУЗУ (и для ML-входов через TradingGate).
+  Лучший тикер бота блокировался. Исправлено: при прибыли и нуле убытков
+  PF = +Infinity (конвенция `BacktestResult`); break-even (0/0) остаётся 0.0.
+- LEARN-MECH-1 (калибровка, MEDIUM): `findStrategySignalStrengthByCycleIds` —
+  (1) без фильтра по тикеру: стратег логируется на КАЖДЫЙ (ticker,timeframe), в
+  map для cycleId могла попасть сила сигнала ДРУГОГО тикера того же цикла;
+  (2) `signal_strength IS NULL` превращался в 0.0 — мусорная точка в выборке
+  калибровки; (3) unordered SELECT + `.toMap()` — при нескольких строках на
+  cycleId «победитель» был недетерминирован. Исправлено: фильтр по тикеру,
+  `IS NOT NULL`, `MAX(signal_strength) GROUP BY cycle_id` (детерминизм; семантика
+  — максимальная уверенность стратега в цикле по тикеру).
+
+**Зафиксировано как открытые решения:**
+- LEARN-OPEN-1 (архитектурный разрыв): корректировки SL/TP/confidence
+  `PerformanceFeedbackAgent` пишутся в `strategy_adjustments`
+  (`saveAdjustments`), но НИГДЕ НЕ ПРИМЕНЯЮТСЯ: `slAdjustmentPercent`/
+  `tpAdjustmentPercent` не читает ни один потребитель, `OrderBuilder`/`ExitRules`
+  всегда берут дефолты из RiskConfig, meta-`confidenceAdjustment` попадает
+  только в reasoning. Обучение де-факто audit-log. Рекомендация: отдельная
+  работа — потребление корректировок (SL/TP в OrderBuilder, confidence в гейт)
+  с границами и A/B-контролем.
+- LEARN-MECH-2 (производительность): `analyzeLastNDays` — полный скан закрытых
+  сделок + запись blind-spot в read-путях (`shouldPauseTrading` 7d, fallback 14d,
+  kelly 30d, feedback 14d) на каждый (ticker,timeframe) → 2·T·F сканов за цикл;
+  `occurrenceCount` накапливается по пересекающимся окнам 7/14/30 дней;
+  конкурентный read-modify-write между таймфреймами одного тикера (`blind_spots`
+  без unique-ограничения) → потеря инкремента/дубликат. Рекомендация: кэш
+  TradeStats (TTL), персист blind-spot вне read-путей, unique
+  (ticker, condition_pattern) + upsert.
+- LEARN-MECH-3 (мелкий lookahead): стратегический путь включает незакрытый бар
+  (`findByTickerAndTimeframeAndTimeBetween(..., now())` включительно,
+  `HigherTfTrendFilter`, Redis-кэш текущего бара) — индикаторы/regime считаются
+  по частично сформированному бару; ML-путь осознанно exclusive (MR-M).
+- LEARN-BUG-2 (stale gauges): те же `meterRegistry.gauge` constantNumber-ловушки,
+  что ML-LOW (13.22.1) и CYCLE-02 (13.23.1): `adaptive.*`,
+  `market.regime.level`, `adaptive.drawdown_recovery` (без тегов). Третья
+  фиксация одной причины — рекомендуется отдельный MR на mutable-референсы.
+
+### 13.24.2. MR-O: LEARN-BUG-1 + LEARN-MECH-1 ✅
+
+Тесты (966 total, 0 failed, 2 skipped):
+- `TradeAnalysisServiceTest` (новый, 4 кейса): 100% прибыль → PF=+Infinity;
+  классический PF = grossProfit/grossLoss; break-even → 0.0; нет сделок →
+  пустая карта.
+- `AgentLogRepositoryIntegrationTest` (новый, 2 кейса на реальной Postgres):
+  тикер-фильтр + NULL-исключение + MAX-детерминизм; пустой/blank список cycleId
+  → пустая map.
+- `AdaptiveRiskServiceConfidenceTest`: обновлён под новую сигнатуру
+  (`eq("SBER"), any()`).

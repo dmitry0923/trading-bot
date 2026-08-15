@@ -472,7 +472,7 @@ class AdaptiveRiskService(
                 }
         if (closedWithOutcome.size < riskConfig.confidenceCalibrationMinTrades) return null
         val confidenceByCycleId =
-            agentLogRepository.findStrategySignalStrengthByCycleIds(closedWithOutcome.map { it.first })
+            agentLogRepository.findStrategySignalStrengthByCycleIds(ticker, closedWithOutcome.map { it.first })
         if (confidenceByCycleId.isEmpty()) return null
         return ConfidenceCalibrator
             .calibrate(

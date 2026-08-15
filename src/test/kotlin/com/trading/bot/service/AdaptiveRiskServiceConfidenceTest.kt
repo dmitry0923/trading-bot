@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import java.math.BigDecimal
 
 /**
@@ -87,7 +88,7 @@ class AdaptiveRiskServiceConfidenceTest {
     }
 
     private suspend fun stubSignalStrengths(map: Map<String, Double>) {
-        Mockito.`when`(agentLogRepo.findStrategySignalStrengthByCycleIds(any())).thenReturn(map)
+        Mockito.`when`(agentLogRepo.findStrategySignalStrengthByCycleIds(eq("SBER"), any())).thenReturn(map)
     }
 
     private suspend fun stubStats(winRate: Double?) {
@@ -198,7 +199,7 @@ class AdaptiveRiskServiceConfidenceTest {
 
             // Только 4 сделки имеют лог стратега < minTrades 5 -> fallback (winRate 0.5 -> 0.60).
             assertEquals(0.60, threshold, 1e-9)
-            Mockito.verify(agentLogRepo).findStrategySignalStrengthByCycleIds(listOf("c1", "c2", "c3", "c4", "c5", "c6"))
+            Mockito.verify(agentLogRepo).findStrategySignalStrengthByCycleIds(eq("SBER"), eq(listOf("c1", "c2", "c3", "c4", "c5", "c6")))
         }
     }
 
@@ -222,7 +223,7 @@ class AdaptiveRiskServiceConfidenceTest {
 
             // Только 4 сделки с pnl < minTrades 5 -> fallback без запроса agent_logs.
             assertEquals(0.60, threshold, 1e-9)
-            Mockito.verify(agentLogRepo, Mockito.never()).findStrategySignalStrengthByCycleIds(any())
+            Mockito.verify(agentLogRepo, Mockito.never()).findStrategySignalStrengthByCycleIds(eq("SBER"), any())
         }
     }
 }

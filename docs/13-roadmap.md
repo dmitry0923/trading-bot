@@ -1960,3 +1960,138 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   (0.75) — `AtomicReference<Double>`, а не `AtomicLong`, чтобы не терять точность.
 
 Полный прогон: 974 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+## 13.27. Аудит пути исполнения ордеров (EXEC)
+
+Цель: проверить путь «вход → исполнение → закрытие» на рассинхрон локального
+стейта с биржей: подача ордеров (транспорты), outbox/RabbitMQ, обработка
+fill-событий WS, partial fills, close-стейт-машина, P&L/фиксация дневного лимита.
+
+### 13.27.1. Находки аудита
+
+**EXEC-1 (HIGH) — ложное закрытие акции: WS-fill ВХОДНОГО ордера трактуется как close-фил**
+
+Место: dispatch `TradingBotService.onExecutionReport` (:371-373) → fallback
+`handleRegularStockFill` (TradingBotService.kt:384-412); ядро `handleExecutionReport`
+(OrderExecutionEngine.kt:709-768).
+
+Механика:
+1. `placeEntryOrder` (OrderExecutionEngine.kt:120-186) сохраняет вход как OPEN
+   **non-pending** в двух штатных случаях: (а) `verifyOrder` вернул полное
+   исполнение (быстрый fill); (б) `verifyOrder` вернул 0 filledQty (лимитка
+   «висит») — позиция всё равно создаётся non-pending по цене входа (:178-179).
+2. WS-поток `OrdersGetAndSubscribeV2` (AlorWebSocketClient.subscribeToOrders)
+   доставляет fill-события ВСЕХ ордеров портфеля, включая размещённые через
+   транспорт; `parseExecution` сопоставляет `orderNumber` — он совпадает с
+   `pos.alorOrderId` (транспорт возвращает именно биржевой orderNumber).
+3. Для non-pending OPEN позиции `handleExecutionReport` возвращает `false`
+   (нет pendingEntry/pendingClose, orderId ≠ slOrderId/tpOrderId) →
+   `handleRegularStockFill` находит позицию по `findByAlorOrderId(orderId)` (:387),
+   проходит guard `status==OPEN && closedAt==null` (:388) и ЗАКРЫВАЕТ позицию:
+   `status=CLOSED`, `closeReason="EXECUTION_FILL"`, `closePrice`=цена входа,
+   P&L на полный qty, `recordPositionClosed` + `risk.updateDailyPnL` (:403-408).
+   Проверки, что пришёл именно close-ордер (side/closeOrderId), НЕТ.
+
+Срабатывание: лимитный вход, исполнившийся позже стартового `verifyOrder`
+(resting limit или fill после REST-подтверждения) → fill-событие приходит, когда
+позиция уже non-pending → ложное закрытие.
+
+Последствия:
+1. Локальный стейт: позиция CLOSED, на бирже позиция ОТКРЫТА (orphan exposure).
+2. `risk.updateDailyPnL` фиксирует ложный P&L; реальное закрытие позже упадёт в
+   `transitionToClosed` → «already closed by another path» → фактический P&L и
+   событие PositionClosed не запишутся (дневной лимит занижен).
+3. Резервация слота входа не снимается (`handleRegularStockFill` не зовёт
+   `releaseEntry`), но `cleanupStaleEntryReservations` (30 мин) удалит её, т.к.
+   локальная позиция уже CLOSED → возможен повторный вход по тому же тикеру →
+   ДВОЙНАЯ позиция на бирже.
+4. Реконнект WS → State Reconciliation видит биржевую позицию без локальной
+   (UNKNOWN_POSITION) → hard halt до ручного вмешательства.
+
+Фьючерсы НЕ затронуты: `FuturesTradingBotService.onExecutionReport` (:180-188)
+вызывает только engine, fallback отсутствует.
+
+Тестовое покрытие отсутствует: grep по `handleRegularStockFill`/`EXECUTION_FILL`/
+`ws.fill_applied` не находит ни одного теста.
+
+Предлагаемое лечение (MR): в `handleRegularStockFill` обрабатывать только
+close-филы — требовать `report.orderId == pos.closeOrderId` либо side,
+противоположный направлению позиции; при `report.orderId == pos.alorOrderId`
+(вход) — игнорировать (входы финализирует engine в pendingEntry). + тест:
+entry-fill на non-pending OPEN позиции НЕ закрывает.
+
+**EXEC-2 (MEDIUM) — `verifyOrder` читает только `filledQty`, без fallback на `filledQuantity`**
+
+`AlorClient.verifyOrder` (AlorClient.kt:333) — `j.path("filledQty").asInt(0)` без
+fallback, тогда как `reconcileOrderByIdempotencyKey` (:284-288), `getOpenOrders`
+(:422-426) и `parseExecution` (AlorWebSocketClient.kt:408-412) читают обе формы.
+Если Alor вернёт `filledQuantity`:
+- `placeEntryOrder` (OrderExecutionEngine.kt:161) не увидит частичный fill →
+  позиция сохранится non-pending на полный qty при фактически частичном исполнении;
+- `confirmCloseFill` (:796) получит 0 → частичное закрытие не распознается.
+
+Унифицировать парсинг (fallback на обе формы, как в остальных местах).
+
+**EXEC-3 (MEDIUM) — `verifyOrder == null` (сетевой сбой) трактуется как полное исполнение входа**
+
+`placeEntryOrder` (OrderExecutionEngine.kt:159-186): при `execution == null`
+`filledQty = null` → full-fill ветка → позиция OPEN non-pending по цене-марке без
+подтверждения исполнения; outbox-реконсилятор pendingEntry её не обработает
+(не pending). При фактическом незаполненном/частичном входе локальный стейт
+завышен, SL/TP армятся на полный qty, а пришедший позже fill уходит в EXEC-1
+(ложное закрытие). Предложение: сбой verifyOrder → pendingEntry (как UNCERTAIN),
+подтверждение — реконсилятором.
+
+**EXEC-4 (LOW) — `handleRegularStockFill` при PARTIALLY_FILLED пишет closePrice/pnl/closeReason на OPEN-позицию + некорректный slippage**
+
+- PARTIALLY_FILLED (TradingBotService.kt:392-401): позиция остаётся OPEN, но
+  `closePrice`/`pnl` (на полный qty) и `closeReason="EXECUTION_FILL"` сохраняются —
+  display-only мусор, маскирующий впоследствии реальное закрытие (closeReason уже не null).
+- `recordSlippage(pos.entryPrice, fillPrice, ...)` (:409) для close-фила использует
+  entryPrice как «ожидаемую» цену — slippage закрытия семантически неверен и
+  дублирует запись engine'а (`confirmCloseFill` передаёт expectedPrice).
+
+### 13.27.2. Что проверено — замечаний нет (INFO)
+
+- **Outbox (OrderOutboxService/OrderOutboxPublisher/OutboxOrderConsumer):**
+  idempotency key (UUIDv7) один на логический ордер; State Reconciliation ПЕРЕД
+  повторной доставкой (`reconcileOrderByIdempotencyKey`, `Unknown` → без
+  переотправки); AUTO ack; PENDING→dispatch / SENT→ack / FAILED→ack; bounded retry → DLQ.
+- **Транспорты (RoutedOrderTransport):** WS primary → REST fallback ТОЛЬКО при
+  `OrderTransportUnavailableException` (команда гарантированно не ушла);
+  `OrderDeliveryUncertainException` НЕ перехватывается → UNCERTAIN (защита от
+  double execution при fallback).
+- **Close-стейт-машина:** атомарный `claimForClose` (EXEC-001), сверка по
+  `closeOrderId`, `confirmCloseFill` с вторичной проверкой по позиции на бирже,
+  partial close с дозакрытием остатка, остаток лимитного входа отменяется после
+  `entryPartialFillCancelAfterMs`.
+- **StateReconciliationService:** fail-safe (REST недоступен → стейт не мутируется,
+  hard halt), phantom-закрытие, direction mismatch → RECONCILIATION_REQUIRED,
+  qty-adjust при частичном закрытии в окне разрыва.
+- **Биржевые SL/TP:** установка через outbox, перевыставление только после
+  подтверждённой отмены (защита от двойного стопа/тейка), контроль «живой» заявки
+  по outbox-строке.
+
+### 13.27.3. Итог
+
+4 находки: EXEC-1 (HIGH), EXEC-2/EXEC-3 (MEDIUM), EXEC-4 (LOW). Рекомендуемый
+следующий MR: EXEC-1 (фикс + тест); EXEC-2/EXEC-3 можно закрыть одним коммитом
+(оба — подтверждение исполнения входа).
+
+### 13.27.4. MR-R: EXEC-1 — ложное закрытие акции входным fill ✅
+
+Фикс `handleRegularStockFill` (TradingBotService.kt): fallback-обработчик WS-fill
+теперь ищет позицию ТОЛЬКО по `findByCloseOrderId(orderId)` — fill ВХОДНОГО ордера
+(`report.orderId == pos.alorOrderId`) больше не находит non-pending OPEN позицию
+и не закрывает её. Входы финализирует engine (`handleExecutionReport`,
+pendingEntry-ветка); close-филы по-прежнему обрабатываются и закрывают позицию
+с полной записью P&L (`EXECUTION_FILL`, `recordPositionClosed`,
+`risk.updateDailyPnL`) — путь, который раньше дублировался, сохранён.
+
+Тесты (3 targeted + 974 регресс, 0 failed; полный прогон ниже):
+- `TradingBotServiceExecutionReportTest` (новый): entry-fill (FILLED) на non-pending
+  OPEN позиции НЕ закрывает (EXEC-1); entry-fill (PARTIALLY_FILLED) НЕ закрывает;
+  close-фил ЗАКРЫВАЕТ позицию через WS fallback (регресс F-5: status=CLOSED,
+  closePrice, closeReason=EXECUTION_FILL, updateDailyPnL + recordPositionClosed).
+
+Полный прогон: 977 tests, 0 failed, 2 skipped; ktlintCheck чист.

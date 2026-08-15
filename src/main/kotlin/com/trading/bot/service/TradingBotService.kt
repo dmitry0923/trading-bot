@@ -384,7 +384,10 @@ class TradingBotService(
     private suspend fun handleRegularStockFill(report: ExecutionReport) {
         if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
         val orderId = report.orderId
-        val pos = positionRepo.findByAlorOrderId(orderId) ?: positionRepo.findByCloseOrderId(orderId) ?: return
+        // EXEC-1 (roadmap 13.27): close-филом считается ТОЛЬКО исполнение close-ордера.
+        // Fill входного ордера (alorOrderId) финализирует OrderExecutionEngine в pendingEntry;
+        // совпадение по входному ордеру здесь закрыло бы открытую позицию (ложное закрытие).
+        val pos = positionRepo.findByCloseOrderId(orderId) ?: return
         if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
         if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
         val fillPrice = report.avgPrice ?: return

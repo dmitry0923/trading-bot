@@ -181,7 +181,7 @@ class AdaptiveRiskService(
         var size = base
 
         // Volatility targeting: размер обратно пропорционален дневной волатильности.
-        val resolvedAtr = atr ?: resolveAtr(ticker)
+        val resolvedAtr = atr ?: resolveDailyAtr(ticker)
         val resolvedPrice = currentPrice ?: resolvePrice(ticker)
         val volMultiplier = resolveVolatilityMultiplier(ticker, resolvedAtr, resolvedPrice)
         if (volMultiplier != null) {
@@ -378,6 +378,23 @@ class AdaptiveRiskService(
     private fun resolveAtr(ticker: String): BigDecimal? = candleCache.calculateAtr(ticker, "MINUTE_10", 14)
 
     /**
+     * Дневной эквивалент ATR тикера из кэша свечей (MINUTE_10), иначе null.
+     *
+     * Внутридневной ATR масштабируется к дневному горизонту sqrt(свечей в сессии)
+     * ([RiskConfig.volatilityFallbackCandlesPerDay]) — единая математика с
+     * [resolveDailyVolPercent] и документированным volatility targeting: волатильность
+     * растёт как sqrt(t), 10-мин ATR% нельзя сравнивать с дневным таргетом напрямую.
+     *
+     * @param ticker тикер инструмента
+     * @return дневной эквивалент ATR или null при недостатке данных
+     */
+    private fun resolveDailyAtr(ticker: String): BigDecimal? {
+        val atr = resolveAtr(ticker) ?: return null
+        val n = riskConfig.volatilityFallbackCandlesPerDay.coerceAtLeast(1).toDouble()
+        return atr.multiply(BigDecimal(sqrt(n).toString()))
+    }
+
+    /**
      * Текущая цена тикера (последнее закрытие из кэша MINUTE_10), иначе null.
      *
      * @param ticker тикер инструмента
@@ -475,13 +492,16 @@ class AdaptiveRiskService(
     /**
      * Проверяет, находится ли бот в режиме восстановления после просадки.
      *
+     * Считается серия убыточных сделок подряд, считая от ПОСЛЕДНЕГО закрытия
+     * (findClosedSince уже возвращает newest-first, поэтому список НЕ разворачивается —
+     * разворот привёл бы к подсчёту серии от САМОЙ СТАРОЙ сделки окна).
+     *
      * @return true, если за последние 3 дня было >= 3 убыточных сделок подряд
      */
     suspend fun isInDrawdownRecovery(): Boolean {
         val recent = positionRepo.findClosedSince(LocalDateTime.now().minusDays(3))
         val consecutiveLosses =
             recent
-                .reversed()
                 .takeWhile {
                     (it.pnl ?: BigDecimal.ZERO) < BigDecimal.ZERO
                 }.count()

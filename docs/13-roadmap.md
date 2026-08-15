@@ -1432,7 +1432,7 @@ claim пропускает, stale PROCESSING перезахват, fresh PROCESS
 ### 13.19.8. Очередь EXEC-MR
 
 Очередь пуста — следующий MR по мере выявления новых проблем в аудите исполнения.
-| P2 | CoroutineScope lifecycle, distributed outbox claim (SKIP LOCKED) | pending |
+P2 «CoroutineScope lifecycle, distributed outbox claim (SKIP LOCKED)» — **готово (MR-G)**.
 
 ---
 
@@ -1560,3 +1560,78 @@ live-контуру `DiscretionaryStrategy.runChain` для закрытия P1 
 Тесты: `AgentBacktestSignalGeneratorTest` — стабы/проверки переведены на 0.60;
 добавлен «custom confidence threshold propagates to strategy and arbitrator»
 (0.75 доходит до `formulate` и `adjudicate`). Полный билд зелёный (940+ тестов).
+
+## 13.21. Аудит корректности риск-менеджмента (RISK)
+
+Аудит критичного для капитала модуля: daily loss / drawdown
+(`DrawdownProtectionService`), Kelly/volatility/confidence сайзинг
+(`AdaptiveRiskService`), фьючерсные guardrails (`FuturesRiskEngine`,
+`FuturesPositionSizer`, `EstimatedLiquidationPriceProvider`), exposure
+(`RiskExposureService`, `RiskManagementService`), circuit breaker
+(`DailyLossCircuitBreaker`), `TradingHoursGuard`.
+
+### 13.21.1. Находки аудита
+
+**Исправлено (MR-L, 13.21.2):**
+- RISK-01 (баг): `AdaptiveRiskService.isInDrawdownRecovery` разворачивал список
+  `findClosedSince` (новейшая сделка первой), считая серию убытков от САМОЙ СТАРОЙ
+  сделки окна. Активная серия из 3 убытков с последующей прибылью в окне → серия
+  «обнулялась» и позиции не резались на 0.5 в разгаре просадки.
+- RISK-02 (баг): внутридневной ATR (MINUTE_10) из кэша сравнивался с ДНЕВНЫМ
+  таргетом волатильности напрямую (без sqrt(свечей в сессии)) — множитель
+  упирался в 2.0 и позиция раздувалась до 2× базы. Fallback-путь и KDoc
+  предусматривали масштабирование, основная ветка — нет.
+- RISK-03 (устойчивость): `EstimatedLiquidationPriceProvider` делил
+  `priceStepCost / priceStep` ДО проверки — `priceStep == 0` в конфиге
+  инструмента кидал `ArithmeticException` вместо null.
+
+**Зафиксировано как открытые решения (не фиксы в MR-L):**
+- Kelly-кап (`kellyMaxPositionFraction`) применяется к базе, а не к финальному
+  размеру: vol-таргетинг (до 2.0) может раздуть позицию выше капа. Закодировано
+  тестом «volatility targeting reduces size for high atr» (10000 при капе 5000) —
+  осознанный дизайн, но в проде `kelly-max-position-fraction: 0.50` усиливает
+  эффект (до 100% AUM). Пересмотреть деплой-конфиг.
+- AUM = баланс Alor + totalRealized + unrealized: если баланс брокера уже
+  включает реализованный P&L (LIVE), суммарный реализованный P&L учитывается
+  дважды → лимиты looser. В SIMULATION (баланс = константа депозита) сложение
+  корректно. Требуется подтверждение семантики `getPortfolioMoney`.
+- Дневной лимит — чистый процент от AUM (`maxDailyLossRub` только при
+  `maxDailyLossPercent <= 0`). KDoc `RiskConfig.maxDailyLossPercent` приведён к
+  реализованному поведению (ранее описывал пол `max(AUM*%, rub)`). Решение:
+  percent-only оставлено как есть (тест это кодирует).
+- Временные окна: day reset/персист по МСК, оконные запросы 7d/30d — по серверной
+  TZ. При развёртывании вне МСК позиции около полуночи попадают в разные дни.
+- Гонка: `@Synchronized updateDailyPnl` vs несинхронизированная запись
+  `computeStatus` из корутины по close — узкое окно потери P&L аккумулятора.
+- `cachedOrNeutral(accountId)` игнорирует accountId (глобальный статус) — 7d/30d
+  и shadow-режим глобальны, daily limit пер-аккаунтен. Вероятно намеренно.
+- Нотионал фьючерсов = entryPrice × qty (пункты как рубли) в
+  `RiskExposureService`/`RiskManagementService` — exposure-отчёт и гросс/нет гейт
+  акций занижают риск при смешанном портфеле.
+- Асимметрия дневного P&L: реализованный — все закрытия за день, нереализованный —
+  только позиции, открытые сегодня.
+- Circuit breaker шлёт `TradingHaltedEvent` на каждое закрытие в режиме лимита
+  (без дедупликации) — спам алертов и завышенный счётчик.
+
+### 13.21.2. MR-L: RISK-01/02/03 — сайзинг и ликвидация подстрахованы ✅
+
+Решение:
+- `isInDrawdownRecovery`: убран `.reversed()` — серия убытков подряд считается от
+  последнего закрытия (список уже newest-first). Согласовано с
+  `DrawdownProtectionService.consecutiveLosses`.
+- `resolveDailyAtr`: новый метод масштабирует MINUTE_10 ATR к дневному горизонту
+  `sqrt(volatilityFallbackCandlesPerDay)` (единая математика с
+  `resolveDailyVolPercent`); `calculateOptimalPositionSize` использует его при
+  `atr == null`. Явно переданный ATR считается дневным (без масштабирования).
+- `EstimatedLiquidationPriceProvider`: guard `priceStep/priceStepCost <= 0` до
+  деления.
+
+Тесты (950 total, 0 failed):
+- `AdaptiveRiskServiceKellyTest`: «trailing three losses trigger drawdown
+  recovery», «leading losses followed by fresh win do not trigger drawdown
+  recovery», «intraday atr is scaled to daily horizon for volatility targeting»
+  (MINUTE_10 ATR 2% → дневной эквивалент ≈15.1% → размер ~1324 вместо 10000).
+- `EstimatedLiquidationPriceProviderTest` (новый): priceStep 0/отрицательный →
+  null без исключения; 0/отрицательный priceStepCost → null; LONG = entry − буфер,
+  SHORT = entry + буфер.
+- Правка KDoc `maxDailyLossPercent` (percent-only).

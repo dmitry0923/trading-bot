@@ -12,6 +12,7 @@ import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -84,6 +85,16 @@ class AdaptiveRiskServiceKellyTest {
     private suspend fun stubClosedPositions(list: List<Position>) {
         Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
     }
+
+    private fun closedPosition(pnl: BigDecimal): Position =
+        Position(
+            ticker = "SBER",
+            direction = com.trading.bot.model.PositionDirection.LONG,
+            quantity = 1,
+            entryPrice = BigDecimal("100"),
+            pnl = pnl,
+            status = PositionStatus.CLOSED,
+        )
 
     private suspend fun stubAum() {
         Mockito.`when`(aumProvider.currentAum()).thenReturn(riskConfig.maxPositionRub)
@@ -253,6 +264,55 @@ class AdaptiveRiskServiceKellyTest {
             val size = service.calculateOptimalPositionSize("SBER")
             // base ~5000 (cap 0.10) -> drawdown reduction *0.5
             assertEquals(2500.0, size.toDouble(), 60.0)
+        }
+
+    @Test
+    fun `trailing three losses trigger drawdown recovery`() =
+        runBlocking {
+            // findClosedSince возвращает newest-first: [L(now), L, L, W]
+            stubClosedPositions(
+                listOf(
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("50")),
+                ),
+            )
+
+            assertTrue(service.isInDrawdownRecovery())
+        }
+
+    @Test
+    fun `leading losses followed by fresh win do not trigger drawdown recovery`() =
+        runBlocking {
+            // newest-first: [W(now), L, L, L] — последняя сделка прибыльная, серия прервана
+            stubClosedPositions(
+                listOf(
+                    closedPosition(BigDecimal("50")),
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("-100")),
+                ),
+            )
+
+            assertFalse(service.isInDrawdownRecovery())
+        }
+
+    @Test
+    fun `intraday atr is scaled to daily horizon for volatility targeting`() =
+        runBlocking {
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))
+            stubStats(mapOf("SBER" to s))
+            riskConfig.kellyFraction = 1.0
+
+            // MINUTE_10 ATR из кэша (2% внутридневной) → дневной эквивалент ≈ 2% * sqrt(57) ≈ 15.1%.
+            // До фикса ATR% сравнивался с дневным таргетом 4% напрямую → множитель упирался в 2.0
+            // и позиция раздувалась до 10 000 вместо ~1 325.
+            Mockito.`when`(candleCache.calculateAtr("SBER", "MINUTE_10", 14)).thenReturn(BigDecimal("2"))
+            val size = service.calculateOptimalPositionSize("SBER", currentPrice = BigDecimal("100"))
+
+            // base ~5000 (cap 0.10) * (4 / (2*sqrt(57))) ≈ 5000 * 0.2649 ≈ 1324.5
+            assertEquals(1324.5, size.toDouble(), 50.0)
         }
 
     @Test

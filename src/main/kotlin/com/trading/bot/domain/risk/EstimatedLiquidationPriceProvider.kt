@@ -31,8 +31,8 @@ class EstimatedLiquidationPriceProvider : LiquidationPriceProvider {
         priceStepCost: BigDecimal,
     ): BigDecimal? {
         if (entryPrice == null || direction == null) return null
+        if (priceStep <= BigDecimal.ZERO || priceStepCost <= BigDecimal.ZERO) return null
         val pointValue = priceStepCost.divide(priceStep, 6, RoundingMode.HALF_UP)
-        if (pointValue <= BigDecimal.ZERO) return null
 
         val bufferPrice =
             marginPerContract

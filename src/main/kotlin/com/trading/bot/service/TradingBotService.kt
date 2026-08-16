@@ -392,6 +392,18 @@ class TradingBotService(
         if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
         val fillPrice = report.avgPrice ?: return
 
+        if (report.status == OrderStatus.PARTIALLY_FILLED) {
+            // EXEC-4 (roadmap 13.27): частичный close-фил не пишет closePrice/pnl/closeReason
+            // в OPEN-позицию (раньше — display-мусор, маскировавший реальное закрытие:
+            // closeReason уже не null, pnl на полный qty). Позиция остаётся нетронутой,
+            // остаток сверяет State Reconciliation (qty-adjust).
+            logger.info {
+                "WS partial close fill for ${pos.ticker}: order=$orderId filled=${report.filledQty} @ $fillPrice — " +
+                    "position left OPEN, remainder handled by State Reconciliation"
+            }
+            return
+        }
+
         pos.closePrice = fillPrice
         val pnl =
             when (pos.direction) {
@@ -399,17 +411,17 @@ class TradingBotService(
                 PositionDirection.SHORT -> pos.entryPrice.subtract(fillPrice).multiply(BigDecimal(pos.quantity))
             }
         pos.pnl = pnl
-        pos.status = if (report.status == OrderStatus.PARTIALLY_FILLED) PositionStatus.OPEN else PositionStatus.CLOSED
-        pos.closedAt = if (report.status == OrderStatus.PARTIALLY_FILLED) null else LocalDateTime.now()
+        pos.status = PositionStatus.CLOSED
+        pos.closedAt = LocalDateTime.now()
         pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
         positionRepo.save(pos)
-        if (pos.status == PositionStatus.CLOSED) {
-            tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
-            // Дневной P&L фиксируется и здесь (WS-путь закрытия минует callback
-            // OrderExecutionEngine.onPositionClosed — иначе дневной лимит не увидит убыток).
-            risk.updateDailyPnL(pnl, pos.accountId)
-        }
-        alorClient.recordSlippage(pos.entryPrice, fillPrice, pos.quantity)
+        tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
+        // Дневной P&L фиксируется и здесь (WS-путь закрытия минует callback
+        // OrderExecutionEngine.onPositionClosed — иначе дневной лимит не увидит убыток).
+        risk.updateDailyPnL(pnl, pos.accountId)
+        // EXEC-4: slippage закрытия фиксирует engine (confirmCloseFill → verifyOrder
+        // с expectedPrice); здесь entryPrice как «ожидаемая» цена семантически неверен —
+        // запись убрана.
         meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()
         logger.info { "WS fill applied for ${pos.ticker}: order=$orderId price=$fillPrice pnl=$pnl" }
     }

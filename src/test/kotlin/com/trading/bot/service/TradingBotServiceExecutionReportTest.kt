@@ -24,6 +24,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -201,6 +202,37 @@ class TradingBotServiceExecutionReportTest {
             verify(risk, Mockito.timeout(3000)).updateDailyPnL(any(), Mockito.nullable(Long::class.java))
             verify(tradeEventService, Mockito.timeout(3000)).recordPositionClosed(any(), any())
         }
+    }
+
+    @Test
+    fun `close order partial fill does not pollute open position (EXEC-4)`() {
+        val pos = stockPosition(alorOrderId = "ord-entry-1", closeOrderId = "ord-close-1")
+        runBlocking {
+            Mockito.`when`(positionRepo.findByAlorOrderId("ord-close-1")).thenReturn(null)
+            Mockito.`when`(positionRepo.findByCloseOrderId("ord-close-1")).thenReturn(pos)
+        }
+        val report =
+            ExecutionReport(
+                orderId = "ord-close-1",
+                status = OrderStatus.PARTIALLY_FILLED,
+                filledQty = 5,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        service.onExecutionReport(ExecutionReportEvent(report))
+
+        runBlocking {
+            verify(positionRepo, Mockito.timeout(3000).atLeastOnce()).findByCloseOrderId("ord-close-1")
+            verify(positionRepo, never()).save(any())
+            verify(tradeEventService, never()).recordPositionClosed(any(), any())
+            verify(risk, never()).updateDailyPnL(any(), Mockito.nullable(Long::class.java))
+        }
+        assertEquals(PositionStatus.OPEN, pos.status)
+        assertNull(pos.closePrice)
+        assertNull(pos.pnl)
+        assertNull(pos.closeReason)
     }
 
     private fun awaitUntil(

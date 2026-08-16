@@ -2126,3 +2126,31 @@ WS-fill (`handleExecutionReport`, pendingEntry-ветка) либо `resolveEntr
   `alorOrderId` и полным qty, метрика `entry.uncertain` +1.
 
 Полный прогон: 979 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+### 13.27.6. MR-T: EXEC-4 — PARTIALLY_FILLED не мусорит OPEN-позицию, убран неверный slippage ✅
+
+`handleRegularStockFill` (TradingBotService.kt):
+- **PARTIALLY_FILLED close-фил** больше НЕ пишет `closePrice`/`pnl` (на полный qty)/
+  `closeReason="EXECUTION_FILL"` в OPEN-позицию (display-мусор, маскировавший реальное
+  закрытие: `closeReason` уже не null, P&L завышен). Позиция остаётся нетронутой;
+  остаток сверяет State Reconciliation (qty-adjust, line ~294-309). Сам метод теперь
+  обрабатывает только FILLED → путь закрытия упрощён до линейного (без ветки статуса).
+- **Убран `alorClient.recordSlippage(pos.entryPrice, fillPrice, ...)`**: entryPrice как
+  «ожидаемая» цена close-фила семантически неверен и дублировал запись engine'а —
+  slippage закрытия корректно фиксирует `confirmCloseFill` → `verifyOrder(expectedPrice)`
+  (AlorClient.kt:344).
+
+Тесты (1 targeted + 979 регресс, 0 failed; полный прогон ниже):
+- `TradingBotServiceExecutionReportTest.close order partial fill does not pollute
+  open position (EXEC-4)` (новый): close PARTIALLY_FILLED → позиция остаётся OPEN,
+  `closePrice`/`pnl`/`closeReason` не тронуты, `save`/`recordPositionClosed`/
+  `updateDailyPnL` не вызываются.
+
+Полный прогон: 980 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+### 13.27.7. Итог EXEC — все 4 находки закрыты ✅
+
+EXEC-1 (MR-R), EXEC-2/EXEC-3 (MR-S), EXEC-4 (MR-T) исправлены с тестами. Аудит
+13.27 полностью закрыт. Открытые решения остаются только по ACCT (13.25.1:
+F-3, F-4, F-1/F-2/F-13/F-14, F-11/F-12 — требуют архитектурных решений по
+multi-account модели).

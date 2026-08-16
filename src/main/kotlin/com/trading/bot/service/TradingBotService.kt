@@ -69,7 +69,6 @@ class TradingBotService(
     private val webSocketManager: WebSocketManager,
     private val orderOutboxService: OrderOutboxService,
     private val redis: RedisCacheService,
-    private val risk: RiskManagementService,
     private val riskConfig: RiskConfig,
     private val positionRepo: PositionRepository,
     private val orderOutboxRepo: OrderOutboxRepository,
@@ -108,7 +107,11 @@ class TradingBotService(
             instrumentFilter = { it.instrumentType != InstrumentType.FUTURES },
             metricPrefix = "bot",
             onPositionClosed = { pos ->
-                risk.updateDailyPnL(pos.pnl ?: BigDecimal.ZERO, pos.accountId)
+                // F-4 (roadmap 13.25): публикуем PositionClosedEvent как фьючерсы —
+                // DailyLossCircuitBreaker учитывает дневной P&L один раз (прямой вызов
+                // здесь дал бы двойной счёт), DrawdownProtectionService пересчитывает
+                // multi-tier статус сразу после закрытия акции.
+                eventPublisher.publishPositionClosed(pos)
                 MutableGauges.set(meterRegistry, "bot.pnl", pos.pnl?.toDouble() ?: 0.0, Tags.of("ticker", pos.ticker))
             },
             protectionOrdersEnabled = alorClient.isLiveMode,
@@ -416,9 +419,11 @@ class TradingBotService(
         pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
         positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
-        // Дневной P&L фиксируется и здесь (WS-путь закрытия минует callback
-        // OrderExecutionEngine.onPositionClosed — иначе дневной лимит не увидит убыток).
-        risk.updateDailyPnL(pnl, pos.accountId)
+        // F-4 (roadmap 13.25): WS-путь закрытия минует callback OrderExecutionEngine
+        // onPositionClosed — событие публикуем здесь: DailyLossCircuitBreaker учтёт
+        // P&L и проверит дневной лимит, DrawdownProtectionService пересчитает
+        // multi-tier статус (прямой вызов updateDailyPnL дал бы двойной счёт).
+        eventPublisher.publishPositionClosed(pos)
         // EXEC-4: slippage закрытия фиксирует engine (confirmCloseFill → verifyOrder
         // с expectedPrice); здесь entryPrice как «ожидаемая» цена семантически неверен —
         // запись убрана.

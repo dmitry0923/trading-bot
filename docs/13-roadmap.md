@@ -1868,13 +1868,10 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   P&L, но не вызывал `risk.updateDailyPnL` (в отличие от engine-пути через
   callback `onPositionClosed`) — дневной лимит убытка не видел такие закрытия.
   Исправлено: учёт P&L на закрытии. (Осторожно: публиковать `PositionClosedEvent`
-  здесь нельзя — двойной счёт через `DailyLossCircuitBreaker`.)
+  здесь нельзя — двойной счёт через `DailyLossCircuitBreaker`. Это ограничение
+  снято в MR-V, 13.25.4: прямой вызов заменён публикацией события.)
 
 **Зафиксировано как открытые решения:**
-- F-4 (механика обновления статуса): `computeStatus` пересчитывается только при
-  закрытии фьючерса (`PositionClosedEvent` публикует только
-  `FuturesTradingBotService`) и через REST; закрытие акции не обновляет
-  multi-tier статус. Единое решение конфликтует с F-1 и F-5 (двойной счёт).
 - F-1/F-2/F-13/F-14 (кросс-аккаунтное смешивание): `findClosedSince`/
   `findClosedAggregates` не фильтруют по accountId, глобальный halt без
   accountId, `cachedOrNeutral` игнорирует accountId — при нескольких аккаунтах
@@ -1929,6 +1926,37 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   balance + unrealized = 47 000.
 
 Полный прогон: 980 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+### 13.25.4. MR-V: F-4 — закрытие акции сразу обновляет multi-tier статус ✅
+
+Проблема: `PositionClosedEvent` публиковал только `FuturesTradingBotService`,
+поэтому `computeStatus` (rolling 7d/30d, серия убытков, shadow mode, AUM) после
+закрытия акции не пересчитывался до следующего стратегического цикла/REST.
+Путь акций обновлял только синхронный дневной аккумулятор (два расходящихся
+вызова `updateDailyPnL`), но не multi-tier статус.
+
+Единое решение конфликтовало с F-5 (двойной счёт через `DailyLossCircuitBreaker`).
+Разрешение: **прямые вызовы `updateDailyPnL` в путях акций ЗАМЕНЕНЫ публикацией
+`PositionClosedEvent`** (как во фьючерсах) — P&L учитывается ровно один раз
+слушателем `DailyLossCircuitBreaker`, а `DrawdownProtectionService.onPositionClosed`
+пересчитывает статус немедленно. F-5-ограничение «публиковать событие здесь
+нельзя» снято.
+
+`TradingBotService`:
+- callback `onPositionClosed` (engine-путь SL/TP/trailing/strategy close):
+  `eventPublisher.publishPositionClosed(pos)` вместо `risk.updateDailyPnL`
+  (gauge `bot.pnl` сохранён).
+- WS-fallback `handleRegularStockFill` (EXECUTION_FILL): то же самое.
+- неиспользуемый параметр `risk: RiskManagementService` убран из конструктора.
+
+Побочный эффект (унификация с фьючерсами): при достижении дневного лимита
+убытка закрытием акции теперь публикуется `TradingHaltedEvent`
+(глобальная остановка входов, как у фьючерсов), dashboard получает
+`POSITION_CLOSED`-broadcast, PaperTradingService фиксирует исход эксперимента.
+
+Тесты: `TradingBotServiceExecutionReportTest` переведён с
+`verify(risk).updateDailyPnL` на `verify(eventPublisher).publishPositionClosed`
+(3 ассерта; 4 теста, 0 failed). Полный прогон ниже.
 
 ## 13.26. Аудит живых gauge-метрик (GAUGE)
 
@@ -2178,5 +2206,5 @@ WS-fill (`handleExecutionReport`, pendingEntry-ветка) либо `resolveEntr
 
 EXEC-1 (MR-R), EXEC-2/EXEC-3 (MR-S), EXEC-4 (MR-T) исправлены с тестами. Аудит
 13.27 полностью закрыт. Открытые решения остаются только по ACCT (13.25.1:
-F-3, F-4, F-1/F-2/F-13/F-14, F-11/F-12 — требуют архитектурных решений по
-multi-account модели).
+F-1/F-2/F-13/F-14, F-11/F-12 — требуют архитектурных решений по multi-account
+модели). F-3 исправлен в MR-U (13.25.3), F-4 — в MR-V (13.25.4).

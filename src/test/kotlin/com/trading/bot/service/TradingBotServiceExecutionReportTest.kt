@@ -46,7 +46,6 @@ class TradingBotServiceExecutionReportTest {
     private val webSocketManager = Mockito.mock(WebSocketManager::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
     private val redis = Mockito.mock(RedisCacheService::class.java)
-    private val risk = Mockito.mock(RiskManagementService::class.java)
     private val riskConfig = RiskConfig()
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
@@ -79,7 +78,6 @@ class TradingBotServiceExecutionReportTest {
                 webSocketManager,
                 orderOutboxService,
                 redis,
-                risk,
                 riskConfig,
                 positionRepo,
                 orderOutboxRepo,
@@ -137,7 +135,7 @@ class TradingBotServiceExecutionReportTest {
         runBlocking {
             verify(positionRepo, Mockito.timeout(3000)).findByAlorOrderId("ord-entry-1")
             verify(positionRepo, never()).save(any())
-            verify(risk, never()).updateDailyPnL(any(), Mockito.nullable(Long::class.java))
+            verify(eventPublisher, never()).publishPositionClosed(any())
             verify(tradeEventService, never()).recordPositionClosed(any(), any())
         }
         assertEquals(PositionStatus.OPEN, pos.status)
@@ -199,7 +197,7 @@ class TradingBotServiceExecutionReportTest {
         assertEquals(0, BigDecimal("110").compareTo(pos.closePrice))
         assertEquals("EXECUTION_FILL", pos.closeReason)
         runBlocking {
-            verify(risk, Mockito.timeout(3000)).updateDailyPnL(any(), Mockito.nullable(Long::class.java))
+            verify(eventPublisher, Mockito.timeout(3000)).publishPositionClosed(any())
             verify(tradeEventService, Mockito.timeout(3000)).recordPositionClosed(any(), any())
         }
     }
@@ -227,7 +225,7 @@ class TradingBotServiceExecutionReportTest {
             verify(positionRepo, Mockito.timeout(3000).atLeastOnce()).findByCloseOrderId("ord-close-1")
             verify(positionRepo, never()).save(any())
             verify(tradeEventService, never()).recordPositionClosed(any(), any())
-            verify(risk, never()).updateDailyPnL(any(), Mockito.nullable(Long::class.java))
+            verify(eventPublisher, never()).publishPositionClosed(any())
         }
         assertEquals(PositionStatus.OPEN, pos.status)
         assertNull(pos.closePrice)

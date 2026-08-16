@@ -1871,10 +1871,6 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   здесь нельзя — двойной счёт через `DailyLossCircuitBreaker`.)
 
 **Зафиксировано как открытые решения:**
-- F-3 (AUM double-count): `currentAum = latestAum() + totalRealized + unrealized`,
-  но `latestAum()` = Alor `moneyAmount` (свободные средства) уже содержит
-  реализованный P&L → реализованный P&L учитывается дважды в AUM и дневном
-  лимите. Требует решения модели equity (средства vs счёт).
 - F-4 (механика обновления статуса): `computeStatus` пересчитывается только при
   закрытии фьючерса (`PositionClosedEvent` публикует только
   `FuturesTradingBotService`) и через REST; закрытие акции не обновляет
@@ -1903,6 +1899,36 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
 - `InvestorClearingIntegrationTest.settleWithdrawal is idempotent...` (новый, на
   реальной Postgres): повторный клиринг за тот же день не меняет баланс,
   totalWithdrawn и оставляет одну транзакцию CLEARING.
+
+### 13.25.3. MR-U: F-3 — AUM больше не учитывает реализованный P&L дважды ✅
+
+Модель equity (решение): **счёт-модель** — AUM = текущий баланс счёта
+(`latestAum()` = Alor `moneyAmount`, уже содержит реализованный P&L) +
+нереализованный P&L открытых позиций. Реализованный P&L НЕ добавляется повторно.
+
+`DrawdownProtectionService`:
+- `currentAum`: убран `+ totalRealized` — раньше `latestAum() + totalRealized +
+  unrealized` учитывал реализованный P&L дважды (завышенный AUM → завышенный
+  дневной лимит просадки). Теперь `latestAum() + unrealized`.
+- `peakAumAndDrawdown`: `latestAum()` — ТЕКУЩИЙ баланс, а не стартовый депозит.
+  Стартовый депозит восстанавливается как `deposit = balance - totalRealized`;
+  running = deposit + totalRealized (= balance); peak = deposit + peakRealized.
+  Просадка от пика теперь корректна (раньше и пик, и текущая equity были
+  искажены двойным учётом реализованного P&L).
+
+Тесты (обновлены под корректную модель; полный прогон ниже):
+- `aum does not double count realized pnl already in balance (F-3)` (переименован):
+  balance 50 000, реализовано +20 000 → AUM = 50 000 (не 70 000), лимит 5 000.
+- `daily limit is pure percent of aum with no ruble floor`: баланс упал до 30 000 →
+  AUM 30 000, лимит 3 000.
+- `drawdown percent is measured from peak aum`: deposit = balance - totalRealized
+  (65 000 = 50 000 + 15 000), peak = 75 000, текущая = 50 000, dd = 33.33% (было 41.67%).
+- `drawdown percent is zero when equity at all time high`: deposit 43 000, peak =
+  balance = 50 000, dd = 0.
+- `computeStatus reconciles daily pnl from db including open positions`: AUM =
+  balance + unrealized = 47 000.
+
+Полный прогон: 980 tests, 0 failed, 2 skipped; ktlintCheck чист.
 
 ## 13.26. Аудит живых gauge-метрик (GAUGE)
 

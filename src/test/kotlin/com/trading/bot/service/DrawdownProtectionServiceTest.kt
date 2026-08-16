@@ -34,9 +34,13 @@ class DrawdownProtectionServiceTest {
     private val instrumentsConfig = InstrumentsConfig()
     private val moscowToday = LocalDate.now(ZoneId.of("Europe/Moscow"))
 
-    private fun service(config: RiskConfig = RiskConfig()): DrawdownProtectionService {
+    private fun service(
+        config: RiskConfig = RiskConfig(),
+        balance: BigDecimal = config.maxPositionRub,
+    ): DrawdownProtectionService {
         val aumProvider = Mockito.mock(AumProvider::class.java)
-        Mockito.`when`(aumProvider.latestAum()).thenReturn(config.maxPositionRub)
+        // latestAum() = ТЕКУЩИЙ баланс счёта (moneyAmount), уже включает реализованный P&L.
+        Mockito.`when`(aumProvider.latestAum()).thenReturn(balance)
         return DrawdownProtectionService(
             config,
             positionRepo,
@@ -98,7 +102,7 @@ class DrawdownProtectionServiceTest {
         )
 
     @Test
-    fun `aum includes realized pnl and daily limit scales with it`() =
+    fun `aum does not double count realized pnl already in balance (F-3)`() =
         runBlocking {
             stubNoOpenPositions()
             stubClosedPositions(
@@ -111,12 +115,13 @@ class DrawdownProtectionServiceTest {
             val s = service()
             val status = s.computeStatus()
 
-            // AUM = 50 000 + 30 000 - 10 000 = 70 000
-            assertEquals(0, BigDecimal("70000").compareTo(status.aum))
-            // дневной лимит = 10% от AUM = 7 000
-            assertEquals(0, BigDecimal("7000").compareTo(status.dailyLimitRub))
+            // Баланс (latestAum) = 50 000 уже содержит реализованный P&L (+20 000);
+            // добавлять totalRealized нельзя — двойной счёт.
+            assertEquals(0, BigDecimal("50000").compareTo(status.aum))
+            // дневной лимит = 10% от AUM = 5 000
+            assertEquals(0, BigDecimal("5000").compareTo(status.dailyLimitRub))
             // эффективный лимит берётся из кэша
-            assertEquals(0, BigDecimal("7000").compareTo(s.effectiveDailyLossLimitRub()))
+            assertEquals(0, BigDecimal("5000").compareTo(s.effectiveDailyLossLimitRub()))
             assertFalse(status.blocking())
         }
 
@@ -175,7 +180,8 @@ class DrawdownProtectionServiceTest {
     @Test
     fun `daily limit is pure percent of aum with no ruble floor`() =
         runBlocking {
-            // AUM упал до 30 000 → 10% = 3 000, рублёвый floor НЕ применяется
+            // Баланс упал до 30 000 (депозит 50 000 - убыток 20 000) → 10% = 3 000,
+            // рублёвый floor НЕ применяется
             stubNoOpenPositions()
             stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-20000"), LocalDateTime.now().minusDays(1))),
@@ -186,7 +192,7 @@ class DrawdownProtectionServiceTest {
                     maxDailyLossPercent = 10.0
                 }
 
-            val s = service(config)
+            val s = service(config, balance = BigDecimal("30000"))
             val status = s.computeStatus()
 
             assertEquals(0, BigDecimal("30000").compareTo(status.aum))
@@ -280,10 +286,12 @@ class DrawdownProtectionServiceTest {
             val s = service()
             val status = s.computeStatus()
 
-            // equity: 50000 -> 60000 (peak) -> 35000; dd = (60000-35000)/60000 = 41.67%
-            assertEquals(0, BigDecimal("60000").compareTo(status.peakAum))
-            assertEquals(0, BigDecimal("35000").compareTo(status.aum))
-            assertEquals(41.67, status.drawdownPercent, 0.01)
+            // Баланс (latestAum) = 50 000. Депозит = balance - totalRealized =
+            // 50 000 - (-15 000) = 65 000. Пик equity = 65 000 + 10 000 (peak) = 75 000;
+            // текущая = 65 000 - 15 000 = 50 000; dd = (75 000 - 50 000)/75 000 = 33.33%
+            assertEquals(0, BigDecimal("75000").compareTo(status.peakAum))
+            assertEquals(0, BigDecimal("50000").compareTo(status.aum))
+            assertEquals(33.33, status.drawdownPercent, 0.01)
         }
 
     @Test
@@ -300,8 +308,10 @@ class DrawdownProtectionServiceTest {
             val s = service()
             val status = s.computeStatus()
 
-            assertEquals(0, BigDecimal("57000").compareTo(status.peakAum))
-            assertEquals(0, BigDecimal("57000").compareTo(status.aum))
+            // Депозит = 50 000 - 7 000 = 43 000; пик = 43 000 + 7 000 = 50 000;
+            // текущий баланс = 50 000 → просадки нет
+            assertEquals(0, BigDecimal("50000").compareTo(status.peakAum))
+            assertEquals(0, BigDecimal("50000").compareTo(status.aum))
             assertEquals(0.0, status.drawdownPercent, 1e-9)
         }
 
@@ -424,8 +434,8 @@ class DrawdownProtectionServiceTest {
 
             // dailyPnl = -1000 (realized) + -3000 (unrealized open) = -4000
             assertEquals(0, BigDecimal("-4000").compareTo(status.dailyPnlRub))
-            // AUM = 50 000 - 1000 - 3000 = 46 000
-            assertEquals(0, BigDecimal("46000").compareTo(status.aum))
+            // AUM = баланс 50 000 (реализованный -1000 уже в балансе) + unrealized -3000 = 47 000
+            assertEquals(0, BigDecimal("47000").compareTo(status.aum))
             assertEquals(0, BigDecimal("-4000").compareTo(s.getDailyPnl()))
         }
 }

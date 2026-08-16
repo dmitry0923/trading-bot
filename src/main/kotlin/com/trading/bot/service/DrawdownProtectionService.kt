@@ -131,7 +131,7 @@ class DrawdownProtectionService(
         val closedToday = positionRepo.findClosedSince(todayStart)
         val open = positionRepo.findByStatus(PositionStatus.OPEN)
         val aggregates = positionRepo.findClosedAggregates()
-        val aum = currentAum(aggregates.totalRealized, open)
+        val aum = currentAum(open)
         val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates)
 
         val realizedToday = sumPnl(closedToday)
@@ -377,14 +377,13 @@ class DrawdownProtectionService(
             .takeWhile { it.pnl?.compareTo(BigDecimal.ZERO) == -1 }
             .count()
 
-    private fun currentAum(
-        totalRealized: BigDecimal,
-        open: List<Position>,
-    ): BigDecimal {
+    private fun currentAum(open: List<Position>): BigDecimal {
         val unrealized = unrealizedPnl(open)
+        // F-3 (roadmap 13.25): latestAum() = текущий баланс счёта (moneyAmount) уже
+        // содержит реализованный P&L — totalRealized добавлять НЕЛЬЗЯ (двойной счёт
+        // в AUM и дневном лимите). Equity = баланс + нереализованный P&L открытых.
         return aumProvider
             .latestAum()
-            .add(totalRealized)
             .add(unrealized)
             .coerceAtLeast(BigDecimal.ZERO)
     }
@@ -426,12 +425,18 @@ class DrawdownProtectionService(
      * (peak - current) / peak * 100. (Нереализованный P&L в пике не учитывается —
      * только реализованные закрытия.)
      *
+     * F-3 (roadmap 13.25): [latestAum] — ТЕКУЩИЙ баланс счёта (уже включает
+     * реализованный P&L), а не стартовый депозит. Стартовый депозит восстанавливается
+     * как deposit = balance - totalRealized; текущая equity running = balance;
+     * peak = deposit + peakRealized.
+     *
      * @return (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
     private fun peakAumAndDrawdown(aggregates: PositionRepository.ClosedPositionAggregates): PeakAndDrawdown {
-        val start = aumProvider.latestAum()
-        val running = start.add(aggregates.totalRealized)
-        val peak = start.add(aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO))
+        val balance = aumProvider.latestAum()
+        val deposit = balance.subtract(aggregates.totalRealized).coerceAtLeast(BigDecimal.ZERO)
+        val running = balance
+        val peak = deposit.add(aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO))
         val drawdownPercent =
             if (peak > BigDecimal.ZERO) {
                 peak

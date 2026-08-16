@@ -1872,10 +1872,10 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   снято в MR-V, 13.25.4: прямой вызов заменён публикацией события.)
 
 **Зафиксировано как открытые решения:**
-- F-1/F-2/F-13/F-14 (кросс-аккаунтное смешивание): `findClosedSince`/
-  `findClosedAggregates` не фильтруют по accountId, глобальный halt без
-  accountId, `cachedOrNeutral` игнорирует accountId — при нескольких аккаунтах
-  лимиты считаются по пулу. Нужна архитектурная работа по привязке к accountId.
+- F-2 (глобальный halt без accountId): `TradingHaltedEvent`/`TradingGate` — глобальная
+  остановка торговли не скоупирована по аккаунту. Оставлено осознанно: halt — это
+  глобальный «рубильник» (DAILY_LOSS_LIMIT/LEVERAGE_DISABLED/STATE_DESYNC), требует
+  отдельного архитектурного решения (per-account halt + привязка события к аккаунту).
 - F-10 (lookahead инвестора): `ProfitForecastService` считает прогноз на будущий
   период по реальным закрытым сделкам, включая сделки после даты вывода — уже
   задокументировано (эвристика клиринга, не точка входа).
@@ -1980,6 +1980,51 @@ Kelly/AUM-сайзинг акций считались по ПУЛУ всех а
   только позиции аккаунта 5.
 - `AdaptiveRiskServiceKellyTest.kelly base scales with per-account aum (F-12)`:
   AUM 100k vs 50k при той же статистике → размер ровно в 2 раза больше.
+
+Полный прогон ниже.
+
+### 13.25.6. MR-X: F-1/F-13/F-14 — per-account multi-tier статус (windows, кэш, shadow) ✅
+
+Проблема: весь Multi-Tier статус (`computeStatus`) считался по ПУЛУ всех аккаунтов:
+- F-1: `findClosedSince`/`findClosedAggregates` не фильтровали по accountId → дневной
+  P&L, окна 7д/30д, агрегаты просадки (peakRealized/totalRealized) смешивали сделки
+  всех аккаунтов;
+- F-13: `cachedOrNeutral()` возвращал один глобальный статус и игнорировал accountId →
+  `isEntryBlocked(accountId)` мог заблокировать вход по аккаунту из-за статуса ДРУГОГО
+  аккаунта; Kelly-деградация по просадке тоже читала глобальный статус;
+- F-14: Shadow/Read-only режим по серии убытков считался от пуловых закрытий и
+  включался для всех аккаунтов сразу.
+
+Исправлено (архитектурное решение: единый per-account скоуп, как уже было сделано
+для дневного аккумулятора в v2.2 и F-11/F-12):
+- `PositionRepository.findClosedAggregates(accountId)` — новая per-account версия
+  (WHERE account_id = :accountId / IS NULL для legacy). Оконные запросы
+  (`findClosedByAccountSince`) уже существовали.
+- `DrawdownProtectionService.computeStatus(accountId)` — все запросы, AUM
+  (`latestAum(accountId)`), дневной лимит (`effectiveDailyLossLimitRubFor`),
+  реконсиляция аккумулятора (per-account снапшот) и shadow — скоупированы по аккаунту.
+- Кэш `cachedStatus` → `ConcurrentHashMap<Long, DrawdownStatus>` по ключу accountId
+  (legacy-путь — nullAccountKey). `cachedOrNeutral(accountId)` и `isEntryBlocked(accountId)`
+  читают статус конкретного аккаунта.
+- `shadowModeUntil` → per-account map; `isShadowModeActive(accountId)`.
+- `AdaptiveRiskService`: `drawdownScaleMultiplier(accountId)`,
+  `isInDrawdownRecovery(accountId)` (окно через `findClosedByAccountSince`) —
+  Kelly-деградация по статусу аккаунта.
+- `ApiController /risk/drawdown`: необязательный `accountId` query-параметр.
+- `updateDailyPnl(accountId)`: синхронно обновляет per-account кэш (как legacy-путь).
+
+accountId = null во всех точках = legacy-путь без привязки: поведение ровно прежнее
+(один аккаунт), все старые тесты сохранены.
+
+Тесты (новые; полный прогон ниже):
+- `DrawdownProtectionServiceTest.computeStatus scopes windows and aggregates by
+  account (F-1)`: A=-6000 (лимит пробит), B=+1000 → B не блокирован.
+- `DrawdownProtectionServiceTest.cachedOrNeutral and entry blocking are per-account,
+  not global (F-13)`: кэш читается по аккаунту без глобального статуса.
+- `DrawdownProtectionServiceTest.shadow mode activates per-account, not from pooled
+  losses (F-14)`: серия 3 убытков A → shadow только для A.
+- `AdaptiveRiskServiceKellyTest.drawdown recovery scopes recent closes by account
+  (F-1)`: 3 убытка A vs прибыльная B.
 
 Полный прогон ниже.
 
@@ -2230,7 +2275,8 @@ WS-fill (`handleExecutionReport`, pendingEntry-ветка) либо `resolveEntr
 ### 13.27.7. Итог EXEC — все 4 находки закрыты ✅
 
 EXEC-1 (MR-R), EXEC-2/EXEC-3 (MR-S), EXEC-4 (MR-T) исправлены с тестами. Аудит
-13.27 полностью закрыт. Открытые решения остаются только по ACCT (13.25.1:
-F-1/F-2/F-13/F-14 — требуют архитектурных решений по multi-account модели).
+13.27 полностью закрыт. Открытые решения остаются только по ACCT (13.25.1):
+F-2 (глобальный halt без accountId — осознанно, глобальный «рубильник») и F-10
+(задокументированная эвристика, не точка входа).
 F-3 исправлен в MR-U (13.25.3), F-4 — в MR-V (13.25.4), F-11/F-12 — в MR-W
-(13.25.5), F-15 — в MR-Q (13.26.2); F-10 задокументирован как эвристика.
+(13.25.5), F-1/F-13/F-14 — в MR-X (13.25.6), F-15 — в MR-Q (13.26.2).

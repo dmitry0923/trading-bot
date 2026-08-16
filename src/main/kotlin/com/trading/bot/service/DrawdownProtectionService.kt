@@ -55,6 +55,10 @@ import java.time.ZoneId
  * и обновляется на каждое закрытие позиции и каждый стратегический цикл — горячие
  * проверки входа читают кэш без БД.
  *
+ * (multi-account, F-1/F-13/F-14, roadmap 13.25.6) Статус, кэш, серия убытков и
+ * Shadow/Read-only режим скоупированы по аккаунту: лимиты/блокировки одного аккаунта
+ * не влияют на другой; accountId = null — legacy-путь без привязки к аккаунту.
+ *
  * Единый источник истины дневного P&L: синхронный аккумулятор [updateDailyPnl] кормится
  * путями закрытия акций (RiskManagementService) и фьючерсов (DailyLossCircuitBreaker),
  * персистится в daily_risk_snapshot и реконсилится полным пересчётом из БД в [computeStatus].
@@ -79,11 +83,25 @@ class DrawdownProtectionService(
 
     private val moscowZone = ZoneId.of("Europe/Moscow")
 
-    @Volatile
-    private var cachedStatus: DrawdownStatus? = null
+    /** Ключ кэша для legacy-пути (accountId = null): позиции без привязки к аккаунту. */
+    private val nullAccountKey = -1L
 
-    @Volatile
-    private var shadowModeUntil: Instant? = null
+    private fun key(accountId: Long?): Long = accountId ?: nullAccountKey
+
+    /**
+     * Per-account кэш Multi-Tier статуса (F-13, roadmap 13.25.6): cachedOrNeutral и
+     * горячие проверки входа больше не читают глобальный статус, а статус аккаунта.
+     * Ключ — accountId (legacy-путь — [nullAccountKey]).
+     */
+    private val cachedStatusByAccount: java.util.concurrent.ConcurrentHashMap<Long, DrawdownStatus> =
+        java.util.concurrent.ConcurrentHashMap()
+
+    /**
+     * Per-account Shadow/Read-only режим (F-14): серия убыточных сделок подряд считается
+     * по закрытиям аккаунта, а не по общему пулу позиций.
+     */
+    private val shadowModeUntilByAccount: java.util.concurrent.ConcurrentHashMap<Long, Instant> =
+        java.util.concurrent.ConcurrentHashMap()
 
     // Синхронный дневной аккумулятор — единственная точка учёта дневного P&L.
     @Volatile
@@ -117,45 +135,58 @@ class DrawdownProtectionService(
      * Полный пересчёт Multi-Tier статуса из фактических сделок в БД.
      * Вызывается один раз за стратегический цикл и при закрытии позиции.
      *
+     * (multi-account, F-1/F-13, roadmap 13.25.6) Скоуп — аккаунт: оконные запросы,
+     * агрегаты, AUM, дневной аккумулятор и Shadow/Read-only режим считаются по позициям
+     * конкретного [accountId]; accountId = null — legacy-путь без привязки.
+     *
      * @return текущий [DrawdownStatus]
      */
-    suspend fun computeStatus(): DrawdownStatus {
+    suspend fun computeStatus(accountId: Long? = null): DrawdownStatus {
         resetDailyStateIfNewDay()
-        aumProvider.currentAum() // обновление баланса из Alor перед расчётом лимитов
+        aumProvider.currentAum(accountId) // обновление баланса из Alor перед расчётом лимитов
         // МСК, а не серверный LocalDateTime.now() — иначе граница дня в computeStatus
         // может разойтись с аккумулятором (resetDailyStateIfNewDay/updateDailyPnl).
         val now = LocalDateTime.now(moscowZone)
         val todayStart = now.toLocalDate().atStartOfDay()
-        // Оконные запросы вместо полного сканирования всех закрытых позиций.
-        val closedSince30d = positionRepo.findClosedSince(now.minusDays(30))
-        val closedToday = positionRepo.findClosedSince(todayStart)
-        val open = positionRepo.findByStatus(PositionStatus.OPEN)
-        val aggregates = positionRepo.findClosedAggregates()
-        val aum = currentAum(open)
-        val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates)
+        // Оконные запросы вместо полного сканирования всех закрытых позиций (по аккаунту).
+        val closedSince30d = positionRepo.findClosedByAccountSince(accountId, now.minusDays(30))
+        val closedToday = positionRepo.findClosedByAccountSince(accountId, todayStart)
+        val open = positionRepo.findOpenByAccount(accountId)
+        val aggregates = positionRepo.findClosedAggregates(accountId)
+        val aum = currentAum(open, accountId)
+        val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates, accountId)
 
         val realizedToday = sumPnl(closedToday)
         val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
         val dailyPnl = realizedToday.add(dailyUnrealized)
 
         // Реконсиляция синхронного аккумулятора с фактами из БД (перезапись, не сложение).
-        todayPnl = dailyPnl
-        todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
-        persistDailyState()
+        val dailyLimit =
+            if (accountId != null) {
+                loadAccountDailyState(accountId, now.toLocalDate())
+                accountPnl[accountId] = dailyPnl
+                accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
+                persistDailyState(accountId)
+                effectiveDailyLossLimitRubFor(accountId, aum)
+            } else {
+                todayPnl = dailyPnl
+                todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+                persistDailyState()
+                effectiveDailyLossLimitRub(aum)
+            }
 
         val rolling7d = sumPnl(closedSince30d.filter { isClosedOnOrAfter(it, now.minusDays(7)) })
         val rolling30d = sumPnl(closedSince30d)
 
-        val dailyLimit = effectiveDailyLossLimitRub(aum)
         val rolling7dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent7d)
         val rolling30dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent30d)
 
-        val dailyBreached = todayDailyLossReached
+        val dailyBreached = dailyPnl <= dailyLimit.negate()
         val rolling7dBreached = rolling7d <= rolling7dLimit.negate()
         val rolling30dBreached = rolling30d <= rolling30dLimit.negate()
 
         val consecutive = consecutiveLosses(closedSince30d)
-        val shadowUntil = refreshShadowMode(consecutive)
+        val shadowUntil = refreshShadowMode(consecutive, accountId)
         val shadowActive = shadowUntil != null && Instant.now().isBefore(shadowUntil)
 
         val reasons =
@@ -187,10 +218,11 @@ class DrawdownProtectionService(
                 reasons = reasons,
                 timestamp = Instant.now(),
             )
-        cachedStatus = status
-        recordMetrics(status)
+        cachedStatusByAccount[key(accountId)] = status
+        recordMetrics(status, accountId)
+        val scopeLabel = if (accountId != null) " (account=$accountId)" else ""
         logger.info {
-            "Drawdown status: aum=$aum peak=$peakAum dd=$drawdownPercent% " +
+            "Drawdown status$scopeLabel: aum=$aum peak=$peakAum dd=$drawdownPercent% " +
                 "daily=${percentOf(status.dailyPnlRub, aum)}% " +
                 "7d=${percentOf(status.rolling7dPnlRub, aum)}% 30d=${percentOf(status.rolling30dPnlRub, aum)}% " +
                 "losses=$consecutive shadow=$shadowActive reasons=$reasons"
@@ -202,17 +234,26 @@ class DrawdownProtectionService(
      * Текущий статус из кэша (без БД) для горячих проверок входа.
      * Если кэш ещё не заполнен (старт до первого цикла) — считает консервативно-нейтрально
      * от стартового депозита и синхронного дневного аккумулятора.
+     *
+     * (F-13, roadmap 13.25.6) Статус берётся для конкретного [accountId] — вход по аккаунту
+     * больше не блокируется статусом другого аккаунта.
      */
     override fun cachedOrNeutral(accountId: Long?): DrawdownStatus {
-        cachedStatus?.let { return it }
-        val aum = aumProvider.latestAum()
+        cachedStatusByAccount[key(accountId)]?.let { return it }
+        val aum = aumProvider.latestAum(accountId)
+        val dailyPnl =
+            if (accountId == null) todayPnl else (accountPnl[accountId] ?: BigDecimal.ZERO)
+        val dailyLimitReached =
+            if (accountId == null) todayDailyLossReached else (accountLossReached[accountId] ?: false)
+        val dailyLimit =
+            if (accountId == null) effectiveDailyLossLimitRub(aum) else effectiveDailyLossLimitRubFor(accountId, aum)
         return DrawdownStatus(
             aum = aum,
             peakAum = aum,
             drawdownPercent = 0.0,
-            dailyPnlRub = todayPnl,
-            dailyLimitRub = effectiveDailyLossLimitRub(aum),
-            dailyLimitBreached = todayDailyLossReached,
+            dailyPnlRub = dailyPnl,
+            dailyLimitRub = dailyLimit,
+            dailyLimitBreached = dailyLimitReached,
             rolling7dPnlRub = BigDecimal.ZERO,
             rolling7dLimitRub = percentOfAum(aum, riskConfig.maxRollingLossPercent7d),
             rolling7dBreached = false,
@@ -221,8 +262,8 @@ class DrawdownProtectionService(
             rolling30dBreached = false,
             consecutiveLosses = 0,
             maxConsecutiveLosses = riskConfig.maxConsecutiveLosses,
-            shadowModeActive = isShadowModeActive(),
-            shadowModeUntil = shadowModeUntil,
+            shadowModeActive = isShadowModeActive(accountId),
+            shadowModeUntil = shadowModeUntilByAccount[key(accountId)],
             reasons = emptyList(),
             timestamp = Instant.now(),
         )
@@ -247,7 +288,7 @@ class DrawdownProtectionService(
             return
         }
         todayPnl = todayPnl.add(pnl)
-        val aum = cachedStatus?.aum ?: aumProvider.latestAum()
+        val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
         val dailyLimit = effectiveDailyLossLimitRub(aum)
         if (todayPnl <= dailyLimit.negate()) {
             todayDailyLossReached = true
@@ -257,10 +298,10 @@ class DrawdownProtectionService(
         MutableGauges.set(meterRegistry, "risk.daily.pnl", todayPnl.toDouble())
         MutableGauges.set(meterRegistry, "risk.daily.limit.reached", if (todayDailyLossReached) 1.0 else 0.0)
         // Синхронное обновление кэша — входы блокируются немедленно, без ожидания цикла.
-        cachedStatus?.let { s ->
+        cachedStatusByAccount[key(null)]?.let { s ->
             val updated = s.copy(dailyPnlRub = todayPnl, dailyLimitBreached = todayDailyLossReached)
-            cachedStatus = updated
-            recordMetrics(updated)
+            cachedStatusByAccount[key(null)] = updated
+            recordMetrics(updated, null)
         }
     }
 
@@ -291,6 +332,12 @@ class DrawdownProtectionService(
             if (accountLossReached[accountId] == true) 1.0 else 0.0,
             Tags.of("account", accountId.toString()),
         )
+        // Синхронное обновление per-account кэша — входы по аккаунту блокируются немедленно.
+        cachedStatusByAccount[key(accountId)]?.let { s ->
+            val updated = s.copy(dailyPnlRub = newPnl, dailyLimitBreached = accountLossReached[accountId] == true)
+            cachedStatusByAccount[key(accountId)] = updated
+            recordMetrics(updated, accountId)
+        }
     }
 
     private fun loadAccountDailyState(
@@ -339,8 +386,11 @@ class DrawdownProtectionService(
     /**
      * Заблокированы ли новые входы (кэш). Покрывает все tier-лимиты и Shadow/Read-only,
      * а также per-account дневной лимит.
+     *
+     * (F-13, roadmap 13.25.6) Статус читается для конкретного [accountId] — вход по
+     * аккаунту блокируется только статусом своего аккаунта (не глобальным).
      */
-    override fun isEntryBlocked(accountId: Long?): Boolean = cachedOrNeutral().blocking() || isDailyLossLimitReached(accountId)
+    override fun isEntryBlocked(accountId: Long?): Boolean = cachedOrNeutral(accountId).blocking() || isDailyLossLimitReached(accountId)
 
     /**
      * Причина блокировки входа (для логов/отказов). Пустая строка — вход разрешён.
@@ -348,10 +398,10 @@ class DrawdownProtectionService(
     fun entryBlockReason(): String = cachedOrNeutral().reasons.joinToString("; ")
 
     /**
-     * Активен ли Shadow/Read-only режим LLM-агента (кэш, без БД).
+     * Активен ли Shadow/Read-only режим LLM-агента (кэш, без БД). Per-account (F-14).
      */
-    fun isShadowModeActive(): Boolean {
-        val until = shadowModeUntil ?: return false
+    fun isShadowModeActive(accountId: Long? = null): Boolean {
+        val until = shadowModeUntilByAccount[key(accountId)] ?: return false
         return Instant.now().isBefore(until)
     }
 
@@ -364,7 +414,7 @@ class DrawdownProtectionService(
      * если процентный лимит отключён (<= 0).
      */
     fun effectiveDailyLossLimitRub(): BigDecimal {
-        val aum = cachedStatus?.aum ?: aumProvider.latestAum()
+        val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
         return effectiveDailyLossLimitRub(aum)
     }
 
@@ -377,13 +427,16 @@ class DrawdownProtectionService(
             .takeWhile { it.pnl?.compareTo(BigDecimal.ZERO) == -1 }
             .count()
 
-    private fun currentAum(open: List<Position>): BigDecimal {
+    private fun currentAum(
+        open: List<Position>,
+        accountId: Long?,
+    ): BigDecimal {
         val unrealized = unrealizedPnl(open)
         // F-3 (roadmap 13.25): latestAum() = текущий баланс счёта (moneyAmount) уже
         // содержит реализованный P&L — totalRealized добавлять НЕЛЬЗЯ (двойной счёт
         // в AUM и дневном лимите). Equity = баланс + нереализованный P&L открытых.
         return aumProvider
-            .latestAum()
+            .latestAum(accountId)
             .add(unrealized)
             .coerceAtLeast(BigDecimal.ZERO)
     }
@@ -432,8 +485,11 @@ class DrawdownProtectionService(
      *
      * @return (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
-    private fun peakAumAndDrawdown(aggregates: PositionRepository.ClosedPositionAggregates): PeakAndDrawdown {
-        val balance = aumProvider.latestAum()
+    private fun peakAumAndDrawdown(
+        aggregates: PositionRepository.ClosedPositionAggregates,
+        accountId: Long?,
+    ): PeakAndDrawdown {
+        val balance = aumProvider.latestAum(accountId)
         val deposit = balance.subtract(aggregates.totalRealized).coerceAtLeast(BigDecimal.ZERO)
         val running = balance
         val peak = deposit.add(aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO))
@@ -496,23 +552,28 @@ class DrawdownProtectionService(
         }
 
     /**
-     * Обновляет Shadow/Read-only состояние по серии убытков:
+     * Обновляет Shadow/Read-only состояние по серии убытков (per-account, F-14):
      * - серия >= лимита → shadow минимум на [RiskConfig.shadowModeCooldownHours];
      * - серия держится дольше кд → продлеваем (агент не торгует, пока продолжает сыпаться);
      * - серия сброшена прибыльной сделкой → shadow снимается.
      */
-    private fun refreshShadowMode(consecutive: Int): Instant? {
+    private fun refreshShadowMode(
+        consecutive: Int,
+        accountId: Long?,
+    ): Instant? {
+        val accountKey = key(accountId)
         if (!riskConfig.shadowModeEnabled || consecutive < riskConfig.maxConsecutiveLosses) {
-            shadowModeUntil = null
+            shadowModeUntilByAccount.remove(accountKey)
             return null
         }
         val now = Instant.now()
-        val until = shadowModeUntil ?: Instant.EPOCH
+        val until = shadowModeUntilByAccount[accountKey] ?: Instant.EPOCH
         if (until.isBefore(now)) {
             val extended = now.plus(Duration.ofHours(riskConfig.shadowModeCooldownHours))
-            shadowModeUntil = extended
+            shadowModeUntilByAccount[accountKey] = extended
             logger.warn {
-                "SHADOW MODE activated for LLM agent: $consecutive consecutive losses >= ${riskConfig.maxConsecutiveLosses}; " +
+                "SHADOW MODE activated for LLM agent (account=${accountId ?: "legacy"}): " +
+                    "$consecutive consecutive losses >= ${riskConfig.maxConsecutiveLosses}; " +
                     "entries blocked until $extended (retraining/calibration)"
             }
             meterRegistry.counter("drawdown.shadow.activated").increment()
@@ -578,17 +639,21 @@ class DrawdownProtectionService(
         return override ?: effectiveDailyLossLimitRub(aum)
     }
 
-    private fun recordMetrics(status: DrawdownStatus) {
-        MutableGauges.set(meterRegistry, "drawdown.aum", status.aum.toDouble())
-        MutableGauges.set(meterRegistry, "drawdown.peak_aum", status.peakAum.toDouble())
-        MutableGauges.set(meterRegistry, "drawdown.percent", status.drawdownPercent)
-        MutableGauges.set(meterRegistry, "drawdown.daily.pnl", status.dailyPnlRub.toDouble(), Tags.of("unit", "rub"))
-        MutableGauges.set(meterRegistry, "drawdown.daily.percent", percentOf(status.dailyPnlRub, status.aum))
-        MutableGauges.set(meterRegistry, "drawdown.rolling7d.percent", percentOf(status.rolling7dPnlRub, status.aum))
-        MutableGauges.set(meterRegistry, "drawdown.rolling30d.percent", percentOf(status.rolling30dPnlRub, status.aum))
-        MutableGauges.set(meterRegistry, "drawdown.consecutive.losses", status.consecutiveLosses.toDouble())
-        MutableGauges.set(meterRegistry, "drawdown.shadow.mode", if (status.shadowModeActive) 1.0 else 0.0)
-        MutableGauges.set(meterRegistry, "drawdown.blocked", if (status.blocking()) 1.0 else 0.0)
+    private fun recordMetrics(
+        status: DrawdownStatus,
+        accountId: Long? = null,
+    ) {
+        val tags = if (accountId != null) Tags.of("account", accountId.toString()) else Tags.empty()
+        MutableGauges.set(meterRegistry, "drawdown.aum", status.aum.toDouble(), tags)
+        MutableGauges.set(meterRegistry, "drawdown.peak_aum", status.peakAum.toDouble(), tags)
+        MutableGauges.set(meterRegistry, "drawdown.percent", status.drawdownPercent, tags)
+        MutableGauges.set(meterRegistry, "drawdown.daily.pnl", status.dailyPnlRub.toDouble(), tags.and("unit", "rub"))
+        MutableGauges.set(meterRegistry, "drawdown.daily.percent", percentOf(status.dailyPnlRub, status.aum), tags)
+        MutableGauges.set(meterRegistry, "drawdown.rolling7d.percent", percentOf(status.rolling7dPnlRub, status.aum), tags)
+        MutableGauges.set(meterRegistry, "drawdown.rolling30d.percent", percentOf(status.rolling30dPnlRub, status.aum), tags)
+        MutableGauges.set(meterRegistry, "drawdown.consecutive.losses", status.consecutiveLosses.toDouble(), tags)
+        MutableGauges.set(meterRegistry, "drawdown.shadow.mode", if (status.shadowModeActive) 1.0 else 0.0, tags)
+        MutableGauges.set(meterRegistry, "drawdown.blocked", if (status.blocking()) 1.0 else 0.0, tags)
     }
 
     /**
@@ -600,9 +665,12 @@ class DrawdownProtectionService(
     fun onPositionClosed(event: PositionClosedEvent) {
         scope.launch {
             try {
-                val status = computeStatus()
+                // (F-1, roadmap 13.25.6) Пересчёт по аккаунту закрытой позиции — статус
+                // другого аккаунта не затирается и не смешивается с этим.
+                val status = computeStatus(event.accountId)
                 logger.info {
-                    "Drawdown status refreshed after close ${event.ticker}: pnl=${event.pnl} reason=${event.reason} -> " +
+                    "Drawdown status refreshed after close ${event.ticker}: pnl=${event.pnl} reason=${event.reason} " +
+                        "account=${event.accountId ?: "legacy"} -> " +
                         "blocking=${status.blocking()} shadow=${status.shadowModeActive}"
                 }
             } catch (e: Exception) {

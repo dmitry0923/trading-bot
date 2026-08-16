@@ -18,6 +18,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
@@ -83,7 +85,7 @@ class AdaptiveRiskServiceKellyTest {
     }
 
     private suspend fun stubClosedPositions(list: List<Position>) {
-        Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
+        Mockito.`when`(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenReturn(list)
     }
 
     private fun closedPosition(pnl: BigDecimal): Position =
@@ -103,7 +105,7 @@ class AdaptiveRiskServiceKellyTest {
     private fun stubDrawdown(ddPercent: Double) {
         val aum = riskConfig.maxPositionRub
         Mockito
-            .`when`(drawdownProtection.cachedOrNeutral())
+            .`when`(drawdownProtection.cachedOrNeutral(anyOrNull()))
             .thenReturn(
                 DrawdownStatus(
                     aum = aum,
@@ -296,6 +298,25 @@ class AdaptiveRiskServiceKellyTest {
             )
 
             assertFalse(service.isInDrawdownRecovery())
+        }
+
+    @Test
+    fun `drawdown recovery scopes recent closes by account (F-1)`() =
+        runBlocking {
+            // A: 3 убытка подряд (newest-first); B: прибыльная последняя сделка
+            Mockito.`when`(positionRepo.findClosedByAccountSince(eq(7L), any())).thenReturn(
+                listOf(
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("-100")),
+                    closedPosition(BigDecimal("-100")),
+                ),
+            )
+            Mockito.`when`(positionRepo.findClosedByAccountSince(eq(8L), any())).thenReturn(
+                listOf(closedPosition(BigDecimal("50"))),
+            )
+
+            assertTrue(service.isInDrawdownRecovery(7L))
+            assertFalse(service.isInDrawdownRecovery(8L))
         }
 
     @Test

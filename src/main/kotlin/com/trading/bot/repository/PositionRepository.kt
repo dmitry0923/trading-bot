@@ -338,13 +338,15 @@ class PositionRepository(
      *
      * Позиции с NULL pnl не влияют на сумму (аналог sumOf { pnl ?: ZERO }).
      * Один агрегирующий проход в БД вместо загрузки всех строк в память.
+     * (multi-account) accountId = null → только legacy-позиции без привязки.
      */
     data class ClosedPositionAggregates(
         val totalRealized: BigDecimal,
         val peakRealized: BigDecimal,
     )
 
-    suspend fun findClosedAggregates(): ClosedPositionAggregates {
+    suspend fun findClosedAggregates(accountId: Long?): ClosedPositionAggregates {
+        val accountClause = if (accountId == null) "account_id IS NULL" else "account_id = :accountId"
         val sql =
             """
             SELECT COALESCE(SUM(pnl), 0) AS total,
@@ -356,11 +358,12 @@ class PositionRepository(
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                        ) AS cum
                 FROM positions
-                WHERE status != 'OPEN'
+                WHERE status != 'OPEN' AND $accountClause
             ) s
             """.trimIndent()
-        return databaseClient
-            .sql(sql)
+        val spec = databaseClient.sql(sql)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
             .map { row, _ ->
                 ClosedPositionAggregates(
                     totalRealized = row.get("total", BigDecimal::class.java) ?: BigDecimal.ZERO,

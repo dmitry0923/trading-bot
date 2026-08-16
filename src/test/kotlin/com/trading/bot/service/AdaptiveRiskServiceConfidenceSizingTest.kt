@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -57,7 +58,7 @@ class AdaptiveRiskServiceConfidenceSizingTest {
     }
 
     private suspend fun stubClosedPositions(list: List<Position>) {
-        Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(list)
+        Mockito.`when`(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenReturn(list)
         Mockito.`when`(positionRepo.findClosedByTickerSince(any(), any())).thenReturn(list)
     }
 
@@ -69,7 +70,7 @@ class AdaptiveRiskServiceConfidenceSizingTest {
     private fun stubDrawdown() {
         val aum = riskConfig.maxPositionRub
         Mockito
-            .`when`(drawdownProtection.cachedOrNeutral())
+            .`when`(drawdownProtection.cachedOrNeutral(anyOrNull()))
             .thenReturn(
                 DrawdownStatus(
                     aum = aum,

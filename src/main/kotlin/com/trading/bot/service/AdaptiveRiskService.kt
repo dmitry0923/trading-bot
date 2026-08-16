@@ -198,7 +198,8 @@ class AdaptiveRiskService(
         size = size.multiply(BigDecimal(confidenceFactor))
 
         // Drawdown degradation: непрерывный множитель по глубине просадки + серия убытков.
-        val drawdownFactor = drawdownScaleMultiplier().coerceAtMost(recoveryReductionFactor())
+        // (F-13, roadmap 13.25.6) Множитель считается по статусу аккаунта, а не глобальному.
+        val drawdownFactor = drawdownScaleMultiplier(accountId).coerceAtMost(recoveryReductionFactor(accountId))
         size = size.multiply(BigDecimal(drawdownFactor))
 
         // Market regime: рыночный overlay (RVI: VOLATILE урезает, STRESS обнуляет)
@@ -358,8 +359,8 @@ class AdaptiveRiskService(
      * Берётся ближайший не превышающий просадку tier из [RiskConfig.drawdownScaleTiers]:
      * просадка 0% -> 1.0, 3% -> 0.75, 6% -> 0.5, 10% -> 0.25, 15% -> 0.0.
      */
-    private fun drawdownScaleMultiplier(): Double {
-        val drawdownPercent = drawdownProtection.cachedOrNeutral().drawdownPercent
+    private fun drawdownScaleMultiplier(accountId: Long? = null): Double {
+        val drawdownPercent = drawdownProtection.cachedOrNeutral(accountId).drawdownPercent
         var factor = 1.0
         for ((tier, scale) in riskConfig.drawdownScaleTiers) {
             if (drawdownPercent >= tier) factor = scale
@@ -371,7 +372,8 @@ class AdaptiveRiskService(
      * Fallback-множитель при drawdown-recovery: серия убыточных сделок подряд
      * режет размер на [RiskConfig.kellyDrawdownReduction].
      */
-    private suspend fun recoveryReductionFactor(): Double = if (isInDrawdownRecovery()) riskConfig.kellyDrawdownReduction else 1.0
+    private suspend fun recoveryReductionFactor(accountId: Long? = null): Double =
+        if (isInDrawdownRecovery(accountId)) riskConfig.kellyDrawdownReduction else 1.0
 
     /**
      * Текущее ATR тикера из кэша свечей (MINUTE_10), иначе null.
@@ -497,13 +499,16 @@ class AdaptiveRiskService(
      * Проверяет, находится ли бот в режиме восстановления после просадки.
      *
      * Считается серия убыточных сделок подряд, считая от ПОСЛЕДНЕГО закрытия
-     * (findClosedSince уже возвращает newest-first, поэтому список НЕ разворачивается —
-     * разворот привёл бы к подсчёту серии от САМОЙ СТАРОЙ сделки окна).
+     * (findClosedByAccountSince уже возвращает newest-first, поэтому список НЕ
+     * разворачивается — разворот привёл бы к подсчёту серии от САМОЙ СТАРОЙ сделки окна).
+     *
+     * (F-1, roadmap 13.25.6) Оконный запрос скоупирован по [accountId] — серия сделок
+     * одного аккаунта не считается по общему пулу.
      *
      * @return true, если за последние 3 дня было >= 3 убыточных сделок подряд
      */
-    suspend fun isInDrawdownRecovery(): Boolean {
-        val recent = positionRepo.findClosedSince(LocalDateTime.now().minusDays(3))
+    suspend fun isInDrawdownRecovery(accountId: Long? = null): Boolean {
+        val recent = positionRepo.findClosedByAccountSince(accountId, LocalDateTime.now().minusDays(3))
         val consecutiveLosses =
             recent
                 .takeWhile {

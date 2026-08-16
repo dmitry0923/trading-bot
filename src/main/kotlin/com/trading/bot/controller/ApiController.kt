@@ -343,9 +343,14 @@ class ApiController(
     /**
      * Multi-Tier Drawdown Protection: AUM, дневной/скользящие (7д, 30д) лимиты в % от AUM,
      * серия убытков подряд, Shadow/Read-only режим LLM-агента.
+     *
+     * (F-1, roadmap 13.25.6) Необязательный accountId — статус конкретного аккаунта;
+     * без параметра — legacy-путь без привязки к аккаунту.
      */
     @GetMapping("/risk/drawdown")
-    suspend fun getDrawdownStatus() = drawdownProtectionService.computeStatus()
+    suspend fun getDrawdownStatus(
+        @RequestParam(name = "accountId", required = false) accountId: Long? = null,
+    ) = drawdownProtectionService.computeStatus(accountId)
 
     /**
      * Append-only audit trail позиции (Event Sourcing): события

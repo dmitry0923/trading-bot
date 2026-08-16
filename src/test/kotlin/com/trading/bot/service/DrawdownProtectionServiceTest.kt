@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -40,7 +41,7 @@ class DrawdownProtectionServiceTest {
     ): DrawdownProtectionService {
         val aumProvider = Mockito.mock(AumProvider::class.java)
         // latestAum() = ТЕКУЩИЙ баланс счёта (moneyAmount), уже включает реализованный P&L.
-        Mockito.`when`(aumProvider.latestAum()).thenReturn(balance)
+        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(balance)
         return DrawdownProtectionService(
             config,
             positionRepo,
@@ -57,19 +58,19 @@ class DrawdownProtectionServiceTest {
      * открытых позиций (вызывать только внутри runBlocking).
      */
     private suspend fun stubNoOpenPositions() {
-        Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
+        Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(emptyList())
     }
 
     /**
-     * Стаббит оконные запросы [PositionRepository.findClosedSince] и
+     * Стаббит оконные запросы [PositionRepository.findClosedByAccountSince] и
      * [PositionRepository.findClosedAggregates] — согласованно с одним списком.
      */
     private suspend fun stubClosedPositions(positions: List<Position>) {
-        Mockito.`when`(positionRepo.findClosedSince(any())).thenAnswer { inv ->
-            val since = inv.getArgument<LocalDateTime>(0)
+        Mockito.`when`(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenAnswer { inv ->
+            val since = inv.getArgument<LocalDateTime>(1)
             positions.filter { (it.closedAt ?: LocalDateTime.MIN) >= since }
         }
-        Mockito.`when`(positionRepo.findClosedAggregates()).thenReturn(
+        Mockito.`when`(positionRepo.findClosedAggregates(anyOrNull())).thenReturn(
             PositionRepository.ClosedPositionAggregates(
                 totalRealized = positions.sumOf { it.pnl ?: BigDecimal.ZERO },
                 peakRealized = peakCumulativeRealized(positions),
@@ -90,6 +91,7 @@ class DrawdownProtectionServiceTest {
     private fun closedPosition(
         pnl: BigDecimal,
         closedAt: LocalDateTime,
+        accountId: Long? = null,
     ): Position =
         Position(
             ticker = "SBER",
@@ -99,7 +101,28 @@ class DrawdownProtectionServiceTest {
             pnl = pnl,
             status = PositionStatus.CLOSED,
             closedAt = closedAt,
+            accountId = accountId,
         )
+
+    /**
+     * Per-account стаб оконных запросов и агрегатов: каждый аккаунт видит только свои
+     * закрытые позиции (как findClosedByAccountSince/findClosedAggregates в БД).
+     */
+    private suspend fun stubAccountClosedPositions(positionsByAccount: Map<Long?, List<Position>>) {
+        Mockito.`when`(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenAnswer { inv ->
+            val accountId = inv.getArgument<Long?>(0)
+            val since = inv.getArgument<LocalDateTime>(1)
+            (positionsByAccount[accountId] ?: emptyList()).filter { (it.closedAt ?: LocalDateTime.MIN) >= since }
+        }
+        Mockito.`when`(positionRepo.findClosedAggregates(anyOrNull())).thenAnswer { inv ->
+            val accountId = inv.getArgument<Long?>(0)
+            val positions = positionsByAccount[accountId] ?: emptyList()
+            PositionRepository.ClosedPositionAggregates(
+                totalRealized = positions.sumOf { it.pnl ?: BigDecimal.ZERO },
+                peakRealized = peakCumulativeRealized(positions),
+            )
+        }
+    }
 
     @Test
     fun `aum does not double count realized pnl already in balance (F-3)`() =
@@ -415,7 +438,7 @@ class DrawdownProtectionServiceTest {
             stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-1000"), LocalDateTime.now())),
             )
-            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
                 listOf(
                     Position(
                         ticker = "SBER",
@@ -437,5 +460,79 @@ class DrawdownProtectionServiceTest {
             // AUM = баланс 50 000 (реализованный -1000 уже в балансе) + unrealized -3000 = 47 000
             assertEquals(0, BigDecimal("47000").compareTo(status.aum))
             assertEquals(0, BigDecimal("-4000").compareTo(s.getDailyPnl()))
+        }
+
+    // ===================== Per-account скоуп (F-1/F-13/F-14) =====================
+
+    @Test
+    fun `computeStatus scopes windows and aggregates by account (F-1)`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubAccountClosedPositions(
+                mapOf(
+                    7L to listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(), 7L)),
+                    8L to listOf(closedPosition(BigDecimal("1000"), LocalDateTime.now(), 8L)),
+                ),
+            )
+
+            val s = service()
+            val accountA = s.computeStatus(7L)
+            val accountB = s.computeStatus(8L)
+
+            // A: дневной убыток -6000 → лимит (5 000) пробит
+            assertEquals(0, BigDecimal("-6000").compareTo(accountA.dailyPnlRub))
+            assertTrue(accountA.dailyLimitBreached)
+            assertTrue(s.isEntryBlocked(7L))
+            // B: прибыль +1000 — не блокирован, несмотря на заблокированный A
+            assertEquals(0, BigDecimal("1000").compareTo(accountB.dailyPnlRub))
+            assertFalse(accountB.dailyLimitBreached)
+            assertFalse(s.isEntryBlocked(8L))
+        }
+
+    @Test
+    fun `cachedOrNeutral and entry blocking are per-account, not global (F-13)`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubAccountClosedPositions(
+                mapOf(
+                    7L to listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(), 7L)),
+                    8L to listOf(closedPosition(BigDecimal("500"), LocalDateTime.now(), 8L)),
+                ),
+            )
+
+            val s = service()
+            s.computeStatus(7L)
+            s.computeStatus(8L)
+
+            // кэш читается по аккаунту — без глобального статуса
+            assertTrue(s.cachedOrNeutral(7L).blocking())
+            assertFalse(s.cachedOrNeutral(8L).blocking())
+            assertTrue(s.isEntryBlocked(7L))
+            assertFalse(s.isEntryBlocked(8L))
+        }
+
+    @Test
+    fun `shadow mode activates per-account, not from pooled losses (F-14)`() =
+        runBlocking {
+            val now = LocalDateTime.now()
+            stubNoOpenPositions()
+            val accountA =
+                listOf(
+                    closedPosition(BigDecimal("-100"), now.minusMinutes(5), 7L),
+                    closedPosition(BigDecimal("-200"), now.minusMinutes(10), 7L),
+                    closedPosition(BigDecimal("-300"), now.minusMinutes(15), 7L),
+                )
+            // B: прибыльная сделка → серия сброшена, shadow не включается
+            val accountB = listOf(closedPosition(BigDecimal("500"), now.minusMinutes(1), 8L))
+            stubAccountClosedPositions(mapOf(7L to accountA, 8L to accountB))
+
+            val s = service()
+            s.computeStatus(7L)
+            s.computeStatus(8L)
+
+            assertTrue(s.isShadowModeActive(7L))
+            assertFalse(s.isShadowModeActive(8L))
+            assertTrue(s.isEntryBlocked(7L))
+            assertFalse(s.isEntryBlocked(8L))
         }
 }

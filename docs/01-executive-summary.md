@@ -167,7 +167,7 @@ flowchart LR
 |---|---|---|
 | v2.0 | Мультиагентный конвейер, риск-движок, outbox, resilience | ✅ реализовано |
 | v2.1 | Event-driven слой, sector/volatility guard, backtest | ✅ реализовано |
-| v2.2 | Emergency stop, дневной P&L в БД, LLM в бэктесте | 🟡 частично: emergency stop ✅, остальное 🔜 |
+| v2.2 | Emergency stop, дневной P&L в БД, LLM в бэктесте | 🟡 частично: emergency stop ✅, дневной P&L в БД ✅, LLM в бэктесте 🔜 |
 | v2.3 | Мульти-реплика, k8s-манифесты, партиционирование свечей | 🔜 в планах |
 
 Подробно — раздел 13.

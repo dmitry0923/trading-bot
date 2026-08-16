@@ -8,6 +8,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Circuit breaker по дневному лимиту убытка.
@@ -22,6 +25,12 @@ import org.springframework.stereotype.Component
  *   - PositionMonitor продолжает закрывать открытые позиции по SL/TP, но новых не открывает.
  *   - В лог пишется алерт об остановке торговли.
  *
+ * Дедупликация (13.28, MR-Y): пока лимит пробит, каждое следующее закрытие снова
+ * попадает в ветку «limit reached». Без дедупликации halt-событие публиковалось бы
+ * на каждое закрытие — спам алертов, завышенный счётчик и перезапись последнего
+ * halt в trading_halt. Событие публикуется один раз в день (на первое пробитие),
+ * ключ — accountId (legacy — nullAccountKey); новый день снимает дедупликацию.
+ *
  * Метрика: circuit.daily_loss.triggered (Counter).
  */
 @Component
@@ -31,6 +40,14 @@ class DailyLossCircuitBreaker(
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
+
+    private val moscowZone = ZoneId.of("Europe/Moscow")
+
+    /** Ключ дедупликации для legacy-пути (accountId = null). */
+    private val nullAccountKey = -1L
+
+    /** День, когда halt уже опубликован (per-account; legacy — [nullAccountKey]). */
+    private val haltPublishedOn: ConcurrentHashMap<Long, LocalDate> = ConcurrentHashMap()
 
     /**
      * Обрабатывает закрытие позиции: обновляет дневной P&L и при достижении
@@ -42,12 +59,17 @@ class DailyLossCircuitBreaker(
     fun onPositionClosed(event: PositionClosedEvent) {
         drawdownProtection.updateDailyPnl(event.pnl, event.accountId)
         if (drawdownProtection.isDailyLossLimitReached(event.accountId)) {
-            logger.error {
-                "Daily loss limit reached (dailyPnL=${drawdownProtection.getDailyPnl(event.accountId)} ₽). " +
-                    "Trading halted. No new entries until next day."
+            val key = event.accountId ?: nullAccountKey
+            val today = LocalDate.now(moscowZone)
+            if (haltPublishedOn[key] != today) {
+                haltPublishedOn[key] = today
+                logger.error {
+                    "Daily loss limit reached (dailyPnL=${drawdownProtection.getDailyPnl(event.accountId)} ₽). " +
+                        "Trading halted. No new entries until next day."
+                }
+                eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT"))
+                meterRegistry.counter("circuit.daily_loss.triggered").increment()
             }
-            eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT"))
-            meterRegistry.counter("circuit.daily_loss.triggered").increment()
         }
     }
 }

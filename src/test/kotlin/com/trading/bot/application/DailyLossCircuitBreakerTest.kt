@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.anyOrNull
 import java.math.BigDecimal
 
 /**
@@ -61,5 +62,41 @@ class DailyLossCircuitBreakerTest {
         Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-3000"))
         assertTrue(haltedEvents.isEmpty())
         assertEquals(0.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)
+    }
+
+    @Test
+    fun `halt published once per day while limit stays breached`() {
+        Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
+        val b = breaker()
+
+        b.onPositionClosed(
+            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "STOP_LOSS"),
+        )
+        b.onPositionClosed(
+            PositionClosedEvent(positionId = 2, ticker = "Si", pnl = BigDecimal("-2000"), reason = "STOP_LOSS"),
+        )
+
+        assertEquals(1, haltedEvents.size)
+        assertEquals("DAILY_LOSS_LIMIT", haltedEvents.single().reason)
+        assertEquals(1.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)
+    }
+
+    @Test
+    fun `halt dedup is per account`() {
+        Mockito.`when`(drawdownProtection.isDailyLossLimitReached(anyOrNull())).thenReturn(true)
+        val b = breaker()
+
+        b.onPositionClosed(
+            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "STOP_LOSS", accountId = 7L),
+        )
+        b.onPositionClosed(
+            PositionClosedEvent(positionId = 2, ticker = "Si", pnl = BigDecimal("-2000"), reason = "STOP_LOSS", accountId = 7L),
+        )
+        b.onPositionClosed(
+            PositionClosedEvent(positionId = 3, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS", accountId = 8L),
+        )
+
+        assertEquals(2, haltedEvents.size)
+        assertEquals(2.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)
     }
 }

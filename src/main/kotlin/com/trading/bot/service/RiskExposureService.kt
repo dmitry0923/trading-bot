@@ -1,6 +1,8 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.PositionExposure
@@ -33,12 +35,20 @@ import kotlin.math.sqrt
  * состояние портфеля — информационно. Все метрики публикуются в Prometheus
  * (risk.exposure.*) и отдаются через GET /api/v1/risk/exposure.
  *
+ * Нотионал позиции в рублях = entryPrice × qty × pointValue(ticker) для фьючерсов
+ * (13.28.2, MR-Z): точка цены фьючерса ≠ рубль, pointValue масштабирует пункты в ₽
+ * (Si: 1000 ₽ на 1.0 цены). Акции: entryPrice × qty (qty в штуках, pointValue = 1)
+ * — единая семантика с P&L ([DrawdownProtectionService.unrealizedPnl]). Это исправляет
+ * занижение фьючерсной экспозиции в отчёте; входные гейты (RiskManagementService/
+ * PortfolioRiskEngineImpl) сознательно НЕ масштабируются (см. 13.28.2).
+ *
  * Exposure Score = 100 · (0.25·концентрация + 0.25·(1/effN нормализовано) +
  * 0.25·(VaR%/лимит) + 0.125·(gross%/лимит) + 0.125·(|net%|/лимит)), каждый член в [0,1].
  */
 @Service
 class RiskExposureService(
     private val riskConfig: RiskConfig,
+    private val instrumentsConfig: InstrumentsConfig,
     private val positionRepo: PositionRepository,
     private val correlationProvider: CorrelationMatrixProvider,
     private val candleCache: CandleCacheService,
@@ -173,7 +183,11 @@ class RiskExposureService(
                 )
             }.sortedByDescending { it.grossPercentAum }
 
-    private fun signedNotional(pos: Position): Double = pos.entryPrice.toDouble() * pos.quantity * directionSign(pos.direction)
+    private fun signedNotional(pos: Position): Double =
+        pos.entryPrice.toDouble() * pos.quantity * pointValue(pos) * directionSign(pos.direction)
+
+    private fun pointValue(pos: Position): Double =
+        if (pos.instrumentType == InstrumentType.FUTURES) instrumentsConfig.pointValue(pos.ticker).toDouble() else 1.0
 
     private fun directionSign(direction: PositionDirection): Double = if (direction == PositionDirection.LONG) 1.0 else -1.0
 

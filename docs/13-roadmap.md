@@ -2324,9 +2324,38 @@ F-3 исправлен в MR-U (13.25.3), F-4 — в MR-V (13.25.4), F-11/F-12 �
 
 Полный прогон: 988 tests, 0 failed, 2 skipped; ktlintCheck чист.
 
-### 13.28.2. Открыто (не в MR-Y)
+### 13.28.2. MR-Z: нотионал фьючерсов в exposure-отчёте масштабирован pointValue ✅
 
-- **RISK-OPEN-2 — нотионал фьючерсов = entryPrice × qty (пункты как рубли)** в
-  `RiskExposureService`/`RiskManagementService`: exposure-отчёт и гросс/нет-гейт
-  акций занижают риск при смешанном портфеле. Требует шага цены/стоимости шага по
-  инструменту — кандидат в отдельный MR.
+**Находка (RISK-OPEN-2):** `RiskExposureService.signedNotional = entryPrice × qty`
+трактовал пункты фьючерса как рубли: для Si (~70 000 пунктов, pointValue = 1000 ₽
+на 1.0 цены) отчёт показывал 70 000 ₽ вместо 70 000 000 ₽ реального рублёвого
+нотионала — смешанный портфель акций+фьючерсов занижал экспозицию на 3 порядка.
+
+**Фикс (RiskExposureService.kt, report-only):** `signedNotional` теперь
+`entryPrice × qty × pointValue(ticker)` (InstrumentsConfig). Для акций
+pointValue = 1 → поведение не меняется; для фьючерсов пункты масштабируются в ₽,
+как в P&L/стопах/ликвидации. Затрагивает только информационный снимок
+(`GET /api/v1/risk/exposure`, метрики risk.exposure.*, Exposure Score) —
+гросс/нет отчёт, секторная агрегация, VaR95 и score становятся честными.
+
+**Сознательно НЕ масштабируются входные гейты** (`RiskManagementService.exceedsPortfolioLimits`,
+`PortfolioRiskEngineImpl.signedNotional`): их лимиты — проценты депозита
+(maxGrossExposurePercent 150% / maxNetExposurePercent 100%), а фьючерс сайзится по
+маржа/плечу (GO/leverage), не по нотионалу. При pointValue-масштабировании один
+контракт Si (~70 млн ₽) заблокировал бы все фьючерсные входы при текущем конфиге.
+Решение зафиксировано: гейты остаются как есть, отчёт корректен.
+
+Тесты (1 новый + регресс; полный прогон ниже):
+- `futures notional is scaled by point value (RISK-OPEN-2)` (новый): Si @ 70 000
+  × 1 лот → grossExposureRub = 70 000 000 ₽ и notionalRub позиции = 70 000 000 ₽.
+
+Полный прогон: 989 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+### 13.28.3. Открыто (не фиксы, осознанные решения)
+
+- **RISK-OPEN-3 — гонка `@Synchronized updateDailyPnl` vs запись `computeStatus`
+  из корутины по close** (узкое окно потери P&L аккумулятора): требуется
+  синхронизация записи дневного стейта — кандидат в отдельный MR.
+- **RISK-OPEN-4 — Kelly-кап к базе, а не к финальному размеру** (vol-таргетинг
+  до 2.0 может раздуть позицию выше капа): дизайн, пересмотреть деплой-конфиг
+  `kelly-max-position-fraction: 0.50`.

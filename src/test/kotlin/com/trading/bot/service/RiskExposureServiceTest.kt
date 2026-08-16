@@ -1,6 +1,8 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
@@ -22,6 +24,7 @@ import java.math.BigDecimal
  */
 class RiskExposureServiceTest {
     private val riskConfig = RiskConfig()
+    private val instrumentsConfig = InstrumentsConfig()
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val correlationProvider = Mockito.mock(CorrelationMatrixProvider::class.java)
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
@@ -29,7 +32,7 @@ class RiskExposureServiceTest {
     private val aumProvider = Mockito.mock(AumProvider::class.java)
 
     private val service =
-        RiskExposureService(riskConfig, positionRepo, correlationProvider, candleCache, meterRegistry, aumProvider)
+        RiskExposureService(riskConfig, instrumentsConfig, positionRepo, correlationProvider, candleCache, meterRegistry, aumProvider)
 
     private suspend fun stubAum() {
         Mockito.`when`(aumProvider.currentAum()).thenReturn(riskConfig.maxPositionRub)
@@ -39,6 +42,7 @@ class RiskExposureServiceTest {
         ticker: String,
         price: BigDecimal,
         direction: PositionDirection = PositionDirection.LONG,
+        instrumentType: InstrumentType = InstrumentType.STOCK,
     ): Position =
         Position(
             id = ticker.hashCode().toLong(),
@@ -46,6 +50,7 @@ class RiskExposureServiceTest {
             direction = direction,
             quantity = 1,
             entryPrice = price,
+            instrumentType = instrumentType,
         )
 
     private suspend fun stubPositions(positions: List<Position>) {
@@ -160,5 +165,21 @@ class RiskExposureServiceTest {
             assertEquals(1, report.perPositionExposure.size)
             assertEquals("FINANCE", report.perPositionExposure.first().sector)
             assertEquals("FINANCE", report.perSectorExposure.first().sector)
+        }
+
+    @Test
+    fun `futures notional is scaled by point value (RISK-OPEN-2)`() =
+        runBlocking {
+            stubPositions(listOf(position("Si", BigDecimal("70000"), instrumentType = InstrumentType.FUTURES)))
+            stubAum()
+            stubCorrelations(listOf("Si"), 1.0)
+            stubVols(listOf("Si"))
+
+            val report = service.buildSnapshot()
+
+            // Si: pointValue = priceStepCost/priceStep = 10/0.01 = 1000 ₽ на 1.0 цены
+            // → нотионал 70000 × 1 × 1000, а не «пункты как рубли» (70000).
+            assertEquals(BigDecimal("70000000.00"), report.grossExposureRub)
+            assertEquals(BigDecimal("70000000.00"), report.perPositionExposure.single().notionalRub)
         }
 }

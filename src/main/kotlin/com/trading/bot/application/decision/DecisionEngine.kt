@@ -139,7 +139,6 @@ class DecisionEngine(
 
         val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val entryPrice = alorClient.getLastPrice(ticker) ?: signal.targetPrice
-        val openPositions = positionRepo.findByStatus(PositionStatus.OPEN)
 
         // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью).
         // null = legacy single-account (таблица пуста) или все аккаунты переполнены.
@@ -154,6 +153,11 @@ class DecisionEngine(
                 .increment()
             return
         }
+
+        // F-11 (roadmap 13.25): открытые позиции берутся ТОЛЬКО по выбранному аккаунту —
+        // иначе MAX_POSITIONS, корреляционные и портфельные лимиты считались по ПУЛУ всех
+        // аккаунтов. accountId = null (legacy) — позиции с account_id = NULL.
+        val openPositions = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.accountId == accountId }
 
         // Риск-этап: Да/Нет (дневной лимит, drawdown, волатильность, дубли,
         // лимиты позиций/секторов, ATR%, STRESS, валидность входных данных).

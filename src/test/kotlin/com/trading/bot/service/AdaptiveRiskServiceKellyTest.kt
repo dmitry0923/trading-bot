@@ -354,6 +354,20 @@ class AdaptiveRiskServiceKellyTest {
         }
 
     @Test
+    fun `kelly base scales with per-account aum (F-12)`() =
+        runBlocking {
+            stubStats(mapOf("SBER" to stats(winRate = 0.6, avgWin = BigDecimal("125"), avgLoss = BigDecimal("100"))))
+            Mockito.`when`(aumProvider.currentAum(7L)).thenReturn(BigDecimal("100000"))
+            Mockito.`when`(aumProvider.currentAum()).thenReturn(BigDecimal("50000"))
+
+            val accountSize = service.calculateOptimalPositionSize("SBER", accountId = 7L)
+            val defaultSize = service.calculateOptimalPositionSize("SBER")
+
+            // AUM 100 000 vs 50 000 при той же статистике → размер ровно в 2 раза больше.
+            assertEquals(0, accountSize.compareTo(defaultSize.multiply(BigDecimal("2"))))
+        }
+
+    @Test
     fun `quarter kelly is default`() =
         runBlocking {
             val s = stats(winRate = 0.6, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"))

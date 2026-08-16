@@ -1876,14 +1876,9 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
   `findClosedAggregates` не фильтруют по accountId, глобальный halt без
   accountId, `cachedOrNeutral` игнорирует accountId — при нескольких аккаунтах
   лимиты считаются по пулу. Нужна архитектурная работа по привязке к accountId.
-- F-11/F-12 (глобальные лимиты): `MAX_POSITIONS` для фьючерсов и Kelly/AUM для
-  акций считаются глобально, не per-account.
 - F-10 (lookahead инвестора): `ProfitForecastService` считает прогноз на будущий
   период по реальным закрытым сделкам, включая сделки после даты вывода — уже
   задокументировано (эвристика клиринга, не точка входа).
-- F-15 (stale gauges): 4-я фиксация constantNumber-ловушек
-  (`bot.ws.fill_applied`-стиль см. 13.22.1/13.23.1/13.24.1) — требуется отдельный
-  MR на mutable-референсы.
 
 ### 13.25.2. MR-P: F-5/F-6/F-7/F-8/F-9 ✅
 
@@ -1957,6 +1952,36 @@ newest-first (разворота в `isInDrawdownRecovery` нет).
 Тесты: `TradingBotServiceExecutionReportTest` переведён с
 `verify(risk).updateDailyPnL` на `verify(eventPublisher).publishPositionClosed`
 (3 ассерта; 4 теста, 0 failed). Полный прогон ниже.
+
+### 13.25.5. MR-W: F-11/F-12 — per-account лимиты позиций и Kelly/AUM ✅
+
+Проблема: `MAX_POSITIONS`, корреляционные и портфельные лимиты, а также
+Kelly/AUM-сайзинг акций считались по ПУЛУ всех аккаунтов:
+- `DecisionEngine` загружал `findByStatus(OPEN)` БЕЗ фильтра по accountId →
+  `EntryRequest.openPositions` содержал позиции всех аккаунтов → при нескольких
+  аккаунтах лимит позиций аккаунта мог быть исчерпан, но бот входил, считая по пулу.
+- `AdaptiveRiskService.calculateOptimalPositionSize` брал AUM через
+  `aumProvider.currentAum()` (без accountId) → Kelly-бюджет считался от пулового
+  депозита, а не от депозита аккаунта входа.
+
+Исправлено:
+- `DecisionEngine`: выбор аккаунта вынесен до загрузки позиций; открытые позиции
+  фильтруются `{ it.accountId == accountId }` (accountId = null → legacy-позиции
+  с account_id = NULL). Все downstream-проверки на `openPositions` — MAX_POSITIONS
+  (StockRiskEngine/FuturesRiskEngine), корреляции, Gross/Net exposure — теперь
+  per-account. Поведение single-account не меняется (все позиции в одном бакете).
+- `AdaptiveRiskService.calculateOptimalPositionSize`: новый параметр
+  `accountId: Long? = null`, AUM через `currentAum(accountId)`; null = legacy.
+- `StockEntryProfile.sizePosition`: передаёт `request.accountId` в Kelly-сайзинг.
+
+Тесты (новые):
+- `DecisionEngineTest.open positions for risk checks are scoped to selected
+  account (F-11)`: accountId=5, в пуле позиции 5/5/7 → риск-запросу передаются
+  только позиции аккаунта 5.
+- `AdaptiveRiskServiceKellyTest.kelly base scales with per-account aum (F-12)`:
+  AUM 100k vs 50k при той же статистике → размер ровно в 2 раза больше.
+
+Полный прогон ниже.
 
 ## 13.26. Аудит живых gauge-метрик (GAUGE)
 
@@ -2206,5 +2231,6 @@ WS-fill (`handleExecutionReport`, pendingEntry-ветка) либо `resolveEntr
 
 EXEC-1 (MR-R), EXEC-2/EXEC-3 (MR-S), EXEC-4 (MR-T) исправлены с тестами. Аудит
 13.27 полностью закрыт. Открытые решения остаются только по ACCT (13.25.1:
-F-1/F-2/F-13/F-14, F-11/F-12 — требуют архитектурных решений по multi-account
-модели). F-3 исправлен в MR-U (13.25.3), F-4 — в MR-V (13.25.4).
+F-1/F-2/F-13/F-14 — требуют архитектурных решений по multi-account модели).
+F-3 исправлен в MR-U (13.25.3), F-4 — в MR-V (13.25.4), F-11/F-12 — в MR-W
+(13.25.5), F-15 — в MR-Q (13.26.2); F-10 задокументирован как эвристика.

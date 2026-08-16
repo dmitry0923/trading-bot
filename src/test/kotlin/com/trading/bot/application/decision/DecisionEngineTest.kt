@@ -183,6 +183,47 @@ class DecisionEngineTest {
     }
 
     @Test
+    fun `open positions for risk checks are scoped to selected account (F-11)`() {
+        val own1 =
+            Position(
+                ticker = "A",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("100"),
+                status = PositionStatus.OPEN,
+                accountId = 5L,
+            )
+        val own2 =
+            Position(
+                ticker = "B",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("100"),
+                status = PositionStatus.OPEN,
+                accountId = 5L,
+            )
+        val other =
+            Position(
+                ticker = "C",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("100"),
+                status = PositionStatus.OPEN,
+                accountId = 7L,
+            )
+        val profile = FakeEntryProfile()
+        runBlocking {
+            Mockito.`when`(tradingAccountService.selectAccount()).thenReturn(5L)
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(true)
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(listOf(own1, other, own2))
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
+        assertEquals(listOf(own1, own2), profile.lastOpenPositions)
+    }
+
+    @Test
     fun `all accounts full rejects entry instead of leaking to default portfolio`() {
         runBlocking {
             Mockito.`when`(tradingAccountService.selectAccount()).thenReturn(null)
@@ -510,6 +551,7 @@ class DecisionEngineTest {
         var buildEntryRequestCalls = 0
         var onOpenedCalls = 0
         var lastSizeForOrderParams: PositionSizeResult? = null
+        var lastOpenPositions: List<Position>? = null
 
         override val instrumentType: InstrumentType = InstrumentType.FUTURES
         override val metricPrefix: String = "test"
@@ -528,6 +570,7 @@ class DecisionEngineTest {
             accountId: Long?,
         ): EntryRequest? {
             buildEntryRequestCalls++
+            lastOpenPositions = openPositions
             if (buildEntryRequestReturnsNull) return null
             return EntryRequest(
                 ticker = signal.ticker,

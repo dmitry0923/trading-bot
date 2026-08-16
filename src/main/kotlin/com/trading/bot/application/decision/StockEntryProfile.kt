@@ -87,7 +87,13 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         request: EntryRequest,
     ): PositionSizeResult {
-        val kellySizeRub = adaptiveRisk.calculateOptimalPositionSize(signal.ticker, signalStrength = signal.signalStrength)
+        // F-12 (roadmap 13.25): AUM для Kelly берётся по аккаунту входа, а не глобально.
+        val kellySizeRub =
+            adaptiveRisk.calculateOptimalPositionSize(
+                signal.ticker,
+                signalStrength = signal.signalStrength,
+                accountId = request.accountId,
+            )
         val kellyQty =
             if (kellySizeRub > BigDecimal.ZERO) {
                 kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt()

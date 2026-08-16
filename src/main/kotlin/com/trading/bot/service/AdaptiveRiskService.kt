@@ -151,6 +151,8 @@ class AdaptiveRiskService(
      * @param atr дневной ATR (если null — берётся/масштабируется из кэша свечей)
      * @param currentPrice текущая цена (если null — последнее закрытие из кэша)
      * @param signalStrength сила сигнала (0..1); null — без confidence-сайзинга
+     * @param accountId аккаунт (F-12, roadmap 13.25): AUM берётся по аккаунту,
+     *   а не глобально; null = legacy single-account
      * @return рекомендуемый размер позиции в рублях (0 при невыгодной статистике)
      */
     suspend fun calculateOptimalPositionSize(
@@ -158,8 +160,9 @@ class AdaptiveRiskService(
         atr: BigDecimal? = null,
         currentPrice: BigDecimal? = null,
         signalStrength: Double? = null,
+        accountId: Long? = null,
     ): BigDecimal {
-        val aum = aumProvider.currentAum()
+        val aum = aumProvider.currentAum(accountId)
         val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
         // No-data fallback тоже ограничен жёстким капом: min(noDataFraction, kellyMaxPositionFraction).
         val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)

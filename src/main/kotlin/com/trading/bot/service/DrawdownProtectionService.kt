@@ -62,6 +62,9 @@ import java.time.ZoneId
  * Единый источник истины дневного P&L: синхронный аккумулятор [updateDailyPnl] кормится
  * путями закрытия акций (RiskManagementService) и фьючерсов (DailyLossCircuitBreaker),
  * персистится в daily_risk_snapshot и реконсилится полным пересчётом из БД в [computeStatus].
+ * RISK-OPEN-3 (roadmap 13.28.3): все записи дневного состояния (аккумулятор + reconcile)
+ * сериализованы монитором `this`; reconcile перезаписывает аккумулятор только на «чистом»
+ * дне (dirty-флаг), иначе live-закрытия не потеряют инкремент.
  */
 @Service
 class DrawdownProtectionService(
@@ -112,6 +115,18 @@ class DrawdownProtectionService(
 
     private var lastTradingDate: LocalDate = LocalDate.MIN
 
+    /**
+     * Dirty-флаг дневного аккумулятора (RISK-OPEN-3, roadmap 13.28.3, MR-AA).
+     * true — сегодня было живое накопление [updateDailyPnl]. Тогда [computeStatus]
+     * НЕ перезаписывает аккумулятор recompute'ом из БД (recompute мог пройти раньше
+     * коммита concurrent-закрытия и потерять его инкремент), а только персистит
+     * текущее значение. Reconcile-перезапись выполняется лишь на «чистом»
+     * аккумуляторе (рестарт / первое касание дня). Все записи — под монитором
+     * `this` (общий с [updateDailyPnl]).
+     */
+    private var accumulatorDirty: Boolean = false
+    private val accountDirty: java.util.concurrent.ConcurrentHashMap<Long, Boolean> = java.util.concurrent.ConcurrentHashMap()
+
     // Per-account дневной P&L (multi-account, roadmap v2.2). Ключ — accountId.
     private val accountPnl: java.util.concurrent.ConcurrentHashMap<Long, BigDecimal> = java.util.concurrent.ConcurrentHashMap()
     private val accountLossReached: java.util.concurrent.ConcurrentHashMap<Long, Boolean> = java.util.concurrent.ConcurrentHashMap()
@@ -142,7 +157,11 @@ class DrawdownProtectionService(
      * @return текущий [DrawdownStatus]
      */
     suspend fun computeStatus(accountId: Long? = null): DrawdownStatus {
-        resetDailyStateIfNewDay()
+        // RISK-OPEN-3 (roadmap 13.28.3): сброс/восстановление дневного стейта
+        // сериализован тем же монитором, что и @Synchronized updateDailyPnl.
+        synchronized(this) {
+            resetDailyStateIfNewDay()
+        }
         aumProvider.currentAum(accountId) // обновление баланса из Alor перед расчётом лимитов
         // МСК, а не серверный LocalDateTime.now() — иначе граница дня в computeStatus
         // может разойтись с аккумулятором (resetDailyStateIfNewDay/updateDailyPnl).
@@ -160,19 +179,30 @@ class DrawdownProtectionService(
         val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
         val dailyPnl = realizedToday.add(dailyUnrealized)
 
-        // Реконсиляция синхронного аккумулятора с фактами из БД (перезапись, не сложение).
+        // Реконсиляция синхронного аккумулятора с фактами из БД. RISK-OPEN-3 (roadmap
+        // 13.28.3, MR-AA): запись дневного состояния сериализована тем же монитором,
+        // что и @Synchronized updateDailyPnl, а перезапись выполняется только если
+        // аккумулятор НЕ кормился живыми закрытиями сегодня (dirty-флаг). Иначе
+        // concurrent-закрытие, не прочитанное recompute'ом (запрос прошёл до его
+        // коммита), потеряло бы свой инкремент в аккумуляторе и персисте.
         val dailyLimit =
-            if (accountId != null) {
-                loadAccountDailyState(accountId, now.toLocalDate())
-                accountPnl[accountId] = dailyPnl
-                accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
-                persistDailyState(accountId)
-                effectiveDailyLossLimitRubFor(accountId, aum)
-            } else {
-                todayPnl = dailyPnl
-                todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
-                persistDailyState()
-                effectiveDailyLossLimitRub(aum)
+            synchronized(this) {
+                if (accountId != null) {
+                    loadAccountDailyState(accountId, now.toLocalDate())
+                    if (accountDirty[accountId] != true) {
+                        accountPnl[accountId] = dailyPnl
+                        accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
+                    }
+                    persistDailyState(accountId)
+                    effectiveDailyLossLimitRubFor(accountId, aum)
+                } else {
+                    if (!accumulatorDirty) {
+                        todayPnl = dailyPnl
+                        todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+                    }
+                    persistDailyState()
+                    effectiveDailyLossLimitRub(aum)
+                }
             }
 
         val rolling7d = sumPnl(closedSince30d.filter { isClosedOnOrAfter(it, now.minusDays(7)) })
@@ -288,6 +318,7 @@ class DrawdownProtectionService(
             return
         }
         todayPnl = todayPnl.add(pnl)
+        accumulatorDirty = true
         val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
         val dailyLimit = effectiveDailyLossLimitRub(aum)
         if (todayPnl <= dailyLimit.negate()) {
@@ -318,6 +349,7 @@ class DrawdownProtectionService(
         loadAccountDailyState(accountId, day)
         val newPnl = (accountPnl[accountId] ?: BigDecimal.ZERO).add(pnl)
         accountPnl[accountId] = newPnl
+        accountDirty[accountId] = true
         val aum = aumProvider.latestAum(accountId)
         val dailyLimit = effectiveDailyLossLimitRubFor(accountId, aum)
         if (newPnl <= dailyLimit.negate()) {
@@ -590,6 +622,8 @@ class DrawdownProtectionService(
         val today = LocalDate.now(moscowZone)
         if (lastTradingDate == today) return
         lastTradingDate = today
+        accumulatorDirty = false
+        accountDirty.clear()
         loadDailyState(today)
     }
 

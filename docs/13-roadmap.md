@@ -2351,11 +2351,39 @@ pointValue = 1 → поведение не меняется; для фьючер
 
 Полный прогон: 989 tests, 0 failed, 2 skipped; ktlintCheck чист.
 
-### 13.28.3. Открыто (не фиксы, осознанные решения)
+### 13.28.3. MR-AA: гонка дневного аккумулятора закрыта (RISK-OPEN-3) ✅
 
-- **RISK-OPEN-3 — гонка `@Synchronized updateDailyPnl` vs запись `computeStatus`
-  из корутины по close** (узкое окно потери P&L аккумулятора): требуется
-  синхронизация записи дневного стейта — кандидат в отдельный MR.
+**Находка (RISK-OPEN-3):** `@Synchronized updateDailyPnl` vs несинхронизированная
+перезапись дневного стейта из `computeStatus` (корутина по close) — узкое окно потери
+P&L аккумулятора: recompute из БД мог пройти до коммита concurrent-закрытия и
+перезаписать аккумулятор значением без его инкремента.
+
+**Фикс (DrawdownProtectionService.kt):**
+- **Сериализация записей**: сброс дня (`resetDailyStateIfNewDay`) и reconcile-блок
+  `computeStatus` обёрнуты в `synchronized(this)` — тот же монитор, что и у
+  `@Synchronized updateDailyPnl` (reentrant). Записи аккумулятора и персиста атомарны
+  друг относительно друга, порядок детерминирован.
+- **Dirty-гвард перезаписи**: `accumulatorDirty`/`accountDirty` — флаги «аккумулятор
+  кормился живыми закрытиями сегодня». Reconcile-перезапись (`todayPnl = dailyPnl` /
+  `accountPnl[accountId] = dailyPnl`) выполняется ТОЛЬКО на «чистом» аккумуляторе
+  (рестарт / первое касание дня — БД единственный источник). При live-накоплении
+  аккумулятор сохраняется (он superset БД: каждое закрытие коммитится до своего
+  updateDailyPnl), а персистится текущее значение — stale-recompute больше не может
+  сбросить инкремент. Флаги сбрасываются при смене дня.
+
+Семантика не изменилась для однопоточного пути: `computeStatus reconciles daily pnl
+from db including open positions` и per-account F-1-тесты проходят как раньше
+(первое касание дня — чистый аккумулятор → перезапись из БД).
+
+Тесты (1 новый + регресс; полный прогон ниже):
+- `computeStatus does not clobber live accumulator with stale recompute (RISK-OPEN-3)`
+  (новый): updateDailyPnl(-1000) → computeStatus с пустым recompute (0) → аккумулятор
+  остаётся -1000 и персистится -1000 (без гварда было бы 0 — потеря инкремента).
+
+Полный прогон: 990 tests, 0 failed, 2 skipped; ktlintCheck чист.
+
+### 13.28.4. Открыто (осознанные решения, не фиксы)
+
 - **RISK-OPEN-4 — Kelly-кап к базе, а не к финальному размеру** (vol-таргетинг
   до 2.0 может раздуть позицию выше капа): дизайн, пересмотреть деплой-конфиг
   `kelly-max-position-fraction: 0.50`.

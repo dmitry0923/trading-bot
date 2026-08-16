@@ -462,6 +462,26 @@ class DrawdownProtectionServiceTest {
             assertEquals(0, BigDecimal("-4000").compareTo(s.getDailyPnl()))
         }
 
+    @Test
+    fun `computeStatus does not clobber live accumulator with stale recompute (RISK-OPEN-3)`() =
+        runBlocking {
+            // recompute из БД не видит concurrent-закрытие (запрос прошёл до его коммита):
+            // закрытий «нет» → recompute dailyPnl = 0, хотя в аккумуляторе уже -1000.
+            stubClosedPositions(emptyList())
+            stubNoOpenPositions()
+
+            val s = service()
+            // Живое накопление: -1000 в аккумуляторе (dirty=true), персист -1000.
+            s.updateDailyPnl(BigDecimal("-1000"))
+
+            s.computeStatus()
+
+            // dirty-аккумулятор НЕ перезаписывается stale-recompute (0): оба персиста
+            // (updateDailyPnl и computeStatus) сохраняют -1000, а не 0 (без dirty-гварда
+            // второй был бы 0 — потеря инкремента в daily_risk_snapshot при рестарте).
+            Mockito.verify(snapshotRepo, Mockito.times(2)).upsert(moscowToday, BigDecimal("-1000"), false, BigDecimal("-1000"))
+        }
+
     // ===================== Per-account скоуп (F-1/F-13/F-14) =====================
 
     @Test

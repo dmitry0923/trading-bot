@@ -201,10 +201,10 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
-    fun `daily limit is pure percent of aum with no ruble floor`() =
+    fun `daily limit is min of percent aum and ruble cap`() =
         runBlocking {
             // Баланс упал до 30 000 (депозит 50 000 - убыток 20 000) → 10% = 3 000,
-            // рублёвый floor НЕ применяется
+            // рублёвый потолок 5 000 > 3 000 → effective = 3 000
             stubNoOpenPositions()
             stubClosedPositions(
                 listOf(closedPosition(BigDecimal("-20000"), LocalDateTime.now().minusDays(1))),
@@ -220,6 +220,25 @@ class DrawdownProtectionServiceTest {
 
             assertEquals(0, BigDecimal("30000").compareTo(status.aum))
             assertEquals(0, BigDecimal("3000").compareTo(status.dailyLimitRub))
+        }
+
+    @Test
+    fun `ruble cap kicks in when percent limit exceeds it`() =
+        runBlocking {
+            // AUM = 100 000 → 10% = 10 000, но рублёвый потолок = 5 000 → effective = 5 000
+            stubNoOpenPositions()
+            stubClosedPositions(emptyList())
+            val config =
+                RiskConfig().apply {
+                    maxDailyLossRub = BigDecimal("5000")
+                    maxDailyLossPercent = 10.0
+                }
+
+            val s = service(config, balance = BigDecimal("100000"))
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("100000").compareTo(status.aum))
+            assertEquals(0, BigDecimal("5000").compareTo(status.dailyLimitRub))
         }
 
     @Test

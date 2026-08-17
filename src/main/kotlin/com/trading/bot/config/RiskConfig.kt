@@ -223,9 +223,8 @@ class RiskConfig {
     // ===== Multi-Tier Drawdown Protection (% от AUM) =====
 
     /**
-     * Дневной лимит убытка, % от AUM. Эффективный лимит в рублях =
-     * AUM * maxDailyLossPercent / 100 (чисто процентный; рублёвое значение
-     * [maxDailyLossRub] используется ТОЛЬКО при выключенном процентном лимите <= 0).
+     * Дневной лимит убытка, % от AUM. Если `maxDailyLossRub > 0` тоже включён,
+     * эффективный лимит = `min(AUM * percent / 100, maxDailyLossRub)` (жёсткий потолок).
      * 10.0 = нельзя терять более 10% капитала за день.
      */
     var maxDailyLossPercent: Double = 10.0

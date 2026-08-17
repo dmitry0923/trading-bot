@@ -40,7 +40,8 @@ import java.time.ZoneId
  *
  *  1. **Дневной лимит** — P&L за сегодня (реализованный по закрытым сделкам +
  *     нереализованный mark-to-market по открытым позициям) не может опуститься ниже
- *     `-maxDailyLossPercent%` AUM;
+ *     `-effectiveDailyLossLimit` AUM. Если включены оба параметра (`maxDailyLossPercent > 0`
+ *     И `maxDailyLossRub > 0`), эффективный лимит = `min(% от AUM, рублёвый потолок)`;
  *  2. **Скользящий лимит 7 дней** — защита от серии мелких убыточных сделок,
  *     которые не пробивают дневной лимит, но накапливают просадку за неделю;
  *  3. **Скользящий лимит 30 дней** — «смерть от тысячи порезов» на горизонте месяца;
@@ -440,10 +441,9 @@ class DrawdownProtectionService(
     /**
      * Эффективный дневной лимит убытка в рублях (кэш AUM, без БД).
      *
-     * При включённом процентном лимите (`maxDailyLossPercent > 0`) используется ТОЛЬКО
-     * `% от AUM` — лимит масштабируется при росте и падении капитала без рублёвого
-     * ослабления. Рублёвое значение [RiskConfig.maxDailyLossRub] — только fallback,
-     * если процентный лимит отключён (<= 0).
+     * Если включены оба параметра (`maxDailyLossPercent > 0` И `maxDailyLossRub > 0`) —
+     * берётся **минимум** (более строгий): процент масштабируется с AUM, рублёвый —
+     * жёсткий потолок. Если включён только один — используется он.
      */
     fun effectiveDailyLossLimitRub(): BigDecimal {
         val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
@@ -573,15 +573,23 @@ class DrawdownProtectionService(
     }
 
     /**
-     * Дневной лимит убытка в рублях: чистый % от AUM.
-     * Рублёвое значение используется только при отключённом процентном лимите (<= 0).
+     * Дневной лимит убытка в рублях.
+     *
+     * Если включены оба параметра (% > 0 И rub > 0) — берём **минимум**
+     * (более строгий): процент масштабируется с AUM, рублёвый — жёсткий потолок.
+     * Если включён только один — используется он.
      */
-    private fun effectiveDailyLossLimitRub(aum: BigDecimal): BigDecimal =
-        if (riskConfig.maxDailyLossPercent > 0) {
-            percentOfAum(aum, riskConfig.maxDailyLossPercent)
-        } else {
-            riskConfig.maxDailyLossRub
+    private fun effectiveDailyLossLimitRub(aum: BigDecimal): BigDecimal {
+        val percentLimit =
+            if (riskConfig.maxDailyLossPercent > 0) percentOfAum(aum, riskConfig.maxDailyLossPercent) else null
+        val rubLimit = if (riskConfig.maxDailyLossRub > BigDecimal.ZERO) riskConfig.maxDailyLossRub else null
+        return when {
+            percentLimit != null && rubLimit != null -> minOf(percentLimit, rubLimit)
+            percentLimit != null -> percentLimit
+            rubLimit != null -> rubLimit
+            else -> BigDecimal.ZERO
         }
+    }
 
     /**
      * Обновляет Shadow/Read-only состояние по серии убытков (per-account, F-14):

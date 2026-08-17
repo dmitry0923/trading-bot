@@ -2,7 +2,6 @@ package com.trading.bot.application
 
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.ExitRules
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
@@ -11,7 +10,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
 import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.PositionRepository
-import com.trading.bot.service.RedisCacheService
+import com.trading.bot.service.ReactiveRedisCacheService
 import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -35,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 class StockPositionMonitor(
     private val positionRepo: PositionRepository,
     private val engine: OrderExecutionEngine,
-    private val redis: RedisCacheService,
+    private val redis: ReactiveRedisCacheService,
     private val riskConfig: RiskConfig,
     private val tradeEventService: TradeEventService,
     private val meterRegistry: MeterRegistry,
@@ -49,7 +48,7 @@ class StockPositionMonitor(
             val open =
                 positionRepo
                     .findByStatusAndTicker(PositionStatus.OPEN, event.ticker)
-            val strategy = BlockingDb.io { redis.getStrategy(event.ticker) }
+            val strategy = redis.getStrategy(event.ticker)
             open.forEach { pos ->
                 if (pos.instrumentType != com.trading.bot.model.InstrumentType.FUTURES) {
                     monitorPosition(pos, event.price, strategy)

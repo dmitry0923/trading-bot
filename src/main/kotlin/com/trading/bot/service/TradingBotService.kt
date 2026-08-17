@@ -13,11 +13,11 @@ import com.trading.bot.client.WsConnectionStatus
 import com.trading.bot.client.WsStream
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.signal.toSignal
 import com.trading.bot.event.TradingEventPublisher
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.CloseReason
@@ -69,7 +69,7 @@ class TradingBotService(
     private val alorWsClient: AlorWebSocketClient,
     private val webSocketManager: WebSocketManager,
     private val orderOutboxService: OrderOutboxService,
-    private val redis: RedisCacheService,
+    private val redis: ReactiveRedisCacheService,
     private val riskConfig: RiskConfig,
     private val positionRepo: PositionRepository,
     private val orderOutboxRepo: OrderOutboxRepository,
@@ -83,6 +83,7 @@ class TradingBotService(
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
     private val tradingAccountService: TradingAccountService,
+    private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -104,7 +105,7 @@ class TradingBotService(
             objectMapper = objectMapper,
             tradeEventService = tradeEventService,
             meterRegistry = meterRegistry,
-            pnlCalculator = PnlCalculator.plain(),
+            pnlCalculator = PnlCalculator.stock { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L },
             instrumentFilter = { it.instrumentType != InstrumentType.FUTURES },
             metricPrefix = "bot",
             onPositionClosed = { pos ->
@@ -174,6 +175,13 @@ class TradingBotService(
                             .timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
                             .record(Duration.between(tick.receivedAt, Instant.now()).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
                         eventPublisher.publishPriceChanged(tick.ticker, tick.price)
+                        if (tick.bidSize != null && tick.askSize != null) {
+                            val obi = com.trading.bot.domain.microstructure.ObiCalculator.calculate(tick.bidSize, tick.askSize)
+                            if (obi != null) marketDataGate.updateObi(tick.ticker, obi)
+                        }
+                        if (tick.bid != null && tick.ask != null) {
+                            marketDataGate.recordSpread(tick.ticker, tick.bid, tick.ask)
+                        }
                     } catch (e: Exception) {
                         logger.error(e) { "WS quote processing error for ${tick.ticker}" }
                     }
@@ -233,7 +241,7 @@ class TradingBotService(
     @EventListener
     fun onStrategyGenerated(event: com.trading.bot.event.StrategyGeneratedEvent) {
         val signal = event.signal
-        if (signal.ticker == "Si") return // фьючерсы обрабатывает FuturesTradingBotService
+        if (instrumentsConfig.isFutures(signal.ticker)) return
         if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
             logger.info { "Trading disabled (single flag) — entry skipped ${signal.ticker}" }
@@ -343,7 +351,7 @@ class TradingBotService(
         logger.info { "=== BOT CYCLE (manual trigger) ===" }
         meterRegistry.counter("bot.cycle").increment()
         scope.launch {
-            val strategies = BlockingDb.io { redis.getAllStrategies(tradingConfig.tickers) }
+            val strategies = redis.getAllStrategies(tradingConfig.tickers)
             strategies.values.forEach { eventPublisher.publishStrategyGenerated(it.toSignal()) }
         }
     }

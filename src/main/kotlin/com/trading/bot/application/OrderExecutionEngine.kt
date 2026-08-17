@@ -26,7 +26,7 @@ import kotlin.math.abs
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
- * - акции: (exit - entry) * qty;
+ * - акции: (exit - entry) * qty * lotSize;
  * - фьючерсы: (exit - entry) * pointValue * qty.
  */
 fun interface PnlCalculator {
@@ -38,11 +38,14 @@ fun interface PnlCalculator {
     ): BigDecimal
 
     companion object {
-        fun plain(): PnlCalculator =
+        fun plain(): PnlCalculator = stock { 1L }
+
+        fun stock(lotSize: (String) -> Long): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
+                val lots = BigDecimal(lotSize(pos.ticker))
                 when (pos.direction) {
-                    PositionDirection.LONG -> to.subtract(from).multiply(qty)
-                    PositionDirection.SHORT -> from.subtract(to).multiply(qty)
+                    PositionDirection.LONG -> to.subtract(from).multiply(qty).multiply(lots)
+                    PositionDirection.SHORT -> from.subtract(to).multiply(qty).multiply(lots)
                 }
             }
 

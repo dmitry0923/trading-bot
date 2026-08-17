@@ -1,11 +1,11 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.DistributedLockConfig
-import com.trading.bot.infrastructure.db.BlockingDb
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.reactive.awaitFirstOrNull
 import org.slf4j.LoggerFactory
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.stereotype.Service
 import java.time.Duration
@@ -24,14 +24,14 @@ import java.util.UUID
  *   ключ чужого прогона;
  * - одиночная инсталляция работает без Redis: при `distributed-lock.enabled=false`
  *   [runExclusive] просто исполняет блок;
- * - [failOpenOnError] при сбое самого Redis (не конкуренция): `true` для фоновых
+ * - failOpenOnError при сбое самого Redis (не конкуренция): `true` для фоновых
  *   планировщиков (не пропустить reconcile/close из-за недоступного Redis),
  *   `false` для входа в позицию (не открывать без лока).
  */
 @Service
 class DistributedLockService(
     private val config: DistributedLockConfig,
-    private val redisTemplate: StringRedisTemplate,
+    private val reactiveRedisTemplate: ReactiveStringRedisTemplate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = LoggerFactory.getLogger(DistributedLockService::class.java)
@@ -88,21 +88,23 @@ class DistributedLockService(
     private suspend fun acquire(
         name: String,
         ttlSeconds: Long,
-    ): Lock? =
-        BlockingDb.io {
-            val token = UUID.randomUUID().toString()
-            val acquired =
-                redisTemplate
-                    .opsForValue()
-                    .setIfAbsent(KEY_PREFIX + name, token, Duration.ofSeconds(ttlSeconds))
-            if (acquired == true) Lock(name, token) else null
-        }
+    ): Lock? {
+        val token = UUID.randomUUID().toString()
+        val acquired =
+            reactiveRedisTemplate
+                .opsForValue()
+                .setIfAbsent(KEY_PREFIX + name, token, Duration.ofSeconds(ttlSeconds))
+                .awaitFirstOrNull()
+        return if (acquired == true) Lock(name, token) else null
+    }
 
-    private suspend fun release(lock: Lock): Boolean =
-        BlockingDb.io {
-            val removed = redisTemplate.execute(RELEASE_SCRIPT, listOf(lock.key), lock.token) as? Long
-            removed == 1L
-        }
+    private suspend fun release(lock: Lock): Boolean {
+        val removed =
+            reactiveRedisTemplate
+                .execute(RELEASE_SCRIPT, listOf(lock.key), lock.token)
+                .awaitFirstOrNull()
+        return removed == 1L
+    }
 
     companion object {
         private const val KEY_PREFIX = "distributed-lock:"

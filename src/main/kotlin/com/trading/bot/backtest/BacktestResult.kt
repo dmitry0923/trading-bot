@@ -35,6 +35,10 @@ data class BacktestResult(
     val recoveryFactor: Double = 0.0,
     val calmarRatio: Double = 0.0,
     val tradeReturns: List<Double> = emptyList(),
+    /** Суммарная комиссия за все сделки (рубли). */
+    val totalCommissionPaid: BigDecimal = BigDecimal.ZERO,
+    /** Доля комиссий в общей прибыли: commission / |gross_profit| × 100. */
+    val costDragPercent: Double = 0.0,
 ) {
     /**
      * Критерии приёма стратегии в прод:
@@ -65,6 +69,8 @@ data class BacktestResult(
             "avgTrade" to avgTrade,
             "recoveryFactor" to recoveryFactor,
             "calmarRatio" to calmarRatio,
+            "totalCommissionPaid" to totalCommissionPaid.toDouble(),
+            "costDragPercent" to costDragPercent,
             "passable" to isPassable(),
         )
 }
@@ -75,6 +81,7 @@ object BacktestMetrics {
         equityCurve: List<BigDecimal>,
         tradeReturns: List<Double>,
         holdBars: List<Int> = emptyList(),
+        totalCommission: BigDecimal = BigDecimal.ZERO,
     ): BacktestResult {
         val totalReturn =
             if (equityCurve.size >= 2 && equityCurve.first() > BigDecimal.ZERO) {
@@ -145,6 +152,13 @@ object BacktestMetrics {
                 0.0
             }
 
+        val costDragPercent =
+            if (grossProfit > 0) {
+                totalCommission.toDouble() / grossProfit * 100.0
+            } else {
+                0.0
+            }
+
         return BacktestResult(
             ticker = ticker,
             totalReturn = totalReturn,
@@ -163,11 +177,13 @@ object BacktestMetrics {
             recoveryFactor = recoveryFactor,
             calmarRatio = calmarRatio,
             tradeReturns = tradeReturns,
+            totalCommissionPaid = totalCommission,
+            costDragPercent = costDragPercent,
         )
     }
 
     /**
-     * Периодные доходности кривой капитала: `(E[i] − E[i−1]) / E[i−1]`.
+     * Периодные доходности кривой капитала: `(E(i) - E(i-1)) / E(i-1)`.
      * Точки с неположительным знаменателем пропускаются (нет смысла в доходности
      * от нулевого/отрицательного капитала).
      */

@@ -78,6 +78,22 @@ object SimulatedExecution {
             .setScale(4, RoundingMode.HALF_UP)
 
     /**
+     * Фиксированная комиссия за лот (per-instrument, например CNY_RUB = 10 RUB/лот).
+     * В отличие от [commissionOn], не зависит от оборота — реалистична для MOEX
+     * с фиксированными тарифами на валютные пары.
+     *
+     * @param commissionPerLot комиссия за 1 лот в рублях (round-trip)
+     * @param lots количество лотов (= quantity / lotSize)
+     */
+    fun commissionFixed(
+        commissionPerLot: BigDecimal,
+        lots: Int,
+    ): BigDecimal =
+        commissionPerLot
+            .multiply(BigDecimal(lots))
+            .setScale(4, RoundingMode.HALF_UP)
+
+    /**
      * Округление до целого лота (вниз) по лотности инструмента.
      * Если результат меньше 1 лота — 0 (позиция не открывается).
      * При lotSize <= 0 (инструмент не найден) лотность игнорируется.

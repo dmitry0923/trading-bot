@@ -24,12 +24,15 @@ import org.springframework.stereotype.Component
  * @property pairs пары для арбитража: тикер -> связанный инструмент
  *   (напр. "Si" -> "USDRUB"). Задаёт relatedQuote в StrategyContext; без пары
  *   ArbitrageStrategy всегда HOLD
+ * @property obiEntryThreshold порог |OBI| для блокировки входа (0.0..1.0):
+ *   BUY блокируется при obi < -threshold, SELL — при obi > threshold.
+ *   0.0 = проверка отключена (по умолчанию 0.5 = умеренная фильтрация)
  */
 @Component
 @ConfigurationProperties(prefix = "trading")
 class TradingConfig {
     var mode: String = "SIMULATION"
-    var tickers: List<String> = listOf("Si", "SBER", "GAZP", "LKOH", "VTBR", "ROSN", "NVTK", "PLZL", "MGNT", "TATN")
+    var tickers: List<String> = listOf("Si", "SBER", "GAZP", "LKOH", "VTBR", "ROSN", "NVTK", "PLZL", "MGNT", "TATN", "CNY_RUB")
     var botIntervalMs: Long = 300000
     var strategyIntervalMs: Long = 600000
     var monitorIntervalMs: Long = 10000
@@ -40,4 +43,5 @@ class TradingConfig {
     var marketDataMaxAgeMs: Long = 15_000
     var candleStaleBufferMs: Long = 120_000
     var pairs: Map<String, String> = emptyMap()
+    var obiEntryThreshold: Double = 0.5
 }

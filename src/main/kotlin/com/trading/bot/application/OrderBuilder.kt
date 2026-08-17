@@ -6,10 +6,9 @@ import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.risk.PositionSizeResult
 import com.trading.bot.domain.risk.TradeRiskDecision
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.repository.StrategyRepository
-import com.trading.bot.service.RedisCacheService
+import com.trading.bot.service.ReactiveRedisCacheService
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 
@@ -26,7 +25,7 @@ class OrderBuilder(
     private val riskConfig: RiskConfig,
     private val instrumentsConfig: InstrumentsConfig,
     private val strategyRepo: StrategyRepository,
-    private val redis: RedisCacheService,
+    private val redis: ReactiveRedisCacheService,
 ) {
     /**
      * Параметры заявки для фьючерса: SL/TP в ценах от [PositionSizeResult],
@@ -75,17 +74,23 @@ class OrderBuilder(
     }
 
     /**
-     * Параметры заявки для акции: SL/TP по проценту от цены входа.
+     * Параметры заявки для акции: SL/TP по проценту от цены входа,
+     * округлённые до сетки цен инструмента (priceStep).
      * Размер позиции (quantity) вычисляет адаптивный риск-менеджмент (Kelly)
      * в оркестраторе входа.
      */
     fun buildStockOrderParams(
+        ticker: String,
         direction: PositionDirection,
         quantity: Int,
         entryPrice: BigDecimal,
     ): OrderParams {
-        val stopLoss = ExitRules.calcSL(entryPrice, direction, riskConfig.defaultStopLossPercent)
-        val takeProfit = ExitRules.calcTP(entryPrice, direction, riskConfig.defaultTakeProfitPercent)
+        val spec = instrumentsConfig.find(ticker)
+        val priceStep = spec?.priceStep ?: BigDecimal("0.01")
+        val slPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent) ?: riskConfig.defaultStopLossPercent
+        val tpPercent = spec?.effectiveTpPercent(riskConfig.defaultTakeProfitPercent) ?: riskConfig.defaultTakeProfitPercent
+        val stopLoss = ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
+        val takeProfit = ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
         return OrderParams(
             direction = direction,
             quantity = quantity,
@@ -110,7 +115,7 @@ class OrderBuilder(
             takeProfit = decision.takeProfit,
             trailingStop = decision.trailingStop,
         )
-        val existing = BlockingDb.io { redis.getStrategy(decision.ticker) }
+        val existing = redis.getStrategy(decision.ticker)
         if (existing != null) {
             val updated =
                 existing.copy(
@@ -119,7 +124,7 @@ class OrderBuilder(
                     takeProfit = decision.takeProfit,
                     trailingStop = decision.trailingStop,
                 )
-            BlockingDb.io { redis.saveStrategy(updated) }
+            redis.saveStrategy(updated)
         }
     }
 }

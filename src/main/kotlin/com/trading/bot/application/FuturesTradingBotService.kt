@@ -125,7 +125,7 @@ class FuturesTradingBotService(
     @EventListener
     fun onStrategyGenerated(event: StrategyGeneratedEvent) {
         val signal = event.signal
-        if (signal.ticker != "Si") return
+        if (!instrumentsConfig.isFutures(signal.ticker)) return
         if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return
         if (!tradingGate.isTradingEnabled()) {
             logger.info { "Trading disabled (single flag) — futures entry skipped ${signal.ticker}" }
@@ -154,7 +154,7 @@ class FuturesTradingBotService(
      */
     @EventListener
     fun onPriceChanged(event: PriceChangedEvent) {
-        if (event.ticker != "Si") return
+        if (!instrumentsConfig.isFutures(event.ticker)) return
         scope.launch(TraceContext.mdcContext(mapOf(TraceContext.TICKER to event.ticker))) {
             try {
                 positionMonitor.monitor(event.ticker, event.price)

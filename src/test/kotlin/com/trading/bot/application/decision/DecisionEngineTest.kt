@@ -36,10 +36,12 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
-import org.springframework.data.redis.core.StringRedisTemplate
-import org.springframework.data.redis.core.ValueOperations
+import com.trading.bot.model.dto.MarketSnapshot
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
+import org.springframework.data.redis.core.ReactiveValueOperations
 import java.math.BigDecimal
 import java.time.Duration
+import reactor.core.publisher.Mono
 
 /**
  * Unit-тесты единого оркестратора входа [DecisionEngine].
@@ -60,10 +62,10 @@ class DecisionEngineTest {
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val meterRegistry = SimpleMeterRegistry()
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
-    private val lockRedis = Mockito.mock(StringRedisTemplate::class.java)
+    private val lockRedis = Mockito.mock(ReactiveStringRedisTemplate::class.java)
 
     @Suppress("UNCHECKED_CAST")
-    private val lockValueOps = Mockito.mock(ValueOperations::class.java) as ValueOperations<String, String>
+    private val lockValueOps = Mockito.mock(ReactiveValueOperations::class.java) as ReactiveValueOperations<String, String>
     private val distributedLockService = DistributedLockService(distributedLockConfig, lockRedis, meterRegistry)
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
@@ -93,7 +95,9 @@ class DecisionEngineTest {
             Mockito.`when`(higherTfTrendFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(degenerateCaseGuard.blockReason(any(), any())).thenReturn(null)
             Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
-            Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("100"))
+            Mockito.`when`(alorClient.getMarketSnapshot("Si")).thenReturn(
+                MarketSnapshot(ticker = "Si", currentPrice = BigDecimal("100"))
+            )
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
                 .`when`(portfolioRiskEngine.evaluate(anyPortfolioRiskRequest()))
@@ -494,7 +498,7 @@ class DecisionEngineTest {
                     Mockito.any(String::class.java),
                     Mockito.any(Duration::class.java),
                 ),
-            ).thenReturn(false)
+            ).thenReturn(Mono.just(false))
         runBlocking {
             engine().openPosition(signal(), gateway())
         }
@@ -512,7 +516,7 @@ class DecisionEngineTest {
                     Mockito.any(String::class.java),
                     Mockito.any(Duration::class.java),
                 ),
-            ).thenReturn(true)
+            ).thenReturn(Mono.just(true))
         runBlocking {
             engine().openPosition(signal(), gateway())
         }

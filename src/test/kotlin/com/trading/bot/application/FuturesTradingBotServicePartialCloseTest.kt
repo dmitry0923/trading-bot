@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
@@ -63,7 +63,7 @@ class FuturesTradingBotServicePartialCloseTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val distributedLockService =
-        DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
+        DistributedLockService(distributedLockConfig, Mockito.mock(ReactiveStringRedisTemplate::class.java), meterRegistry)
 
     private val service =
         FuturesTradingBotService(
@@ -121,6 +121,7 @@ class FuturesTradingBotServicePartialCloseTest {
         )
 
     private fun stubCommon(pos: Position) {
+        Mockito.`when`(instrumentsConfig.isFutures(Mockito.anyString())).thenReturn(true)
         runBlocking {
             Mockito
                 .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))

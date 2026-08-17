@@ -9,25 +9,21 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
-import org.springframework.data.redis.core.StringRedisTemplate
-import org.springframework.data.redis.core.ValueOperations
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
+import org.springframework.data.redis.core.ReactiveValueOperations
 import org.springframework.data.redis.core.script.RedisScript
+import reactor.core.publisher.Flux
+import reactor.core.publisher.Mono
 import java.time.Duration
 
 /**
  * Unit-тесты распределённого лока [DistributedLockService].
- *
- * Покрывают контракты:
- * - выключенный лок (single-instance) исполняет блок без обращения к Redis;
- * - конкуренция (SET NX вернул false) → блок не исполняется, результат false;
- * - успешный захват → блок исполняется, ключ освобождается (Lua compare-and-delete);
- * - сбой Redis + failOpenOnError=true → блок всё равно исполняется (fail-open);
- * - сбой Redis + failOpenOnError=false → блок не исполняется (fail-closed).
  */
 class DistributedLockServiceTest {
     private val config = DistributedLockConfig()
-    private val redis = Mockito.mock(StringRedisTemplate::class.java)
-    private val valueOps = Mockito.mock(ValueOperations::class.java) as ValueOperations<String, String>
+    private val redis = Mockito.mock(ReactiveStringRedisTemplate::class.java)
+    @Suppress("UNCHECKED_CAST")
+    private val valueOps = Mockito.mock(ReactiveValueOperations::class.java) as ReactiveValueOperations<String, String>
     private val meterRegistry = SimpleMeterRegistry()
     private val service = DistributedLockService(config, redis, meterRegistry)
 
@@ -48,10 +44,10 @@ class DistributedLockServiceTest {
                     Mockito.any(String::class.java),
                     Mockito.any(Duration::class.java),
                 ),
-            ).thenReturn(true)
+            ).thenReturn(Mono.just(true))
         Mockito
             .`when`(redis.execute(Mockito.any(RedisScript::class.java), Mockito.anyList(), Mockito.anyString()))
-            .thenReturn(1L)
+            .thenReturn(Flux.just(1L))
     }
 
     private fun acquireContended() {
@@ -62,7 +58,7 @@ class DistributedLockServiceTest {
                     Mockito.any(String::class.java),
                     Mockito.any(Duration::class.java),
                 ),
-            ).thenReturn(false)
+            ).thenReturn(Mono.just(false))
     }
 
     private fun acquireThrows() {
@@ -80,7 +76,7 @@ class DistributedLockServiceTest {
         }
 
     @Test
-    fun `successful acquire runs block and releases the key`() =
+    fun `successful acquire runs block and releases the key`() {
         runBlocking {
             config.enabled = true
             acquireSucceeds()
@@ -91,6 +87,7 @@ class DistributedLockServiceTest {
             assertEquals(1, blockRuns)
             Mockito.verify(redis).execute(Mockito.any(RedisScript::class.java), Mockito.anyList(), Mockito.anyString())
         }
+    }
 
     @Test
     fun `contended acquire skips block and returns false`() =

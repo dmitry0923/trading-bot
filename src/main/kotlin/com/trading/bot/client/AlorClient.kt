@@ -2,6 +2,8 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.domain.microstructure.MicropriceCalculator
+import com.trading.bot.domain.microstructure.ObiCalculator
 import com.trading.bot.domain.risk.DegenerateCaseDetector
 import com.trading.bot.model.dto.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -16,7 +18,6 @@ import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
-import org.springframework.web.reactive.function.client.WebClientResponseException
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
@@ -93,13 +94,21 @@ class AlorClient(
             val seed = ticker.hashCode().toLong().and(0x7FFFFFFFL)
             val base = 100 + (seed % 900)
             val price = BigDecimal(base).setScale(2)
+            val bid = price.multiply(BigDecimal("0.999")).setScale(2)
+            val ask = price.multiply(BigDecimal("1.001")).setScale(2)
+            val bidSize = 150L + (seed % 850)
+            val askSize = 150L + ((seed shr 8) % 850)
             logger.warn { "SIMULATION mode: returning synthetic price for $ticker = $price" }
             return MarketSnapshot(
                 ticker = ticker,
                 currentPrice = price,
-                bid = price.multiply(BigDecimal("0.999")).setScale(2),
-                ask = price.multiply(BigDecimal("1.001")).setScale(2),
+                bid = bid,
+                ask = ask,
                 volume = 1_000_000L,
+                bidSize = bidSize,
+                askSize = askSize,
+                microprice = MicropriceCalculator.calculate(bid, ask, bidSize, askSize),
+                obi = ObiCalculator.calculate(bidSize, askSize),
             )
         }
         val start = System.currentTimeMillis()
@@ -118,12 +127,20 @@ class AlorClient(
             recordLatency("getQuotes", start)
             meterRegistry.counter("alor.quotes.ok", Tags.of("ticker", ticker)).increment()
             val j = objectMapper.readTree(raw)
+            val bid = j.path("bid").asString().toBigDecimalOrNull()
+            val ask = j.path("ask").asString().toBigDecimalOrNull()
+            val bidSize = j.path("bidVolume").asLong(0).takeIf { it > 0 }
+            val askSize = j.path("askVolume").asLong(0).takeIf { it > 0 }
             MarketSnapshot(
                 ticker = ticker,
                 currentPrice = BigDecimal(j.path("lastPrice").asString("0")),
-                bid = j.path("bid").asString().toBigDecimalOrNull(),
-                ask = j.path("ask").asString().toBigDecimalOrNull(),
+                bid = bid,
+                ask = ask,
                 volume = j.path("volume").asLong(0),
+                bidSize = bidSize,
+                askSize = askSize,
+                microprice = MicropriceCalculator.calculate(bid, ask, bidSize, askSize),
+                obi = ObiCalculator.calculate(bidSize, askSize),
                 timestamp = Instant.now(),
             )
         } catch (e: Exception) {

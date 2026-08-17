@@ -1,0 +1,114 @@
+groups:
+  - name: trading_bot_critical
+    rules:
+      # BotDown: приложение не отвечает на health check
+      - alert: BotDown
+        expr: up{job="trading-bot"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trading bot is DOWN"
+          description: "Application has been unreachable for more than 1 minute."
+
+      # DailyLossLimitReached: дневной лимит убытка достигнут
+      - alert: DailyLossLimitReached
+        expr: drawdown_daily_limit_reached == 1
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Daily loss limit reached"
+          description: "Drawdown protection triggered. Trading halted for the day."
+
+      # EmergencyStop: аварийная остановка
+      - alert: EmergencyStop
+        expr: bot_emergency_stop_total > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Emergency stop activated"
+          description: "Emergency stop has been triggered. All positions being closed."
+
+      # WsQuotesDisconnected: WS quotes отключён > 5 минут
+      - alert: WsQuotesDisconnected
+        expr: alor_ws_status{stream="QUOTES"} != 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WebSocket quotes disconnected"
+          description: "Quotes WebSocket has been disconnected for more than 5 minutes."
+
+  - name: trading_bot_warning
+    rules:
+      # HighSpread: спред > 2% (для CNY_RUB — критично)
+      - alert: HighSpread
+        expr: market_data_spread_percent > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Abnormally wide spread on {{ $labels.ticker }}"
+          description: "Spread is {{ $value | printf \"%.3f\" }}% which exceeds 2% threshold."
+
+      # LLMHighLatency: LLM p95 > 20s
+      - alert: LLMHighLatency
+        expr: histogram_quantile(0.95, rate(llm_latency_seconds_bucket[5m])) > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM latency p95 is {{ $value | printf \"%.1f\" }}s"
+          description: "LLM response latency exceeds 20s SLO target."
+
+      # WsReconnectLoop: много реконнектов
+      - alert: WsReconnectLoop
+        expr: rate(alor_ws_reconnect_total[5m]) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket reconnect loop detected"
+          description: "Reconnect rate is {{ $value | printf \"%.2f\" }}/s (more than 1 every 5s)."
+
+      # ConsecutiveLosses: серия убытков > 3
+      - alert: ConsecutiveLosses
+        expr: drawdown_consecutive_losses >= 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consecutive losses: {{ $value }}"
+          description: "Shadow mode may be activated after {{ $value }} consecutive losses."
+
+      # OBI Opposition Block: входы блокируются по OBI
+      - alert: OpiBlockingEntries
+        expr: rate(bot_entry_rejected_total{reason="OBI_OPPosing"}[10m]) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OBI frequently blocking entries on {{ $labels.ticker }}"
+          description: "OBI opposition rejection rate is {{ $value | printf \"%.3f\" }}/s."
+
+      # MarketDataStale: нет свежих данных > 2 минут
+      - alert: MarketDataStale
+        expr: market_data_age_ms > 120000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Market data stale for {{ $labels.ticker }}"
+          description: "Last data age is {{ $value | printf \"%.0f\" }}ms (> 2 minutes)."
+
+      # TradingPaused: тикер на паузе
+      - alert: TradingPaused
+        expr: strategy_pause_total > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trading paused on {{ $labels.ticker }}"
+          description: "Adaptive risk has paused trading for this ticker."

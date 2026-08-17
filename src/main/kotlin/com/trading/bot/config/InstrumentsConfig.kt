@@ -14,6 +14,11 @@ import java.math.RoundingMode
  *   - go = 15 000 ₽ (гарантийное обеспечение)
  *   - leverage берётся из LeverageConfig (placeholder `${leverage.user-leverage}`)
  *
+ * CNY_RUB — кросс-курс юань/рубль MOEX:
+ *   - lotSize = 10 000 юаней
+ *   - priceStep = 0.0001 (0.01 копейки)
+ *   - priceStepCost = 1.0 ₽
+ *
  * Остальные тикеры — акции MOEX (SBER, GAZP, LKOH, ...). Их futures-поля
  * (go, leverage) не используются: для акций применяется Kelly-сайзинг.
  *
@@ -126,6 +131,21 @@ class InstrumentsConfig {
                 leverage = BigDecimal("1.0"),
                 baseAsset = "RUB",
             ),
+            InstrumentSpec(
+                ticker = "CNY_RUB",
+                type = "STOCK",
+                lotSize = 10000,
+                priceStep = BigDecimal("0.0001"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal("1.0"),
+                baseAsset = "CNY",
+                slPercent = 0.5,
+                tpPercent = 1.0,
+                maxSpreadPercent = 2.0,
+                maxGapPercent = 5.0,
+                commissionRub = BigDecimal("10.0"),
+            ),
         )
 
     data class InstrumentSpec(
@@ -137,7 +157,26 @@ class InstrumentsConfig {
         var go: BigDecimal = BigDecimal("15000"),
         var leverage: BigDecimal = BigDecimal("2.0"),
         var baseAsset: String = "USD",
-    )
+        /** Per-instrument SL% — overrides RiskConfig.defaultStopLossPercent when non-null. */
+        var slPercent: Double? = null,
+        /** Per-instrument TP% — overrides RiskConfig.defaultTakeProfitPercent when non-null. */
+        var tpPercent: Double? = null,
+        /** Per-instrument max spread % — overrides RiskConfig.maxSpreadPercent when non-null. */
+        var maxSpreadPercent: Double? = null,
+        /** Per-instrument max gap % — overrides RiskConfig.maxGapPercent when non-null. */
+        var maxGapPercent: Double? = null,
+        /** Commission per lot in RUB (round-trip). Used by cost-aware position sizing. */
+        var commissionRub: BigDecimal? = null,
+    ) {
+        /** Effective SL%: per-instrument override or global default. */
+        fun effectiveSlPercent(globalDefault: Double): Double = slPercent ?: globalDefault
+        /** Effective TP%: per-instrument override or global default. */
+        fun effectiveTpPercent(globalDefault: Double): Double = tpPercent ?: globalDefault
+        /** Effective max spread %: per-instrument override or global default. */
+        fun effectiveMaxSpreadPercent(globalDefault: Double): Double = maxSpreadPercent ?: globalDefault
+        /** Effective max gap %: per-instrument override or global default. */
+        fun effectiveMaxGapPercent(globalDefault: Double): Double = maxGapPercent ?: globalDefault
+    }
 
     fun find(ticker: String): InstrumentSpec? = instruments.firstOrNull { it.ticker.equals(ticker, ignoreCase = true) }
 

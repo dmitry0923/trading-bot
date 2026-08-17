@@ -138,7 +138,8 @@ class DecisionEngine(
         }
 
         val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-        val entryPrice = alorClient.getLastPrice(ticker) ?: signal.targetPrice
+        val snapshot = alorClient.getMarketSnapshot(ticker)
+        val entryPrice = snapshot?.microprice ?: snapshot?.currentPrice ?: signal.targetPrice
 
         // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью).
         // null = legacy single-account (таблица пуста) или все аккаунты переполнены.

@@ -78,32 +78,49 @@ object ExitRules {
 
     /**
      * Цена стоп-лосса по проценту от цены входа (акции).
+     * Если передан [priceStep], результат округляется до сетки цен инструмента.
      */
     fun calcSL(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         percent: Double,
+        priceStep: BigDecimal = BigDecimal("0.01"),
     ): BigDecimal {
         val p = BigDecimal(percent.toString()).divide(BigDecimal("100"))
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(p)).setScale(2, RoundingMode.HALF_UP)
-            PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.add(p)).setScale(2, RoundingMode.HALF_UP)
-        }
+        val raw =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
+                PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.add(p))
+            }
+        return alignToGrid(raw, priceStep)
     }
 
     /**
      * Цена тейк-профита по проценту от цены входа (акции).
+     * Если передан [priceStep], результат округляется до сетки цен инструмента.
      */
     fun calcTP(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         percent: Double,
+        priceStep: BigDecimal = BigDecimal("0.01"),
     ): BigDecimal {
         val p = BigDecimal(percent.toString()).divide(BigDecimal("100"))
-        return when (direction) {
-            PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(p)).setScale(2, RoundingMode.HALF_UP)
-            PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.subtract(p)).setScale(2, RoundingMode.HALF_UP)
-        }
+        val raw =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(p))
+                PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
+            }
+        return alignToGrid(raw, priceStep)
+    }
+
+    /**
+     * Округление цены до ближайшего шага сетки.
+     */
+    private fun alignToGrid(price: BigDecimal, priceStep: BigDecimal): BigDecimal {
+        if (priceStep <= BigDecimal.ZERO) return price.setScale(2, RoundingMode.HALF_UP)
+        val scale = priceStep.scale()
+        return price.divide(priceStep, 0, RoundingMode.HALF_UP).multiply(priceStep).setScale(scale, RoundingMode.HALF_UP)
     }
 
     /**

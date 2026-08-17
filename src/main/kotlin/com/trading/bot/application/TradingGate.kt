@@ -1,5 +1,7 @@
 package com.trading.bot.application
 
+import com.trading.bot.client.WebSocketManager
+import com.trading.bot.client.WsStream
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.model.entity.TradingHaltRecord
@@ -40,6 +42,7 @@ class TradingGate(
     private val candleCache: CandleCacheService,
     private val marketDataGate: MarketDataGate,
     private val tradingHaltService: TradingHaltService,
+    private val webSocketManager: WebSocketManager,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -95,6 +98,16 @@ class TradingGate(
                         reason = TradingBlockReason.OUTSIDE_HOURS,
                         source = TradingBlockSource.TRADING_HOURS,
                         detail = "outside trading window ${settings.tradingHoursStart}–${settings.tradingHoursEnd} MSK",
+                    ),
+                )
+            }
+
+            if (!webSocketManager.isConnected(WsStream.QUOTES) && !webSocketManager.isConnected(WsStream.ORDERS)) {
+                add(
+                    TradingBlock(
+                        reason = TradingBlockReason.WS_DISCONNECTED,
+                        source = TradingBlockSource.MARKET_DATA,
+                        detail = "WebSocket disconnected — waiting for reconnect",
                     ),
                 )
             }

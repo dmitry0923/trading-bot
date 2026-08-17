@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
@@ -22,13 +23,15 @@ import java.time.LocalDateTime
  * - PRICE_GAP по свечам кэша;
  * - DEPOSITARY_PAUSE по нулевым объёмам;
  * - порядок проверок (спред → гэп → пауза);
- * - pass-through при выключенном guard и при чистом состоянии.
+ * - pass-through при выключенном guard и при чистом состоянии;
+ * - per-instrument spread/gap thresholds.
  */
 class DegenerateCaseGuardTest {
     private val riskConfig = RiskConfig()
+    private val instrumentsConfig = InstrumentsConfig()
     private val alorClient = Mockito.mock(AlorClient::class.java)
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
-    private val guard = DegenerateCaseGuard(riskConfig, alorClient, candleCache)
+    private val guard = DegenerateCaseGuard(riskConfig, instrumentsConfig, alorClient, candleCache)
 
     @BeforeEach
     fun setUp() {
@@ -169,6 +172,44 @@ class DegenerateCaseGuardTest {
         }
 
         val reason = runBlocking { guard.blockReason("SBER", "MINUTE_10") }
+        assertNull(reason)
+    }
+
+    @Test
+    fun `per-instrument spread threshold overrides global`() {
+        riskConfig.maxSpreadPercent = 5.0
+        instrumentsConfig.instruments = mutableListOf(
+            InstrumentsConfig.InstrumentSpec(ticker = "CNY_RUB", type = "STOCK", lotSize = 10000,
+                priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+                maxSpreadPercent = 0.2),
+        )
+        runBlocking {
+            Mockito
+                .`when`(alorClient.getMarketSnapshot("CNY_RUB"))
+                .thenReturn(MarketSnapshot(currentPrice = BigDecimal("12.40"), bid = BigDecimal("12.30"), ask = BigDecimal("12.50")))
+        }
+
+        val reason = runBlocking { guard.blockReason("CNY_RUB", "MINUTE_10") }
+        assertEquals("WIDE_SPREAD", reason)
+    }
+
+    @Test
+    fun `per-instrument wider spread threshold allows entry`() {
+        riskConfig.maxSpreadPercent = 0.2
+        instrumentsConfig.instruments = mutableListOf(
+            InstrumentsConfig.InstrumentSpec(ticker = "CNY_RUB", type = "STOCK", lotSize = 10000,
+                priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+                maxSpreadPercent = 5.0),
+        )
+        runBlocking {
+            Mockito
+                .`when`(alorClient.getMarketSnapshot("CNY_RUB"))
+                .thenReturn(MarketSnapshot(currentPrice = BigDecimal("12.40"), bid = BigDecimal("12.30"), ask = BigDecimal("12.50")))
+        }
+
+        val reason = runBlocking { guard.blockReason("CNY_RUB", "MINUTE_10") }
         assertNull(reason)
     }
 }

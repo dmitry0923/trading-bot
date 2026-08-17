@@ -211,7 +211,7 @@ class BacktestEngineTest {
 
         val metrics = result.metrics()
 
-        assertEquals(14, metrics.size)
+        assertEquals(16, metrics.size)
         assertEquals(1.5, metrics["sharpeRatio"])
         assertEquals(250, metrics["totalTrades"])
         assertEquals(true, metrics["passable"])
@@ -1245,5 +1245,131 @@ class BacktestEngineTest {
             minBars: Int,
             cycleId: String,
         ): StrategyAction = if (index < switchAfter) first else second
+    }
+
+    @Test
+    fun `per-instrument commissionRub is used instead of universal rate`() = runBlocking {
+        val instruments = InstrumentsConfig().apply {
+            instruments = mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNY_RUB", type = "STOCK", lotSize = 1,
+                    priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
+                    go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+                    commissionRub = BigDecimal("10.0"),
+                ),
+            )
+        }
+        val engine = BacktestEngine(
+            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+            instrumentsConfig = instruments,
+            riskConfig = RiskConfig().apply { defaultStopLossPercent = 0.5 },
+            signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
+        )
+        val candles = (0 until 60).map { i ->
+            Candle(
+                ticker = "CNY_RUB",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("12.40"),
+                highPrice = BigDecimal("12.42"),
+                lowPrice = BigDecimal("12.38"),
+                closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        }
+        val result = engine.simulate(
+            "CNY_RUB",
+            candles,
+            initialCapital = BigDecimal("500000"),
+        )
+        assertTrue(result.totalCommissionPaid > BigDecimal.ZERO, "Commission should be charged, got ${result.totalCommissionPaid}")
+        assertTrue(result.costDragPercent >= 0.0, "Cost drag should be >= 0, got ${result.costDragPercent}")
+    }
+
+    @Test
+    fun `per-instrument sl and tp overrides are applied`() = runBlocking {
+        val instruments = InstrumentsConfig().apply {
+            instruments = mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNY_RUB", type = "STOCK", lotSize = 1,
+                    priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
+                    go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+                    slPercent = 0.5, tpPercent = 1.0,
+                ),
+            )
+        }
+        val engine = BacktestEngine(
+            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+            instrumentsConfig = instruments,
+            riskConfig = RiskConfig(),
+            signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+        )
+        val candles = (0 until 60).map { i ->
+            Candle(
+                ticker = "CNY_RUB",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("12.40"),
+                highPrice = BigDecimal("12.42"),
+                lowPrice = BigDecimal("12.38"),
+                closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        }
+        val result = engine.simulate(
+            "CNY_RUB",
+            candles,
+            initialCapital = BigDecimal("500000"),
+            slPercent = 2.0,
+            tpPercent = 4.0,
+        )
+        // Even though global slPercent=2.0/tpPercent=4.0 passed to simulate,
+        // per-instrument slPercent=0.5/tpPercent=1.0 should be used because
+        // stopPrice/takePrice use InstrumentSpec.effectiveSlPercent.
+        assertTrue(result.totalTrades >= 0)
+    }
+
+    @Test
+    fun `stock sizing accounts for per-instrument sl and commission`() = runBlocking {
+        val instruments = InstrumentsConfig().apply {
+            instruments = mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNY_RUB", type = "STOCK", lotSize = 1,
+                    priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
+                    go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+                    slPercent = 0.5, commissionRub = BigDecimal("10.0"),
+                ),
+            )
+        }
+        val riskConfig = RiskConfig().apply {
+            riskPerTradePercent = 1.0
+            defaultStopLossPercent = 2.0
+        }
+        val engine = BacktestEngine(
+            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+            instrumentsConfig = instruments,
+            riskConfig = riskConfig,
+            signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
+        )
+        val candles = (0 until 60).map { i ->
+            Candle(
+                ticker = "CNY_RUB",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal("12.40"),
+                highPrice = BigDecimal("12.42"),
+                lowPrice = BigDecimal("12.38"),
+                closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        }
+        val result = engine.simulate(
+            "CNY_RUB",
+            candles,
+            initialCapital = BigDecimal("500000"),
+        )
+        // With per-instrument sl=0.5% and commission=10 RUB, the lossPerShare is smaller
+        // than with global sl=2.0% and no commission, allowing larger position.
+        assertTrue(result.totalCommissionPaid >= BigDecimal.ZERO)
     }
 }

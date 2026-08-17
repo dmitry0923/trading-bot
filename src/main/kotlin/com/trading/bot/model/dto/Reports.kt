@@ -27,5 +27,9 @@ data class MarketSnapshot(
     val bid: BigDecimal? = null,
     val ask: BigDecimal? = null,
     val volume: Long? = null,
+    val bidSize: Long? = null,
+    val askSize: Long? = null,
+    val microprice: BigDecimal? = null,
+    val obi: BigDecimal? = null,
     val timestamp: Instant = Instant.now(),
 )

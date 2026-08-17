@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.DegenerateCaseDetector
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -10,10 +11,9 @@ import org.springframework.stereotype.Component
  * Пре-входной guard вырожденных рыночных случаев (roadmap 13.3.5).
  *
  * Проверяет перед входом в позицию:
- *   1. [WIDE_SPREAD] — спред котировок выше [RiskConfig.maxSpreadPercent] (fail-open:
- *      нет снэпшота — пропускаем, как в [AlorClient.placeMarketOrder]);
- *   2. [PRICE_GAP] — открывающий гэп на последней свече выше [RiskConfig.maxGapPercent];
- *   3. [DEPOSITARY_PAUSE] — [RiskConfig.consecutiveZeroVolumeBars] подряд нулевых
+ *   1. WIDE_SPREAD — спред котировок выше порога (per-instrument или global);
+ *   2. PRICE_GAP — открывающий гэп на последней свече выше порога;
+ *   3. DEPOSITARY_PAUSE — consecutiveZeroVolumeBars подряд нулевых
  *      по объёму свечей (депозитарная/торговая пауза).
  *
  * Проверки по свечам fail-open при недостатке данных (пустой кэш на старте).
@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component
 @Component
 class DegenerateCaseGuard(
     private val config: RiskConfig,
+    private val instrumentsConfig: InstrumentsConfig,
     private val alorClient: AlorClient,
     private val candleCache: CandleCacheService,
 ) {
@@ -41,6 +42,10 @@ class DegenerateCaseGuard(
     ): String? {
         if (!config.degenerateCaseGuardEnabled) return null
 
+        val spec = instrumentsConfig.find(ticker)
+        val spreadThreshold = spec?.effectiveMaxSpreadPercent(config.maxSpreadPercent) ?: config.maxSpreadPercent
+        val gapThreshold = spec?.effectiveMaxGapPercent(config.maxGapPercent) ?: config.maxGapPercent
+
         val snapshot = alorClient.getMarketSnapshot(ticker)
         if (
             snapshot != null &&
@@ -48,16 +53,16 @@ class DegenerateCaseGuard(
                 snapshot.bid,
                 snapshot.ask,
                 snapshot.currentPrice,
-                config.maxSpreadPercent,
+                spreadThreshold,
             )
         ) {
-            logger.warn { "Wide spread for $ticker (> ${config.maxSpreadPercent}%) — entry blocked" }
+            logger.warn { "Wide spread for $ticker (> ${spreadThreshold}%) — entry blocked" }
             return "WIDE_SPREAD"
         }
 
         val candles = candleCache.getRecentCandles(ticker, timeframe, lookbackBars)
-        if (DegenerateCaseDetector.isGap(candles, config.maxGapPercent)) {
-            logger.warn { "Price gap for $ticker (> ${config.maxGapPercent}%) — entry blocked" }
+        if (DegenerateCaseDetector.isGap(candles, gapThreshold)) {
+            logger.warn { "Price gap for $ticker (> ${gapThreshold}%) — entry blocked" }
             return "PRICE_GAP"
         }
         if (DegenerateCaseDetector.isDepositaryPause(candles, config.consecutiveZeroVolumeBars)) {

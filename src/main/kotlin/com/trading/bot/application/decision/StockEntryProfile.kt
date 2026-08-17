@@ -103,15 +103,20 @@ class StockEntryProfile(
 
         // Риск-кап на сделку (аналог FuturesPositionSizer): убыток при срабатывании
         // стопа не может превысить riskPerTradePercent% от AUM.
-        // lossPerShare = entryPrice * defaultStopLossPercent% (SL-цена у OrderBuilder такая же).
+        // lossPerShare = entryPrice * effectiveSlPercent% (SL-цена у OrderBuilder такая же).
+        val spec = instrumentsConfig.find(signal.ticker)
+        val effectiveSlPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+            ?: riskConfig.defaultStopLossPercent
+        val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
         val riskAmount =
             request.portfolioMoney
                 .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerShare =
             entryPrice
-                .multiply(BigDecimal(riskConfig.defaultStopLossPercent.toString()))
+                .multiply(BigDecimal(effectiveSlPercent.toString()))
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+                .add(commissionPerLot.divide(BigDecimal(spec?.lotSize ?: 1), 6, RoundingMode.HALF_UP))
         val maxQtyByRisk =
             if (lossPerShare > BigDecimal.ZERO) {
                 riskAmount.divide(lossPerShare, 4, RoundingMode.DOWN).toInt()
@@ -155,7 +160,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         request: EntryRequest,
-    ): OrderParams = orderBuilder.buildStockOrderParams(direction, size.quantity.coerceAtLeast(1), entryPrice)
+    ): OrderParams = orderBuilder.buildStockOrderParams(ticker, direction, size.quantity.coerceAtLeast(1), entryPrice)
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 

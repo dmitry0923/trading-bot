@@ -1,5 +1,7 @@
 package com.trading.bot.application
 
+import com.trading.bot.client.WebSocketManager
+import com.trading.bot.client.WsStream
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.model.entity.BotSettings
@@ -36,6 +38,7 @@ class TradingGateTest {
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
     private val marketDataGate = Mockito.mock(MarketDataGate::class.java)
     private val tradingHaltService = Mockito.mock(TradingHaltService::class.java)
+    private val webSocketManager = Mockito.mock(WebSocketManager::class.java)
 
     private fun gate(
         manualEnabled: Boolean = true,
@@ -56,6 +59,7 @@ class TradingGateTest {
         Mockito
             .`when`(candleCache.calculateAtr(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
             .thenReturn(null)
+        Mockito.`when`(webSocketManager.isConnected(any<WsStream>())).thenReturn(true)
         runBlocking {
             Mockito.`when`(adaptiveRisk.shouldPauseTrading(Mockito.anyString())).thenReturn(false)
         }
@@ -69,6 +73,7 @@ class TradingGateTest {
             candleCache = candleCache,
             marketDataGate = marketDataGate,
             tradingHaltService = tradingHaltService,
+            webSocketManager = webSocketManager,
         )
     }
 

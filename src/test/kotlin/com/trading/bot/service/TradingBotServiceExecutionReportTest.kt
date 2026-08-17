@@ -46,7 +46,7 @@ class TradingBotServiceExecutionReportTest {
     private val alorWsClient = Mockito.mock(AlorWebSocketClient::class.java)
     private val webSocketManager = Mockito.mock(WebSocketManager::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
-    private val redis = Mockito.mock(RedisCacheService::class.java)
+    private val redis = Mockito.mock(ReactiveRedisCacheService::class.java)
     private val riskConfig = RiskConfig()
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
     private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
@@ -60,6 +60,7 @@ class TradingBotServiceExecutionReportTest {
     private val distributedLockService = Mockito.mock(DistributedLockService::class.java)
     private val distributedLockConfig = DistributedLockConfig()
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
+    private val instrumentsConfig = Mockito.mock(com.trading.bot.config.InstrumentsConfig::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private lateinit var service: TradingBotService
@@ -92,6 +93,7 @@ class TradingBotServiceExecutionReportTest {
                 distributedLockService,
                 distributedLockConfig,
                 tradingAccountService,
+                instrumentsConfig,
                 meterRegistry,
             )
     }

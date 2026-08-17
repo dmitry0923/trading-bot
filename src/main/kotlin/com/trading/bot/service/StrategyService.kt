@@ -17,7 +17,6 @@ import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.strategy.StrategyDecision
 import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.event.TradingEventPublisher
-import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.StrategyAction
@@ -75,7 +74,7 @@ class StrategyService(
     private val llmAdvisor: LlmAdvisor,
     private val feedbackAgent: PerformanceFeedbackAgent,
     private val adaptiveRisk: AdaptiveRiskService,
-    private val redis: RedisCacheService,
+    private val redis: ReactiveRedisCacheService,
     private val candleCache: CandleCacheService,
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
@@ -377,7 +376,7 @@ class StrategyService(
         // последний BUY/SELL (иначе OrderBuilder.recordStrategyExecution и REST
         // «последняя стратегия» видели HOLD-строку без риск-полей).
         if (signal.action != StrategyAction.HOLD) {
-            BlockingDb.io { redis.saveStrategy(strategy) }
+            redis.saveStrategy(strategy)
         }
 
         val experimentEnabled = paperTradingService.isExperimentEnabled()
@@ -430,7 +429,7 @@ class StrategyService(
         ticker: String,
         regime: PerTickerRegime,
     ) {
-        MutableGauges.set(meterRegistry, "market.regime.level", regime.encodedLevel().toDouble(), Tags.of("ticker", ticker))
+        MutableGauges.set(meterRegistry, "market.regime.level", regime.encodedLevel(), Tags.of("ticker", ticker))
         regime.blockReason()?.let { reason ->
             meterRegistry.counter("market.regime.blocked", Tags.of("ticker", ticker, "reason", reason)).increment()
         }

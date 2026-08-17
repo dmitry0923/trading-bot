@@ -50,7 +50,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.verify
-import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -88,7 +88,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val distributedLockConfig = DistributedLockConfig().apply { enabled = false }
     private val distributedLockService =
-        DistributedLockService(distributedLockConfig, Mockito.mock(StringRedisTemplate::class.java), meterRegistry)
+        DistributedLockService(distributedLockConfig, Mockito.mock(ReactiveStringRedisTemplate::class.java), meterRegistry)
     private val tradingAccountService = Mockito.mock(TradingAccountService::class.java)
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
     private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
@@ -150,6 +150,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
 
     @BeforeEach
     fun stubAccount() {
+        Mockito.`when`(instrumentsConfig.isFutures(Mockito.anyString())).thenReturn(true)
         runBlocking {
             Mockito
                 .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))

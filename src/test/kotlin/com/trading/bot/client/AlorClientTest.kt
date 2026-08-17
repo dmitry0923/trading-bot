@@ -90,21 +90,28 @@ class AlorClientTest {
 
                 val snapshot = c.getMarketSnapshot("SBER")
 
+                val seed = "SBER".hashCode().toLong().and(0x7FFFFFFFL)
+                val base = 100 + (seed % 900)
+                val expectedPrice = BigDecimal(base).setScale(2)
+
                 assertEquals("SBER", snapshot?.ticker)
-                assertEquals(0, BigDecimal("100").compareTo(snapshot?.currentPrice))
-                assertEquals(0, BigDecimal("99.9").compareTo(snapshot?.bid))
-                assertEquals(0, BigDecimal("100.1").compareTo(snapshot?.ask))
+                assertEquals(0, expectedPrice.compareTo(snapshot?.currentPrice))
+                assertEquals(0, expectedPrice.multiply(BigDecimal("0.999")).setScale(2).compareTo(snapshot?.bid))
+                assertEquals(0, expectedPrice.multiply(BigDecimal("1.001")).setScale(2).compareTo(snapshot?.ask))
                 assertEquals(1_000_000L, snapshot?.volume)
                 assertTrue(server.requests.isEmpty(), "no REST call expected in SIMULATION")
             }
         }
 
     @Test
-    fun `simulation mode getLastPrice returns 100`() =
+    fun `simulation mode getLastPrice returns seeded price`() =
         runBlocking {
             FakeAlorServer().use { server ->
                 val c = client(server, mode = "SIMULATION")
-                assertEquals(0, BigDecimal("100").compareTo(c.getLastPrice("SBER")))
+                val seed = "SBER".hashCode().toLong().and(0x7FFFFFFFL)
+                val base = 100 + (seed % 900)
+                val expectedPrice = BigDecimal(base).setScale(2)
+                assertEquals(0, expectedPrice.compareTo(c.getLastPrice("SBER")))
             }
         }
 
@@ -393,7 +400,7 @@ class AlorClientTest {
         }
 
     @Test
-    fun `market order blocked on wide spread`() =
+    fun `market order blocked on wide spread`() {
         runBlocking {
             FakeAlorServer().use { server ->
                 val (c, registry) = clientWithMetrics(server)
@@ -406,6 +413,7 @@ class AlorClientTest {
                 verify(orderTransport, never()).placeLimit(any(), any(), any(), any(), any(), any())
             }
         }
+    }
 
     @Test
     fun `market order forced on wide spread for emergency close`() =
@@ -441,7 +449,7 @@ class AlorClientTest {
         }
 
     @Test
-    fun `placeLimitOrder delegates to order transport`() =
+    fun `placeLimitOrder delegates to order transport`() {
         runBlocking {
             FakeAlorServer().use { server ->
                 val c = client(server)
@@ -453,6 +461,7 @@ class AlorClientTest {
                 verify(orderTransport).placeLimit("SBER", "buy", 1, BigDecimal("250.0"), "idem-1", "P1")
             }
         }
+    }
 
     private class FakeAlorServer : AutoCloseable {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

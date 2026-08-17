@@ -30,6 +30,7 @@ enum class TradingBlockReason {
     VOLATILITY,
     STALE_DATA,
     TICKER_PAUSED,
+    WS_DISCONNECTED,
 }
 
 /**

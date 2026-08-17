@@ -99,10 +99,15 @@ class FuturesPositionSizer(
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "INVALID_LOSS_PER_CONTRACT")
         }
 
-        // 4. Максимум контрактов по риску
+        // 3b. Комиссия за лот (если задана): round-trip cost вычитается из бюджета риска,
+        //     чтобы не превысить лимит потерь с учётом транзакционных издержек.
+        val commissionPerContract = instrument.commissionRub ?: BigDecimal.ZERO
+
+        // 4. Максимум контрактов по риску (с учётом комиссии)
+        val effectiveRiskPerContract = lossPerContract.add(commissionPerContract)
         val maxContractsByRisk =
             riskAmount
-                .divide(lossPerContract, 4, RoundingMode.DOWN)
+                .divide(effectiveRiskPerContract, 4, RoundingMode.DOWN)
                 .toInt()
 
         // 5. Маржинальный бюджет: депозит * maxMarginUsagePercent%

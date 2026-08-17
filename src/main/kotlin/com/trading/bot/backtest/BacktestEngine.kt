@@ -212,6 +212,7 @@ class BacktestEngine(
         val equityCurve = ArrayList<BigDecimal>()
         val tradeReturns = ArrayList<Double>()
         val tradeHoldBars = ArrayList<Int>()
+        val commissionAccumulator = mutableListOf(BigDecimal.ZERO)
         val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
         var mlBlockedCount = 0
         var mtfBlockedCount = 0
@@ -237,6 +238,7 @@ class BacktestEngine(
                                 i,
                                 tradeReturns,
                                 tradeHoldBars,
+                                commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -254,6 +256,7 @@ class BacktestEngine(
                                 i,
                                 tradeReturns,
                                 tradeHoldBars,
+                                commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -293,6 +296,7 @@ class BacktestEngine(
                                 i,
                                 tradeReturns,
                                 tradeHoldBars,
+                                commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -331,6 +335,7 @@ class BacktestEngine(
                                 i,
                                 tradeReturns,
                                 tradeHoldBars,
+                                commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
@@ -355,6 +360,7 @@ class BacktestEngine(
                             i,
                             tradeReturns,
                             tradeHoldBars,
+                            commissionAccumulator,
                             commissionMultiplier,
                             slippageMultiplier,
                         )
@@ -373,7 +379,7 @@ class BacktestEngine(
                             tpPoints,
                         )
                     if (position != null) {
-                        cash = applyOpen(cash, position, commissionMultiplier)
+                        cash = applyOpen(cash, position, ticker, commissionMultiplier)
                     }
                 }
                 equityCurve.add(equityAt(cash, position, current.closePrice))
@@ -396,7 +402,7 @@ class BacktestEngine(
                     tpPoints,
                 )
             if (position != null) {
-                cash = applyOpen(cash, position, commissionMultiplier)
+                cash = applyOpen(cash, position, ticker, commissionMultiplier)
             }
             equityCurve.add(equityAt(cash, position, current.closePrice))
         }
@@ -413,13 +419,14 @@ class BacktestEngine(
                     sorted.lastIndex,
                     tradeReturns,
                     tradeHoldBars,
+                    commissionAccumulator,
                     commissionMultiplier,
                     slippageMultiplier,
                 )
         }
         equityCurve.add(cash)
 
-        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns, tradeHoldBars)
+        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns, tradeHoldBars, commissionAccumulator[0])
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
@@ -445,6 +452,32 @@ class BacktestEngine(
         SimulatedExecution.MARKET_SLIPPAGE_RATE.multiply(BigDecimal.valueOf(multiplier))
 
     private fun slippageTicks(multiplier: Double): Int = (SimulatedExecution.FUTURES_SLIPPAGE_TICKS * multiplier).toInt().coerceAtLeast(1)
+
+    /**
+     * Комиссия за сделку: per-instrument фиксированная (commissionRub × лоты)
+     * или универсальный процент от оборота.
+     */
+    private fun computeCommission(
+        ticker: String,
+        price: BigDecimal,
+        quantity: Int,
+        commissionMultiplier: Double = 1.0,
+    ): BigDecimal {
+        val spec = instrumentsConfig.find(ticker)
+        val fixedPerLot = spec?.commissionRub
+        if (fixedPerLot != null && fixedPerLot > BigDecimal.ZERO) {
+            val lotSize = spec.lotSize.coerceAtLeast(1)
+            val lots = quantity / lotSize
+            if (lots < 1) {
+                return SimulatedExecution.commissionOn(price, quantity, commissionRate(commissionMultiplier))
+            }
+            return SimulatedExecution.commissionFixed(
+                fixedPerLot.multiply(BigDecimal.valueOf(commissionMultiplier.toLong())),
+                lots,
+            )
+        }
+        return SimulatedExecution.commissionOn(price, quantity, commissionRate(commissionMultiplier))
+    }
 
     /**
      * Цена исполнения market-ордера с проскальзыванием:
@@ -473,10 +506,11 @@ class BacktestEngine(
     private fun applyOpen(
         cash: BigDecimal,
         pos: PositionSim,
+        ticker: String,
         commissionMultiplier: Double = 1.0,
     ): BigDecimal =
         cash.subtract(
-            SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity, commissionRate(commissionMultiplier)),
+            computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier),
         )
 
     /** Оценка текущего капитала: cash + нереализованный PnL позиции (mark-to-market). */
@@ -570,14 +604,20 @@ class BacktestEngine(
                 .toInt()
         // Риск-кап на сделку (аналог StockEntryProfile.sizePosition): потеря при
         // стопе не должна превысить riskPerTradePercent% портфеля.
+        // Учитываем per-instrument SL% и commissionRub (как в live StockEntryProfile).
+        val effectiveSl = instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+            ?: riskConfig.defaultStopLossPercent
+        val commissionPerLot = instrument?.commissionRub ?: BigDecimal.ZERO
+        val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1
         val riskAmount =
             cash
                 .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerShare =
             price
-                .multiply(BigDecimal(riskConfig.defaultStopLossPercent.toString()))
+                .multiply(BigDecimal(effectiveSl.toString()))
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+                .add(commissionPerLot.divide(BigDecimal(lotSize), 6, RoundingMode.HALF_UP))
         val riskCapQty =
             if (lossPerShare > BigDecimal.ZERO) {
                 riskAmount.divide(lossPerShare, 4, RoundingMode.DOWN).toInt()
@@ -611,7 +651,9 @@ class BacktestEngine(
      * [com.trading.bot.application.OrderBuilder.buildFuturesOrderParams]),
      * для акций — процент от цены входа через [ExitRules.calcSL] (тот же код,
      * что в live [com.trading.bot.application.OrderBuilder.buildStockOrderParams]).
+     * Per-instrument SL% (InstrumentsConfig.InstrumentSpec.slPercent) имеет приоритет над глобальным.
      */
+    @Suppress("UNUSED_PARAMETER")
     private fun stopPrice(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
@@ -629,10 +671,14 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.add(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        return ExitRules.calcSL(fillPrice, direction, slPercent * 100.0)
+        val effectiveSl = instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+            ?: riskConfig.defaultStopLossPercent
+        return ExitRules.calcSL(fillPrice, direction, effectiveSl, instrument?.priceStep ?: BigDecimal("0.01"))
     }
 
-    /** Тейк-профит: для фьючерсов — пункты, для акций — процент (см. [stopPrice]). */
+    /** Тейк-профит: для фьючерсов — пункты, для акций — процент (см. [stopPrice]).
+     * Per-instrument TP% (InstrumentsConfig.InstrumentSpec.tpPercent) имеет приоритет над глобальным. */
+    @Suppress("UNUSED_PARAMETER")
     private fun takePrice(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
@@ -648,7 +694,9 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.subtract(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        return ExitRules.calcTP(fillPrice, direction, tpPercent * 100.0)
+        val effectiveTp = instrument?.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
+            ?: riskConfig.defaultTakeProfitPercent
+        return ExitRules.calcTP(fillPrice, direction, effectiveTp, instrument?.priceStep ?: BigDecimal("0.01"))
     }
 
     /**
@@ -668,13 +716,15 @@ class BacktestEngine(
         closeBar: Int,
         tradeReturns: MutableList<Double>,
         tradeHoldBars: MutableList<Int>,
+        commissionAccumulator: MutableList<BigDecimal>,
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill = executionFill(instrument, ticker, price, pos.direction == PositionDirection.SHORT, slippageMultiplier)
-        val commissionEntry = SimulatedExecution.commissionOn(pos.entryPrice, pos.quantity, commissionRate(commissionMultiplier))
-        val commissionExit = SimulatedExecution.commissionOn(fill.price, pos.quantity, commissionRate(commissionMultiplier))
+        val commissionEntry = computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier)
+        val commissionExit = computeCommission(ticker, fill.price, pos.quantity, commissionMultiplier)
+        commissionAccumulator[0] = commissionAccumulator[0].add(commissionEntry).add(commissionExit)
         val gross =
             when (pos.direction) {
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)

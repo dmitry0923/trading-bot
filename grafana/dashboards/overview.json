@@ -1,0 +1,224 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "title": "Bot Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "up{job=\"trading-bot\"}",
+          "legendFormat": "Status"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "title": "WS Quotes",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [
+        {
+          "expr": "alor_ws_status{stream=\"QUOTES\"}",
+          "legendFormat": "Connected"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DISCONNECTED", "color": "red" }, "1": { "text": "CONNECTED", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "title": "WS Orders",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "expr": "alor_ws_status{stream=\"ORDERS\"}",
+          "legendFormat": "Connected"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "DISCONNECTED", "color": "red" }, "1": { "text": "CONNECTED", "color": "green" } }, "type": "value" }
+          ],
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "title": "Daily P&L",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "risk_daily_pnl",
+          "legendFormat": "P&L (RUB)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyRUB",
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 0 }, { "color": "green", "value": 1000 }] }
+        }
+      }
+    },
+    {
+      "title": "Drawdown %",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "targets": [
+        {
+          "expr": "drawdown_percent",
+          "legendFormat": "Drawdown"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 0.2,
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.05 }, { "color": "red", "value": 0.1 }] }
+        }
+      }
+    },
+    {
+      "title": "Shadow Mode",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "targets": [
+        {
+          "expr": "drawdown_shadow_mode",
+          "legendFormat": "Active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "OFF", "color": "green" }, "1": { "text": "SHADOW", "color": "orange" } }, "type": "value" }
+          ],
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] }
+        }
+      }
+    },
+    {
+      "title": "Portfolio AUM",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 4 },
+      "targets": [
+        {
+          "expr": "portfolio_aum",
+          "legendFormat": "AUM"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "currencyRUB" }
+      }
+    },
+    {
+      "title": "Equity Curve",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "portfolio_aum",
+          "legendFormat": "AUM"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "currencyRUB" }
+      }
+    },
+    {
+      "title": "Cycles per Minute",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "rate(bot_cycle_total[5m]) * 60",
+          "legendFormat": "cycles/min"
+        }
+      ]
+    },
+    {
+      "title": "CNY/RUB Spread %",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "market_data_spread_percent{ticker=\"CNY_RUB\"}",
+          "legendFormat": "Spread %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1.0 }, { "color": "red", "value": 2.0 }] } }
+      }
+    },
+    {
+      "title": "CNY/RUB OBI",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "market_data_obi{ticker=\"CNY_RUB\"}",
+          "legendFormat": "OBI"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": -1, "max": 1 }
+      }
+    },
+    {
+      "title": "Entry Rejections by Reason",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "rate(bot_entry_rejected_total[5m]) * 60",
+          "legendFormat": "{{ reason }} ({{ ticker }})"
+        }
+      ]
+    },
+    {
+      "title": "Risk Entry Allowed",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "risk_futures_entry_allowed",
+          "legendFormat": "Futures Allowed"
+        },
+        {
+          "expr": "risk_stock_entry_allowed",
+          "legendFormat": "Stocks Allowed"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["trading-bot", "overview"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Trading Bot — Overview",
+  "uid": "trading-bot-overview",
+  "version": 1
+}

@@ -41,6 +41,10 @@ import java.time.Instant
 data class QuoteTick(
     val ticker: String,
     val price: BigDecimal,
+    val bid: BigDecimal? = null,
+    val ask: BigDecimal? = null,
+    val bidSize: Long? = null,
+    val askSize: Long? = null,
     val receivedAt: Instant = Instant.now(),
     val sequence: Long = 0,
     val exchangeTime: Instant? = null,
@@ -91,7 +95,6 @@ class AlorWebSocketClient(
 ) {
     private val logger = KotlinLogging.logger {}
     private val wsClient = ReactorNettyWebSocketClient()
-    private val maxAttempts = 10
     private val incomingBufferCapacity = 1000
 
     /**
@@ -110,13 +113,12 @@ class AlorWebSocketClient(
             lateinit var connect: (Int) -> Unit
 
             scheduleReconnect = { nextAttempt: Int ->
-                if (cancelled || nextAttempt > maxAttempts) {
-                    logger.error { "Alor WS: max reconnect attempts ($maxAttempts) reached, giving up" }
-                    meterRegistry.counter("alor.ws.disconnected", Tags.of("reason", "MAX_ATTEMPTS")).increment()
+                if (cancelled) {
+                    logger.info { "Alor WS: cancelled, stopping reconnect" }
                     close()
                 } else {
                     val backoffSeconds = reconnectDelaySeconds(nextAttempt)
-                    logger.warn { "Alor WS: reconnecting in ${backoffSeconds}s (attempt $nextAttempt/$maxAttempts)" }
+                    logger.warn { "Alor WS: reconnecting in ${backoffSeconds}s (attempt $nextAttempt)" }
                     meterRegistry.counter("alor.ws.reconnect").increment()
                     launch {
                         delay(backoffSeconds * 1000)
@@ -210,13 +212,12 @@ class AlorWebSocketClient(
             lateinit var connect: (Int) -> Unit
 
             scheduleReconnect = { nextAttempt: Int ->
-                if (cancelled || nextAttempt > maxAttempts) {
-                    logger.error { "Alor WS quotes: max reconnect attempts ($maxAttempts) reached, giving up" }
-                    meterRegistry.counter("alor.ws.quotes.disconnected", Tags.of("reason", "MAX_ATTEMPTS")).increment()
+                if (cancelled) {
+                    logger.info { "Alor WS quotes: cancelled, stopping reconnect" }
                     close()
                 } else {
                     val backoffSeconds = reconnectDelaySeconds(nextAttempt)
-                    logger.warn { "Alor WS quotes: reconnecting in ${backoffSeconds}s (attempt $nextAttempt/$maxAttempts)" }
+                    logger.warn { "Alor WS quotes: reconnecting in ${backoffSeconds}s (attempt $nextAttempt)" }
                     meterRegistry.counter("alor.ws.quotes.reconnect").increment()
                     launch {
                         delay(backoffSeconds * 1000)
@@ -463,12 +464,20 @@ class AlorWebSocketClient(
             var last: BigDecimal? = null
             var bid: BigDecimal? = null
             var offer: BigDecimal? = null
+            var bidVol: Long? = null
+            var offerVol: Long? = null
             var exchangeTime: Instant? = null
             for (q in quotes) {
                 when (q.path("o").asString()) {
                     "Last" -> last = q.path("price").asString().toBigDecimalOrNull()
-                    "Bid" -> bid = q.path("price").asString().toBigDecimalOrNull()
-                    "Offer" -> offer = q.path("price").asString().toBigDecimalOrNull()
+                    "Bid" -> {
+                        bid = q.path("price").asString().toBigDecimalOrNull()
+                        bidVol = q.path("volume").asLong(0).takeIf { it > 0 }
+                    }
+                    "Offer" -> {
+                        offer = q.path("price").asString().toBigDecimalOrNull()
+                        offerVol = q.path("volume").asLong(0).takeIf { it > 0 }
+                    }
                 }
                 if (exchangeTime == null) exchangeTime = parseTime(q.path("time"))
                 if (last != null) break
@@ -482,7 +491,15 @@ class AlorWebSocketClient(
                     bid ?: offer
                 } ?: return null
 
-            QuoteTick(ticker = symbol, price = price, exchangeTime = exchangeTime)
+            QuoteTick(
+                ticker = symbol,
+                price = price,
+                bid = bid,
+                ask = offer,
+                bidSize = bidVol,
+                askSize = offerVol,
+                exchangeTime = exchangeTime,
+            )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to parse Alor WS quote: ${json.take(500)}" }
             null

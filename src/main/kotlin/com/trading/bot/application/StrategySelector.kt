@@ -42,13 +42,14 @@ class StrategySelector {
             "ARBITRAGE" to DirectionFit(trend = 0.5, range = 0.8),
             "GRID" to DirectionFit(trend = 0.0, range = 1.0),
             "MEAN_REVERSION" to DirectionFit(trend = 0.0, range = 1.0),
+            "CNY_RUB" to DirectionFit(trend = 0.3, range = 1.0),
         )
 
     private val volatilityAllowed: Map<RegimeVolatility, Set<String>> =
         mapOf(
             RegimeVolatility.LOW to fits.keys,
             RegimeVolatility.NORMAL to fits.keys,
-            RegimeVolatility.HIGH to setOf("SCALPING", "DISCRETIONARY", "ARBITRAGE"),
+            RegimeVolatility.HIGH to setOf("SCALPING", "DISCRETIONARY", "ARBITRAGE", "CNY_RUB"),
             RegimeVolatility.EXTREME to emptySet(),
         )
 

@@ -163,4 +163,92 @@ class FuturesPositionSizerTest {
         requireNotNull(liqBigGo)
         assertEquals(0, BigDecimal("91970").compareTo(liqBigGo)) // буфер 30
     }
+
+    @Test
+    fun `commission reduces max contracts by risk`() {
+        val commInstrument = InstrumentsConfig().apply {
+            instruments = mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNY_RUB",
+                    type = "STOCK",
+                    lotSize = 10000,
+                    priceStep = BigDecimal("0.0001"),
+                    priceStepCost = BigDecimal("1.0"),
+                    go = BigDecimal("1000"),
+                    leverage = BigDecimal("1.0"),
+                    baseAsset = "CNY",
+                    commissionRub = BigDecimal("10.0"),
+                ),
+            )
+        }
+        // stopLossPoints=50, lossPerContract = 50 * 1.0 = 50 RUB, commission = 10 RUB
+        // effectiveRiskPerContract = 60; riskAmount = 500; maxContractsByRisk = floor(500/60) = 8
+        // marginBudget = 50000 * 30% = 15000; marginPerContract=1000; maxContractsByMargin = 15
+        // final = min(8, 15, 1) = 1  → need to raise maxContractsPerPosition
+        val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
+        val sizer2 = FuturesPositionSizer(riskConfig2, commInstrument)
+        val result = sizer2.calculateContracts(
+            ticker = "CNY_RUB",
+            portfolioMoney = BigDecimal("50000"),
+            stopLossPoints = 50,
+            currentGo = BigDecimal("1000"),
+        )
+        assertEquals(8, result.quantity)
+    }
+
+    @Test
+    fun `commission can reduce to zero`() {
+        val commInstrument = InstrumentsConfig().apply {
+            instruments = mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNY_RUB",
+                    type = "STOCK",
+                    lotSize = 10000,
+                    priceStep = BigDecimal("0.0001"),
+                    priceStepCost = BigDecimal("1.0"),
+                    go = BigDecimal("1000"),
+                    leverage = BigDecimal("1.0"),
+                    baseAsset = "CNY",
+                    commissionRub = BigDecimal("100.0"),
+                ),
+            )
+        }
+        val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
+        val sizer = FuturesPositionSizer(riskConfig2, commInstrument)
+        // effectiveRiskPerContract = 50 + 100 = 150; riskAmount = 500; floor(500/150) = 3
+        val result = sizer.calculateContracts(
+            ticker = "CNY_RUB",
+            portfolioMoney = BigDecimal("50000"),
+            stopLossPoints = 50,
+            currentGo = BigDecimal("1000"),
+        )
+        assertEquals(3, result.quantity)
+    }
+
+    @Test
+    fun `zero commission behaves same as before`() {
+        val noCommInstrument = InstrumentsConfig().apply {
+            instruments = mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "Si",
+                    type = "FUTURES",
+                    lotSize = 1,
+                    priceStep = BigDecimal("0.01"),
+                    priceStepCost = BigDecimal("10.0"),
+                    go = BigDecimal("15000"),
+                    leverage = BigDecimal("2.0"),
+                    baseAsset = "USD",
+                    commissionRub = null,
+                ),
+            )
+        }
+        val sizer = FuturesPositionSizer(riskConfig, noCommInstrument)
+        val result = sizer.calculateContracts(
+            ticker = "Si",
+            portfolioMoney = BigDecimal("50000"),
+            stopLossPoints = 50,
+            currentGo = BigDecimal("15000"),
+        )
+        assertEquals(1, result.quantity)
+    }
 }

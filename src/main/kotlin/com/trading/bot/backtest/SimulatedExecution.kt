@@ -78,7 +78,7 @@ object SimulatedExecution {
             .setScale(4, RoundingMode.HALF_UP)
 
     /**
-     * Фиксированная комиссия за лот (per-instrument, например CNY_RUB = 10 RUB/лот).
+     * Фиксированная комиссия за лот (per-instrument, например CNYRUB_TOM = 10 RUB/лот).
      * В отличие от [commissionOn], не зависит от оборота — реалистична для MOEX
      * с фиксированными тарифами на валютные пары.
      *

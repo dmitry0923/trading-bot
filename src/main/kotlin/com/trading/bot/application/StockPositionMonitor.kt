@@ -1,5 +1,6 @@
 package com.trading.bot.application
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.infrastructure.tracing.TraceContext
@@ -36,6 +37,7 @@ class StockPositionMonitor(
     private val engine: OrderExecutionEngine,
     private val redis: ReactiveRedisCacheService,
     private val riskConfig: RiskConfig,
+    private val instrumentsConfig: InstrumentsConfig,
     private val tradeEventService: TradeEventService,
     private val meterRegistry: MeterRegistry,
 ) {
@@ -138,11 +140,14 @@ class StockPositionMonitor(
     private fun calculatePnl(
         pos: Position,
         price: BigDecimal,
-    ): BigDecimal =
-        when (pos.direction) {
-            PositionDirection.LONG -> price.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
-            PositionDirection.SHORT -> pos.entryPrice.subtract(price).multiply(BigDecimal(pos.quantity))
+    ): BigDecimal {
+        val lotSize = instrumentsConfig.find(pos.ticker)?.lotSize ?: 1
+        val multiplier = BigDecimal(pos.quantity * lotSize)
+        return when (pos.direction) {
+            PositionDirection.LONG -> price.subtract(pos.entryPrice).multiply(multiplier)
+            PositionDirection.SHORT -> pos.entryPrice.subtract(price).multiply(multiplier)
         }
+    }
 
     private fun updatePositionPnlGauge(
         ticker: String,

@@ -32,7 +32,7 @@ import org.springframework.stereotype.Component
 @ConfigurationProperties(prefix = "trading")
 class TradingConfig {
     var mode: String = "SIMULATION"
-    var tickers: List<String> = listOf("Si", "SBER", "GAZP", "LKOH", "VTBR", "ROSN", "NVTK", "PLZL", "MGNT", "TATN", "CNY_RUB")
+    var tickers: List<String> = listOf("Si", "SBER", "GAZP", "LKOH", "VTBR", "ROSN", "NVTK", "PLZL", "MGNT", "TATN", "CNYRUB_TOM")
     var botIntervalMs: Long = 300000
     var strategyIntervalMs: Long = 600000
     var monitorIntervalMs: Long = 10000

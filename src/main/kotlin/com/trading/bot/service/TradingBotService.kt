@@ -127,6 +127,7 @@ class TradingBotService(
             engine = engine,
             redis = redis,
             riskConfig = riskConfig,
+            instrumentsConfig = instrumentsConfig,
             tradeEventService = tradeEventService,
             meterRegistry = meterRegistry,
         )

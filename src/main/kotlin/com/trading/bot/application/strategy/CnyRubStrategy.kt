@@ -30,11 +30,12 @@ import java.math.RoundingMode
  */
 @Component
 class CnyRubStrategy : Strategy {
-    override val id = "CNY_RUB"
+    override val id = "CNYRUB_TOM"
 
     override suspend fun evaluate(context: StrategyContext): StrategyDecision {
-        if (context.ticker.uppercase() != "CNY_RUB") {
-            return StrategyDecision.hold(context.snapshot.currentPrice, "Not CNY_RUB ticker")
+        val tickerUpper = context.ticker.uppercase()
+        if (tickerUpper != "CNYRUB_TOM" && tickerUpper != "CNY_RUB") {
+            return StrategyDecision.hold(context.snapshot.currentPrice, "Not CNYRUB_TOM ticker")
         }
 
         val indicators = context.indicators

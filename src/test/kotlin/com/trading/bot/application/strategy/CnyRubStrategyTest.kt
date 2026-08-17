@@ -17,16 +17,16 @@ class CnyRubStrategyTest {
     private val strategy = CnyRubStrategy()
 
     @Test
-    fun `returns HOLD for non CNY_RUB ticker`() = runBlocking {
+    fun `returns HOLD for non CNYRUB_TOM ticker`() = runBlocking {
         val ctx = context("SBER", indicators = indicators(rsi = 25.0, bbLower = BigDecimal("99"), bbUpper = BigDecimal("101"), bbMiddle = BigDecimal("100")))
         val result = strategy.evaluate(ctx)
         assertEquals(StrategyAction.HOLD, result.action)
-        assertTrue(result.reasoning.contains("Not CNY_RUB"))
+        assertTrue(result.reasoning.contains("Not CNYRUB_TOM"))
     }
 
     @Test
     fun `returns HOLD without indicators`() = runBlocking {
-        val ctx = context("CNY_RUB", indicators = null)
+        val ctx = context("CNYRUB_TOM", indicators = null)
         val result = strategy.evaluate(ctx)
         assertEquals(StrategyAction.HOLD, result.action)
         assertTrue(result.reasoning.contains("Insufficient"))
@@ -35,7 +35,7 @@ class CnyRubStrategyTest {
     @Test
     fun `BUY when RSI oversold and price at lower BB`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.3400"),
             indicators = indicators(
                 rsi = 25.0,
@@ -52,7 +52,7 @@ class CnyRubStrategyTest {
     @Test
     fun `SELL when RSI overbought and price at upper BB`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.5000"),
             indicators = indicators(
                 rsi = 75.0,
@@ -69,7 +69,7 @@ class CnyRubStrategyTest {
     @Test
     fun `HOLD when RSI neutral`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             indicators = indicators(rsi = 50.0),
         )
         val result = strategy.evaluate(ctx)
@@ -79,7 +79,7 @@ class CnyRubStrategyTest {
     @Test
     fun `HOLD when RSI oversold but price not at lower BB`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.4200"),
             indicators = indicators(
                 rsi = 25.0,
@@ -95,7 +95,7 @@ class CnyRubStrategyTest {
     @Test
     fun `microstructure confirms buy`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.3400"),
             indicators = indicators(
                 rsi = 25.0,
@@ -113,7 +113,7 @@ class CnyRubStrategyTest {
     @Test
     fun `microstructure blocks buy when obi opposes`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.3400"),
             indicators = indicators(
                 rsi = 25.0,
@@ -131,7 +131,7 @@ class CnyRubStrategyTest {
     @Test
     fun `fallback mode works without bidSize askSize`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.3400"),
             indicators = indicators(
                 rsi = 25.0,
@@ -149,7 +149,7 @@ class CnyRubStrategyTest {
     @Test
     fun `signal strength above zero for valid signal`() = runBlocking {
         val ctx = context(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             price = BigDecimal("12.3400"),
             indicators = indicators(
                 rsi = 20.0,

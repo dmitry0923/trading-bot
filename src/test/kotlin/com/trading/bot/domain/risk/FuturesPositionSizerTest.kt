@@ -169,7 +169,7 @@ class FuturesPositionSizerTest {
         val commInstrument = InstrumentsConfig().apply {
             instruments = mutableListOf(
                 InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNY_RUB",
+                    ticker = "CNYRUB_TOM",
                     type = "STOCK",
                     lotSize = 10000,
                     priceStep = BigDecimal("0.0001"),
@@ -188,7 +188,7 @@ class FuturesPositionSizerTest {
         val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
         val sizer2 = FuturesPositionSizer(riskConfig2, commInstrument)
         val result = sizer2.calculateContracts(
-            ticker = "CNY_RUB",
+            ticker = "CNYRUB_TOM",
             portfolioMoney = BigDecimal("50000"),
             stopLossPoints = 50,
             currentGo = BigDecimal("1000"),
@@ -201,7 +201,7 @@ class FuturesPositionSizerTest {
         val commInstrument = InstrumentsConfig().apply {
             instruments = mutableListOf(
                 InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNY_RUB",
+                    ticker = "CNYRUB_TOM",
                     type = "STOCK",
                     lotSize = 10000,
                     priceStep = BigDecimal("0.0001"),
@@ -217,7 +217,7 @@ class FuturesPositionSizerTest {
         val sizer = FuturesPositionSizer(riskConfig2, commInstrument)
         // effectiveRiskPerContract = 50 + 100 = 150; riskAmount = 500; floor(500/150) = 3
         val result = sizer.calculateContracts(
-            ticker = "CNY_RUB",
+            ticker = "CNYRUB_TOM",
             portfolioMoney = BigDecimal("50000"),
             stopLossPoints = 50,
             currentGo = BigDecimal("1000"),

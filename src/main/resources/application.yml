@@ -274,7 +274,7 @@ trading:
     - PLZL
     - MGNT
     - TATN
-    - CNY_RUB
+    - CNYRUB_TOM
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
   monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}
@@ -412,14 +412,16 @@ instruments:
       go: "0"
       leverage: "1.0"
       baseAsset: "RUB"
-    - ticker: "CNY_RUB"
-      type: "STOCK"
-      lotSize: 10000
-      priceStep: "0.0001"
-      priceStepCost: "1.0"
+    - ticker: "CNYRUB_TOM"
+      type: "FX"
+      lotSize: 1000
+      priceStep: "0.0005"
+      priceStepCost: "0.5"
       go: "0"
       leverage: "1.0"
       baseAsset: "CNY"
+      quoteAsset: "RUB"
+      alorTicker: "CNYRUB_TOM"
 
 risk:
   enabled: true
@@ -526,7 +528,7 @@ risk:
     TATN: ENERGY
     PLZL: METALS
     MGNT: CONSUMER
-    CNY_RUB: FX
+    CNYRUB_TOM: FX
 
 logging:
   level:

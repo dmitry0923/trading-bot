@@ -14,10 +14,10 @@ import java.math.RoundingMode
  *   - go = 15 000 ₽ (гарантийное обеспечение)
  *   - leverage берётся из LeverageConfig (placeholder `${leverage.user-leverage}`)
  *
- * CNY_RUB — кросс-курс юань/рубль MOEX:
- *   - lotSize = 10 000 юаней
- *   - priceStep = 0.0001 (0.01 копейки)
- *   - priceStepCost = 1.0 ₽
+ * CNYRUB_TOM — кросс-курс юань/рубль MOEX (FX spot):
+ *   - lotSize = 1 000 юаней (CETS)
+ *   - priceStep = 0.0005 (0.05 копейки)
+ *   - priceStepCost = 0.5 ₽
  *
  * Остальные тикеры — акции MOEX (SBER, GAZP, LKOH, ...). Их futures-поля
  * (go, leverage) не используются: для акций применяется Kelly-сайзинг.
@@ -132,14 +132,16 @@ class InstrumentsConfig {
                 baseAsset = "RUB",
             ),
             InstrumentSpec(
-                ticker = "CNY_RUB",
-                type = "STOCK",
-                lotSize = 10000,
-                priceStep = BigDecimal("0.0001"),
-                priceStepCost = BigDecimal("1.0"),
+                ticker = "CNYRUB_TOM",
+                type = "FX",
+                lotSize = 1000,
+                priceStep = BigDecimal("0.0005"),
+                priceStepCost = BigDecimal("0.5"),
                 go = BigDecimal.ZERO,
                 leverage = BigDecimal("1.0"),
                 baseAsset = "CNY",
+                quoteAsset = "RUB",
+                alorTicker = "CNYRUB_TOM",
                 slPercent = 0.5,
                 tpPercent = 1.0,
                 maxSpreadPercent = 2.0,
@@ -157,6 +159,10 @@ class InstrumentsConfig {
         var go: BigDecimal = BigDecimal("15000"),
         var leverage: BigDecimal = BigDecimal("2.0"),
         var baseAsset: String = "USD",
+        /** Алёрный тикер (если отличается от внутреннего ticker). */
+        var alorTicker: String? = null,
+        /** Валюта котировки (RUB, USD, ...) — для FX нужна для расчёта notional. */
+        var quoteAsset: String = "RUB",
         /** Per-instrument SL% — overrides RiskConfig.defaultStopLossPercent when non-null. */
         var slPercent: Double? = null,
         /** Per-instrument TP% — overrides RiskConfig.defaultTakeProfitPercent when non-null. */
@@ -176,11 +182,25 @@ class InstrumentsConfig {
         fun effectiveMaxSpreadPercent(globalDefault: Double): Double = maxSpreadPercent ?: globalDefault
         /** Effective max gap %: per-instrument override or global default. */
         fun effectiveMaxGapPercent(globalDefault: Double): Double = maxGapPercent ?: globalDefault
+
+        /**
+         * Notional в котировочной валюте (RUB для FX).
+         * qty — число лотов; price — текущая цена.
+         * Для FX: 1 лот × 1000 CNY × 12.5 RUB = 12 500 RUB.
+         * Для STOCK: qty × price (лот уже учтён в qty на MOEX).
+         */
+        fun notional(qty: Int, price: BigDecimal): BigDecimal =
+            price.multiply(BigDecimal(qty * lotSize))
+
+        /** Alor-тикер для API-вызовов (alorTicker или ticker). */
+        fun effectiveTicker(): String = alorTicker ?: ticker
     }
 
     fun find(ticker: String): InstrumentSpec? = instruments.firstOrNull { it.ticker.equals(ticker, ignoreCase = true) }
 
     fun isFutures(ticker: String): Boolean = find(ticker)?.type == "FUTURES"
+
+    fun isFx(ticker: String): Boolean = find(ticker)?.type == "FX"
 
     /**
      * Стоимость 1.0 единицы цены в рублях (priceStepCost / priceStep).

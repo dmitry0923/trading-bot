@@ -16,7 +16,7 @@
 | Свойство | Default | Тип | Описание |
 |---|---|---|---|
 | `risk.enabled` | `true` | Boolean | мастер-выключатель риск-движка |
-| `risk.max-position-rub` | `500000` | BigDecimal | максимальный размер позиции в рублях (база для Kelly) |
+| `risk.max-position-rub` | `50000` | BigDecimal | максимальный размер позиции в рублях (база для Kelly) |
 | `risk.max-daily-loss-rub` | `50000` | BigDecimal | дневной лимит убытка (закрытые сделки) |
 | `risk.max-open-positions` | `5` | Integer | максимум одновременных открытых позиций |
 | `risk.max-sector-exposure` | `2` | Integer | макс. открытых позиций в одном секторе |
@@ -427,7 +427,7 @@ fun calcTP(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
 
 1. **Ручная остановка**: `POST /api/v1/bot/emergency-stop` — ставит флаг `bot:emergency-stop=true` в Redis + локально, персистит причину в `trading_halt` (reason `EMERGENCY_STOP`), блокирует новые входы через `TradingGate` (`TradingBlockReason.EMERGENCY_STOP`) и опционально закрывает все позиции рыночными ордерами (`liquidate=true`). `StrategyService.run()` проверяет флаг в начале цикла и выходит.
 2. **Возобновление**: только `POST /api/v1/bot/resume` (или рестарт — остановка переживает рестарт через `trading_halt`).
-3. **Автоматическая остановка**: если убыток закрытых позиций за час > 10% от `max-position-rub` (500 000 × 10% = 50 000 ₽) — автоматический emergency stop (`source=AUTO`). Реализация требует хранить PnL с таймстампами (БД) — roadmap.
+3. **Автоматическая остановка**: если убыток закрытых позиций за час > 10% от `max-position-rub` (50 000 × 10% = 5 000 ₽) — автоматический emergency stop (`source=AUTO`). Реализация требует хранить PnL с таймстампами (БД) — roadmap.
 
 Метрики: `bot.emergency_stop{source}`, `bot.emergency_resume`.
 

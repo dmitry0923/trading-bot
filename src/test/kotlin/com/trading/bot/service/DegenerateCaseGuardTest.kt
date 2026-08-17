@@ -179,18 +179,18 @@ class DegenerateCaseGuardTest {
     fun `per-instrument spread threshold overrides global`() {
         riskConfig.maxSpreadPercent = 5.0
         instrumentsConfig.instruments = mutableListOf(
-            InstrumentsConfig.InstrumentSpec(ticker = "CNY_RUB", type = "STOCK", lotSize = 10000,
-                priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
-                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+            InstrumentsConfig.InstrumentSpec(ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
+                priceStep = BigDecimal("0.0005"), priceStepCost = BigDecimal("0.5"),
+                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY", quoteAsset = "RUB",
                 maxSpreadPercent = 0.2),
         )
         runBlocking {
             Mockito
-                .`when`(alorClient.getMarketSnapshot("CNY_RUB"))
+                .`when`(alorClient.getMarketSnapshot("CNYRUB_TOM"))
                 .thenReturn(MarketSnapshot(currentPrice = BigDecimal("12.40"), bid = BigDecimal("12.30"), ask = BigDecimal("12.50")))
         }
 
-        val reason = runBlocking { guard.blockReason("CNY_RUB", "MINUTE_10") }
+        val reason = runBlocking { guard.blockReason("CNYRUB_TOM", "MINUTE_10") }
         assertEquals("WIDE_SPREAD", reason)
     }
 
@@ -198,18 +198,18 @@ class DegenerateCaseGuardTest {
     fun `per-instrument wider spread threshold allows entry`() {
         riskConfig.maxSpreadPercent = 0.2
         instrumentsConfig.instruments = mutableListOf(
-            InstrumentsConfig.InstrumentSpec(ticker = "CNY_RUB", type = "STOCK", lotSize = 10000,
-                priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
-                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
+            InstrumentsConfig.InstrumentSpec(ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
+                priceStep = BigDecimal("0.0005"), priceStepCost = BigDecimal("0.5"),
+                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY", quoteAsset = "RUB",
                 maxSpreadPercent = 5.0),
         )
         runBlocking {
             Mockito
-                .`when`(alorClient.getMarketSnapshot("CNY_RUB"))
+                .`when`(alorClient.getMarketSnapshot("CNYRUB_TOM"))
                 .thenReturn(MarketSnapshot(currentPrice = BigDecimal("12.40"), bid = BigDecimal("12.30"), ask = BigDecimal("12.50")))
         }
 
-        val reason = runBlocking { guard.blockReason("CNY_RUB", "MINUTE_10") }
+        val reason = runBlocking { guard.blockReason("CNYRUB_TOM", "MINUTE_10") }
         assertNull(reason)
     }
 }

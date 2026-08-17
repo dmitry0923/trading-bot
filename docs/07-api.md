@@ -91,7 +91,7 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
 {
   "tradingEnabled": true,
   "riskEnabled": true,
-  "maxPositionRub": 500000,
+  "maxPositionRub": 50000,
   "maxDailyLossRub": 50000
 }
 ```
@@ -723,7 +723,7 @@ Live-снимок портфельного риска (Correlation Engine). Read
 **Response 200**:
 ```json
 {
-  "aum": 500000,
+  "aum": 50000,
   "exposureScore": 52,
   "grossExposureRub": 300000.00,
   "grossExposurePercent": 60.00,

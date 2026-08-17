@@ -1252,7 +1252,7 @@ class BacktestEngineTest {
         val instruments = InstrumentsConfig().apply {
             instruments = mutableListOf(
                 InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNY_RUB", type = "STOCK", lotSize = 1,
+                    ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                     priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
                     go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
                     commissionRub = BigDecimal("10.0"),
@@ -1267,7 +1267,7 @@ class BacktestEngineTest {
         )
         val candles = (0 until 60).map { i ->
             Candle(
-                ticker = "CNY_RUB",
+                ticker = "CNYRUB_TOM",
                 timeframe = "MINUTE_10",
                 openPrice = BigDecimal("12.40"),
                 highPrice = BigDecimal("12.42"),
@@ -1278,7 +1278,7 @@ class BacktestEngineTest {
             )
         }
         val result = engine.simulate(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             candles,
             initialCapital = BigDecimal("500000"),
         )
@@ -1291,7 +1291,7 @@ class BacktestEngineTest {
         val instruments = InstrumentsConfig().apply {
             instruments = mutableListOf(
                 InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNY_RUB", type = "STOCK", lotSize = 1,
+                    ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                     priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
                     go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
                     slPercent = 0.5, tpPercent = 1.0,
@@ -1306,7 +1306,7 @@ class BacktestEngineTest {
         )
         val candles = (0 until 60).map { i ->
             Candle(
-                ticker = "CNY_RUB",
+                ticker = "CNYRUB_TOM",
                 timeframe = "MINUTE_10",
                 openPrice = BigDecimal("12.40"),
                 highPrice = BigDecimal("12.42"),
@@ -1317,7 +1317,7 @@ class BacktestEngineTest {
             )
         }
         val result = engine.simulate(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             candles,
             initialCapital = BigDecimal("500000"),
             slPercent = 2.0,
@@ -1334,7 +1334,7 @@ class BacktestEngineTest {
         val instruments = InstrumentsConfig().apply {
             instruments = mutableListOf(
                 InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNY_RUB", type = "STOCK", lotSize = 1,
+                    ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                     priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
                     go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
                     slPercent = 0.5, commissionRub = BigDecimal("10.0"),
@@ -1353,7 +1353,7 @@ class BacktestEngineTest {
         )
         val candles = (0 until 60).map { i ->
             Candle(
-                ticker = "CNY_RUB",
+                ticker = "CNYRUB_TOM",
                 timeframe = "MINUTE_10",
                 openPrice = BigDecimal("12.40"),
                 highPrice = BigDecimal("12.42"),
@@ -1364,7 +1364,7 @@ class BacktestEngineTest {
             )
         }
         val result = engine.simulate(
-            "CNY_RUB",
+            "CNYRUB_TOM",
             candles,
             initialCapital = BigDecimal("500000"),
         )

@@ -175,7 +175,7 @@ trading:
 
 risk:
   enabled: true
-  max-position-rub: 500000
+  max-position-rub: 50000
   max-daily-loss-rub: 50000
   max-open-positions: 5
   max-sector-exposure: 2              # макс. открытых позиций в одном секторе
@@ -422,7 +422,7 @@ METRICS_SCRAPE_TOKEN=change-me-prometheus-token
 
 ```
 TRADING_MODE=SIMULATION, MAX_OPEN_POS=0
-risk: enabled=true, maxPosition=500000, maxDailyLoss=50000, sectorExposure=2, volatility=5.0%
+risk: enabled=true, maxPosition=50000, maxDailyLoss=50000, sectorExposure=2, volatility=5.0%
 llm: model=kimi-k3, timeout=30s, cb=true, rl=true, retry=true, cache=true
 ```
 

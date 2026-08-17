@@ -27,4 +27,5 @@ enum class PositionStatus {
 enum class InstrumentType {
     STOCK,
     FUTURES,
+    FX,
 }

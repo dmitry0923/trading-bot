@@ -15,8 +15,7 @@ import java.math.BigDecimal
 import java.time.LocalDateTime
 
 /**
- * R2DBC-репозиторий позиций. Все методы suspend: вызываются из корутин,
- * блокирующие JDBC-обёртки ([com.trading.bot.infrastructure.db.BlockingDb]) больше не нужны.
+ * R2DBC-репозиторий позиций. Все методы suspend: вызываются из корутин.
  */
 @Repository
 class PositionRepository(
@@ -80,7 +79,7 @@ class PositionRepository(
         val sql = "SELECT DISTINCT ticker FROM positions WHERE status = 'OPEN'"
         return databaseClient
             .sql(sql)
-            .map { row, _ -> row.get("ticker", String::class.java)!! }
+            .map { row, _ -> row.get("ticker", String::class.java) ?: error("DISTINCT ticker column is null") }
             .all()
             .collectList()
             .awaitSingle()

@@ -254,7 +254,7 @@ class PortfolioRiskEngineImpl(
             }
         val available = intraday.values.filterNotNull()
         if (available.isEmpty()) return VolatilityData(emptyMap(), perTickerQuality)
-        val fallback = available.maxOrNull()!!
+        val fallback = available.maxOrNull() ?: return VolatilityData(emptyMap(), perTickerQuality)
         return VolatilityData(intraday.mapValues { it.value ?: fallback }, perTickerQuality)
     }
 
@@ -310,7 +310,7 @@ class PortfolioRiskEngineImpl(
     }
 
     /**
-     * Исторический портфельный ряд дневных лог-доходностей: p[t] = Σ wᵢ·rᵢ[t]
+     * Исторический портфельный ряд дневных лог-доходностей: p\[t\] = Σ wᵢ·rᵢ\[t\]
      * (веса — подписанные, хедж long/short учитывается). Серии выравниваются по
      * хвосту (минимальная длина). Возвращает null, если истории недостаточно
      * ([RiskConfig.portfolioHistoricalMinSamples]) — метрики Historical VaR/CVaR

@@ -569,12 +569,13 @@ class OrderExecutionEngine(
     ) {
         val filled = execution.filledQuantity.coerceIn(0, pos.quantity)
         if (filled <= 0) return
-        if (pos.pendingClose && pos.closeOrderId != null) {
+        if (pos.pendingClose) {
+            val closeId = pos.closeOrderId
             val positionId = pos.id
-            if (positionId != null) {
-                orderOutboxService.placeCancelOrder(positionId, pos.closeOrderId!!, accountId = pos.accountId)
+            if (closeId != null && positionId != null) {
+                orderOutboxService.placeCancelOrder(positionId, closeId, accountId = pos.accountId)
                 logger.info {
-                    "Protection $reason closed ${pos.ticker} first — cancelling pending close order ${pos.closeOrderId}"
+                    "Protection $reason closed ${pos.ticker} first — cancelling pending close order $closeId"
                 }
             }
             pos.closeOrderId = null
@@ -682,16 +683,18 @@ class OrderExecutionEngine(
     ) {
         if (!protectionOrdersEnabled) return
         val positionId = pos.id ?: return
-        if (pos.slOrderId != null && skip != "SL") {
-            orderOutboxService.placeCancelOrder(positionId, pos.slOrderId!!, accountId = pos.accountId)
-            logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=${pos.slOrderId})" }
+        val slId = pos.slOrderId
+        if (slId != null && skip != "SL") {
+            orderOutboxService.placeCancelOrder(positionId, slId, accountId = pos.accountId)
+            logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=$slId)" }
             pos.slOrderId = null
             pos.slOrderPrice = null
             pos.slPendingReplace = false
         }
-        if (pos.tpOrderId != null && skip != "TP") {
-            orderOutboxService.placeCancelOrder(positionId, pos.tpOrderId!!, accountId = pos.accountId)
-            logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=${pos.tpOrderId})" }
+        val tpId = pos.tpOrderId
+        if (tpId != null && skip != "TP") {
+            orderOutboxService.placeCancelOrder(positionId, tpId, accountId = pos.accountId)
+            logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=$tpId)" }
             pos.tpOrderId = null
             pos.tpOrderPrice = null
             pos.tpPendingReplace = false

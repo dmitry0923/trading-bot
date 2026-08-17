@@ -110,7 +110,8 @@ class TradingAccountService(
         val candidates = mutableListOf<TradingAccount>()
         for (account in accounts) {
             val limit = account.maxOpenPositions ?: riskConfig.maxOpenPositions
-            val open = positionRepository.findOpenCountByAccount(account.id!!)
+            val accountId = account.id ?: continue
+            val open = positionRepository.findOpenCountByAccount(accountId)
             if (open < limit) candidates.add(account)
         }
         if (candidates.isEmpty()) return null

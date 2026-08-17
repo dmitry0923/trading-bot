@@ -9,6 +9,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
+import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.RedisCacheService
 import com.trading.bot.service.TradeEventService
@@ -48,9 +49,10 @@ class StockPositionMonitor(
             val open =
                 positionRepo
                     .findByStatusAndTicker(PositionStatus.OPEN, event.ticker)
+            val strategy = BlockingDb.io { redis.getStrategy(event.ticker) }
             open.forEach { pos ->
                 if (pos.instrumentType != com.trading.bot.model.InstrumentType.FUTURES) {
-                    monitorPosition(pos, event.price)
+                    monitorPosition(pos, event.price, strategy)
                 }
             }
         } catch (e: Exception) {
@@ -66,6 +68,7 @@ class StockPositionMonitor(
     private suspend fun monitorPosition(
         pos: Position,
         price: BigDecimal,
+        strategy: Strategy?,
     ) {
         TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
         TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
@@ -88,13 +91,15 @@ class StockPositionMonitor(
             return
         }
 
+        val prevTrailing = pos.trailingStopPrice
         if (riskConfig.trailingStopEnabled) {
             ExitRules.updateTrailingStop(pos, price, riskConfig.trailingStopPercent)
         }
+        val trailingChanged = pos.trailingStopPrice != prevTrailing
 
         var slUpdated = false
         var tpUpdated = false
-        BlockingDb.io { redis.getStrategy(pos.ticker) }?.let { strat ->
+        strategy?.let { strat ->
             if (strat.action == StrategyAction.CLOSE) {
                 engine.closePosition(pos, price, CloseReason.STRATEGY_CLOSE)
                 return
@@ -124,8 +129,8 @@ class StockPositionMonitor(
                 }
             }
         }
-        positionRepo.save(pos)
-        if (slUpdated || tpUpdated) {
+        if (slUpdated || tpUpdated || trailingChanged) {
+            positionRepo.save(pos)
             tradeEventService.recordPositionUpdated(pos)
             engine.onProtectionLevelsChanged(pos)
         }

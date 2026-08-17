@@ -185,9 +185,14 @@ class InstrumentsConfig {
 
         /**
          * Notional в котировочной валюте (RUB для FX).
-         * qty — число лотов; price — текущая цена.
-         * Для FX: 1 лот × 1000 CNY × 12.5 RUB = 12 500 RUB.
-         * Для STOCK: qty × price (лот уже учтён в qty на MOEX).
+         * qty — число лотов; price — цена за единицу базового актива.
+         * notional = price × qty × lotSize.
+         *
+         * Примеры:
+         *   CNYRUB_TOM: 1 лот × 1000 CNY × 12.5 RUB/CNY = 12 500 RUB
+         *   SBER:       10 лотов × 300 RUB × 10 shares/лот = 30 000 RUB
+         *
+         * Формула одинакова для STOCK и FX — qty всегда число лотов.
          */
         fun notional(qty: Int, price: BigDecimal): BigDecimal =
             price.multiply(BigDecimal(qty * lotSize))

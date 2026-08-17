@@ -352,11 +352,11 @@ class BacktestEngineTest {
 
     @Test
     fun `pnl charges commission on the full position size`() {
-        // flat 100 ₽, constant BUY: qty = 100000 * 0.2 / 100 = 200 акций SBER (лот 10).
+        // flat 100 ₽, constant BUY: qty = 100000 * 0.2 / 100 = 200 лотов SBER (лот 10).
         // entry fill = 100.1 (slippage 0.1%), exit fill = 99.9.
-        // gross = (99.9 - 100.1) * 200 = -40 ₽
+        // gross = (99.9 - 100.1) * 200 * lotSize(10) = -400 ₽
         // комиссии = (100.1*200 + 99.9*200) * 0.0005 = 20 ₽
-        // итог equity = 100000 - 40 - 20 = 99940 ₽ (раньше было ~99959.9).
+        // итог equity = 100000 - 10.01 (entry comm) - 400 - 9.99 (exit comm) = 99580 ₽
         val engine =
             BacktestEngine(
                 CandleRepository(Mockito.mock(DatabaseClient::class.java)),
@@ -366,17 +366,17 @@ class BacktestEngineTest {
         val result = runBlocking { engine.simulate("SBER", flatCandles()) }
 
         assertEquals(1, result.totalTrades)
-        assertEquals(-60.0, result.tradeReturns.single(), 1e-9)
-        assertEquals(0, BigDecimal("99940").compareTo(result.equityCurve.last()))
+        assertEquals(-420.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("99580").compareTo(result.equityCurve.last()))
     }
 
     @Test
     fun `stock fallback size is capped by risk per trade`() {
-        // capitalSlice = 1.0 → slice дал бы 1000 акций; риск-кап (1% портфеля против
+        // capitalSlice = 1.0 → slice дал бы 1000 лотов; риск-кап (1% портфеля против
         // 2% стопа, как StockEntryProfile) ограничивает qty = (100000*0.01)/(100*0.02) = 500.
-        // entry fill = 100.1, exit fill = 99.9, qty = 500:
-        // gross = (99.9-100.1)*500 = -100; комиссии = (100.1+99.9)*500*0.0005 = 50
-        // equity = 100000 - 150 = 99850 (без капа при qty=1000 было бы 99700).
+        // entry fill = 100.1, exit fill = 99.9, qty = 500, lotSize = 10:
+        // gross = (99.9-100.1)*500*10 = -1000; комиссии = (100.1+99.9)*500*0.0005 = 50
+        // equity = 100000 - 25.025 (entry comm) - 1000 - 24.975 (exit comm) = 98950
         val engine =
             BacktestEngine(
                 CandleRepository(Mockito.mock(DatabaseClient::class.java)),
@@ -390,8 +390,8 @@ class BacktestEngineTest {
         val result = runBlocking { engine.simulate("SBER", flatCandles()) }
 
         assertEquals(1, result.totalTrades)
-        assertEquals(-150.0, result.tradeReturns.single(), 1e-9)
-        assertEquals(0, BigDecimal("99850").compareTo(result.equityCurve.last()))
+        assertEquals(-1050.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("98950").compareTo(result.equityCurve.last()))
     }
 
     @Test

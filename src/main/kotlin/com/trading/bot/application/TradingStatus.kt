@@ -18,6 +18,9 @@ import java.time.Instant
  * - [VOLATILITY] — ATR% выше лимита;
  * - [STALE_DATA] — устаревшие рыночные данные;
  * - [TICKER_PAUSED] — адаптивная пауза по статистике тикера.
+ *
+ * См. также [SL_PROTECTION_FAILED] — глобальный блок при невозможности
+ * выставить биржевой SL на открытую позицию (HALT + emergency close).
  */
 enum class TradingBlockReason {
     MANUAL_DISABLE,
@@ -31,6 +34,7 @@ enum class TradingBlockReason {
     STALE_DATA,
     TICKER_PAUSED,
     WS_DISCONNECTED,
+    SL_PROTECTION_FAILED,
 }
 
 /**

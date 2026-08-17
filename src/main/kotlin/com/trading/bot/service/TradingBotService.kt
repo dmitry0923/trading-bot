@@ -18,11 +18,11 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.signal.toSignal
 import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
-import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.ExecutionReport
@@ -89,6 +89,10 @@ class TradingBotService(
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /** Lot-based P&L — единый источник для engine и ws-fill handler. */
+    private val pnlCalculator: PnlCalculator =
+        PnlCalculator.lotBased { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L }
+
     @PreDestroy
     fun close() {
         scope.cancel()
@@ -105,7 +109,7 @@ class TradingBotService(
             objectMapper = objectMapper,
             tradeEventService = tradeEventService,
             meterRegistry = meterRegistry,
-            pnlCalculator = PnlCalculator.stock { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L },
+            pnlCalculator = pnlCalculator,
             instrumentFilter = { it.instrumentType != InstrumentType.FUTURES },
             metricPrefix = "bot",
             onPositionClosed = { pos ->
@@ -115,6 +119,22 @@ class TradingBotService(
                 // multi-tier статус сразу после закрытия акции.
                 eventPublisher.publishPositionClosed(pos)
                 MutableGauges.set(meterRegistry, "bot.pnl", pos.pnl?.toDouble() ?: 0.0, Tags.of("ticker", pos.ticker))
+            },
+            onSlProtectionFailed = { pos ->
+                // Safety: SL/TP permanently failed → HALT all entries + emergency close unprotected position.
+                logger.warn { "SL protection FAILED for ${pos.ticker} — halting entries and triggering emergency close" }
+                eventPublisher.publishTradingHalted(
+                    TradingHaltedEvent(reason = "SL_PROTECTION_FAILED"),
+                )
+                scope.launch {
+                    try {
+                        val price = alorClient.getLastPrice(pos.ticker) ?: pos.currentPrice ?: pos.entryPrice
+                        emergencyClose(pos.ticker, price)
+                        logger.warn { "Emergency close after SL failure: ${pos.ticker} @ $price" }
+                    } catch (e: Exception) {
+                        logger.error(e) { "Emergency close FAILED for ${pos.ticker} after SL failure — manual intervention required" }
+                    }
+                }
             },
             protectionOrdersEnabled = alorClient.isLiveMode,
             portfolioResolver = { accountId -> tradingAccountService.portfolioOf(accountId) },
@@ -321,11 +341,7 @@ class TradingBotService(
         }
 
         pos.closePrice = fillPrice
-        val pnl =
-            when (pos.direction) {
-                PositionDirection.LONG -> fillPrice.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
-                PositionDirection.SHORT -> pos.entryPrice.subtract(fillPrice).multiply(BigDecimal(pos.quantity))
-            }
+        val pnl = pnlCalculator.pnl(pos, pos.entryPrice, fillPrice, BigDecimal(pos.quantity))
         pos.pnl = pnl
         pos.status = PositionStatus.CLOSED
         pos.closedAt = LocalDateTime.now()
@@ -355,6 +371,15 @@ class TradingBotService(
             val strategies = redis.getAllStrategies(tradingConfig.tickers)
             strategies.values.forEach { eventPublisher.publishStrategyGenerated(it.toSignal()) }
         }
+    }
+
+    /**
+     * Аварийное закрытие конкретной позиции (при SL_PROTECTION_FAILED).
+     * Вызывается из [engine] callback, поэтому [engine] уже инициализирован.
+     */
+    private suspend fun emergencyClose(ticker: String, price: BigDecimal) {
+        val pos = positionRepo.findByStatusAndTicker(PositionStatus.OPEN, ticker).firstOrNull() ?: return
+        engine.closePosition(pos, price, CloseReason.EMERGENCY_STOP)
     }
 
     /**

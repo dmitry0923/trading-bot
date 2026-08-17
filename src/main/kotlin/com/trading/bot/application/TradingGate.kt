@@ -179,6 +179,7 @@ class TradingGate(
                 "LEVERAGE_DISABLED" -> TradingBlockReason.LEVERAGE_DISABLED
                 "STATE_DESYNC" -> TradingBlockReason.STATE_DESYNC
                 "EMERGENCY_STOP" -> TradingBlockReason.EMERGENCY_STOP
+                "SL_PROTECTION_FAILED" -> TradingBlockReason.SL_PROTECTION_FAILED
                 "MANUAL", "MANUAL_DISABLE" -> TradingBlockReason.MANUAL_DISABLE
                 else -> return null
             }

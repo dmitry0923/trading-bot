@@ -270,7 +270,7 @@ class BacktestEngine(
             val signal = signalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
             if (signal == StrategyAction.HOLD || signal == StrategyAction.CLOSE) {
                 // Удержание: фиксируем equity по текущей цене закрытия
-                equityCurve.add(equityAt(cash, position, current.closePrice))
+                equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
                 continue
             }
 
@@ -302,7 +302,7 @@ class BacktestEngine(
                             )
                         position = null
                     }
-                    equityCurve.add(equityAt(cash, position, current.closePrice))
+                    equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
                     continue
                 }
             }
@@ -341,7 +341,7 @@ class BacktestEngine(
                             )
                         position = null
                     }
-                    equityCurve.add(equityAt(cash, position, current.closePrice))
+                    equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
                     continue
                 }
             }
@@ -382,7 +382,7 @@ class BacktestEngine(
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
                     }
                 }
-                equityCurve.add(equityAt(cash, position, current.closePrice))
+                equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
                 continue
             }
 
@@ -404,7 +404,7 @@ class BacktestEngine(
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
             }
-            equityCurve.add(equityAt(cash, position, current.closePrice))
+            equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
         }
 
         // Закрыть оставшуюся позицию по последней цене
@@ -515,17 +515,21 @@ class BacktestEngine(
 
     /** Оценка текущего капитала: cash + нереализованный PnL позиции (mark-to-market). */
     private fun equityAt(
+        ticker: String,
         cash: BigDecimal,
         position: PositionSim?,
         marketPrice: BigDecimal,
     ): BigDecimal {
         if (position == null) return cash
+        val instrument = instrumentsConfig.find(ticker)
+        val lotSize = instrument?.lotSize?.toLong() ?: 1L
         val qty = position.quantity.toBigDecimal()
+        val notionalMultiplier = qty.multiply(BigDecimal(lotSize))
         val unrealized =
             when (position.direction) {
                 PositionDirection.LONG -> marketPrice.subtract(position.entryPrice)
                 PositionDirection.SHORT -> position.entryPrice.subtract(marketPrice)
-            }.multiply(qty)
+            }.multiply(notionalMultiplier)
         return cash.add(unrealized)
     }
 
@@ -725,11 +729,12 @@ class BacktestEngine(
         val commissionEntry = computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier)
         val commissionExit = computeCommission(ticker, fill.price, pos.quantity, commissionMultiplier)
         commissionAccumulator[0] = commissionAccumulator[0].add(commissionEntry).add(commissionExit)
+        val lotSize = instrument?.lotSize?.toLong() ?: 1L
         val gross =
             when (pos.direction) {
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
                 PositionDirection.SHORT -> pos.entryPrice.subtract(fill.price)
-            }.multiply(BigDecimal(pos.quantity))
+            }.multiply(BigDecimal(pos.quantity * lotSize))
         val pnl = gross.subtract(commissionEntry).subtract(commissionExit)
 
         tradeReturns.add(pnl.toDouble())

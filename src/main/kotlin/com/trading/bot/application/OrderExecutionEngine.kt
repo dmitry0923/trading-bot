@@ -26,7 +26,7 @@ import kotlin.math.abs
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
- * - акции: (exit - entry) * qty * lotSize;
+ * - акции/FX: (exit - entry) * qty * lotSize (qty = число лотов);
  * - фьючерсы: (exit - entry) * pointValue * qty.
  */
 fun interface PnlCalculator {
@@ -38,9 +38,10 @@ fun interface PnlCalculator {
     ): BigDecimal
 
     companion object {
-        fun plain(): PnlCalculator = stock { 1L }
+        fun plain(): PnlCalculator = lotBased { 1L }
 
-        fun stock(lotSize: (String) -> Long): PnlCalculator =
+        /** lot-based P&L для акций и FX: Δprice × qty × lotSize. */
+        fun lotBased(lotSize: (String) -> Long): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
                 val lots = BigDecimal(lotSize(pos.ticker))
                 when (pos.direction) {
@@ -102,6 +103,7 @@ class OrderExecutionEngine(
     private val metricPrefix: String,
     private val onEntryOpened: (Position) -> Unit = {},
     private val onPositionClosed: (Position) -> Unit = {},
+    private val onSlProtectionFailed: (Position) -> Unit = {},
     private val protectionOrdersEnabled: Boolean = false,
     private val portfolioResolver: suspend (Long?) -> String = { alorConfig.portfolio },
 ) {
@@ -485,7 +487,8 @@ class OrderExecutionEngine(
                         logger.info { "Exchange SL ${row.alorOrderId} for ${pos.ticker} was cancelled — not re-arming" }
                     }
                 } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
-                    logger.warn { "Exchange SL for ${pos.ticker} permanently failed (${row.errorMessage}); monitoring fallback" }
+                    logger.warn { "Exchange SL for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure" }
+                    onSlProtectionFailed(pos)
                 }
             }
         }
@@ -502,7 +505,8 @@ class OrderExecutionEngine(
                         logger.info { "Exchange TP ${row.alorOrderId} for ${pos.ticker} was cancelled — not re-arming" }
                     }
                 } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
-                    logger.warn { "Exchange TP for ${pos.ticker} permanently failed (${row.errorMessage}); monitoring fallback" }
+                    logger.warn { "Exchange TP for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure" }
+                    onSlProtectionFailed(pos)
                 }
             }
         }

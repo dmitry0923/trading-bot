@@ -425,6 +425,11 @@ instruments:
       baseAsset: "CNY"
       quoteAsset: "RUB"
       alorTicker: "CNYRUB_TOM"
+      slPercent: "0.5"
+      tpPercent: "1.0"
+      maxSpreadPercent: "2.0"
+      maxGapPercent: "5.0"
+      commissionRub: "10.0"
 
 risk:
   enabled: true

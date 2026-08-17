@@ -1262,7 +1262,7 @@ class BacktestEngineTest {
         val engine = BacktestEngine(
             CandleRepository(Mockito.mock(DatabaseClient::class.java)),
             instrumentsConfig = instruments,
-            riskConfig = RiskConfig().apply { defaultStopLossPercent = 0.5 },
+            riskConfig = RiskConfig().apply { defaultStopLossPercent = BigDecimal("0.5") },
             signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
         )
         val candles = (0 until 60).map { i ->
@@ -1294,7 +1294,7 @@ class BacktestEngineTest {
                     ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                     priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
                     go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
-                    slPercent = 0.5, tpPercent = 1.0,
+                    slPercent = BigDecimal("0.5"), tpPercent = BigDecimal("1.0"),
                 ),
             )
         }
@@ -1337,13 +1337,13 @@ class BacktestEngineTest {
                     ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                     priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
                     go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
-                    slPercent = 0.5, commissionRub = BigDecimal("10.0"),
+                    slPercent = BigDecimal("0.5"), commissionRub = BigDecimal("10.0"),
                 ),
             )
         }
         val riskConfig = RiskConfig().apply {
             riskPerTradePercent = 1.0
-            defaultStopLossPercent = 2.0
+            defaultStopLossPercent = BigDecimal("2.0")
         }
         val engine = BacktestEngine(
             CandleRepository(Mockito.mock(DatabaseClient::class.java)),

@@ -619,7 +619,7 @@ class BacktestEngine(
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerShare =
             price
-                .multiply(BigDecimal(effectiveSl.toString()))
+                .multiply(effectiveSl)
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
                 .add(commissionPerLot.divide(BigDecimal(lotSize), 6, RoundingMode.HALF_UP))
         val riskCapQty =

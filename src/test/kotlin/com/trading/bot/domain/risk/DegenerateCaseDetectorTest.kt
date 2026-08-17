@@ -53,35 +53,35 @@ class DegenerateCaseDetectorTest {
     fun `wide spread detected above threshold`() {
         val bid = BigDecimal("99")
         val ask = BigDecimal("101")
-        assertTrue(DegenerateCaseDetector.isWideSpread(bid, ask, BigDecimal("100"), maxSpreadPercent = 1.0))
-        assertFalse(DegenerateCaseDetector.isWideSpread(bid, ask, BigDecimal("100"), maxSpreadPercent = 3.0))
+        assertTrue(DegenerateCaseDetector.isWideSpread(bid, ask, BigDecimal("100"), maxSpreadPercent = BigDecimal("1.0")))
+        assertFalse(DegenerateCaseDetector.isWideSpread(bid, ask, BigDecimal("100"), maxSpreadPercent = BigDecimal("3.0")))
     }
 
     @Test
     fun `wide spread check disabled at non positive threshold`() {
-        assertFalse(DegenerateCaseDetector.isWideSpread(BigDecimal("50"), BigDecimal("100"), BigDecimal("100"), maxSpreadPercent = 0.0))
-        assertFalse(DegenerateCaseDetector.isWideSpread(BigDecimal("50"), BigDecimal("100"), BigDecimal("100"), maxSpreadPercent = -1.0))
+        assertFalse(DegenerateCaseDetector.isWideSpread(BigDecimal("50"), BigDecimal("100"), BigDecimal("100"), maxSpreadPercent = BigDecimal("0.0")))
+        assertFalse(DegenerateCaseDetector.isWideSpread(BigDecimal("50"), BigDecimal("100"), BigDecimal("100"), maxSpreadPercent = BigDecimal("-1.0")))
     }
 
     @Test
     fun `gap detected when last open far from previous close`() {
         val candles = listOf(candle(open = 100.0, close = 100.0), candle(open = 105.0, close = 106.0))
-        assertTrue(DegenerateCaseDetector.isGap(candles, maxGapPercent = 3.0))
-        assertFalse(DegenerateCaseDetector.isGap(candles, maxGapPercent = 6.0))
+        assertTrue(DegenerateCaseDetector.isGap(candles, maxGapPercent = BigDecimal("3.0")))
+        assertFalse(DegenerateCaseDetector.isGap(candles, maxGapPercent = BigDecimal("6.0")))
     }
 
     @Test
     fun `gap fails open on insufficient candles or zero prev close`() {
-        assertFalse(DegenerateCaseDetector.isGap(emptyList(), maxGapPercent = 3.0))
-        assertFalse(DegenerateCaseDetector.isGap(listOf(candle(open = 100.0, close = 100.0)), maxGapPercent = 3.0))
+        assertFalse(DegenerateCaseDetector.isGap(emptyList(), maxGapPercent = BigDecimal("3.0")))
+        assertFalse(DegenerateCaseDetector.isGap(listOf(candle(open = 100.0, close = 100.0)), maxGapPercent = BigDecimal("3.0")))
         val prevZero = listOf(candle(open = 0.0, close = 0.0), candle(open = 100.0, close = 100.0))
-        assertFalse(DegenerateCaseDetector.isGap(prevZero, maxGapPercent = 3.0))
+        assertFalse(DegenerateCaseDetector.isGap(prevZero, maxGapPercent = BigDecimal("3.0")))
     }
 
     @Test
     fun `gap check disabled at non positive threshold`() {
         val candles = listOf(candle(open = 100.0, close = 100.0), candle(open = 105.0, close = 106.0))
-        assertFalse(DegenerateCaseDetector.isGap(candles, maxGapPercent = 0.0))
+        assertFalse(DegenerateCaseDetector.isGap(candles, maxGapPercent = BigDecimal("0.0")))
     }
 
     @Test

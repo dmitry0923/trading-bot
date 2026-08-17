@@ -114,7 +114,7 @@ class StockEntryProfile(
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerShare =
             entryPrice
-                .multiply(BigDecimal(effectiveSlPercent.toString()))
+                .multiply(effectiveSlPercent)
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
                 .add(commissionPerLot.divide(BigDecimal(spec?.lotSize ?: 1), 6, RoundingMode.HALF_UP))
         val maxQtyByRisk =

@@ -83,10 +83,10 @@ object ExitRules {
     fun calcSL(
         entryPrice: BigDecimal,
         direction: PositionDirection,
-        percent: Double,
+        percent: BigDecimal,
         priceStep: BigDecimal = BigDecimal("0.01"),
     ): BigDecimal {
-        val p = BigDecimal(percent.toString()).divide(BigDecimal("100"))
+        val p = percent.divide(BigDecimal("100"), 8, RoundingMode.HALF_UP)
         val raw =
             when (direction) {
                 PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
@@ -102,10 +102,10 @@ object ExitRules {
     fun calcTP(
         entryPrice: BigDecimal,
         direction: PositionDirection,
-        percent: Double,
+        percent: BigDecimal,
         priceStep: BigDecimal = BigDecimal("0.01"),
     ): BigDecimal {
-        val p = BigDecimal(percent.toString()).divide(BigDecimal("100"))
+        val p = percent.divide(BigDecimal("100"), 8, RoundingMode.HALF_UP)
         val raw =
             when (direction) {
                 PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(p))

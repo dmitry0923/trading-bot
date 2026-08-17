@@ -60,7 +60,7 @@ class SettingsServiceTest {
         assertEquals(5, riskConfig.maxOpenPositions)
         assertEquals(2, riskConfig.futuresMaxOpenPositions)
         assertEquals(8.0, riskConfig.maxVolatilityPercent)
-        assertEquals(1.5, riskConfig.defaultStopLossPercent)
+        assertEquals(0, BigDecimal("1.5").compareTo(riskConfig.defaultStopLossPercent))
         assertFalse(leverageConfig.enabled)
         assertEquals(0, leverageConfig.userLeverage.compareTo(BigDecimal("4.0")))
         assertTrue(experimentConfig.enabled)

@@ -142,10 +142,10 @@ class InstrumentsConfig {
                 baseAsset = "CNY",
                 quoteAsset = "RUB",
                 alorTicker = "CNYRUB_TOM",
-                slPercent = 0.5,
-                tpPercent = 1.0,
-                maxSpreadPercent = 2.0,
-                maxGapPercent = 5.0,
+                slPercent = BigDecimal("0.5"),
+                tpPercent = BigDecimal("1.0"),
+                maxSpreadPercent = BigDecimal("2.0"),
+                maxGapPercent = BigDecimal("5.0"),
                 commissionRub = BigDecimal("10.0"),
             ),
         )
@@ -164,24 +164,24 @@ class InstrumentsConfig {
         /** Валюта котировки (RUB, USD, ...) — для FX нужна для расчёта notional. */
         var quoteAsset: String = "RUB",
         /** Per-instrument SL% — overrides RiskConfig.defaultStopLossPercent when non-null. */
-        var slPercent: Double? = null,
+        var slPercent: BigDecimal? = null,
         /** Per-instrument TP% — overrides RiskConfig.defaultTakeProfitPercent when non-null. */
-        var tpPercent: Double? = null,
+        var tpPercent: BigDecimal? = null,
         /** Per-instrument max spread % — overrides RiskConfig.maxSpreadPercent when non-null. */
-        var maxSpreadPercent: Double? = null,
+        var maxSpreadPercent: BigDecimal? = null,
         /** Per-instrument max gap % — overrides RiskConfig.maxGapPercent when non-null. */
-        var maxGapPercent: Double? = null,
+        var maxGapPercent: BigDecimal? = null,
         /** Commission per lot in RUB (round-trip). Used by cost-aware position sizing. */
         var commissionRub: BigDecimal? = null,
     ) {
         /** Effective SL%: per-instrument override or global default. */
-        fun effectiveSlPercent(globalDefault: Double): Double = slPercent ?: globalDefault
+        fun effectiveSlPercent(globalDefault: BigDecimal): BigDecimal = slPercent ?: globalDefault
         /** Effective TP%: per-instrument override or global default. */
-        fun effectiveTpPercent(globalDefault: Double): Double = tpPercent ?: globalDefault
+        fun effectiveTpPercent(globalDefault: BigDecimal): BigDecimal = tpPercent ?: globalDefault
         /** Effective max spread %: per-instrument override or global default. */
-        fun effectiveMaxSpreadPercent(globalDefault: Double): Double = maxSpreadPercent ?: globalDefault
+        fun effectiveMaxSpreadPercent(globalDefault: BigDecimal): BigDecimal = maxSpreadPercent ?: globalDefault
         /** Effective max gap %: per-instrument override or global default. */
-        fun effectiveMaxGapPercent(globalDefault: Double): Double = maxGapPercent ?: globalDefault
+        fun effectiveMaxGapPercent(globalDefault: BigDecimal): BigDecimal = maxGapPercent ?: globalDefault
 
         /**
          * Notional в котировочной валюте (RUB для FX).

@@ -20,8 +20,8 @@ class RiskConfig {
     var maxOpenPositions: Int = 1
     var maxSectorExposure: Int = 2
     var maxVolatilityPercent: Double = 5.0
-    var defaultStopLossPercent: Double = 2.0
-    var defaultTakeProfitPercent: Double = 4.0
+    var defaultStopLossPercent: BigDecimal = BigDecimal("2.0")
+    var defaultTakeProfitPercent: BigDecimal = BigDecimal("4.0")
     var trailingStopEnabled: Boolean = true
     var trailingStopPercent: Double = 1.0
     var sectors: Map<String, String> = emptyMap()
@@ -421,10 +421,10 @@ class RiskConfig {
     var degenerateCaseGuardEnabled: Boolean = true
 
     /** Максимальный спред (ask-bid)/ask в %, выше которого вход запрещён (роадмап: SPREAD > 1%). */
-    var maxSpreadPercent: Double = 1.0
+    var maxSpreadPercent: BigDecimal = BigDecimal("1.0")
 
     /** Максимальный открывающий гэп |open - prevClose|/prevClose в %, выше которого вход запрещён. */
-    var maxGapPercent: Double = 3.0
+    var maxGapPercent: BigDecimal = BigDecimal("3.0")
 
     /** Подряд идущих свечей с нулевым объёмом, при котором фиксируется депозитарная пауза. */
     var consecutiveZeroVolumeBars: Int = 3

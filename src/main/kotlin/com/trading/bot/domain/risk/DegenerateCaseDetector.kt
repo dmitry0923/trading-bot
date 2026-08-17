@@ -43,11 +43,11 @@ object DegenerateCaseDetector {
         bid: BigDecimal?,
         ask: BigDecimal?,
         currentPrice: BigDecimal,
-        maxSpreadPercent: Double,
+        maxSpreadPercent: BigDecimal,
     ): Boolean {
-        if (maxSpreadPercent <= 0) return false
+        if (maxSpreadPercent <= BigDecimal.ZERO) return false
         return spreadPercent(bid, ask, currentPrice)
-            .compareTo(BigDecimal(maxSpreadPercent).movePointLeft(2)) > 0
+            .compareTo(maxSpreadPercent.divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)) > 0
     }
 
     /**
@@ -57,9 +57,9 @@ object DegenerateCaseDetector {
      */
     fun isGap(
         candles: List<Candle>,
-        maxGapPercent: Double,
+        maxGapPercent: BigDecimal,
     ): Boolean {
-        if (maxGapPercent <= 0 || candles.size < 2) return false
+        if (maxGapPercent <= BigDecimal.ZERO || candles.size < 2) return false
         val last = candles.last()
         val prevClose = candles[candles.size - 2].closePrice
         if (prevClose <= BigDecimal.ZERO) return false
@@ -68,7 +68,7 @@ object DegenerateCaseDetector {
                 .subtract(prevClose)
                 .abs()
                 .divide(prevClose, 6, RoundingMode.HALF_UP)
-        return gap.compareTo(BigDecimal(maxGapPercent).movePointLeft(2)) > 0
+        return gap.compareTo(maxGapPercent.divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)) > 0
     }
 
     /**

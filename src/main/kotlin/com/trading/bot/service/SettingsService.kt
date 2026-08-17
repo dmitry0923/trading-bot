@@ -77,8 +77,8 @@ class SettingsService(
         riskConfig.futuresMaxOpenPositions = s.futuresMaxOpenPositions
         riskConfig.maxSectorExposure = s.maxSectorExposure
         riskConfig.maxVolatilityPercent = s.maxVolatilityPercent
-        riskConfig.defaultStopLossPercent = s.defaultStopLossPercent
-        riskConfig.defaultTakeProfitPercent = s.defaultTakeProfitPercent
+        riskConfig.defaultStopLossPercent = BigDecimal(s.defaultStopLossPercent.toString())
+        riskConfig.defaultTakeProfitPercent = BigDecimal(s.defaultTakeProfitPercent.toString())
         riskConfig.trailingStopEnabled = s.trailingStopEnabled
         riskConfig.trailingStopPercent = s.trailingStopPercent
         riskConfig.riskPerTradePercent = s.riskPerTradePercent

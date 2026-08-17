@@ -66,7 +66,7 @@ class DegenerateCaseGuardTest {
 
     @Test
     fun `wide spread blocks entry`() {
-        riskConfig.maxSpreadPercent = 0.2
+        riskConfig.maxSpreadPercent = BigDecimal("0.2")
         runBlocking {
             Mockito
                 .`when`(alorClient.getMarketSnapshot("SBER"))
@@ -134,7 +134,7 @@ class DegenerateCaseGuardTest {
 
     @Test
     fun `spread checked before candles`() {
-        riskConfig.maxSpreadPercent = 0.2
+        riskConfig.maxSpreadPercent = BigDecimal("0.2")
         runBlocking {
             Mockito
                 .`when`(alorClient.getMarketSnapshot("SBER"))
@@ -164,7 +164,7 @@ class DegenerateCaseGuardTest {
 
     @Test
     fun `non positive spread threshold disables spread check`() {
-        riskConfig.maxSpreadPercent = 0.0
+        riskConfig.maxSpreadPercent = BigDecimal("0.0")
         runBlocking {
             Mockito
                 .`when`(alorClient.getMarketSnapshot("SBER"))
@@ -177,12 +177,12 @@ class DegenerateCaseGuardTest {
 
     @Test
     fun `per-instrument spread threshold overrides global`() {
-        riskConfig.maxSpreadPercent = 5.0
+        riskConfig.maxSpreadPercent = BigDecimal("5.0")
         instrumentsConfig.instruments = mutableListOf(
             InstrumentsConfig.InstrumentSpec(ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                 priceStep = BigDecimal("0.0005"), priceStepCost = BigDecimal("0.5"),
                 go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY", quoteAsset = "RUB",
-                maxSpreadPercent = 0.2),
+                maxSpreadPercent = BigDecimal("0.2")),
         )
         runBlocking {
             Mockito
@@ -196,12 +196,12 @@ class DegenerateCaseGuardTest {
 
     @Test
     fun `per-instrument wider spread threshold allows entry`() {
-        riskConfig.maxSpreadPercent = 0.2
+        riskConfig.maxSpreadPercent = BigDecimal("0.2")
         instrumentsConfig.instruments = mutableListOf(
             InstrumentsConfig.InstrumentSpec(ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
                 priceStep = BigDecimal("0.0005"), priceStepCost = BigDecimal("0.5"),
                 go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY", quoteAsset = "RUB",
-                maxSpreadPercent = 5.0),
+                maxSpreadPercent = BigDecimal("5.0")),
         )
         runBlocking {
             Mockito

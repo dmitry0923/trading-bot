@@ -4,6 +4,7 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.ExecutionReport
@@ -125,6 +126,12 @@ class OrderExecutionEngine(
         accountId: Long? = null,
         buildPosition: (orderId: String?, pending: Boolean, fillPrice: BigDecimal, qty: Int) -> Position,
     ): Position? {
+        if (qty <= 0) {
+            logger.error { "Entry rejected $ticker: qty=$qty must be positive" }
+            meterRegistry.counter("$metricPrefix.entry.rejected", Tags.of("ticker", ticker, "reason", "INVALID_QTY")).increment()
+            return null
+        }
+
         // Атомарная резервация слота (EXEC-002, MR-B): ДО отправки ордера. Уникальный
         // индекс entry_reservations (ticker, account) гарантирует, что из конкурентных
         // входов по одному слоту выигрывает один — остальные не создают второй
@@ -216,7 +223,7 @@ class OrderExecutionEngine(
     suspend fun closePosition(
         pos: Position,
         price: BigDecimal,
-        reason: String,
+        reason: CloseReason,
     ) {
         val positionId =
             pos.id ?: run {
@@ -259,7 +266,7 @@ class OrderExecutionEngine(
                 null,
                 "market",
                 positionId = positionId,
-                closeReason = reason,
+                closeReason = reason.code,
             )
         if (!placed.success || placed.alorOrderId == null) {
             if (placed.uncertain) {
@@ -303,7 +310,7 @@ class OrderExecutionEngine(
 
             pos.pendingClose -> {
                 if (pos.closeOrderId != null) {
-                    confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: "RECONCILIATION")
+                    confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
                 } else {
                     resolveCloseViaOutbox(pos)
                 }
@@ -512,7 +519,7 @@ class OrderExecutionEngine(
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
                 positionRepo.save(pos)
-                applyExchangeProtectionClose(pos, ex, "STOP_LOSS")
+                applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
                 return
             }
             if (isGoneStatus(ex)) {
@@ -530,7 +537,7 @@ class OrderExecutionEngine(
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
                 positionRepo.save(pos)
-                applyExchangeProtectionClose(pos, ex, "TAKE_PROFIT")
+                applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
                 return
             }
             if (isGoneStatus(ex)) {
@@ -551,7 +558,7 @@ class OrderExecutionEngine(
     private suspend fun applyExchangeProtectionClose(
         pos: Position,
         execution: AlorClient.OrderExecution,
-        reason: String,
+        reason: CloseReason,
     ) {
         val filled = execution.filledQuantity.coerceIn(0, pos.quantity)
         if (filled <= 0) return
@@ -605,7 +612,7 @@ class OrderExecutionEngine(
                         pos.slOrderPrice = null
                         pos.slPendingReplace = false
                         positionRepo.save(pos)
-                        applyExchangeProtectionClose(pos, ex, "STOP_LOSS")
+                        applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
                         return
                     }
                 }
@@ -641,7 +648,7 @@ class OrderExecutionEngine(
                         pos.tpOrderPrice = null
                         pos.tpPendingReplace = false
                         positionRepo.save(pos)
-                        applyExchangeProtectionClose(pos, ex, "TAKE_PROFIT")
+                        applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
                         return
                     }
                 }
@@ -738,7 +745,7 @@ class OrderExecutionEngine(
         // Проверяем РАНЬШЕ pendingClose: стоп-заявка могла сработать, пока
         // локальный close-ордер ещё «в полёте».
         if (orderId == pos.slOrderId || orderId == pos.tpOrderId) {
-            val reason = if (orderId == pos.slOrderId) "STOP_LOSS" else "TAKE_PROFIT"
+            val reason = if (orderId == pos.slOrderId) CloseReason.STOP_LOSS else CloseReason.TAKE_PROFIT
             if (orderId == pos.slOrderId) {
                 pos.slOrderId = null
                 pos.slOrderPrice = null
@@ -776,7 +783,7 @@ class OrderExecutionEngine(
 
         // Подтверждение закрытия (pendingClose).
         if (pos.pendingClose) {
-            applyCloseExecution(pos, report.filledQty, fillPrice, pos.closeReason ?: "EXECUTION_FILL")
+            applyCloseExecution(pos, report.filledQty, fillPrice, pos.closeReason ?: CloseReason.EXECUTION_FILL)
             return true
         }
 
@@ -789,7 +796,7 @@ class OrderExecutionEngine(
     private suspend fun confirmCloseFill(
         pos: Position,
         expectedPrice: BigDecimal,
-        reason: String,
+        reason: CloseReason,
     ) {
         val orderId = pos.closeOrderId ?: return
         val execution = alorClient.verifyOrder(orderId, expectedPrice = expectedPrice, portfolio = portfolioResolver(pos.accountId))
@@ -847,7 +854,7 @@ class OrderExecutionEngine(
         pos: Position,
         filled: Int,
         avg: BigDecimal,
-        reason: String,
+        reason: CloseReason,
     ) {
         val filledQty = filled.coerceIn(0, pos.quantity)
         if (filledQty <= 0) return
@@ -894,7 +901,7 @@ class OrderExecutionEngine(
     private suspend fun finalizeClosePosition(
         pos: Position,
         closePrice: BigDecimal,
-        reason: String,
+        reason: CloseReason,
     ) {
         val positionId =
             pos.id ?: run {
@@ -903,7 +910,7 @@ class OrderExecutionEngine(
             }
         val targetStatus =
             when (reason) {
-                "TAKE_PROFIT" -> PositionStatus.TAKE_PROFIT
+                CloseReason.TAKE_PROFIT -> PositionStatus.TAKE_PROFIT
                 else -> PositionStatus.CLOSED
             }
         val remainderPnl = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
@@ -920,10 +927,10 @@ class OrderExecutionEngine(
         pos.pendingClose = false
         pos.closeOrderId = null
         cancelProtectionOrders(pos)
-        tradeEventService.recordPositionClosed(pos, reason)
+        tradeEventService.recordPositionClosed(pos, reason.code)
         onPositionClosed(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
-        meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
+        meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
         logger.info { "Closed ${pos.ticker} reason=$reason P&L=$totalPnl" }
     }
 
@@ -951,7 +958,7 @@ class OrderExecutionEngine(
             outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
                 val execution = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId)) ?: return
                 if (execution.status.contains("reject") || execution.status.contains("cancel")) {
-                    abandonEntry(pos, "ENTRY_REJECTED")
+                    abandonEntry(pos, CloseReason.ENTRY_REJECTED)
                     return
                 }
                 if (execution.filledQuantity <= 0) return // лимитный ордер ещё не исполнился
@@ -1031,7 +1038,7 @@ class OrderExecutionEngine(
             }
 
             outbox.status == OutboxStatus.FAILED && outbox.retryCount >= alorConfig.maxOrderRetries -> {
-                abandonEntry(pos, "ENTRY_NOT_CONFIRMED")
+                abandonEntry(pos, CloseReason.ENTRY_NOT_CONFIRMED)
             }
 
             else -> {} // PENDING / FAILED (ещё ретраится) → ждём
@@ -1058,7 +1065,7 @@ class OrderExecutionEngine(
             outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
                 pos.closeOrderId = outbox.alorOrderId
                 positionRepo.save(pos)
-                confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: "RECONCILIATION")
+                confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
             }
 
             outbox.status == OutboxStatus.FAILED && outbox.retryCount >= alorConfig.maxOrderRetries -> {
@@ -1074,7 +1081,7 @@ class OrderExecutionEngine(
 
     private suspend fun abandonEntry(
         pos: Position,
-        reason: String,
+        reason: CloseReason,
     ) {
         logger.warn { "Entry for ${pos.ticker} abandoned: $reason" }
         pos.pendingEntry = false
@@ -1083,6 +1090,6 @@ class OrderExecutionEngine(
         pos.closedAt = LocalDateTime.now()
         positionRepo.save(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
-        meterRegistry.counter("$metricPrefix.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason)).increment()
+        meterRegistry.counter("$metricPrefix.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
     }
 }

@@ -218,7 +218,7 @@ class MlDatasetService(
             exitPrice = position.closePrice,
             pnlRub = pnlRub,
             pnlPercent = BigDecimal(pnlPercent).setScale(4, RoundingMode.HALF_UP).toDouble(),
-            closeReason = position.closeReason,
+            closeReason = position.closeReason?.code,
             win = if (pnlRub > BigDecimal.ZERO) 1 else 0,
             hourOfDay = position.openedAt.hour,
             rsi14 = features.rsi14,

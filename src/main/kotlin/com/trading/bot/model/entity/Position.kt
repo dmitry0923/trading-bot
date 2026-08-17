@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -54,7 +55,7 @@ data class Position(
     var pendingClose: Boolean = false,
     var pendingEntry: Boolean = false,
     var realizedPnl: BigDecimal = BigDecimal.ZERO,
-    var closeReason: String? = null,
+    var closeReason: CloseReason? = null,
     var openedAt: LocalDateTime = LocalDateTime.now(),
     var closedAt: LocalDateTime? = null,
     var cycleId: String? = null,

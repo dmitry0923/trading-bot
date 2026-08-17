@@ -2,6 +2,7 @@ package com.trading.bot.application
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -89,6 +90,11 @@ class OrderExecutionEngineEntryReservationTest {
     private fun anyString(): String {
         Mockito.any(String::class.java)
         return "Si"
+    }
+
+    private fun anyCloseReason(): CloseReason {
+        Mockito.any(CloseReason::class.java)
+        return CloseReason.STOP_LOSS
     }
 
     private fun anyDirection(): PositionDirection {
@@ -204,11 +210,13 @@ class OrderExecutionEngineEntryReservationTest {
         runBlocking { Mockito.verify(positionRepo, times(times)).releaseEntry(eqString("Si"), Mockito.isNull()) }
     }
 
+    @Suppress("ReplaceCallWithBinaryOperator")
     private fun eqString(value: String): String {
         Mockito.eq(value)
         return value
     }
 
+    @Suppress("ReplaceCallWithBinaryOperator")
     private fun eqDirection(value: PositionDirection): PositionDirection {
         Mockito.eq(value)
         return value
@@ -373,7 +381,7 @@ class OrderExecutionEngineEntryReservationTest {
                         Mockito.anyLong(),
                         anyStatus(),
                         anyBigDecimal(),
-                        anyString(),
+                        anyCloseReason(),
                         anyBigDecimal(),
                     ),
                 ).thenReturn(true)
@@ -398,7 +406,7 @@ class OrderExecutionEngineEntryReservationTest {
                 ).thenReturn(successResult("c1"))
         }
 
-        runBlocking { engine.closePosition(pos, BigDecimal("90000"), "STOP_LOSS") }
+        runBlocking { engine.closePosition(pos, BigDecimal("90000"), CloseReason.STOP_LOSS) }
 
         verifyRelease(1)
         runBlocking {

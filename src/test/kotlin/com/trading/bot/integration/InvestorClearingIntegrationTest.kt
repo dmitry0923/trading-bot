@@ -3,6 +3,7 @@ package com.trading.bot.integration
 import com.trading.bot.application.TradingBlockReason
 import com.trading.bot.application.TradingGate
 import com.trading.bot.client.AlorClient
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -286,7 +287,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
             )
         }
 
-        val closed = runBlocking { tradingControlService.forceCloseNow("FORCE_CLOSE") }
+        val closed = runBlocking { tradingControlService.forceCloseNow(CloseReason.FORCE_CLOSE) }
         assertEquals(2, closed)
         assertEquals(0, runBlocking { positionRepository.findOpenCount() })
     }
@@ -330,7 +331,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
             )
         }
 
-        val closed = runBlocking { tradingControlService.forceCloseNow("FORCE_CLOSE") }
+        val closed = runBlocking { tradingControlService.forceCloseNow(CloseReason.FORCE_CLOSE) }
         assertEquals(2, closed)
         assertEquals(0, runBlocking { positionRepository.findOpenCount() })
     }
@@ -354,7 +355,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                     pnl = pnl,
                     status = PositionStatus.CLOSED,
                     alorOrderId = "test-${System.nanoTime()}",
-                    closeReason = "TAKE_PROFIT",
+                    closeReason = CloseReason.TAKE_PROFIT,
                     openedAt = LocalDateTime.now().minusDays(daysAgo + 1),
                     closedAt = LocalDateTime.now().minusDays(daysAgo).minusHours(1),
                 ),

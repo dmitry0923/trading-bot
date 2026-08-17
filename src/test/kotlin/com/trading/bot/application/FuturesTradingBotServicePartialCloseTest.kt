@@ -9,6 +9,7 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.event.PriceChangedEvent
 import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -100,9 +101,9 @@ class FuturesTradingBotServicePartialCloseTest {
         return PositionStatus.OPEN
     }
 
-    private fun anyString(): String {
-        Mockito.any(String::class.java)
-        return "Si"
+    private fun anyCloseReason(): CloseReason {
+        Mockito.any(CloseReason::class.java)
+        return CloseReason.STOP_LOSS
     }
 
     private fun pos(): Position =
@@ -140,7 +141,7 @@ class FuturesTradingBotServicePartialCloseTest {
                         Mockito.anyLong(),
                         anyStatus(),
                         anyBigDecimal(),
-                        anyString(),
+                        anyCloseReason(),
                         anyBigDecimal(),
                     ),
                 ).thenReturn(true)
@@ -228,7 +229,7 @@ class FuturesTradingBotServicePartialCloseTest {
 
         assertEquals(PositionStatus.CLOSED, pos.status)
         assertEquals(0, BigDecimal.ZERO.compareTo(pos.pnl))
-        assertEquals("STOP_LOSS", pos.closeReason)
+        assertEquals(CloseReason.STOP_LOSS, pos.closeReason)
         assertEquals(1, pos.quantity)
         assertTrue(!pos.pendingClose)
         assertNull(pos.closeOrderId)
@@ -243,7 +244,7 @@ class FuturesTradingBotServicePartialCloseTest {
             pos().apply {
                 pendingClose = true
                 closeOrderId = "ord-inflight"
-                closeReason = "STOP_LOSS"
+                closeReason = CloseReason.STOP_LOSS
             }
         stubCommon(pos)
         runBlocking {

@@ -2,6 +2,7 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
@@ -53,7 +54,7 @@ class PositionRepository(
             pendingClose = row.get("pending_close", Boolean::class.javaObjectType) ?: false,
             pendingEntry = row.get("pending_entry", Boolean::class.javaObjectType) ?: false,
             realizedPnl = row.get("realized_pnl", BigDecimal::class.java) ?: BigDecimal.ZERO,
-            closeReason = row.get("close_reason", String::class.java),
+            closeReason = CloseReason.from(row.get("close_reason", String::class.java)),
             openedAt = row.require("opened_at", LocalDateTime::class.java),
             closedAt = row.get("closed_at", LocalDateTime::class.java),
             cycleId = row.get("cycle_id", String::class.java),
@@ -65,6 +66,39 @@ class PositionRepository(
         return databaseClient
             .sql(sql)
             .bind("status", status.name)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
+    /**
+     * Возвращает только уникальные тикеры открытых позиций (без загрузки всех строк).
+     * Используется в pollMarketData для определения тикеров, требующих опроса.
+     */
+    suspend fun findOpenTickersDistinct(): List<String> {
+        val sql = "SELECT DISTINCT ticker FROM positions WHERE status = 'OPEN'"
+        return databaseClient
+            .sql(sql)
+            .map { row, _ -> row.get("ticker", String::class.java)!! }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
+    /**
+     * Открытые позиции конкретного тикера (без загрузки ВСЕХ открытых позиций).
+     * Используется в onPriceChanged для мониторинга одного тикера за тик.
+     */
+    suspend fun findByStatusAndTicker(
+        status: PositionStatus,
+        ticker: String,
+    ): List<Position> {
+        val sql = "SELECT * FROM positions WHERE status = :status AND ticker = :ticker ORDER BY opened_at DESC"
+        return databaseClient
+            .sql(sql)
+            .bind("status", status.name)
+            .bind("ticker", ticker)
             .map { row, _ -> toPosition(row) }
             .all()
             .collectList()
@@ -167,7 +201,7 @@ class PositionRepository(
 
     /**
      * Атомарный переход позиции в закрытое состояние (EXEC-001, защита от двойной
-     * финализации одного close-ордера). Конкурентные [finalizeClosePosition]-вызовы
+     * финализации одного close-ордера). Конкурентные [transitionToClosed]-вызовы
      * (claim-поток и сверяющие потоки) за один UPDATE переводят строку только один раз:
      * rowsUpdated == 1 только у первого, остальные получают 0 и пропускают побочные
      * эффекты (recordPositionClosed / onPositionClosed / снятие защитных заявок).
@@ -179,7 +213,7 @@ class PositionRepository(
         id: Long,
         status: PositionStatus,
         closePrice: BigDecimal,
-        closeReason: String,
+        closeReason: CloseReason,
         pnl: BigDecimal,
     ): Boolean {
         val sql =
@@ -195,7 +229,7 @@ class PositionRepository(
             .bind("status", status.name)
             .bind("closedAt", LocalDateTime.now())
             .bind("closePrice", closePrice)
-            .bind("closeReason", closeReason)
+            .bind("closeReason", closeReason.code)
             .bind("pnl", pnl)
             .fetch()
             .rowsUpdated()
@@ -272,7 +306,7 @@ class PositionRepository(
 
     /**
      * Закрытые позиции (status != OPEN) для экспорта ML-датасета (roadmap v2.4).
-     * Необязательные фильтры: [ticker], [since] (по [closedAt]).
+     * Необязательные фильтры: [ticker], [since] (по closedAt).
      */
     suspend fun findClosed(
         ticker: String? = null,
@@ -432,7 +466,7 @@ class PositionRepository(
             .bind("pendingClose", position.pendingClose)
             .bind("pendingEntry", position.pendingEntry)
             .bind("realizedPnl", position.realizedPnl)
-            .bindOrNull("closeReason", position.closeReason)
+            .bindOrNull("closeReason", position.closeReason?.code)
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
             .bindOrNull("cycleId", position.cycleId)

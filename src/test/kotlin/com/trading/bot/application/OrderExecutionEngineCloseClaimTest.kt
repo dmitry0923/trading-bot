@@ -2,6 +2,7 @@ package com.trading.bot.application
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -14,6 +15,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -100,11 +102,17 @@ class OrderExecutionEngineCloseClaimTest {
         return "Si"
     }
 
+    private fun anyCloseReason(): CloseReason {
+        Mockito.any(CloseReason::class.java)
+        return CloseReason.STOP_LOSS
+    }
+
     private fun anyStatus(): PositionStatus {
         Mockito.any(PositionStatus::class.java)
         return PositionStatus.OPEN
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun successResult(orderId: String): OrderOutboxService.PlaceOrderResult =
         OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), orderId, success = true)
 
@@ -150,6 +158,7 @@ class OrderExecutionEngineCloseClaimTest {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun verifyPlaceOrder(times: Int) {
         runBlocking {
             Mockito
@@ -184,7 +193,7 @@ class OrderExecutionEngineCloseClaimTest {
                         Mockito.anyLong(),
                         anyStatus(),
                         anyBigDecimal(),
-                        anyString(),
+                        anyCloseReason(),
                         anyBigDecimal(),
                     ),
                 ).thenReturn(true)
@@ -192,14 +201,14 @@ class OrderExecutionEngineCloseClaimTest {
         stubFill()
         stubPlaceOrder(successResult("c1"))
 
-        runBlocking { engine.closePosition(pos, BigDecimal("90000"), "STOP_LOSS") }
+        runBlocking { engine.closePosition(pos, BigDecimal("90000"), CloseReason.STOP_LOSS) }
 
         verifyPlaceOrder(1)
         runBlocking {
             Mockito.verify(positionRepo, times(1)).claimForClose(1L)
             Mockito
                 .verify(positionRepo, times(1))
-                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyString(), anyBigDecimal())
+                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyCloseReason(), anyBigDecimal())
             Mockito.verify(tradeEventService, times(1)).recordPositionClosed(anyPosition(), anyString())
         }
     }
@@ -221,7 +230,7 @@ class OrderExecutionEngineCloseClaimTest {
                         Mockito.anyLong(),
                         anyStatus(),
                         anyBigDecimal(),
-                        anyString(),
+                        anyCloseReason(),
                         anyBigDecimal(),
                     ),
                 ).thenReturn(true)
@@ -236,10 +245,10 @@ class OrderExecutionEngineCloseClaimTest {
             (1..2).map {
                 scope.launch {
                     barrier.await()
-                    engine.closePosition(pos.copy(), BigDecimal("90000"), "STOP_LOSS")
+                    engine.closePosition(pos.copy(), BigDecimal("90000"), CloseReason.STOP_LOSS)
                 }
             }
-        runBlocking { jobs.forEach { it.join() } }
+        runBlocking { jobs.joinAll() }
 
         verifyPlaceOrder(1)
         runBlocking {
@@ -268,7 +277,7 @@ class OrderExecutionEngineCloseClaimTest {
                         Mockito.anyLong(),
                         anyStatus(),
                         anyBigDecimal(),
-                        anyString(),
+                        anyCloseReason(),
                         anyBigDecimal(),
                     ),
                 ).thenAnswer { transitionCounter.getAndIncrement() == 0 }
@@ -280,12 +289,12 @@ class OrderExecutionEngineCloseClaimTest {
         // Поток 1 (claim) создаёт ордер и финализирует (transition -> true).
         // Поток 2 (реконсилятор, claim=false) сверяет тот же close-ордер и пробует
         // финализировать ещё раз (transition -> false) — побочные эффекты НЕ повторяются.
-        runBlocking { engine.closePosition(pos, BigDecimal("90000"), "STOP_LOSS") }
+        runBlocking { engine.closePosition(pos, BigDecimal("90000"), CloseReason.STOP_LOSS) }
         runBlocking {
             engine.closePosition(
                 pos.copy(pendingClose = true, closeOrderId = "c1"),
                 BigDecimal("90000"),
-                "STOP_LOSS",
+                CloseReason.STOP_LOSS,
             )
         }
 
@@ -294,7 +303,7 @@ class OrderExecutionEngineCloseClaimTest {
             Mockito.verify(tradeEventService, times(1)).recordPositionClosed(anyPosition(), anyString())
             Mockito
                 .verify(positionRepo, times(2))
-                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyString(), anyBigDecimal())
+                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyCloseReason(), anyBigDecimal())
         }
     }
 
@@ -310,7 +319,7 @@ class OrderExecutionEngineCloseClaimTest {
                         Mockito.anyLong(),
                         anyStatus(),
                         anyBigDecimal(),
-                        anyString(),
+                        anyCloseReason(),
                         anyBigDecimal(),
                     ),
                 ).thenReturn(true)
@@ -318,7 +327,7 @@ class OrderExecutionEngineCloseClaimTest {
         stubSaveReturnsArg()
         stubFill()
 
-        runBlocking { engine.closePosition(pos, BigDecimal("90000"), "STOP_LOSS") }
+        runBlocking { engine.closePosition(pos, BigDecimal("90000"), CloseReason.STOP_LOSS) }
 
         runBlocking {
             Mockito.verify(orderOutboxService, never()).placeOrder(
@@ -347,12 +356,12 @@ class OrderExecutionEngineCloseClaimTest {
         stubSaveReturnsArg()
         stubPlaceOrder(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = false, uncertain = true))
 
-        runBlocking { engine.closePosition(pos, BigDecimal("90000"), "STOP_LOSS") }
+        runBlocking { engine.closePosition(pos, BigDecimal("90000"), CloseReason.STOP_LOSS) }
 
         runBlocking { Mockito.verify(positionRepo, times(1)).save(anyPosition()) }
         assertTrue(savedPos!!.pendingClose)
         assertNull(savedPos!!.closeOrderId)
-        assertEquals("STOP_LOSS", savedPos!!.closeReason)
+        assertEquals(CloseReason.STOP_LOSS, savedPos!!.closeReason)
         verifyPlaceOrder(1)
     }
 
@@ -366,7 +375,7 @@ class OrderExecutionEngineCloseClaimTest {
         stubSaveReturnsArg()
         stubPlaceOrder(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = false))
 
-        runBlocking { engine.closePosition(pos, BigDecimal("90000"), "STOP_LOSS") }
+        runBlocking { engine.closePosition(pos, BigDecimal("90000"), CloseReason.STOP_LOSS) }
 
         runBlocking { Mockito.verify(positionRepo, times(1)).releaseCloseClaim(1L) }
         runBlocking { Mockito.verify(positionRepo, never()).save(anyPosition()) }

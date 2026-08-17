@@ -49,7 +49,7 @@ class TradingEventPublisher(
                 positionId = position.id ?: -1L,
                 ticker = position.ticker,
                 pnl = position.pnl ?: BigDecimal.ZERO,
-                reason = position.closeReason ?: "CLOSED",
+                reason = position.closeReason?.code ?: "CLOSED",
                 cycleId = position.cycleId,
                 accountId = position.accountId,
             ),

@@ -4,6 +4,7 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.infrastructure.UuidV7
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.OrderOutbox
 import com.trading.bot.model.entity.OutboxStatus
@@ -470,13 +471,10 @@ class OrderOutboxService(
      * обходят spread-guard 0.5% — при ликвидации/аварийной остановке блокировка
      * ордера (незакрытая позиция) опаснее проскальзывания по широкому спреду.
      */
-    private fun isEmergencyClose(closeReason: String?): Boolean =
-        closeReason != null &&
-            (
-                closeReason.startsWith("LIQUIDATION") ||
-                    closeReason == "EMERGENCY_STOP" ||
-                    closeReason.startsWith("FORCE_CLOSE")
-            )
+    private fun isEmergencyClose(closeReason: String?): Boolean {
+        val reason = CloseReason.from(closeReason) ?: return false
+        return reason.isLiquidation || reason == CloseReason.EMERGENCY_STOP || reason.isForceClose
+    }
 
     /**
      * Worker: атомарно забирает (claim) PENDING старше 30 сек, FAILED с

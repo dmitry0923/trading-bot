@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
@@ -25,7 +26,7 @@ class TradeAnalysisServiceTest {
 
     private fun closed(
         pnl: BigDecimal,
-        reason: String = "STRATEGY_CLOSE",
+        reason: CloseReason = CloseReason.STRATEGY_CLOSE,
     ): Position =
         Position(
             ticker = "SBER",

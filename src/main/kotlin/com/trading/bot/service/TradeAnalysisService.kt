@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.dto.BlindSpot
 import com.trading.bot.model.dto.TimePattern
 import com.trading.bot.model.dto.TradeStats
@@ -80,9 +81,9 @@ class TradeAnalysisService(
         val avgWin = if (wins > 0) grossProfit.divide(BigDecimal(wins), 2, RoundingMode.HALF_UP) else BigDecimal.ZERO
         val avgLossVal = if (losses > 0) BigDecimal(grossLoss / losses).setScale(2, RoundingMode.HALF_UP) else BigDecimal.ZERO
 
-        val slHits = trades.count { it.closeReason == "STOP_LOSS" }
-        val tpHits = trades.count { it.closeReason == "TAKE_PROFIT" }
-        val strategyCloses = trades.count { it.closeReason == "STRATEGY_CLOSE" }
+        val slHits = trades.count { it.closeReason == CloseReason.STOP_LOSS }
+        val tpHits = trades.count { it.closeReason == CloseReason.TAKE_PROFIT }
+        val strategyCloses = trades.count { it.closeReason == CloseReason.STRATEGY_CLOSE }
         val slHitRate = if (total > 0) slHits.toDouble() / total else 0.0
         val tpHitRate = if (total > 0) tpHits.toDouble() / total else 0.0
         val strategyCloseRate = if (total > 0) strategyCloses.toDouble() / total else 0.0
@@ -153,7 +154,7 @@ class TradeAnalysisService(
 
         val spots = mutableListOf<BlindSpot>()
 
-        val slLosses = losing.count { it.closeReason == "STOP_LOSS" }
+        val slLosses = losing.count { it.closeReason == CloseReason.STOP_LOSS }
         if (slLosses.toDouble() / losing.size > 0.6) {
             val spot =
                 BlindSpot(

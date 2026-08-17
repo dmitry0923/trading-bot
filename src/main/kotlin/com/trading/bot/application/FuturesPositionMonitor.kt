@@ -5,6 +5,7 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.PositionRepository
@@ -65,7 +66,7 @@ class FuturesPositionMonitor(
             when (futuresRiskEngine.checkLiquidationDistance(pos, price)) {
                 FuturesRiskEngine.LiquidationStatus.CRITICAL -> {
                     logger.error { "LIQUIDATION_CRITICAL ${pos.ticker} @ $price — immediate market close" }
-                    engine.closePosition(pos, price, "LIQUIDATION_CRITICAL")
+                    engine.closePosition(pos, price, CloseReason.LIQUIDATION_CRITICAL)
                     continue
                 }
 
@@ -88,15 +89,15 @@ class FuturesPositionMonitor(
             // Живая биржевая заявка покрывает уровень — закрывает сама биржа,
             // иначе локальный мониторинг продублирует закрытие (двойной ордер).
             if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
-                engine.closePosition(pos, price, "STOP_LOSS")
+                engine.closePosition(pos, price, CloseReason.STOP_LOSS)
                 continue
             }
             if (!ExitRules.exchangeTpCovers(pos) && ExitRules.shouldCloseByTP(pos, price)) {
-                engine.closePosition(pos, price, "TAKE_PROFIT")
+                engine.closePosition(pos, price, CloseReason.TAKE_PROFIT)
                 continue
             }
             if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseByTrailing(pos, price)) {
-                engine.closePosition(pos, price, "TRAILING_STOP")
+                engine.closePosition(pos, price, CloseReason.TRAILING_STOP)
                 continue
             }
 

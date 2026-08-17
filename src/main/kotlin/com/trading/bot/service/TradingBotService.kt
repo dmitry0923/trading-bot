@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.OrderExecutionEngine
 import com.trading.bot.application.PnlCalculator
+import com.trading.bot.application.StockPositionMonitor
 import com.trading.bot.application.TradingGate
 import com.trading.bot.application.decision.DecisionEngine
 import com.trading.bot.client.AlorClient
@@ -14,12 +15,12 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
-import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.signal.toSignal
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.infrastructure.db.BlockingDb
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -118,6 +119,17 @@ class TradingBotService(
             portfolioResolver = { accountId -> tradingAccountService.portfolioOf(accountId) },
         )
 
+    /** Мониторинг открытых позиций акций/валют на каждом тике. */
+    private val stockPositionMonitor =
+        StockPositionMonitor(
+            positionRepo = positionRepo,
+            engine = engine,
+            redis = redis,
+            riskConfig = riskConfig,
+            tradeEventService = tradeEventService,
+            meterRegistry = meterRegistry,
+        )
+
     /**
      * WS-подписки на исполнения (multi-account, roadmap v2.2): по одному потоку
      * на портфель каждого включённого аккаунта + legacy конфиг-портфель (для
@@ -147,9 +159,6 @@ class TradingBotService(
 
     /** Время последнего WS-тика по тикеру — используется для отключения поллинга. */
     private val lastWsTickAt = ConcurrentHashMap<String, Instant>()
-
-    /** Текущий P&L открытых позиций (Gauge position.pnl, обновляется на каждом тике). */
-    private val positionPnlGauges = ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicReference<Double>>()
 
     init {
         scope.launch {
@@ -195,10 +204,8 @@ class TradingBotService(
                 ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
             ) {
                 val now = Instant.now()
-                val open = positionRepo.findByStatus(PositionStatus.OPEN)
-                open
-                    .map { it.ticker }
-                    .distinct()
+                val tickers = positionRepo.findOpenTickersDistinct()
+                tickers
                     .filter { ticker ->
                         val lastWs = lastWsTickAt[ticker]
                         lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
@@ -251,116 +258,13 @@ class TradingBotService(
 
     /**
      * PriceChangedEvent → мониторинг открытых позиций (SL/TP/trailing/STRATEGY_CLOSE).
+     * Делегируется в [StockPositionMonitor] для устранения God Object.
      */
     @EventListener
     fun onPriceChanged(event: com.trading.bot.event.PriceChangedEvent) {
         scope.launch(TraceContext.mdcContext(mapOf(TraceContext.TICKER to event.ticker))) {
-            val handlerStart = System.nanoTime()
-            try {
-                val open =
-                    positionRepo
-                        .findByStatus(PositionStatus.OPEN)
-                        .filter { it.ticker == event.ticker && it.instrumentType != InstrumentType.FUTURES }
-                open.forEach { pos ->
-                    // trace_id = cycleId открытия позиции: закрытия/мониторинг наследуют
-                    // идентификатор цикла, породившего вход (см. StrategyService).
-                    TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-                    TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
-                    // Позиции, ожидающие подтверждения входа/закрытия, обрабатывает реконсилятор
-                    // (SL/TP на них не срабатывают — исключаем двойные ордера).
-                    if (pos.pendingEntry || pos.pendingClose) return@forEach
-                    val price = event.price
-                    pos.currentPrice = price
-                    val pnl =
-                        when (pos.direction) {
-                            PositionDirection.LONG -> price.subtract(pos.entryPrice).multiply(BigDecimal(pos.quantity))
-                            PositionDirection.SHORT -> pos.entryPrice.subtract(price).multiply(BigDecimal(pos.quantity))
-                        }
-                    pos.pnl = pnl
-                    updatePositionPnlGauge(pos.ticker, pnl.toDouble())
-
-                    if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
-                        engine.closePosition(pos, price, "STOP_LOSS")
-                        return@forEach
-                    }
-                    if (!ExitRules.exchangeTpCovers(pos) && ExitRules.shouldCloseByTP(pos, price)) {
-                        engine.closePosition(pos, price, "TAKE_PROFIT")
-                        return@forEach
-                    }
-                    if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseByTrailing(pos, price)) {
-                        engine.closePosition(pos, price, "TRAILING_STOP")
-                        return@forEach
-                    }
-
-                    if (riskConfig.trailingStopEnabled) {
-                        ExitRules.updateTrailingStop(pos, price, riskConfig.trailingStopPercent)
-                    }
-
-                    var slUpdated = false
-                    var tpUpdated = false
-                    BlockingDb.io { redis.getStrategy(pos.ticker) }?.let { strat ->
-                        if (strat.action == StrategyAction.CLOSE) {
-                            engine.closePosition(pos, price, "STRATEGY_CLOSE")
-                            return@forEach
-                        }
-                        strat.stopLoss?.let { newSL ->
-                            val shouldUpd =
-                                when (pos.direction) {
-                                    PositionDirection.LONG -> pos.stopLoss?.let { newSL > it } ?: true
-                                    PositionDirection.SHORT -> pos.stopLoss?.let { newSL < it } ?: true
-                                }
-                            if (shouldUpd) {
-                                pos.stopLoss = newSL
-                                logger.info { "SL updated ${pos.ticker} -> $newSL" }
-                                slUpdated = true
-                            }
-                        }
-                        strat.takeProfit?.let { newTP ->
-                            val shouldUpd =
-                                when (pos.direction) {
-                                    PositionDirection.LONG -> pos.takeProfit?.let { newTP > it } ?: true
-                                    PositionDirection.SHORT -> pos.takeProfit?.let { newTP < it } ?: true
-                                }
-                            if (shouldUpd) {
-                                pos.takeProfit = newTP
-                                logger.info { "TP updated ${pos.ticker} -> $newTP" }
-                                tpUpdated = true
-                            }
-                        }
-                    }
-                    positionRepo.save(pos)
-                    if (slUpdated || tpUpdated) {
-                        tradeEventService.recordPositionUpdated(pos)
-                        // Сдвиг SL/TP стратегией → синхронизация биржевых защитных заявок.
-                        engine.onProtectionLevelsChanged(pos)
-                    }
-                }
-            } catch (e: Exception) {
-                logger.error(e) { "Price change handler error ${event.ticker}" }
-                meterRegistry.counter("bot.monitor.error", Tags.of("ticker", event.ticker)).increment()
-            } finally {
-                meterRegistry
-                    .timer("bot.latency", Tags.of("ticker", event.ticker))
-                    .record(System.nanoTime() - handlerStart, java.util.concurrent.TimeUnit.NANOSECONDS)
-            }
+            stockPositionMonitor.monitor(event)
         }
-    }
-
-    /**
-     * Обновляет Gauge position.pnl для тикера (регистрируется один раз на тикер).
-     */
-    private fun updatePositionPnlGauge(
-        ticker: String,
-        pnl: Double,
-    ) {
-        positionPnlGauges
-            .computeIfAbsent(ticker) { t ->
-                val ref =
-                    java.util.concurrent.atomic
-                        .AtomicReference(0.0)
-                meterRegistry.gauge("position.pnl", Tags.of("ticker", t), ref) { it.get() }
-                ref
-            }.set(pnl)
     }
 
     /**
@@ -416,9 +320,9 @@ class TradingBotService(
         pos.pnl = pnl
         pos.status = PositionStatus.CLOSED
         pos.closedAt = LocalDateTime.now()
-        pos.closeReason = pos.closeReason ?: "EXECUTION_FILL"
+        pos.closeReason = pos.closeReason ?: CloseReason.EXECUTION_FILL
         positionRepo.save(pos)
-        tradeEventService.recordPositionClosed(pos, "EXECUTION_FILL")
+        tradeEventService.recordPositionClosed(pos, CloseReason.EXECUTION_FILL.code)
         // F-4 (roadmap 13.25): WS-путь закрытия минует callback OrderExecutionEngine
         // onPositionClosed — событие публикуем здесь: DailyLossCircuitBreaker учтёт
         // P&L и проверит дневной лимит, DrawdownProtectionService пересчитает
@@ -451,7 +355,7 @@ class TradingBotService(
      * @param reason причина закрытия (FORCE_CLOSE, FORCE_CLOSE_SCHEDULED и т.п.)
      * @return количество закрытых позиций
      */
-    suspend fun forceCloseAll(reason: String = "FORCE_CLOSE"): Int {
+    suspend fun forceCloseAll(reason: CloseReason = CloseReason.FORCE_CLOSE): Int {
         val open =
             positionRepo
                 .findByStatus(PositionStatus.OPEN)

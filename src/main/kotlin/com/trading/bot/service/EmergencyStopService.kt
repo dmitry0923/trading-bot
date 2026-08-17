@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.model.CloseReason
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -96,7 +97,7 @@ class EmergencyStopService(
         tradingHaltService.record(HALT_REASON, source.name, reason)
         meterRegistry.counter("bot.emergency_stop", Tags.of("source", source.name)).increment()
         logger.warn { "EMERGENCY STOP activated: reason=$reason source=${source.name} liquidate=$liquidate" }
-        val closed = if (liquidate) tradingControlService.forceCloseNow("EMERGENCY_STOP") else 0
+        val closed = if (liquidate) tradingControlService.forceCloseNow(CloseReason.EMERGENCY_STOP) else 0
         logger.warn { "EMERGENCY STOP done: positionsLiquidated=$closed" }
         return closed
     }

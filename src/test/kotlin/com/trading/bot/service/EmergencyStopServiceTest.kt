@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.entity.TradingHaltRecord
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -63,20 +64,20 @@ class EmergencyStopServiceTest {
 
         assertEquals(0, closed)
         runBlocking {
-            Mockito.verify(tradingControlService, Mockito.never()).forceCloseNow(Mockito.anyString())
+            Mockito.verify(tradingControlService, Mockito.never()).forceCloseNow(any())
         }
     }
 
     @Test
     fun `stop with liquidate closes all positions`() {
         val s = service()
-        runBlocking { Mockito.`when`(tradingControlService.forceCloseNow("EMERGENCY_STOP")).thenReturn(2) }
+        runBlocking { Mockito.`when`(tradingControlService.forceCloseNow(CloseReason.EMERGENCY_STOP)).thenReturn(2) }
 
         val closed = runBlocking { s.stop("manual", EmergencyStopSource.MANUAL, liquidate = true) }
 
         assertEquals(2, closed)
         runBlocking {
-            Mockito.verify(tradingControlService).forceCloseNow("EMERGENCY_STOP")
+            Mockito.verify(tradingControlService).forceCloseNow(CloseReason.EMERGENCY_STOP)
         }
     }
 

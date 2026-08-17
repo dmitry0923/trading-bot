@@ -90,11 +90,15 @@ class AlorClient(
 
     suspend fun getMarketSnapshot(ticker: String): MarketSnapshot? {
         if (!isLive) {
+            val seed = ticker.hashCode().toLong().and(0x7FFFFFFFL)
+            val base = 100 + (seed % 900)
+            val price = BigDecimal(base).setScale(2)
+            logger.warn { "SIMULATION mode: returning synthetic price for $ticker = $price" }
             return MarketSnapshot(
                 ticker = ticker,
-                currentPrice = BigDecimal("100"),
-                bid = BigDecimal("99.9"),
-                ask = BigDecimal("100.1"),
+                currentPrice = price,
+                bid = price.multiply(BigDecimal("0.999")).setScale(2),
+                ask = price.multiply(BigDecimal("1.001")).setScale(2),
                 volume = 1_000_000L,
             )
         }
@@ -155,7 +159,7 @@ class AlorClient(
      * (slippage control) — кроме [forceMarket] (ликвидационные/emergency-закрытия,
      * EXEC-003/004): там блокировка опаснее проскальзывания, поэтому ордер исполняется
      * по лучшему ask/bid (slippage ограничен стаканом), но факт флага логируется и
-     * считает метрику [alor.order.forced_market].
+     * считает метрику alor.order.forced_market.
      * Использует тот же [idempotencyKey], что и базовый лимитный ордер.
      */
     suspend fun placeMarketOrder(
@@ -580,15 +584,6 @@ class AlorClient(
 
     private fun spreadPercent(snapshot: MarketSnapshot): BigDecimal =
         DegenerateCaseDetector.spreadPercent(snapshot.bid, snapshot.ask, snapshot.currentPrice)
-
-    /**
-     * Определённый отказ биржи (4xx, кроме 429): ордер не принят — ретраить бессмысленно.
-     * Всё остальное (сеть, таймаут, 5xx, 429) — retryable/UNCERTAIN.
-     */
-    private fun isDefinitiveRejection(t: Throwable): Boolean =
-        t is WebClientResponseException &&
-            t.statusCode.value() in 400..499 &&
-            t.statusCode.value() != 429
 
     /**
      * Оборачивает HTTP-вызов в Resilience4j: RateLimiter (внутри, лимит на каждую

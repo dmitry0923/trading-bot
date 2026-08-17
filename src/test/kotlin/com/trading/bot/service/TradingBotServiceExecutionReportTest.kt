@@ -12,6 +12,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.ExecutionReportEvent
 import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -195,7 +196,7 @@ class TradingBotServiceExecutionReportTest {
 
         assertEquals(PositionStatus.CLOSED, pos.status)
         assertEquals(0, BigDecimal("110").compareTo(pos.closePrice))
-        assertEquals("EXECUTION_FILL", pos.closeReason)
+        assertEquals(CloseReason.EXECUTION_FILL, pos.closeReason)
         runBlocking {
             verify(eventPublisher, Mockito.timeout(3000)).publishPositionClosed(any())
             verify(tradeEventService, Mockito.timeout(3000)).recordPositionClosed(any(), any())

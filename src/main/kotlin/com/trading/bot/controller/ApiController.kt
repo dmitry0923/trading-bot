@@ -10,6 +10,7 @@ import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.RagAnalysis
 import com.trading.bot.model.dto.RagAnalyzeRequest
@@ -900,7 +901,7 @@ class ApiController(
     @PostMapping("/trading/force-close")
     suspend fun forceClose(
         @RequestParam(defaultValue = "FORCE_CLOSE") reason: String,
-    ): Map<String, Any> = mapOf("closed" to tradingControlService.forceCloseNow(reason))
+    ): Map<String, Any> = mapOf("closed" to tradingControlService.forceCloseNow(CloseReason.from(reason) ?: CloseReason.FORCE_CLOSE))
 
     @PostMapping("/trading/force-close-at")
     suspend fun forceCloseAt(

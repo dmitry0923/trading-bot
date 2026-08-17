@@ -1,5 +1,6 @@
 package com.trading.bot.integration
 
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
@@ -44,11 +45,11 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `trade analysis calculates correct win rate`() {
-        savePosition("SBER", BigDecimal("100"), BigDecimal("110"), PositionStatus.CLOSED, "TAKE_PROFIT")
-        savePosition("SBER", BigDecimal("100"), BigDecimal("115"), PositionStatus.CLOSED, "TAKE_PROFIT")
-        savePosition("SBER", BigDecimal("100"), BigDecimal("105"), PositionStatus.CLOSED, "TAKE_PROFIT")
-        savePosition("SBER", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, "STOP_LOSS")
-        savePosition("SBER", BigDecimal("100"), BigDecimal("95"), PositionStatus.CLOSED, "STOP_LOSS")
+        savePosition("SBER", BigDecimal("100"), BigDecimal("110"), PositionStatus.CLOSED, CloseReason.TAKE_PROFIT)
+        savePosition("SBER", BigDecimal("100"), BigDecimal("115"), PositionStatus.CLOSED, CloseReason.TAKE_PROFIT)
+        savePosition("SBER", BigDecimal("100"), BigDecimal("105"), PositionStatus.CLOSED, CloseReason.TAKE_PROFIT)
+        savePosition("SBER", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, CloseReason.STOP_LOSS)
+        savePosition("SBER", BigDecimal("100"), BigDecimal("95"), PositionStatus.CLOSED, CloseReason.STOP_LOSS)
 
         val stats = runBlocking { tradeAnalysisService.analyzeLastNDays(1) }
 
@@ -64,7 +65,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
     @Test
     fun `adaptive risk pauses trading after 4 consecutive losses`() {
         repeat(4) {
-            savePosition("GAZP", BigDecimal("200"), BigDecimal("190"), PositionStatus.CLOSED, "STOP_LOSS")
+            savePosition("GAZP", BigDecimal("200"), BigDecimal("190"), PositionStatus.CLOSED, CloseReason.STOP_LOSS)
         }
 
         val shouldPause = runBlocking { adaptiveRiskService.shouldPauseTrading("GAZP") }
@@ -75,10 +76,10 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
     @Test
     fun `adaptive risk calculates kelly position size`() {
         repeat(6) {
-            savePosition("LKOH", BigDecimal("1000"), BigDecimal("1150"), PositionStatus.CLOSED, "TAKE_PROFIT")
+            savePosition("LKOH", BigDecimal("1000"), BigDecimal("1150"), PositionStatus.CLOSED, CloseReason.TAKE_PROFIT)
         }
         repeat(4) {
-            savePosition("LKOH", BigDecimal("1000"), BigDecimal("900"), PositionStatus.CLOSED, "STOP_LOSS")
+            savePosition("LKOH", BigDecimal("1000"), BigDecimal("900"), PositionStatus.CLOSED, CloseReason.STOP_LOSS)
         }
 
         val size = runBlocking { adaptiveRiskService.calculateOptimalPositionSize("LKOH") }
@@ -90,7 +91,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
     @Test
     fun `blind spots are persisted to database`() {
         repeat(5) {
-            savePosition("YNDX", BigDecimal("3000"), BigDecimal("2900"), PositionStatus.CLOSED, "STOP_LOSS")
+            savePosition("YNDX", BigDecimal("3000"), BigDecimal("2900"), PositionStatus.CLOSED, CloseReason.STOP_LOSS)
         }
 
         runBlocking { tradeAnalysisService.analyzeLastNDays(1) }
@@ -103,7 +104,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
     @Test
     fun `drawdown recovery detected after 3 consecutive losses`() {
         repeat(3) {
-            savePosition("VTBR", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, "STOP_LOSS")
+            savePosition("VTBR", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, CloseReason.STOP_LOSS)
         }
 
         val inRecovery = runBlocking { adaptiveRiskService.isInDrawdownRecovery() }
@@ -113,8 +114,8 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `time pattern analysis returns hourly win rates`() {
-        savePosition("SBER", BigDecimal("100"), BigDecimal("110"), PositionStatus.CLOSED, "TAKE_PROFIT", hour = 10)
-        savePosition("SBER", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, "STOP_LOSS", hour = 16)
+        savePosition("SBER", BigDecimal("100"), BigDecimal("110"), PositionStatus.CLOSED, CloseReason.TAKE_PROFIT, hour = 10)
+        savePosition("SBER", BigDecimal("100"), BigDecimal("90"), PositionStatus.CLOSED, CloseReason.STOP_LOSS, hour = 16)
 
         val pattern = runBlocking { tradeAnalysisService.timePatternAnalysis("SBER", 1) }
 
@@ -128,7 +129,7 @@ class SelfLearningIntegrationTest : AbstractTestContainerTest() {
         entry: BigDecimal,
         close: BigDecimal,
         status: PositionStatus,
-        reason: String,
+        reason: CloseReason,
         hour: Int = 12,
     ) {
         val pnl = close.subtract(entry).multiply(BigDecimal(10))

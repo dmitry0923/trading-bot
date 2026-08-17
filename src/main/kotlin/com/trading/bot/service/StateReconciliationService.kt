@@ -9,6 +9,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
@@ -210,7 +211,6 @@ class StateReconciliationService(
 
         val orders = (ordersResult as ReconcileResult.Ok).items
         val positions = (positionsResult as ReconcileResult.Ok).items
-        val trades = (tradesResult as ReconcileResult.Ok).items
 
         val workingOrdersByTicker =
             orders
@@ -248,7 +248,7 @@ class StateReconciliationService(
                                 "Reconcile ${pos.ticker}: exchange flat, no working order, pendingClose — " +
                                     "missed fill during WS gap -> marking CLOSED"
                             }
-                            finalizePhantom(pos, "RECONCILE_CLOSED_ON_EXCHANGE")
+                            finalizePhantom(pos, CloseReason.RECONCILE_CLOSED_ON_EXCHANGE)
                             closed++
                         }
 
@@ -265,7 +265,7 @@ class StateReconciliationService(
                                 "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
                                     "closed on exchange during WS gap -> marking CLOSED"
                             }
-                            finalizePhantom(pos, "RECONCILE_PHANTOM")
+                            finalizePhantom(pos, CloseReason.RECONCILE_PHANTOM)
                             closed++
                         }
                     }
@@ -337,7 +337,7 @@ class StateReconciliationService(
      */
     private suspend fun finalizePhantom(
         pos: Position,
-        reason: String,
+        reason: CloseReason,
     ) {
         pos.status = PositionStatus.CLOSED
         pos.closedAt = LocalDateTime.now()

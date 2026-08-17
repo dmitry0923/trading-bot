@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.application.TradingGate
 import com.trading.bot.config.DistributedLockConfig
+import com.trading.bot.model.CloseReason
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -76,12 +77,12 @@ class TradingControlService(
      * @param reason причина (FORCE_CLOSE / FORCE_CLOSE_SCHEDULED и т.п.)
      * @return общее количество закрытых позиций
      */
-    suspend fun forceCloseNow(reason: String = "FORCE_CLOSE"): Int {
+    suspend fun forceCloseNow(reason: CloseReason = CloseReason.FORCE_CLOSE): Int {
         val openCount = positionRepo.findOpenCount()
         val stocks = tradingBotService.forceCloseAll(reason)
         val futures = futuresTradingBotService.forceCloseAll(reason)
         val closed = stocks + futures
-        meterRegistry.counter("trading.control.force_close", Tags.of("reason", reason)).increment()
+        meterRegistry.counter("trading.control.force_close", Tags.of("reason", reason.code)).increment()
         logger.info { "Force close completed: closed=$closed (open before=$openCount), reason=$reason" }
         return closed
     }
@@ -103,7 +104,7 @@ class TradingControlService(
                     name = "scheduler:force-close",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
-                    forceCloseNow("FORCE_CLOSE_SCHEDULED")
+                    forceCloseNow(CloseReason.FORCE_CLOSE_SCHEDULED)
                 }
             }
         }

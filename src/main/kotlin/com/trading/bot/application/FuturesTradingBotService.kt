@@ -13,6 +13,7 @@ import com.trading.bot.event.StrategyGeneratedEvent
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.infrastructure.tracing.TraceContext
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
@@ -194,7 +195,7 @@ class FuturesTradingBotService(
      * @param reason причина закрытия
      * @return количество закрытых позиций
      */
-    suspend fun forceCloseAll(reason: String = "FORCE_CLOSE"): Int {
+    suspend fun forceCloseAll(reason: CloseReason = CloseReason.FORCE_CLOSE): Int {
         val open =
             positionRepo
                 .findByStatus(PositionStatus.OPEN)

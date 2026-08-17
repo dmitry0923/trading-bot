@@ -7,6 +7,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -118,7 +119,7 @@ class StateReconciliationServiceTest {
         runBlocking { verify(positionRepo).save(captor.capture()) }
         val saved = captor.firstValue
         assertEquals(PositionStatus.CLOSED, saved.status)
-        assertEquals("RECONCILE_PHANTOM", saved.closeReason)
+        assertEquals(CloseReason.RECONCILE_PHANTOM, saved.closeReason)
         assertFalse(saved.pendingClose)
         verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
     }
@@ -128,7 +129,7 @@ class StateReconciliationServiceTest {
         val pos =
             openPos("Si", 2).apply {
                 pendingClose = true
-                closeReason = "STOP_LOSS"
+                closeReason = CloseReason.STOP_LOSS
             }
         stubOpenPositions(pos)
         stubReconcileOk()
@@ -138,7 +139,7 @@ class StateReconciliationServiceTest {
         val captor = argumentCaptor<Position>()
         runBlocking { verify(positionRepo).save(captor.capture()) }
         assertEquals(PositionStatus.CLOSED, captor.firstValue.status)
-        assertEquals("RECONCILE_CLOSED_ON_EXCHANGE", captor.firstValue.closeReason)
+        assertEquals(CloseReason.RECONCILE_CLOSED_ON_EXCHANGE, captor.firstValue.closeReason)
     }
 
     @Test

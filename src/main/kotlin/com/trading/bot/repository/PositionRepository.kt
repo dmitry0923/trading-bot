@@ -105,6 +105,40 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /**
+     * Только pending-позиции (pendingEntry или pendingClose) — для реконсиляции.
+     * При 1000+ OPEN-позиций подмножество pending обычно ≤ 5-10 строк.
+     */
+    suspend fun findPending(): List<Position> {
+        val sql =
+            """
+            SELECT * FROM positions
+            WHERE status = 'OPEN' AND (pending_entry = true OR pending_close = true)
+            ORDER BY opened_at DESC
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
+    /**
+     * Открытые акции/валюты (исключая фьючерсы) — для forceCloseAll.
+     * Фильтрация по instrument_type выполняется на стороне БД,
+     * а не в памяти.
+     */
+    suspend fun findOpenStocks(): List<Position> {
+        val sql = "SELECT * FROM positions WHERE status = 'OPEN' AND instrument_type != 'FUTURES' ORDER BY opened_at DESC"
+        return databaseClient
+            .sql(sql)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     suspend fun findOpenCount(): Int {
         val sql = "SELECT COUNT(*) AS cnt FROM positions WHERE status = 'OPEN'"
         return databaseClient

@@ -356,10 +356,7 @@ class TradingBotService(
      * @return количество закрытых позиций
      */
     suspend fun forceCloseAll(reason: CloseReason = CloseReason.FORCE_CLOSE): Int {
-        val open =
-            positionRepo
-                .findByStatus(PositionStatus.OPEN)
-                .filter { it.instrumentType != InstrumentType.FUTURES }
+        val open = positionRepo.findOpenStocks()
         open.forEach { pos ->
             try {
                 val price = alorClient.getLastPrice(pos.ticker) ?: pos.currentPrice ?: pos.entryPrice
@@ -383,7 +380,7 @@ class TradingBotService(
                 ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
             ) {
                 try {
-                    val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType != InstrumentType.FUTURES }
+                    val open = positionRepo.findPending()
                     for (pos in open) {
                         try {
                             engine.reconcilePosition(pos)

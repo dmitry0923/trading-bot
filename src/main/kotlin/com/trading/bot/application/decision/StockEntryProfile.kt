@@ -32,7 +32,7 @@ import java.math.RoundingMode
  * - сайзинг: адаптивный Kelly ([AdaptiveRiskService.calculateOptimalPositionSize]),
  *   размер позиции = Kelly-бюджет / цена входа (минимум 1 лот);
  * - post-sizing: лимиты Gross/Net Exposure ([RiskManagementService.exceedsPortfolioLimits]);
- * - параметры заявки: SL/TP по проценту ([OrderBuilder.buildStockOrderParams]);
+ * - параметры заявки: SL/TP по проценту ([OrderBuilder.buildSpotOrderParams]);
  * - портфельный риск — ENFORCED (BLOCK/SCALE);
  * - после открытия: сброс дневного P&L и лог агента TradingBot (OPEN).
  */
@@ -160,7 +160,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         request: EntryRequest,
-    ): OrderParams = orderBuilder.buildStockOrderParams(ticker, direction, size.quantity.coerceAtLeast(1), entryPrice)
+    ): OrderParams = orderBuilder.buildSpotOrderParams(ticker, direction, size.quantity.coerceAtLeast(1), entryPrice)
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 

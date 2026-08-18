@@ -654,7 +654,7 @@ class BacktestEngine(
      * [RiskConfig.defaultStopLossPoints]; как live
      * [com.trading.bot.application.OrderBuilder.buildFuturesOrderParams]),
      * для акций — процент от цены входа через [ExitRules.calcSL] (тот же код,
-     * что в live [com.trading.bot.application.OrderBuilder.buildStockOrderParams]).
+     * что в live [com.trading.bot.application.OrderBuilder.buildSpotOrderParams]).
      * Per-instrument SL% (InstrumentsConfig.InstrumentSpec.slPercent) имеет приоритет над глобальным.
      */
     @Suppress("UNUSED_PARAMETER")

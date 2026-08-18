@@ -74,12 +74,12 @@ class OrderBuilder(
     }
 
     /**
-     * Параметры заявки для акции: SL/TP по проценту от цены входа,
+     * Параметры заявки для spot-инструмента (акция / FX): SL/TP по проценту от цены входа,
      * округлённые до сетки цен инструмента (priceStep).
      * Размер позиции (quantity) вычисляет адаптивный риск-менеджмент (Kelly)
      * в оркестраторе входа.
      */
-    fun buildStockOrderParams(
+    fun buildSpotOrderParams(
         ticker: String,
         direction: PositionDirection,
         quantity: Int,

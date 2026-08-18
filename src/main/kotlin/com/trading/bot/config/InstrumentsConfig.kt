@@ -171,7 +171,7 @@ class InstrumentsConfig {
         var maxSpreadPercent: BigDecimal? = null,
         /** Per-instrument max gap % — overrides RiskConfig.maxGapPercent when non-null. */
         var maxGapPercent: BigDecimal? = null,
-        /** Commission per lot in RUB (round-trip). Used by cost-aware position sizing. */
+        /** Commission per lot per side in RUB. Used by risk sizing (×2 for round-trip) and backtest. */
         var commissionRub: BigDecimal? = null,
     ) {
         /** Effective SL%: per-instrument override or global default. */
@@ -195,7 +195,7 @@ class InstrumentsConfig {
          * Формула одинакова для STOCK и FX — qty всегда число лотов.
          */
         fun notional(qty: Int, price: BigDecimal): BigDecimal =
-            price.multiply(BigDecimal(qty * lotSize))
+            price.multiply(BigDecimal(qty)).multiply(BigDecimal(lotSize))
 
         /** Alor-тикер для API-вызовов (alorTicker или ticker). */
         fun effectiveTicker(): String = alorTicker ?: ticker
@@ -204,8 +204,6 @@ class InstrumentsConfig {
     fun find(ticker: String): InstrumentSpec? = instruments.firstOrNull { it.ticker.equals(ticker, ignoreCase = true) }
 
     fun isFutures(ticker: String): Boolean = find(ticker)?.type == "FUTURES"
-
-    fun isFx(ticker: String): Boolean = find(ticker)?.type == "FX"
 
     /**
      * Стоимость 1.0 единицы цены в рублях (priceStepCost / priceStep).

@@ -57,11 +57,11 @@ class RiskConfig {
 
     /**
      * Доля от AUM при отсутствии/недостатке статистики для Kelly.
-     * 0.15 = 15% от 50k = 7 500 ₽. Консервативный fallback вместо 100% депозита.
+     * 0.25 = 25% от 50k = 12 500 ₽ — минимум для 1 лота CNYRUB.
      * Эффективно ограничивается сверху жёстким капом [kellyMaxPositionFraction]
      * (min(noDataFraction, cap)) — «жёсткий кап» не обходится без статистики.
      */
-    var kellyNoDataFraction: Double = 0.15
+    var kellyNoDataFraction: Double = 0.25
 
     /**
      * Жёсткий кап доли Kelly от AUM (0..1). 0.10 = консервативный кап: даже при

@@ -624,7 +624,7 @@ class BacktestEngine(
                 .multiply(effectiveSl)
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
                 .multiply(BigDecimal(lotSize))
-                .add(commissionPerLot)
+                .add(commissionPerLot.multiply(BigDecimal(2)))
         val maxLotsByRisk =
             if (lossPerLot > BigDecimal.ZERO) {
                 riskAmount.divide(lossPerLot, 0, RoundingMode.DOWN).toInt()

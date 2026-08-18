@@ -447,7 +447,7 @@ risk:
   kelly-fraction: 0.25
   kelly-wilson-z: 1.0
   kelly-min-trades: 15
-  kelly-no-data-fraction: 0.15
+  kelly-no-data-fraction: 0.25
   kelly-max-position-fraction: 0.50
   # Online-калибровка порога уверенности по исходам сделок (roadmap 13.11.8)
   confidence-calibration-enabled: true

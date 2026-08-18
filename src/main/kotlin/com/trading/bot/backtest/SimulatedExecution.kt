@@ -82,7 +82,7 @@ object SimulatedExecution {
      * В отличие от [commissionOn], не зависит от оборота — реалистична для MOEX
      * с фиксированными тарифами на валютные пары.
      *
-     * @param commissionPerLot комиссия за 1 лот в рублях (round-trip)
+     * @param commissionPerLot комиссия за 1 лот в рублях (per side)
      * @param lots количество лотов (= quantity / lotSize)
      */
     fun commissionFixed(

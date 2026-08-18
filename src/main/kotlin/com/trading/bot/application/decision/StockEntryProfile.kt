@@ -106,7 +106,7 @@ class StockEntryProfile(
             }
 
         // Риск-кап на сделку: убыток при срабатывании стопа не может превысить
-        // riskPerTradePercent% от AUM. lossPerLot = price × SL% × lotSize + commission.
+        // riskPerTradePercent% от AUM. lossPerLot = price × SL% × lotSize + 2×commission (entry + exit).
         val effectiveSlPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
             ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
@@ -119,7 +119,7 @@ class StockEntryProfile(
                 .multiply(effectiveSlPercent)
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
                 .multiply(BigDecimal(lotSize))
-                .add(commissionPerLot)
+                .add(commissionPerLot.multiply(BigDecimal(2)))
         val maxLotsByRisk =
             if (lossPerLot > BigDecimal.ZERO) {
                 riskAmount.divide(lossPerLot, 0, RoundingMode.DOWN).toInt()

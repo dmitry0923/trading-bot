@@ -2,7 +2,6 @@ package com.trading.bot.service
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
-import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.PositionExposure
@@ -35,9 +34,9 @@ import kotlin.math.sqrt
  * состояние портфеля — информационно. Все метрики публикуются в Prometheus
  * (risk.exposure.*) и отдаются через GET /api/v1/risk/exposure.
  *
- * Нотионал позиции в рублях = entryPrice × qty × pointValue(ticker) для фьючерсов
- * (13.28.2, MR-Z): точка цены фьючерса ≠ рубль, pointValue масштабирует пункты в ₽
- * (Si: 1000 ₽ на 1.0 цены). Акции: entryPrice × qty (qty в штуках, pointValue = 1)
+ * Нотионал позиции в рублях = price × qty × lotSize (qty = чис лотов).
+ * Для фьючерсов: pointValue масштабирует пункты в ₽ (Si: 1000 ₽ на 1.0 цены).
+ * Для акций/FX: notional = entryPrice × qty × lotSize (spec.notional()).
  * — единая семантика с P&L ([DrawdownProtectionService.unrealizedPnl]). Это исправляет
  * занижение фьючерсной экспозиции в отчёте; входные гейты (RiskManagementService/
  * PortfolioRiskEngineImpl) сознательно НЕ масштабируются (см. 13.28.2).
@@ -183,11 +182,19 @@ class RiskExposureService(
                 )
             }.sortedByDescending { it.grossPercentAum }
 
-    private fun signedNotional(pos: Position): Double =
-        pos.entryPrice.toDouble() * pos.quantity * pointValue(pos) * directionSign(pos.direction)
-
-    private fun pointValue(pos: Position): Double =
-        if (pos.instrumentType == InstrumentType.FUTURES) instrumentsConfig.pointValue(pos.ticker).toDouble() else 1.0
+    private fun signedNotional(pos: Position): Double {
+        val spec = instrumentsConfig.find(pos.ticker)
+        val notional =
+            if (spec != null && instrumentsConfig.isFutures(pos.ticker)) {
+                pos.entryPrice
+                    .multiply(BigDecimal(pos.quantity))
+                    .multiply(instrumentsConfig.pointValue(pos.ticker))
+            } else {
+                spec?.notional(pos.quantity, pos.entryPrice)
+                    ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
+            }
+        return notional.toDouble() * directionSign(pos.direction)
+    }
 
     private fun directionSign(direction: PositionDirection): Double = if (direction == PositionDirection.LONG) 1.0 else -1.0
 

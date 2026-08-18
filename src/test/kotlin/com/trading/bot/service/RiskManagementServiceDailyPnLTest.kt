@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -20,6 +21,7 @@ class RiskManagementServiceDailyPnLTest {
     private fun service(): RiskManagementService =
         RiskManagementService(
             RiskConfig(),
+            InstrumentsConfig(),
             drawdownProtection,
             SimpleMeterRegistry(),
             Mockito.mock(AumProvider::class.java),

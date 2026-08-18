@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
@@ -27,6 +28,7 @@ class RiskManagementServiceThresholdTest {
     ): RiskManagementService =
         RiskManagementService(
             config,
+            InstrumentsConfig(),
             Mockito.mock(DrawdownProtectionService::class.java),
             registry,
             aumProvider,

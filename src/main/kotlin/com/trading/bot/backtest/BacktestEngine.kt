@@ -456,6 +456,8 @@ class BacktestEngine(
     /**
      * Комиссия за сделку: per-instrument фиксированная (commissionRub × лоты)
      * или универсальный процент от оборота.
+     *
+     * @param quantity количество лотов
      */
     private fun computeCommission(
         ticker: String,
@@ -466,17 +468,17 @@ class BacktestEngine(
         val spec = instrumentsConfig.find(ticker)
         val fixedPerLot = spec?.commissionRub
         if (fixedPerLot != null && fixedPerLot > BigDecimal.ZERO) {
-            val lotSize = spec.lotSize.coerceAtLeast(1)
-            val lots = quantity / lotSize
-            if (lots < 1) {
-                return SimulatedExecution.commissionOn(price, quantity, commissionRate(commissionMultiplier))
+            if (quantity < 1) {
+                val lotSize = spec.lotSize.coerceAtLeast(1)
+                return SimulatedExecution.commissionOn(price, quantity * lotSize, commissionRate(commissionMultiplier))
             }
             return SimulatedExecution.commissionFixed(
                 fixedPerLot.multiply(BigDecimal.valueOf(commissionMultiplier.toLong())),
-                lots,
+                quantity,
             )
         }
-        return SimulatedExecution.commissionOn(price, quantity, commissionRate(commissionMultiplier))
+        val lotSize = spec?.lotSize?.coerceAtLeast(1) ?: 1
+        return SimulatedExecution.commissionOn(price, quantity * lotSize, commissionRate(commissionMultiplier))
     }
 
     /**
@@ -548,17 +550,15 @@ class BacktestEngine(
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
-        val lotSize = instrument?.lotSize ?: 1
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
         val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints)
-        val lotQty = SimulatedExecution.lotRounded(qty, lotSize)
-        if (lotQty <= 0) return null
+        if (qty <= 0) return null
 
         val fill = executionFill(instrument, ticker, price, direction == PositionDirection.LONG, slippageMultiplier)
         return PositionSim(
             direction = direction,
-            quantity = lotQty,
+            quantity = qty,
             entryPrice = fill.price,
             stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints, slPoints),
             takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent, tpPoints),
@@ -601,34 +601,37 @@ class BacktestEngine(
             }
             return size.quantity
         }
-        val sliceQty =
-            cash
-                .multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
-                .divide(price, 0, RoundingMode.DOWN)
-                .toInt()
-        // Риск-кап на сделку (аналог StockEntryProfile.sizePosition): потеря при
-        // стопе не должна превысить riskPerTradePercent% портфеля.
-        // Учитываем per-instrument SL% и commissionRub (как в live StockEntryProfile).
+        val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1
+        val notionalPerLot = price.multiply(BigDecimal(lotSize))
+        val sliceLots =
+            if (notionalPerLot > BigDecimal.ZERO) {
+                cash
+                    .multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
+                    .divide(notionalPerLot, 0, RoundingMode.DOWN)
+                    .toInt()
+            } else {
+                0
+            }
         val effectiveSl = instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
             ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = instrument?.commissionRub ?: BigDecimal.ZERO
-        val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1
         val riskAmount =
             cash
                 .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
-        val lossPerShare =
+        val lossPerLot =
             price
                 .multiply(effectiveSl)
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
-                .add(commissionPerLot.divide(BigDecimal(lotSize), 6, RoundingMode.HALF_UP))
-        val riskCapQty =
-            if (lossPerShare > BigDecimal.ZERO) {
-                riskAmount.divide(lossPerShare, 4, RoundingMode.DOWN).toInt()
+                .multiply(BigDecimal(lotSize))
+                .add(commissionPerLot)
+        val maxLotsByRisk =
+            if (lossPerLot > BigDecimal.ZERO) {
+                riskAmount.divide(lossPerLot, 0, RoundingMode.DOWN).toInt()
             } else {
                 Int.MAX_VALUE
             }
-        return minOf(sliceQty, riskCapQty)
+        return minOf(sliceLots, maxLotsByRisk)
     }
 
     /**

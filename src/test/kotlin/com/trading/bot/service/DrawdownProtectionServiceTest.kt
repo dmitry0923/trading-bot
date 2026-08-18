@@ -462,7 +462,7 @@ class DrawdownProtectionServiceTest {
                     Position(
                         ticker = "SBER",
                         direction = PositionDirection.LONG,
-                        quantity = 1000,
+                        quantity = 100,
                         entryPrice = BigDecimal("100"),
                         currentPrice = BigDecimal("97"),
                         status = PositionStatus.OPEN,

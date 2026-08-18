@@ -123,6 +123,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             mlEntryFilter,
             higherTfTrendFilter,
             degenerateCaseGuard,
+            instrumentsConfig,
         )
 
     private val service =

@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.MlConfig
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -38,6 +39,7 @@ class MlDatasetServiceTest {
     private val service =
         MlDatasetService(
             config,
+            InstrumentsConfig(),
             positionRepository,
             candleRepository,
             agentLogRepository,

@@ -4,6 +4,7 @@ import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.OrderBuilder
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.DistributedLockConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.PortfolioRiskEngine
@@ -71,6 +72,7 @@ class DecisionEngineTest {
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
     private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
     private val degenerateCaseGuard = Mockito.mock(DegenerateCaseGuard::class.java)
+    private val instrumentsConfig = InstrumentsConfig()
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -130,6 +132,7 @@ class DecisionEngineTest {
             mlEntryFilter,
             higherTfTrendFilter,
             degenerateCaseGuard,
+            instrumentsConfig,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -600,6 +603,7 @@ class DecisionEngineTest {
         ): PositionSizeResult = size
 
         override suspend fun postSizingChecks(
+            ticker: String,
             direction: PositionDirection,
             entryPrice: BigDecimal,
             size: PositionSizeResult,

@@ -489,16 +489,17 @@ class DrawdownProtectionService(
         }
         val current = pos.currentPrice ?: return BigDecimal.ZERO
         if (current <= BigDecimal.ZERO) return BigDecimal.ZERO
-        val qty = BigDecimal(pos.quantity)
-        val raw =
+        val delta =
             when (pos.direction) {
-                PositionDirection.LONG -> current.subtract(pos.entryPrice).multiply(qty)
-                PositionDirection.SHORT -> pos.entryPrice.subtract(current).multiply(qty)
+                PositionDirection.LONG -> current.subtract(pos.entryPrice)
+                PositionDirection.SHORT -> pos.entryPrice.subtract(current)
             }
         return if (pos.instrumentType == InstrumentType.FUTURES) {
-            raw.multiply(instrumentsConfig.pointValue(pos.ticker))
+            delta.multiply(BigDecimal(pos.quantity)).multiply(instrumentsConfig.pointValue(pos.ticker))
         } else {
-            raw
+            val spec = instrumentsConfig.find(pos.ticker)
+            val lotSize = spec?.lotSize?.toLong() ?: 1L
+            delta.multiply(BigDecimal(pos.quantity * lotSize))
         }
     }
 
@@ -510,7 +511,7 @@ class DrawdownProtectionService(
      * (peak - current) / peak * 100. (Нереализованный P&L в пике не учитывается —
      * только реализованные закрытия.)
      *
-     * F-3 (roadmap 13.25): [latestAum] — ТЕКУЩИЙ баланс счёта (уже включает
+     * F-3 (roadmap 13.25): latestAum — ТЕКУЩИЙ баланс счёта (уже включает
      * реализованный P&L), а не стартовый депозит. Стартовый депозит восстанавливается
      * как deposit = balance - totalRealized; текущая equity running = balance;
      * peak = deposit + peakRealized.

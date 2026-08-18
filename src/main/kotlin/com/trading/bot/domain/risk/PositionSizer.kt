@@ -6,7 +6,7 @@ import java.math.BigDecimal
 /**
  * Результат расчёта размера позиции.
  *
- * @property quantity итоговое количество контрактов (0 = вход запрещён)
+ * @property quantity итоговое количество лотов (0 = вход запрещён)
  * @property marginRequired требуемая маржа в рублях
  * @property riskAmount допустимый риск на сделку в рублях
  * @property liquidationPrice ОЦЕНОЧНАЯ цена ликвидации (упрощённая модель для

@@ -1,5 +1,6 @@
 package com.trading.bot.application.risk
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.domain.risk.PortfolioRiskEngine
@@ -61,6 +62,7 @@ import kotlin.math.sqrt
 @Service
 class PortfolioRiskEngineImpl(
     private val riskConfig: RiskConfig,
+    private val instrumentsConfig: InstrumentsConfig,
     private val correlationProvider: CorrelationMatrixProvider,
     private val candleCache: CandleCacheService,
     private val meterRegistry: MeterRegistry,
@@ -219,9 +221,15 @@ class PortfolioRiskEngineImpl(
     }
 
     /**
-     * Подписанный нотионал позиции в рублях: LONG -> +entryPrice*qty, SHORT -> -entryPrice*qty.
+     * Подписанный нотионал позиции в рублях: LONG -> +notional, SHORT -> -notional.
+     * notional = price × qty × lotSize (qty = чис лотов).
      */
-    private fun signedNotional(pos: Position): Double = pos.entryPrice.toDouble() * pos.quantity * directionSign(pos.direction)
+    private fun signedNotional(pos: Position): Double {
+        val spec = instrumentsConfig.find(pos.ticker)
+        val notional = spec?.notional(pos.quantity, pos.entryPrice)
+            ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
+        return notional.toDouble() * directionSign(pos.direction)
+    }
 
     private fun directionSign(direction: PositionDirection): Double = if (direction == PositionDirection.LONG) 1.0 else -1.0
 

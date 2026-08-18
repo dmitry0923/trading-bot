@@ -87,6 +87,7 @@ interface EntryProfile {
      * Метрику/лог отклонения фиксирует [DecisionEngine].
      */
     suspend fun postSizingChecks(
+        ticker: String,
         direction: PositionDirection,
         entryPrice: BigDecimal,
         size: PositionSizeResult,

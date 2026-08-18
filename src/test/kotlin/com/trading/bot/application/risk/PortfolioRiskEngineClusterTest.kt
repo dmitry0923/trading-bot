@@ -1,5 +1,6 @@
 package com.trading.bot.application.risk
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.domain.risk.PortfolioRiskRequest
@@ -34,7 +35,7 @@ class PortfolioRiskEngineClusterTest {
     private val candleCache = Mockito.mock(CandleCacheService::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
-    private val engine = PortfolioRiskEngineImpl(riskConfig, correlationProvider, candleCache, meterRegistry)
+    private val engine = PortfolioRiskEngineImpl(riskConfig, InstrumentsConfig(), correlationProvider, candleCache, meterRegistry)
 
     private fun position(
         ticker: String,

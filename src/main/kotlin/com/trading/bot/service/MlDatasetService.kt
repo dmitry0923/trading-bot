@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.MlConfig
 import com.trading.bot.domain.ml.MlFeatureExtractor
 import com.trading.bot.infrastructure.metrics.MutableGauges
@@ -40,6 +41,7 @@ import java.time.LocalDateTime
 @Service
 class MlDatasetService(
     private val mlConfig: MlConfig,
+    private val instrumentsConfig: InstrumentsConfig,
     private val positionRepository: PositionRepository,
     private val candleRepository: CandleRepository,
     private val agentLogRepository: AgentLogRepository,
@@ -205,7 +207,9 @@ class MlDatasetService(
         inBlindSpot: Boolean,
     ): MlDatasetRow {
         val pnlRub = position.pnl ?: BigDecimal.ZERO
-        val invested = position.entryPrice.toDouble() * position.quantity
+        val spec = instrumentsConfig.find(position.ticker)
+        val invested = spec?.notional(position.quantity, position.entryPrice)?.toDouble()
+            ?: (position.entryPrice.toDouble() * position.quantity)
         val pnlPercent = if (invested > 0.0) pnlRub.toDouble() / invested * 100.0 else 0.0
         return MlDatasetRow(
             positionId = position.id!!,

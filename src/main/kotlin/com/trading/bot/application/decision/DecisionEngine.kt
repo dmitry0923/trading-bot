@@ -4,6 +4,7 @@ import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.OrderBuilder
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.DistributedLockConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.RiskVerdict
@@ -72,6 +73,7 @@ class DecisionEngine(
     private val mlEntryFilter: MlEntryFilter,
     private val higherTfTrendFilter: HigherTfTrendFilter,
     private val degenerateCaseGuard: DegenerateCaseGuard,
+    private val instrumentsConfig: InstrumentsConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -214,7 +216,7 @@ class DecisionEngine(
         // Сайзинг (Kelly для акций, маржа/риск для фьючерсов).
         val size = profile.sizePosition(signal, entryPrice, request)
 
-        profile.postSizingChecks(direction, entryPrice, size, openPositions)?.let { reason ->
+        profile.postSizingChecks(ticker, direction, entryPrice, size, openPositions)?.let { reason ->
             logger.warn { "Post-sizing filter reject $ticker: $reason" }
             meterRegistry
                 .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", reason))
@@ -231,7 +233,10 @@ class DecisionEngine(
         // Портфельный риск (агрегат): VaR95 / эффективное число ставок / направленная
         // концентрация. ENFORCED — блок/уменьшение размера; READ_ONLY — только метрики.
         val initialDecision = TradeRiskDecision.from(signal, request, size, params)
-        val portfolioNotional = (initialDecision.entryPrice ?: entryPrice).multiply(BigDecimal(initialDecision.quantity))
+        val spec = instrumentsConfig.find(ticker)
+        val candidatePrice = initialDecision.entryPrice ?: entryPrice
+        val portfolioNotional = spec?.notional(initialDecision.quantity, candidatePrice)
+            ?: candidatePrice.multiply(BigDecimal(initialDecision.quantity))
         val portfolioReport =
             portfolioRiskEngine.evaluate(
                 PortfolioRiskRequest(

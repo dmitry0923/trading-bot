@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
@@ -29,6 +30,7 @@ import java.math.RoundingMode
 @Service
 class RiskManagementService(
     private val riskConfig: RiskConfig,
+    private val instrumentsConfig: InstrumentsConfig,
     private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
     private val aumProvider: AumProvider,
@@ -71,7 +73,7 @@ class RiskManagementService(
      * - Net: чистый directional риск (long - short) после добавления кандидата
      *   не должен выйти за пределы ±maxNetExposurePercent от депозита (по умолчанию 100%).
      *
-     * @param candidateNotionalRub нотионал кандидата в рублях (qty * entryPrice)
+     * @param candidateNotionalRub нотионал кандидата в рублях (spec.notional(qty, price))
      * @param candidateDirection направление кандидата
      * @param openPositions текущие открытые позиции
      * @return true, если портфель выйдет за лимиты exposure
@@ -84,7 +86,13 @@ class RiskManagementService(
         if (candidateNotionalRub <= BigDecimal.ZERO) return false
         val deposit = aumProvider.latestAum()
 
-        val grossBefore = openPositions.sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
+        fun positionNotional(pos: Position): BigDecimal {
+            val spec = instrumentsConfig.find(pos.ticker)
+            return spec?.notional(pos.quantity, pos.entryPrice)
+                ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
+        }
+
+        val grossBefore = openPositions.sumOf { positionNotional(it) }
         val grossAfter = grossBefore.add(candidateNotionalRub)
         val grossLimit =
             deposit
@@ -101,11 +109,11 @@ class RiskManagementService(
         val longExposure =
             openPositions
                 .filter { it.direction == PositionDirection.LONG }
-                .sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
+                .sumOf { positionNotional(it) }
         val shortExposure =
             openPositions
                 .filter { it.direction == PositionDirection.SHORT }
-                .sumOf { it.entryPrice.multiply(BigDecimal(it.quantity)) }
+                .sumOf { positionNotional(it) }
         val netAfter =
             longExposure
                 .subtract(shortExposure)

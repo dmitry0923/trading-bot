@@ -125,6 +125,7 @@ class FuturesEntryProfile(
     }
 
     override suspend fun postSizingChecks(
+        ticker: String,
         direction: PositionDirection,
         entryPrice: BigDecimal,
         size: PositionSizeResult,

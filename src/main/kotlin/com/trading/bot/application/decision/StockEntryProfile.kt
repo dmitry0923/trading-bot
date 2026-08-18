@@ -87,6 +87,10 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         request: EntryRequest,
     ): PositionSizeResult {
+        val spec = instrumentsConfig.find(signal.ticker)
+        val lotSize = spec?.lotSize?.coerceAtLeast(1) ?: 1
+        val notionalPerLot = entryPrice.multiply(BigDecimal(lotSize))
+
         // F-12 (roadmap 13.25): AUM для Kelly берётся по аккаунту входа, а не глобально.
         val kellySizeRub =
             adaptiveRisk.calculateOptimalPositionSize(
@@ -94,17 +98,15 @@ class StockEntryProfile(
                 signalStrength = signal.signalStrength,
                 accountId = request.accountId,
             )
-        val kellyQty =
-            if (kellySizeRub > BigDecimal.ZERO) {
-                kellySizeRub.divide(entryPrice, 0, RoundingMode.DOWN).toInt()
+        val kellyLots =
+            if (kellySizeRub > BigDecimal.ZERO && notionalPerLot > BigDecimal.ZERO) {
+                kellySizeRub.divide(notionalPerLot, 0, RoundingMode.DOWN).toInt()
             } else {
                 0
             }
 
-        // Риск-кап на сделку (аналог FuturesPositionSizer): убыток при срабатывании
-        // стопа не может превысить riskPerTradePercent% от AUM.
-        // lossPerShare = entryPrice * effectiveSlPercent% (SL-цена у OrderBuilder такая же).
-        val spec = instrumentsConfig.find(signal.ticker)
+        // Риск-кап на сделку: убыток при срабатывании стопа не может превысить
+        // riskPerTradePercent% от AUM. lossPerLot = price × SL% × lotSize + commission.
         val effectiveSlPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
             ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
@@ -112,19 +114,20 @@ class StockEntryProfile(
             request.portfolioMoney
                 .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
-        val lossPerShare =
+        val lossPerLot =
             entryPrice
                 .multiply(effectiveSlPercent)
                 .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
-                .add(commissionPerLot.divide(BigDecimal(spec?.lotSize ?: 1), 6, RoundingMode.HALF_UP))
-        val maxQtyByRisk =
-            if (lossPerShare > BigDecimal.ZERO) {
-                riskAmount.divide(lossPerShare, 4, RoundingMode.DOWN).toInt()
+                .multiply(BigDecimal(lotSize))
+                .add(commissionPerLot)
+        val maxLotsByRisk =
+            if (lossPerLot > BigDecimal.ZERO) {
+                riskAmount.divide(lossPerLot, 0, RoundingMode.DOWN).toInt()
             } else {
                 0
             }
 
-        val finalQty = minOf(kellyQty, maxQtyByRisk)
+        val finalQty = minOf(kellyLots, maxLotsByRisk)
         if (finalQty < 1) {
             return PositionSizeResult(
                 quantity = 0,
@@ -144,13 +147,16 @@ class StockEntryProfile(
     }
 
     override suspend fun postSizingChecks(
+        ticker: String,
         direction: PositionDirection,
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         openPositions: List<Position>,
     ): String? {
         val qty = size.quantity.coerceAtLeast(1)
-        val candidateNotional = entryPrice.multiply(BigDecimal(qty))
+        val spec = instrumentsConfig.find(ticker)
+        val candidateNotional = spec?.notional(qty, entryPrice)
+            ?: entryPrice.multiply(BigDecimal(qty))
         return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions)) "PORTFOLIO_LIMIT" else null
     }
 

@@ -247,6 +247,7 @@ class DecisionEngine(
                     aum = request.portfolioMoney,
                 ),
             )
+        var finalSize = size
         when (profile.portfolioMode()) {
             PortfolioMode.ENFORCED -> {
                 if (!portfolioReport.allowed) {
@@ -270,8 +271,8 @@ class DecisionEngine(
                         return
                     }
                     if (scaledQty != params.quantity) {
-                        val scaledSize = size.copy(quantity = scaledQty)
-                        params = profile.buildOrderParams(ticker, direction, entryPrice, scaledSize, request)
+                        finalSize = size.copy(quantity = scaledQty)
+                        params = profile.buildOrderParams(ticker, direction, entryPrice, finalSize, request)
                         meterRegistry.counter("${profile.metricPrefix}.portfolio.scaled", Tags.of("ticker", ticker)).increment()
                         logger.info {
                             "Portfolio risk scale $ticker: qty ${params.quantity} (factor=${portfolioReport.scaleDownFactor})"
@@ -303,7 +304,7 @@ class DecisionEngine(
         // Финальное риск-решение сделки: сигнал + риск-вход + размер + параметры
         // заявки схлопываются в [TradeRiskDecision] и прогоняются через исполнение
         // (position/логи/история стратегии) без дублирования полей.
-        val decision = TradeRiskDecision.from(signal, request, size, params)
+        val decision = TradeRiskDecision.from(signal, request, finalSize, params)
         val opened =
             gateway.placeEntryOrder(
                 decision.ticker,

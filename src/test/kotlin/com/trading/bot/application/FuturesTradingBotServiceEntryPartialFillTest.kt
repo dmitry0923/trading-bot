@@ -48,6 +48,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.verify
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
@@ -153,6 +154,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     fun stubAccount() {
         Mockito.`when`(instrumentsConfig.isFutures(Mockito.anyString())).thenReturn(true)
         runBlocking {
+            Mockito.`when`(degenerateCaseGuard.check(any(), any())).thenReturn(DegenerateCaseGuard.GuardResult.Allowed)
             Mockito
                 .`when`(tradingAccountService.portfolioOf(Mockito.nullable(Long::class.java)))
                 .thenReturn(alorConfig.portfolio)

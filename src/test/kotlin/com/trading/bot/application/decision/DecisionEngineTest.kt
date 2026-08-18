@@ -95,7 +95,7 @@ class DecisionEngineTest {
         runBlocking {
             Mockito.`when`(mlEntryFilter.shouldBlock(any())).thenReturn(null)
             Mockito.`when`(higherTfTrendFilter.shouldBlock(any())).thenReturn(null)
-            Mockito.`when`(degenerateCaseGuard.blockReason(any(), any())).thenReturn(null)
+            Mockito.`when`(degenerateCaseGuard.check(any(), any())).thenReturn(DegenerateCaseGuard.GuardResult.Allowed)
             Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
             Mockito.`when`(alorClient.getMarketSnapshot("Si")).thenReturn(
                 MarketSnapshot(ticker = "Si", currentPrice = BigDecimal("100"))
@@ -326,7 +326,7 @@ class DecisionEngineTest {
     fun `degenerate case rejection blocks entry after freshness check`() {
         val profile = FakeEntryProfile()
         runBlocking {
-            Mockito.`when`(degenerateCaseGuard.blockReason(any(), any())).thenReturn("WIDE_SPREAD")
+            Mockito.`when`(degenerateCaseGuard.check(any(), any())).thenReturn(DegenerateCaseGuard.GuardResult.Blocked("WIDE_SPREAD"))
         }
 
         runBlocking {
@@ -336,7 +336,7 @@ class DecisionEngineTest {
         assertEquals(0, gatewayCalls)
         assertEquals(1.0, rejectMetric("WIDE_SPREAD"))
         runBlocking {
-            Mockito.verify(degenerateCaseGuard).blockReason(eq("Si"), eq("MINUTE_10"))
+            Mockito.verify(degenerateCaseGuard).check(eq("Si"), eq("MINUTE_10"))
         }
     }
 

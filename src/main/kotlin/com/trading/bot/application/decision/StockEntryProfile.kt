@@ -29,8 +29,7 @@ import java.math.RoundingMode
  * Воспроизводит прежний пайплайн TradingBotService.doOpenPosition:
  * - риск-этап: [StockRiskEngine] (Да/Нет);
  * - pre-sizing: глобальный и внутрисекторный корреляционные фильтры;
- * - сайзинг: адаптивный Kelly ([AdaptiveRiskService.calculateOptimalPositionSize]),
- *   сайзинг: адаптивный Kelly ([AdaptiveRiskService.calculateOptimalPositionSize]),
+ * - сайзинг: адаптивный Kelly ([AdaptiveRiskService.calculateOptimalPositionSize]);
  *   размер = Kelly budget / notionalPerLot; если 0 лотов — вход блокируется;
  * - post-sizing: лимиты Gross/Net Exposure ([RiskManagementService.exceedsPortfolioLimits]);
  * - параметры заявки: SL/TP по проценту ([OrderBuilder.buildSpotOrderParams]);

@@ -130,13 +130,16 @@ class DecisionEngine(
         }
 
         // Вырожденные случаи (13.3.5): широкий спред, гэп, депозитарная пауза → отказ
-        // входа. Fail-open при недоступности данных (не ломаем торговлю на пустом кэше).
-        degenerateCaseGuard.blockReason(ticker, signal.timeframe)?.let { reason ->
-            logger.warn { "Degenerate case rejected $ticker: $reason" }
-            meterRegistry
-                .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", reason))
-                .increment()
-            return
+        // входа. Fail-closed при недостатке данных (UNKNOWN ≠ SAFE).
+        when (val result = degenerateCaseGuard.check(ticker, signal.timeframe)) {
+            is DegenerateCaseGuard.GuardResult.Allowed -> Unit
+            is DegenerateCaseGuard.GuardResult.Blocked -> {
+                logger.warn { "Degenerate case rejected $ticker: ${result.reason}" }
+                meterRegistry
+                    .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", result.reason))
+                    .increment()
+                return
+            }
         }
 
         val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT

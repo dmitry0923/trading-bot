@@ -14,7 +14,8 @@ import java.math.RoundingMode
  *   - WIDE_SPREAD: спред (ask-bid)/ask в % выше порога [isWideSpread].
  *     Fail-open при отсутствии/некорректности котировок (спред = 0 — не блокируем).
  *   - PRICE_GAP: открывающий гэп |open - prevClose|/prevClose в % выше порога
- *     [isGap] (недостаточно свечей / некорректная цена — не блокируем).
+ *     [isGap] (недостаточно свечей — не блокируем на уровне детектора;
+ *     проверка количества свечей делается в [com.trading.bot.service.DegenerateCaseGuard]).
  *   - DEPOSITARY_PAUSE: [consecutiveZeroVolumeBars] подряд идущих свечей с нулевым
  *     объёмом (депозитарная/торговая пауза) — [isDepositaryPause].
  */

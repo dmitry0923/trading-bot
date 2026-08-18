@@ -8,6 +8,7 @@ import com.trading.bot.model.entity.Candle
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -63,6 +64,16 @@ class DegenerateCaseGuardTest {
                         volume = 1000L,
                         time = LocalDateTime.of(2026, 1, 1, 10, 10),
                     ),
+                    Candle(
+                        ticker = "SBER",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("100"),
+                        highPrice = BigDecimal("100"),
+                        lowPrice = BigDecimal("100"),
+                        closePrice = BigDecimal("100"),
+                        volume = 1000L,
+                        time = LocalDateTime.of(2026, 1, 1, 10, 20),
+                    ),
                 ),
             )
         }
@@ -108,7 +119,7 @@ class DegenerateCaseGuardTest {
         }
 
         val reason = runBlocking { guard.blockReason("SBER", "MINUTE_10") }
-        assertEquals("NO_MARKET_DATA", reason)
+        assertEquals("MARKET_SNAPSHOT_UNAVAILABLE", reason)
     }
 
     @Test
@@ -131,12 +142,22 @@ class DegenerateCaseGuardTest {
                         Candle(
                             ticker = "SBER",
                             timeframe = "MINUTE_10",
+                            openPrice = BigDecimal("100"),
+                            highPrice = BigDecimal("100"),
+                            lowPrice = BigDecimal("100"),
+                            closePrice = BigDecimal("100"),
+                            volume = 1000L,
+                            time = LocalDateTime.of(2026, 1, 1, 10, 10),
+                        ),
+                        Candle(
+                            ticker = "SBER",
+                            timeframe = "MINUTE_10",
                             openPrice = BigDecimal("106"),
                             highPrice = BigDecimal("106"),
                             lowPrice = BigDecimal("106"),
                             closePrice = BigDecimal("106"),
                             volume = 1000L,
-                            time = LocalDateTime.of(2026, 1, 1, 10, 10),
+                            time = LocalDateTime.of(2026, 1, 1, 10, 20),
                         ),
                     ),
                 )
@@ -154,6 +175,46 @@ class DegenerateCaseGuardTest {
 
         val reason = runBlocking { guard.blockReason("SBER", "MINUTE_10") }
         assertEquals("DEPOSITARY_PAUSE", reason)
+    }
+
+    @Test
+    fun `insufficient candle data blocks entry fail-closed`() {
+        runBlocking {
+            Mockito.`when`(candleCache.getRecentCandles(any(), any(), any())).thenReturn(
+                listOf(
+                    Candle(
+                        ticker = "SBER",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("100"),
+                        highPrice = BigDecimal("100"),
+                        lowPrice = BigDecimal("100"),
+                        closePrice = BigDecimal("100"),
+                        volume = 1000L,
+                        time = LocalDateTime.of(2026, 1, 1, 10, 0),
+                    ),
+                ),
+            )
+        }
+
+        val reason = runBlocking { guard.blockReason("SBER", "MINUTE_10") }
+        assertEquals("INSUFFICIENT_CANDLE_DATA", reason)
+    }
+
+    @Test
+    fun `check returns Blocked for missing snapshot`() {
+        runBlocking {
+            Mockito.`when`(alorClient.getMarketSnapshot(any())).thenReturn(null)
+        }
+
+        val result = runBlocking { guard.check("SBER", "MINUTE_10") }
+        assertTrue(result is DegenerateCaseGuard.GuardResult.Blocked)
+        assertEquals("MARKET_SNAPSHOT_UNAVAILABLE", (result as DegenerateCaseGuard.GuardResult.Blocked).reason)
+    }
+
+    @Test
+    fun `check returns Allowed when market is normal`() {
+        val result = runBlocking { guard.check("SBER", "MINUTE_10") }
+        assertTrue(result is DegenerateCaseGuard.GuardResult.Allowed)
     }
 
     @Test

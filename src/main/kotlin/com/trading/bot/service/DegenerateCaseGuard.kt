@@ -11,14 +11,16 @@ import org.springframework.stereotype.Component
  * Пре-входной guard вырожденных рыночных случаев (roadmap 13.3.5).
  *
  * Проверяет перед входом в позицию:
- *   1. WIDE_SPREAD — спред котировок выше порога (per-instrument или global);
- *   2. PRICE_GAP — открывающий гэп на последней свече выше порога;
- *   3. DEPOSITARY_PAUSE — consecutiveZeroVolumeBars подряд нулевых
+ *   1. MARKET_SNAPSHOT_UNAVAILABLE — снэпшот котировок недоступен;
+ *   2. WIDE_SPREAD — спред котировок выше порога (per-instrument или global);
+ *   3. INSUFFICIENT_CANDLE_DATA — недостаточно свечей для проверки гэпа/паузы;
+ *   4. PRICE_GAP — открывающий гэп на последней свече выше порога;
+ *   5. DEPOSITARY_PAUSE — consecutiveZeroVolumeBars подряд нулевых
  *      по объёму свечей (депозитарная/торговая пауза).
  *
- * Проверки по свечам fail-closed при недостатке данных (пустой кэш на старте).
- * Мастер-выключатель: [RiskConfig.degenerateCaseGuardEnabled] (false — pass-through);
- * отдельные проверки отключаются порогом <= 0.
+ * Все проверки fail-closed: при недостатке данных вход блокируется
+ * (UNKNOWN ≠ SAFE). Мастер-выключатель: [RiskConfig.degenerateCaseGuardEnabled]
+ * (false — pass-through); отдельные проверки отключаются порогом <= 0.
  */
 @Component
 class DegenerateCaseGuard(
@@ -33,14 +35,28 @@ class DegenerateCaseGuard(
         get() = maxOf(config.consecutiveZeroVolumeBars, 2)
 
     /**
-     * @return причина блокировки входа ("WIDE_SPREAD" / "PRICE_GAP" / "DEPOSITARY_PAUSE")
-     *   или null, если вход допустим.
+     * Результат проверки guard'а.
+     *
+     * - [Allowed] — все проверки пройдены, вход допустим.
+     * - [Blocked] — вход заблокирован по указанной причине.
      */
-    suspend fun blockReason(
+    sealed interface GuardResult {
+        data object Allowed : GuardResult
+
+        data class Blocked(val reason: String) : GuardResult
+    }
+
+    /**
+     * Проверяет, не является ли случай вырожденным.
+     *
+     * @return [GuardResult.Allowed], если вход допустим;
+     *   [GuardResult.Blocked] с причиной иначе.
+     */
+    suspend fun check(
         ticker: String,
         timeframe: String,
-    ): String? {
-        if (!config.degenerateCaseGuardEnabled) return null
+    ): GuardResult {
+        if (!config.degenerateCaseGuardEnabled) return GuardResult.Allowed
 
         val spec = instrumentsConfig.find(ticker)
         val spreadThreshold = spec?.effectiveMaxSpreadPercent(config.maxSpreadPercent) ?: config.maxSpreadPercent
@@ -49,7 +65,7 @@ class DegenerateCaseGuard(
         val snapshot = alorClient.getMarketSnapshot(ticker)
         if (snapshot == null) {
             logger.warn { "Market snapshot unavailable for $ticker — entry blocked (fail-closed)" }
-            return "NO_MARKET_DATA"
+            return GuardResult.Blocked("MARKET_SNAPSHOT_UNAVAILABLE")
         }
         if (
             DegenerateCaseDetector.isWideSpread(
@@ -60,22 +76,37 @@ class DegenerateCaseGuard(
             )
         ) {
             logger.warn { "Wide spread for $ticker (> ${spreadThreshold}%) — entry blocked" }
-            return "WIDE_SPREAD"
+            return GuardResult.Blocked("WIDE_SPREAD")
         }
 
         val candles = candleCache.getRecentCandles(ticker, timeframe, lookbackBars)
-        if (candles.isEmpty()) {
-            logger.warn { "No candle data for $ticker — entry blocked (fail-closed)" }
-            return "NO_CANDLE_DATA"
+        if (candles.size < lookbackBars) {
+            logger.warn {
+                "Insufficient candle data for $ticker: ${candles.size}/${lookbackBars} bars " +
+                    "— entry blocked (fail-closed)"
+            }
+            return GuardResult.Blocked("INSUFFICIENT_CANDLE_DATA")
         }
         if (DegenerateCaseDetector.isGap(candles, gapThreshold)) {
             logger.warn { "Price gap for $ticker (> ${gapThreshold}%) — entry blocked" }
-            return "PRICE_GAP"
+            return GuardResult.Blocked("PRICE_GAP")
         }
         if (DegenerateCaseDetector.isDepositaryPause(candles, config.consecutiveZeroVolumeBars)) {
             logger.warn { "Depositary pause for $ticker (${config.consecutiveZeroVolumeBars} zero-volume bars) — entry blocked" }
-            return "DEPOSITARY_PAUSE"
+            return GuardResult.Blocked("DEPOSITARY_PAUSE")
         }
-        return null
+        return GuardResult.Allowed
     }
+
+    /**
+     * Обратно совместимая обёртка: возвращает причину блокировки или null.
+     */
+    suspend fun blockReason(
+        ticker: String,
+        timeframe: String,
+    ): String? =
+        when (val result = check(ticker, timeframe)) {
+            is GuardResult.Allowed -> null
+            is GuardResult.Blocked -> result.reason
+        }
 }

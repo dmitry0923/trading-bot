@@ -30,7 +30,8 @@ import java.math.RoundingMode
  * - риск-этап: [StockRiskEngine] (Да/Нет);
  * - pre-sizing: глобальный и внутрисекторный корреляционные фильтры;
  * - сайзинг: адаптивный Kelly ([AdaptiveRiskService.calculateOptimalPositionSize]),
- *   размер позиции = Kelly-бюджет / цена входа (минимум 1 лот);
+ *   сайзинг: адаптивный Kelly ([AdaptiveRiskService.calculateOptimalPositionSize]),
+ *   размер = Kelly budget / notionalPerLot; если 0 лотов — вход блокируется;
  * - post-sizing: лимиты Gross/Net Exposure ([RiskManagementService.exceedsPortfolioLimits]);
  * - параметры заявки: SL/TP по проценту ([OrderBuilder.buildSpotOrderParams]);
  * - портфельный риск — ENFORCED (BLOCK/SCALE);
@@ -154,10 +155,10 @@ class StockEntryProfile(
         size: PositionSizeResult,
         openPositions: List<Position>,
     ): String? {
-        val qty = size.quantity.coerceAtLeast(1)
+        if (size.quantity < 1) return "ZERO_RISK_SIZE"
         val spec = instrumentsConfig.find(ticker)
-        val candidateNotional = spec?.notional(qty, entryPrice)
-            ?: entryPrice.multiply(BigDecimal(qty))
+        val candidateNotional = spec?.notional(size.quantity, entryPrice)
+            ?: entryPrice.multiply(BigDecimal(size.quantity))
         return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions)) "PORTFOLIO_LIMIT" else null
     }
 
@@ -167,7 +168,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         request: EntryRequest,
-    ): OrderParams = orderBuilder.buildSpotOrderParams(ticker, direction, size.quantity.coerceAtLeast(1), entryPrice)
+    ): OrderParams = orderBuilder.buildSpotOrderParams(ticker, direction, size.quantity, entryPrice)
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 

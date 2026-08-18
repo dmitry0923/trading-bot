@@ -139,7 +139,8 @@ class StockEntryProfile(
         }
         return PositionSizeResult(
             quantity = finalQty,
-            marginRequired = kellySizeRub,
+            marginRequired = spec?.notional(finalQty, entryPrice)
+                ?: entryPrice.multiply(BigDecimal(finalQty)),
             riskAmount = riskAmount,
             liquidationPrice = null,
             reason = null,

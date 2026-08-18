@@ -264,7 +264,11 @@ class DecisionEngine(
                             .multiply(portfolioReport.scaleDownFactor)
                             .setScale(0, RoundingMode.DOWN)
                             .toInt()
-                            .coerceAtLeast(1)
+                    if (scaledQty < 1) {
+                        logger.warn { "Portfolio risk block $ticker: scale ${portfolioReport.scaleDownFactor} reduces qty ${params.quantity} below 1 lot" }
+                        meterRegistry.counter("${profile.metricPrefix}.risk.scaleBlock", Tags.of("ticker", ticker)).increment()
+                        return
+                    }
                     if (scaledQty != params.quantity) {
                         val scaledSize = size.copy(quantity = scaledQty)
                         params = profile.buildOrderParams(ticker, direction, entryPrice, scaledSize, request)

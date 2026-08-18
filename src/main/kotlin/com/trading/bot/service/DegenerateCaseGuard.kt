@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component
  *   3. DEPOSITARY_PAUSE — consecutiveZeroVolumeBars подряд нулевых
  *      по объёму свечей (депозитарная/торговая пауза).
  *
- * Проверки по свечам fail-open при недостатке данных (пустой кэш на старте).
+ * Проверки по свечам fail-closed при недостатке данных (пустой кэш на старте).
  * Мастер-выключатель: [RiskConfig.degenerateCaseGuardEnabled] (false — pass-through);
  * отдельные проверки отключаются порогом <= 0.
  */
@@ -47,8 +47,11 @@ class DegenerateCaseGuard(
         val gapThreshold = spec?.effectiveMaxGapPercent(config.maxGapPercent) ?: config.maxGapPercent
 
         val snapshot = alorClient.getMarketSnapshot(ticker)
+        if (snapshot == null) {
+            logger.warn { "Market snapshot unavailable for $ticker — entry blocked (fail-closed)" }
+            return "NO_MARKET_DATA"
+        }
         if (
-            snapshot != null &&
             DegenerateCaseDetector.isWideSpread(
                 snapshot.bid,
                 snapshot.ask,
@@ -61,6 +64,10 @@ class DegenerateCaseGuard(
         }
 
         val candles = candleCache.getRecentCandles(ticker, timeframe, lookbackBars)
+        if (candles.isEmpty()) {
+            logger.warn { "No candle data for $ticker — entry blocked (fail-closed)" }
+            return "NO_CANDLE_DATA"
+        }
         if (DegenerateCaseDetector.isGap(candles, gapThreshold)) {
             logger.warn { "Price gap for $ticker (> ${gapThreshold}%) — entry blocked" }
             return "PRICE_GAP"

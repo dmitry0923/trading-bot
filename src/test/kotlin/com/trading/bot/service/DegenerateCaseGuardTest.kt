@@ -19,10 +19,11 @@ import java.time.LocalDateTime
  * Unit-тесты пре-входного guard'а вырожденных случаев [DegenerateCaseGuard].
  *
  * Покрывают:
- * - WIDE_SPREAD по снэпшоту котировок (fail-open при отсутствии снэпшота);
+ * - WIDE_SPREAD по снэпшоту котировок (fail-closed при отсутствии снэпшота);
  * - PRICE_GAP по свечам кэша;
  * - DEPOSITARY_PAUSE по нулевым объёмам;
- * - порядок проверок (спред → гэп → пауза);
+ * - NO_CANDLE_DATA при пустом кэше свечей (fail-closed);
+ * - порядок проверок (спред → данные → гэп → пауза);
  * - pass-through при выключенном guard и при чистом состоянии;
  * - per-instrument spread/gap thresholds.
  */
@@ -40,7 +41,30 @@ class DegenerateCaseGuardTest {
             Mockito
                 .`when`(alorClient.getMarketSnapshot(any()))
                 .thenReturn(MarketSnapshot(currentPrice = BigDecimal("100"), bid = BigDecimal("99.9"), ask = BigDecimal("100.1")))
-            Mockito.`when`(candleCache.getRecentCandles(any(), any(), any())).thenReturn(emptyList())
+            Mockito.`when`(candleCache.getRecentCandles(any(), any(), any())).thenReturn(
+                listOf(
+                    Candle(
+                        ticker = "SBER",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("100"),
+                        highPrice = BigDecimal("100"),
+                        lowPrice = BigDecimal("100"),
+                        closePrice = BigDecimal("100"),
+                        volume = 1000L,
+                        time = LocalDateTime.of(2026, 1, 1, 10, 0),
+                    ),
+                    Candle(
+                        ticker = "SBER",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("100"),
+                        highPrice = BigDecimal("100"),
+                        lowPrice = BigDecimal("100"),
+                        closePrice = BigDecimal("100"),
+                        volume = 1000L,
+                        time = LocalDateTime.of(2026, 1, 1, 10, 10),
+                    ),
+                ),
+            )
         }
     }
 
@@ -78,13 +102,13 @@ class DegenerateCaseGuardTest {
     }
 
     @Test
-    fun `missing snapshot fails open for spread check`() {
+    fun `missing snapshot blocks entry fail-closed`() {
         runBlocking {
             Mockito.`when`(alorClient.getMarketSnapshot(any())).thenReturn(null)
         }
 
         val reason = runBlocking { guard.blockReason("SBER", "MINUTE_10") }
-        assertNull(reason)
+        assertEquals("NO_MARKET_DATA", reason)
     }
 
     @Test

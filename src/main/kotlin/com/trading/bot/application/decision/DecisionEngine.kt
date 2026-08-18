@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap
  *      (fail-closed, чтобы не открыть позицию без лока).
  *   3. [MarketDataGate] (defense in depth: свежие рыночные данные).
  *   4. Детектор вырожденных случаев ([DegenerateCaseGuard], roadmap 13.3.5):
- *      широкий спред, гэп, депозитарная пауза — отказ входа (fail-open без данных).
+ *      широкий спред, гэп, депозитарная пауза — отказ входа (fail-closed без данных).
  *   5. Цена входа: [AlorClient.getLastPrice] ?: signal.targetPrice.
  *   6. [EntryProfile.riskEngine].canEnter (Да/Нет).
  *   7. ML-фильтр входа ([MlEntryFilter], roadmap 13.11.5): прогноз модели < порога —
@@ -273,6 +273,22 @@ class DecisionEngine(
                     if (scaledQty != params.quantity) {
                         finalSize = size.copy(quantity = scaledQty)
                         params = profile.buildOrderParams(ticker, direction, entryPrice, finalSize, request)
+                        val scaledNotional = spec?.notional(scaledQty, entryPrice)
+                            ?: entryPrice.multiply(BigDecimal(scaledQty))
+                        val recheck = portfolioRiskEngine.evaluate(
+                            PortfolioRiskRequest(
+                                candidateTicker = ticker,
+                                candidateDirection = direction,
+                                candidateNotionalRub = scaledNotional,
+                                openPositions = openPositions,
+                                aum = request.portfolioMoney,
+                            ),
+                        )
+                        if (!recheck.allowed) {
+                            logger.warn { "Portfolio risk re-check rejected $ticker after SCALE: ${recheck.reasons.joinToString("|")}" }
+                            meterRegistry.counter("${profile.metricPrefix}.risk.scaleReject", Tags.of("ticker", ticker)).increment()
+                            return
+                        }
                         meterRegistry.counter("${profile.metricPrefix}.portfolio.scaled", Tags.of("ticker", ticker)).increment()
                         logger.info {
                             "Portfolio risk scale $ticker: qty ${params.quantity} (factor=${portfolioReport.scaleDownFactor})"

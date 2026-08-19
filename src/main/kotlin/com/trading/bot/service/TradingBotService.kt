@@ -334,7 +334,7 @@ class TradingBotService(
             // closeReason уже не null, pnl на полный qty). Позиция остаётся нетронутой,
             // остаток сверяет State Reconciliation (qty-adjust).
             logger.info {
-                "WS partial close fill for ${pos.ticker}: order=$orderId filled=${report.filledQty} @ $fillPrice — " +
+                "WS partial close fill for ${pos.ticker}: order=$orderId filled=${report.cumulativeFilledQty} @ $fillPrice — " +
                     "position left OPEN, remainder handled by State Reconciliation"
             }
             return

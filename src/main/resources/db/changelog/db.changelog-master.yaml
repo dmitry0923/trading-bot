@@ -49,3 +49,5 @@ databaseChangeLog:
       file: db/changelog/changes/024-signal-strength-rename.sql
   - include:
       file: db/changelog/changes/025-entry-reservations.sql
+  - include:
+      file: db/changelog/changes/026-cumulative-close-fill-qty.sql

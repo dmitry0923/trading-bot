@@ -250,6 +250,8 @@ class OrderExecutionEngine(
         }
 
         val current = positionRepo.findById(positionId)
+        // Сброс накопленного fill для нового close-ордера (дельта-модель).
+        current.cumulativeCloseFillQty = 0
         // Повторная попытка закрытия при уже существующем close-ордере (например,
         // после UNCERTAIN-доставки без closeOrderId реконсилятор мог проставить id) —
         // новый ордер НЕ создаём, только сверяем исполнение.
@@ -768,7 +770,7 @@ class OrderExecutionEngine(
             positionRepo.save(pos)
             applyExchangeProtectionClose(
                 pos,
-                AlorClient.OrderExecution(report.status.name, report.filledQty, fillPrice),
+                AlorClient.OrderExecution(report.status.name, report.cumulativeFilledQty, fillPrice),
                 reason,
             )
             return true
@@ -780,7 +782,7 @@ class OrderExecutionEngine(
                 pos.alorOrderId = orderId
                 pos.pendingEntry = false
                 pos.entryPrice = fillPrice
-                pos.quantity = report.filledQty.coerceAtLeast(1)
+                pos.quantity = report.cumulativeFilledQty.coerceAtLeast(1)
                 positionRepo.save(pos)
                 tradeEventService.recordPositionOpened(pos)
                 onEntryOpened(pos)
@@ -791,9 +793,22 @@ class OrderExecutionEngine(
             return true
         }
 
-        // Подтверждение закрытия (pendingClose).
+        // Подтверждение закрытия (pendingClose) — дельта-модель.
+        // Alor filledQtyBatch — накопительное значение. Только инкремент
+        // с момента последнего применения реально уменьшает позицию.
         if (pos.pendingClose) {
-            applyCloseExecution(pos, report.filledQty, fillPrice, pos.closeReason ?: CloseReason.EXECUTION_FILL)
+            val prevApplied = pos.cumulativeCloseFillQty
+            val delta = report.cumulativeFilledQty - prevApplied
+            if (delta <= 0) {
+                logger.debug {
+                    "Close fill delta=0 for ${pos.ticker}: cumulative=${report.cumulativeFilledQty} " +
+                        "already_applied=$prevApplied — skipping"
+                }
+                return true
+            }
+            pos.cumulativeCloseFillQty = report.cumulativeFilledQty
+            positionRepo.save(pos)
+            applyCloseExecution(pos, delta, fillPrice, pos.closeReason ?: CloseReason.EXECUTION_FILL)
             return true
         }
 
@@ -826,7 +841,19 @@ class OrderExecutionEngine(
             return
         }
         val avg = execution.avgPrice ?: expectedPrice
-        applyCloseExecution(pos, execution.filledQuantity, avg, reason)
+        val cumulativeFill = execution.filledQuantity
+        val prevApplied = pos.cumulativeCloseFillQty
+        val delta = cumulativeFill - prevApplied
+        if (delta <= 0) {
+            logger.debug {
+                "confirmCloseFill delta=0 for ${pos.ticker}: REST cumulative=$cumulativeFill " +
+                    "already_applied=$prevApplied — skipping"
+            }
+            return
+        }
+        pos.cumulativeCloseFillQty = cumulativeFill
+        positionRepo.save(pos)
+        applyCloseExecution(pos, delta, avg, reason)
     }
 
     /**

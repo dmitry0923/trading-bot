@@ -19,6 +19,9 @@ import java.time.LocalDateTime
  *   уменьшает [quantity] (дозакрытие остатка следующей итерацией).
  * - [realizedPnl] — накопленный реализованный P&L по уже закрытым частям
  *   (partial fills); итоговый [pnl] при полном закрытии = realizedPnl + остаток.
+ * - [cumulativeCloseFillQty] — накопительное исполнение close-ордера в лотах
+ *   (Alor: filledQtyBatch). Используется для расчёта дельты: только инкремент
+ *   применяется к позиции, что предотвращает повторное закрытие при дубликатах WS events.
  * - [slOrderId] / [tpOrderId] — биржевые защитные заявки (stop/take-profit), выставленные
  *   при открытии позиции (roadmap v2.2 «Точный контроль SL/TP»); [slOrderPrice] /
  *   [tpOrderPrice] — уровень заявки для детекции перевыставления, [slPendingReplace] /
@@ -56,6 +59,7 @@ data class Position(
     var pendingEntry: Boolean = false,
     var realizedPnl: BigDecimal = BigDecimal.ZERO,
     var closeReason: CloseReason? = null,
+    var cumulativeCloseFillQty: Int = 0,
     var openedAt: LocalDateTime = LocalDateTime.now(),
     var closedAt: LocalDateTime? = null,
     var cycleId: String? = null,

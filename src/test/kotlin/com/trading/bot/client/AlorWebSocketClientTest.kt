@@ -26,7 +26,35 @@ class AlorWebSocketClientTest {
         )
 
     @Test
-    fun `parseExecution FILLED when fill qty equals quantity`() {
+    fun `parseExecution FILLED from data envelope (Simple format)`() {
+        val report =
+            client.parseExecution(
+                """{"opcode":"OrdersGetAndSubscribeV2","guid":"g-1","data":{"id":"ord-1","status":"filled","filledQtyBatch":5,"qtyBatch":5,"avgFillPrice":"92000","ticker":"Si","side":"buy","filled":true}}""",
+            )
+
+        assertEquals("ord-1", report?.orderId)
+        assertEquals(OrderStatus.FILLED, report?.status)
+        assertEquals(5, report?.cumulativeFilledQty)
+        assertEquals(5, report?.requestedQty)
+        assertEquals(0, BigDecimal("92000").compareTo(report?.avgPrice))
+        assertEquals("Si", report?.ticker)
+        assertEquals("buy", report?.side)
+    }
+
+    @Test
+    fun `parseExecution PARTIALLY_FILLED from data envelope`() {
+        val report =
+            client.parseExecution(
+                """{"opcode":"OrdersGetAndSubscribeV2","data":{"id":"ord-1","status":"partiallyFilled","filledQtyBatch":2,"qtyBatch":5,"avgFillPrice":"92000"}}""",
+            )
+
+        assertEquals(OrderStatus.PARTIALLY_FILLED, report?.status)
+        assertEquals(2, report?.cumulativeFilledQty)
+        assertEquals(5, report?.requestedQty)
+    }
+
+    @Test
+    fun `parseExecution FILLED when legacy root format (no data envelope)`() {
         val report =
             client.parseExecution(
                 """{"opcode":"OrdersGetAndSubscribeV2","orderNumber":"ord-1","status":"Filled","filledQty":5,"quantity":5,"avgFillPrice":"92000","ticker":"Si","side":"buy"}""",
@@ -34,21 +62,21 @@ class AlorWebSocketClientTest {
 
         assertEquals("ord-1", report?.orderId)
         assertEquals(OrderStatus.FILLED, report?.status)
-        assertEquals(5, report?.filledQty)
+        assertEquals(5, report?.cumulativeFilledQty)
         assertEquals(0, BigDecimal("92000").compareTo(report?.avgPrice))
         assertEquals("Si", report?.ticker)
         assertEquals("buy", report?.side)
     }
 
     @Test
-    fun `parseExecution PARTIALLY_FILLED when fill below quantity`() {
+    fun `parseExecution PARTIALLY_FILLED when legacy root format`() {
         val report =
             client.parseExecution(
                 """{"opcode":"OrdersGetAndSubscribeV2","orderNumber":"ord-1","status":"PartiallyFilled","filledQty":2,"quantity":5,"avgFillPrice":"92000"}""",
             )
 
         assertEquals(OrderStatus.PARTIALLY_FILLED, report?.status)
-        assertEquals(2, report?.filledQty)
+        assertEquals(2, report?.cumulativeFilledQty)
     }
 
     @Test
@@ -60,16 +88,48 @@ class AlorWebSocketClientTest {
     }
 
     @Test
-    fun `parseExecution uses fallback field names`() {
+    fun `parseExecution uses fallback field names (legacy root)`() {
         val byId = client.parseExecution("""{"id":"o-id","status":"Filled","filledQuantity":1,"filledPrice":"100.5"}""")
         assertEquals("o-id", byId?.orderId)
-        assertEquals(1, byId?.filledQty)
+        assertEquals(1, byId?.cumulativeFilledQty)
         assertEquals(0, BigDecimal("100.5").compareTo(byId?.avgPrice))
 
         val byOrderNo = client.parseExecution("""{"orderNo":"o-no","status":"Filled","qty":1,"price":"99.0","symbol":"SBER"}""")
         assertEquals("o-no", byOrderNo?.orderId)
         assertEquals("SBER", byOrderNo?.ticker)
         assertEquals(0, BigDecimal("99.0").compareTo(byOrderNo?.avgPrice))
+    }
+
+    @Test
+    fun `parseExecution data envelope with brokerSymbol fallback`() {
+        val report =
+            client.parseExecution(
+                """{"data":{"id":"ord-2","status":"filled","filledQtyBatch":1,"qtyBatch":1,"brokerSymbol":"MOEX:CNYRUB_TOM","avgFillPrice":"12.50"}}""",
+            )
+
+        assertEquals("ord-2", report?.orderId)
+        assertEquals("CNYRUB_TOM", report?.ticker)
+        assertEquals(1, report?.cumulativeFilledQty)
+    }
+
+    @Test
+    fun `parseExecution data envelope CANCELED REJECTED statuses`() {
+        assertEquals(
+            OrderStatus.CANCELED,
+            client.parseExecution("""{"data":{"id":"o1","status":"cancelled"}}""")?.status,
+        )
+        assertEquals(
+            OrderStatus.REJECTED,
+            client.parseExecution("""{"data":{"id":"o1","status":"rejected"}}""")?.status,
+        )
+        assertEquals(
+            OrderStatus.NEW,
+            client.parseExecution("""{"data":{"id":"o1","status":"working"}}""")?.status,
+        )
+        assertEquals(
+            OrderStatus.UNKNOWN,
+            client.parseExecution("""{"data":{"id":"o1"}}""")?.status,
+        )
     }
 
     @Test
@@ -81,6 +141,7 @@ class AlorWebSocketClientTest {
     @Test
     fun `parseExecution returns null when order id missing`() {
         assertNull(client.parseExecution("""{"status":"Filled","filledQty":1}"""))
+        assertNull(client.parseExecution("""{"data":{"status":"filled"}}"""))
     }
 
     @Test

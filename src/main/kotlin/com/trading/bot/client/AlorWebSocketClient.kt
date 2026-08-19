@@ -377,23 +377,45 @@ class AlorWebSocketClient(
             val j = objectMapper.readTree(json)
             val opcode = j.path("opcode").asString("")
             if (opcode.isNotBlank() && opcode != "OrdersGetAndSubscribeV2") {
-                // Родительские/служебные сообщения (подтверждение подписки и т.п.) — пропускаем.
                 return null
             }
+
+            // Alor WS OrdersGetAndSubscribeV2 (Simple format) оборачивает payload в "data".
+            // Бэкенд-совместимость: если "data" отсутствует, читаем из корня.
+            val data = j.path("data")
+            val root = if (data.isMissingNode || data.isNull) j else data
+
             val orderId =
-                j
-                    .path("orderNumber")
+                root
+                    .path("id")
                     .asString()
-                    .ifBlank { j.path("id").asString() }
-                    .ifBlank { j.path("orderNo").asString() }
+                    .ifBlank { root.path("orderNumber").asString() }
+                    .ifBlank { root.path("orderNo").asString() }
                     .ifBlank { return null }
 
-            val statusRaw = j.path("status").asString("").lowercase()
+            // filledQtyBatch = исполнено в лотах (Alor decimal → int для модели).
+            // Бэкенд: filledQtyBatch → filledQty → filledQuantity.
+            val cumulativeFilledQty =
+                root
+                    .path("filledQtyBatch")
+                    .asInt(0)
+                    .let { if (it == 0) root.path("filledQty").asInt(0) else it }
+                    .let { if (it == 0) root.path("filledQuantity").asInt(0) else it }
+
+            // qtyBatch = исходное количество в лотах (Alor decimal → int).
+            val requestedQty =
+                root
+                    .path("qtyBatch")
+                    .asInt(0)
+                    .let { if (it == 0) root.path("qty").asInt(0) else it }
+                    .let { if (it == 0) root.path("quantity").asInt(0) else it }
+
+            val statusRaw = root.path("status").asString("").lowercase()
             val status =
                 when {
                     statusRaw.contains("fill") &&
-                        j.path("filledQty").asInt(0) > 0 &&
-                        j.path("filledQty").asInt(0) >= j.path("quantity").asInt(0) -> OrderStatus.FILLED
+                        cumulativeFilledQty > 0 &&
+                        cumulativeFilledQty >= requestedQty -> OrderStatus.FILLED
 
                     statusRaw.contains("fill") -> OrderStatus.PARTIALLY_FILLED
 
@@ -406,28 +428,25 @@ class AlorWebSocketClient(
                     else -> OrderStatus.UNKNOWN
                 }
 
-            val filledQty =
-                j
-                    .path("filledQty")
-                    .asInt(0)
-                    .let { if (it == 0) j.path("filledQuantity").asInt(0) else it }
             val avgPrice =
-                j.path("avgFillPrice").asString().toBigDecimalOrNull()
-                    ?: j.path("filledPrice").asString().toBigDecimalOrNull()
-                    ?: j.path("price").asString().toBigDecimalOrNull()
+                root.path("avgFillPrice").asString().toBigDecimalOrNull()
+                    ?: root.path("filledPrice").asString().toBigDecimalOrNull()
+                    ?: root.path("price").asString().toBigDecimalOrNull()
 
             ExecutionReport(
                 orderId = orderId,
                 status = status,
-                filledQty = filledQty,
+                cumulativeFilledQty = cumulativeFilledQty,
                 avgPrice = avgPrice,
                 ticker =
-                    j
+                    root
                         .path("ticker")
                         .asString()
-                        .ifBlank { j.path("symbol").asString() }
+                        .ifBlank { root.path("symbol").asString() }
+                        .ifBlank { root.path("brokerSymbol").asString().substringAfter(":") }
                         .takeIf { it.isNotBlank() },
-                side = j.path("side").asString().takeIf { it.isNotBlank() },
+                side = root.path("side").asString().takeIf { it.isNotBlank() },
+                requestedQty = requestedQty,
             )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to parse Alor WS message: ${json.take(500)}" }

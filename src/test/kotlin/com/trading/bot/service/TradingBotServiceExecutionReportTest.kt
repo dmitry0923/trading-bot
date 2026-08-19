@@ -127,7 +127,7 @@ class TradingBotServiceExecutionReportTest {
             ExecutionReport(
                 orderId = "ord-entry-1",
                 status = OrderStatus.FILLED,
-                filledQty = 10,
+                cumulativeFilledQty = 10,
                 avgPrice = BigDecimal("105"),
                 ticker = "SBER",
                 side = "buy",
@@ -154,7 +154,7 @@ class TradingBotServiceExecutionReportTest {
             ExecutionReport(
                 orderId = "ord-entry-2",
                 status = OrderStatus.PARTIALLY_FILLED,
-                filledQty = 5,
+                cumulativeFilledQty = 5,
                 avgPrice = BigDecimal("104"),
                 ticker = "SBER",
                 side = "buy",
@@ -183,7 +183,7 @@ class TradingBotServiceExecutionReportTest {
             ExecutionReport(
                 orderId = "ord-close-1",
                 status = OrderStatus.FILLED,
-                filledQty = 10,
+                cumulativeFilledQty = 10,
                 avgPrice = BigDecimal("110"),
                 ticker = "SBER",
                 side = "sell",
@@ -216,7 +216,7 @@ class TradingBotServiceExecutionReportTest {
             ExecutionReport(
                 orderId = "ord-close-1",
                 status = OrderStatus.PARTIALLY_FILLED,
-                filledQty = 5,
+                cumulativeFilledQty = 5,
                 avgPrice = BigDecimal("110"),
                 ticker = "SBER",
                 side = "sell",

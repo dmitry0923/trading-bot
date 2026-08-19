@@ -143,7 +143,7 @@ class StateReconciliationServiceTest {
     }
 
     @Test
-    fun `quantity is adjusted to exchange value on partial close during gap and margin recalculated`() {
+    fun `quantity mismatch marks reconciliation required and halts (fail-closed)`() {
         val pos = openPos("SBER", 10).apply { goPerContract = BigDecimal("15000") }
         stubOpenPositions(pos)
         stubReconcileOk(
@@ -161,10 +161,38 @@ class StateReconciliationServiceTest {
 
         val captor = argumentCaptor<Position>()
         runBlocking { verify(positionRepo).save(captor.capture()) }
-        assertEquals(4, captor.firstValue.quantity)
-        assertEquals(0, BigDecimal("60000").compareTo(captor.firstValue.marginUsed!!))
-        assertEquals(PositionStatus.OPEN, captor.firstValue.status)
-        verify(eventPublisher, never()).publishTradingHalted(anyTradingHaltedEvent())
+        assertEquals(PositionStatus.RECONCILIATION_REQUIRED, captor.firstValue.status)
+        assertFalse(captor.firstValue.pendingClose)
+        assertFalse(captor.firstValue.pendingEntry)
+        verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
+    }
+
+    @Test
+    fun `phantom position with recovered trade price gets closePrice set`() {
+        val pos = openPos("SBER", 10)
+        stubOpenPositions(pos)
+        stubReconcileOk(
+            trades =
+                listOf(
+                    AlorClient.ExchangeTrade(
+                        id = "t1",
+                        orderId = null,
+                        ticker = "SBER",
+                        side = "sell",
+                        quantity = 10,
+                        price = BigDecimal("115"),
+                        time = java.time.Instant.now(),
+                    ),
+                ),
+        )
+
+        runBlocking { service.reconcile() }
+
+        val captor = argumentCaptor<Position>()
+        runBlocking { verify(positionRepo).save(captor.capture()) }
+        assertEquals(PositionStatus.CLOSED, captor.firstValue.status)
+        assertEquals(CloseReason.RECONCILE_PHANTOM, captor.firstValue.closeReason)
+        assertEquals(0, BigDecimal("115").compareTo(captor.firstValue.closePrice!!))
     }
 
     @Test

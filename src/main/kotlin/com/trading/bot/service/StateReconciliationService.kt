@@ -26,6 +26,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.LocalDateTime
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -60,7 +61,7 @@ import java.util.concurrent.atomic.AtomicLong
  *   их разрешает существующий outbox-реконсилятор ([TradingBotService]/[com.trading.bot.application.FuturesTradingBotService]).
  *
  * Метрики:
- * - alor.reconcile.run{closed,adjusted,unknown} — завершённая сверка
+ * - alor.reconcile.run{closed,unknown} — завершённая сверка
  * - alor.reconcile.aborted{reason=FETCH_FAILED} — REST недоступен (+ hard halt)
  * - alor.reconcile.discrepancy{kind, ticker} — PHANTOM / DIRECTION_MISMATCH / UNKNOWN_POSITION
  * - alor.reconcile.fetch_error{kind} — ошибка отдельной выборки (в AlorClient)
@@ -147,13 +148,11 @@ class StateReconciliationService(
         logger.info { "State reconciliation started (${units.size} portfolio(s): ${units.joinToString { it.portfolio }})" }
 
         var closed = 0
-        var adjusted = 0
         var unknown = 0
         var halted = false
         for (unit in units) {
             val outcome = reconcilePortfolio(unit)
             closed += outcome.closed
-            adjusted += outcome.adjusted
             unknown += outcome.unknown
             halted = halted || outcome.halted
         }
@@ -166,10 +165,10 @@ class StateReconciliationService(
             .timer("alor.reconcile.duration")
             .record(System.currentTimeMillis() - start, TimeUnit.MILLISECONDS)
         meterRegistry
-            .counter("alor.reconcile.run", Tags.of("closed", "$closed", "adjusted", "$adjusted", "unknown", "$unknown"))
+            .counter("alor.reconcile.run", Tags.of("closed", "$closed", "unknown", "$unknown"))
             .increment()
         logger.info {
-            "State reconciliation finished: phantom=$closed qtyAdjusted=$adjusted unknownExchange=$unknown " +
+            "State reconciliation finished: phantom=$closed unknownExchange=$unknown " +
                 "in ${System.currentTimeMillis() - start}ms"
         }
     }
@@ -211,6 +210,7 @@ class StateReconciliationService(
 
         val orders = (ordersResult as ReconcileResult.Ok).items
         val positions = (positionsResult as ReconcileResult.Ok).items
+        val trades = (tradesResult as ReconcileResult.Ok).items
 
         val workingOrdersByTicker =
             orders
@@ -220,10 +220,11 @@ class StateReconciliationService(
             positions
                 .filter { it.qty != 0L }
                 .associate { it.ticker.uppercase() to it.qty }
+        val tradesByTicker =
+            trades.groupBy { it.ticker.uppercase() }
         val localOpen = positionRepo.findOpenByAccount(unit.accountId)
 
         var closed = 0
-        var adjusted = 0
         var unknown = 0
         var reconciliationRequired = 0
 
@@ -244,11 +245,20 @@ class StateReconciliationService(
                     }
                     when {
                         pos.pendingClose -> {
-                            logger.error {
-                                "Reconcile ${pos.ticker}: exchange flat, no working order, pendingClose — " +
-                                    "missed fill during WS gap -> marking CLOSED"
+                            val recoveredPrice = recoverClosePrice(pos, tradesByTicker)
+                            if (recoveredPrice != null) {
+                                logger.error {
+                                    "Reconcile ${pos.ticker}: exchange flat, no working order, pendingClose — " +
+                                        "missed fill during WS gap -> marking CLOSED at recovered price $recoveredPrice"
+                                }
+                                finalizePhantom(pos, CloseReason.RECONCILE_CLOSED_ON_EXCHANGE, recoveredPrice)
+                            } else {
+                                logger.error {
+                                    "Reconcile ${pos.ticker}: exchange flat, no working order, pendingClose — " +
+                                        "missed fill during WS gap -> marking CLOSED (no trade price recovered)"
+                                }
+                                finalizePhantom(pos, CloseReason.RECONCILE_CLOSED_ON_EXCHANGE)
                             }
-                            finalizePhantom(pos, CloseReason.RECONCILE_CLOSED_ON_EXCHANGE)
                             closed++
                         }
 
@@ -261,11 +271,20 @@ class StateReconciliationService(
                         }
 
                         else -> {
-                            logger.error {
-                                "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
-                                    "closed on exchange during WS gap -> marking CLOSED"
+                            val recoveredPrice = recoverClosePrice(pos, tradesByTicker)
+                            if (recoveredPrice != null) {
+                                logger.error {
+                                    "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
+                                        "closed on exchange during WS gap -> marking CLOSED at recovered price $recoveredPrice"
+                                }
+                                finalizePhantom(pos, CloseReason.RECONCILE_PHANTOM, recoveredPrice)
+                            } else {
+                                logger.error {
+                                    "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
+                                        "closed on exchange during WS gap -> marking CLOSED (no trade price recovered)"
+                                }
+                                finalizePhantom(pos, CloseReason.RECONCILE_PHANTOM)
                             }
-                            finalizePhantom(pos, CloseReason.RECONCILE_PHANTOM)
                             closed++
                         }
                     }
@@ -293,19 +312,14 @@ class StateReconciliationService(
                 }
                 val exchangeAbsQty = kotlin.math.abs(exchangeQty)
                 if (exchangeAbsQty != pos.quantity.toLong()) {
-                    logger.warn {
+                    logger.error {
                         "Reconcile ${pos.ticker}: qty mismatch local=${pos.quantity} " +
-                            "exchange=$exchangeAbsQty (partial close during WS gap) -> adjusting"
+                            "exchange=$exchangeAbsQty (partial close during WS gap) -> " +
+                            "RECONCILIATION_REQUIRED (risk fields stale, manual intervention required)"
                     }
-                    val newQty = exchangeAbsQty.toInt()
-                    pos.quantity = newQty
-                    // P1: риск-поля пересчитываются после изменения qty — marginUsed
-                    // линейно зависит от количества (GO * qty), без рекалка exposure
-                    // и drawdown-лимиты считаются от устаревшей маржи.
-                    pos.goPerContract?.let { pos.marginUsed = it.multiply(BigDecimal(newQty)) }
-                    positionRepo.save(pos)
-                    meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "QTY_ADJUSTED", "ticker", key)).increment()
-                    adjusted++
+                    markReconciliationRequired(pos)
+                    meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "QTY_MISMATCH", "ticker", key)).increment()
+                    reconciliationRequired++
                 }
             } catch (e: Exception) {
                 logger.error(e) { "Reconcile error for ${pos.id}/${pos.ticker}" }
@@ -325,7 +339,6 @@ class StateReconciliationService(
 
         return ReconcileOutcome(
             closed = closed,
-            adjusted = adjusted,
             unknown = unknown,
             halted = closed > 0 || unknown > 0 || reconciliationRequired > 0,
         )
@@ -333,19 +346,44 @@ class StateReconciliationService(
 
     /**
      * Помечает локальную позицию закрытой как «фантомную» (на бирже её больше нет).
-     * Цена закрытия неизвестна — P&L не пересчитываем, только снимаем позицию с контроля.
+     * Если [recoveredPrice] передана — пересчитываем P&L (closedDuringReconcile=false
+     * чтобы P&L pipeline отработал). Иначе — P&L неизвестен, позиция просто снимается с контроля.
      */
     private suspend fun finalizePhantom(
         pos: Position,
         reason: CloseReason,
+        recoveredPrice: BigDecimal? = null,
     ) {
         pos.status = PositionStatus.CLOSED
         pos.closedAt = LocalDateTime.now()
         pos.closeReason = reason
         pos.pendingClose = false
         pos.pendingEntry = false
+        if (recoveredPrice != null) {
+            pos.closePrice = recoveredPrice
+        }
         positionRepo.save(pos)
         meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "PHANTOM", "ticker", pos.ticker.uppercase())).increment()
+    }
+
+    /**
+     * Попытка восстановить цену закрытия из REST-сделок для фантомных позиций.
+     * Ищет последнюю сделку по тикеру с нужной стороной (sell для LONG, buy для SHORT).
+     */
+    private fun recoverClosePrice(
+        pos: Position,
+        tradesByTicker: Map<String, List<AlorClient.ExchangeTrade>>,
+    ): BigDecimal? {
+        val key = pos.ticker.uppercase()
+        val trades = tradesByTicker[key].orEmpty()
+        val expectedSide = when (pos.direction) {
+            PositionDirection.LONG -> "sell"
+            PositionDirection.SHORT -> "buy"
+        }
+        return trades
+            .filter { it.side?.lowercase() == expectedSide }
+            .maxByOrNull { it.time ?: Instant.MIN }
+            ?.price
     }
 
     /**
@@ -389,7 +427,6 @@ class StateReconciliationService(
     /** Итог сверки одного портфеля. */
     private data class ReconcileOutcome(
         val closed: Int = 0,
-        val adjusted: Int = 0,
         val unknown: Int = 0,
         val halted: Boolean = false,
     )

@@ -19,6 +19,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -453,5 +454,172 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(2, pos.quantity)
         assertFalse(pos.pendingClose)
         assertEquals(0, closedPositions.size)
+    }
+
+    // ─── Durable protection replacement (crash-consistency) ─────────
+
+    /**
+     * After partial close, slPendingReplace/tpPendingReplace flags are set
+     * instead of calling cancelProtectionOrders + attachProtectionOrders directly.
+     * This ensures that if a crash occurs after save, reconciliation will
+     * detect the flags and handle cancel+replace on restart.
+     *
+     * Old SL/TP orders remain active on the exchange (over-protected for the
+     * larger pre-close quantity) until reconciliation replaces them.
+     */
+    @Test
+    fun `partial close sets PendingReplace flags for durable protection replacement`() {
+        val engineWithProtection =
+            OrderExecutionEngine(
+                alorClient = alorClient,
+                orderOutboxService = orderOutboxService,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                objectMapper = objectMapper,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                pnlCalculator = PnlCalculator.plain(),
+                instrumentFilter = { true },
+                metricPrefix = "test",
+                onEntryOpened = {},
+                onPositionClosed = { closedPositions.add(it) },
+                protectionOrdersEnabled = true,
+                portfolioResolver = { "D12345" },
+            )
+
+        val pos =
+            openPos(quantity = 5).apply {
+                slOrderId = "sl-1"
+                slOrderPrice = BigDecimal("90")
+                tpOrderId = "tp-1"
+                tpOrderPrice = BigDecimal("110")
+            }
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        // cumulative=3, delta=3, 3 < 5 → partial close
+        runBlocking { engineWithProtection.handleExecutionReport(report(cumulativeFilledQty = 3)) }
+
+        assertEquals(2, pos.quantity)
+        assertEquals(3, pos.cumulativeCloseFillQty)
+        assertTrue(pos.slPendingReplace) { "slPendingReplace should be set for durable replacement" }
+        assertTrue(pos.tpPendingReplace) { "tpPendingReplace should be set for durable replacement" }
+        // Old IDs preserved — reconciliation will cancel them
+        assertEquals("sl-1", pos.slOrderId)
+        assertEquals("tp-1", pos.tpOrderId)
+        // No new protection orders placed directly — deferred to reconciliation
+        runBlocking {
+            Mockito.verify(orderOutboxService, Mockito.never()).placeOrder(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyInt(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.anyString(),
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(String::class.java),
+                Mockito.nullable(Long::class.java),
+            )
+        }
+    }
+
+    /**
+     * Full close finalizes the position — PendingReplace flags are not set
+     * because the position transitions to CLOSED and no protection is needed.
+     */
+    @Test
+    fun `full close does not set PendingReplace flags`() {
+        val engineWithProtection =
+            OrderExecutionEngine(
+                alorClient = alorClient,
+                orderOutboxService = orderOutboxService,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                objectMapper = objectMapper,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                pnlCalculator = PnlCalculator.plain(),
+                instrumentFilter = { true },
+                metricPrefix = "test",
+                onEntryOpened = {},
+                onPositionClosed = { closedPositions.add(it) },
+                protectionOrdersEnabled = true,
+                portfolioResolver = { "D12345" },
+            )
+
+        val pos =
+            openPos(quantity = 5).apply {
+                slOrderId = "sl-1"
+                tpOrderId = "tp-1"
+            }
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        // cumulative=5, delta=5 >= quantity=5 → finalize
+        runBlocking { engineWithProtection.handleExecutionReport(report(cumulativeFilledQty = 5)) }
+
+        assertEquals(PositionStatus.CLOSED, pos.status)
+        // Flags should NOT be set — position is closed, no replacement needed
+        assertFalse(pos.slPendingReplace)
+        assertFalse(pos.tpPendingReplace)
+    }
+
+    /**
+     * Crash scenario: partial close saves PendingReplace flags, but process crashes
+     * before reconciliation runs. On restart, reconciliation sees the flags and
+     * handles replacement. This test verifies the flags are persisted (saved) atomically.
+     */
+    @Test
+    fun `partial close saves PendingReplace flags atomically with quantity and P and L`() {
+        val engineWithProtection =
+            OrderExecutionEngine(
+                alorClient = alorClient,
+                orderOutboxService = orderOutboxService,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                objectMapper = objectMapper,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                pnlCalculator = PnlCalculator.plain(),
+                instrumentFilter = { true },
+                metricPrefix = "test",
+                onEntryOpened = {},
+                onPositionClosed = { closedPositions.add(it) },
+                protectionOrdersEnabled = true,
+                portfolioResolver = { "D12345" },
+            )
+
+        var savedPosition: Position? = null
+        runBlocking {
+            Mockito.`when`(positionRepo.save(anyPosition())).thenAnswer { inv ->
+                val arg = inv.getArgument<Position>(0)
+                savedPosition = arg
+                arg
+            }
+        }
+
+        val pos =
+            openPos(quantity = 10).apply {
+                slOrderId = "sl-1"
+                tpOrderId = "tp-1"
+            }
+        stubFindCloseOrderId(pos)
+
+        // cumulative=4, delta=4, 4 < 10 → partial close
+        runBlocking { engineWithProtection.handleExecutionReport(report(cumulativeFilledQty = 4)) }
+
+        // All changes saved in one atomic save
+        val saved = savedPosition!!
+        assertEquals(6, saved.quantity)
+        assertEquals(4, saved.cumulativeCloseFillQty)
+        assertTrue(saved.slPendingReplace) { "flags must be saved atomically with quantity" }
+        assertTrue(saved.tpPendingReplace)
+        assertFalse(saved.pendingClose)
+        assertNull(saved.closeOrderId)
     }
 }

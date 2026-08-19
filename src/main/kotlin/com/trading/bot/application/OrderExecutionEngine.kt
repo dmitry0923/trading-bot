@@ -602,6 +602,14 @@ class OrderExecutionEngine(
         }
         cancelProtectionOrders(pos)
         applyCloseExecution(pos, filled, execution.avgPrice ?: pos.currentPrice ?: pos.entryPrice, reason)
+        // After SL/TP execution, re-attach protection for the remaining position.
+        // applyPartialClose no longer calls attachProtectionOrders (it defers to
+        // reconciliation via PendingReplace flags), but in the SL/TP execution path
+        // the IDs were already cleared by cancelProtectionOrders above, so flags
+        // are not set. We must re-attach directly here to protect the remainder.
+        if (pos.status == PositionStatus.OPEN) {
+            attachProtectionOrders(pos)
+        }
     }
 
     /**
@@ -950,6 +958,21 @@ class OrderExecutionEngine(
 
     /**
      * Partial fill: реализуем P&L закрытой части, уменьшаем quantity, остаток дозакрываем.
+     *
+     * Защитные SL/TP перевыставляются через durable PendingReplace flags:
+     * - Если SL/TP IDs ещё установлены (ручной путь закрытия через WS/REST),
+     *   устанавливаем slPendingReplace/tpPendingReplace. Отмена старых ордеров
+     *   и размещение новых происходит в [reconcileProtectionOrders] →
+     *   [finishProtectionReplacement] + [attachProtectionOrders].
+     * - Если SL/TP IDs уже очищены (путь исполнения SL/TP через [applyExchangeProtectionClose]),
+     *   флаги не устанавливаются. Вызывающий код ([applyExchangeProtectionClose])
+     *   уже вызвал [cancelProtectionOrders] и должен вызвать [attachProtectionOrders]
+     *   после applyCloseExecution.
+     *
+     * Ключевое свойство: одна атомарная save() фиксирует и quantity/P&L,
+     * и флаги замены защиты. При crash до save — старые SL/TP (для полного
+     * объёма) остаются на бирже (over-protected, не unprotected). После
+     * restart reconciliation видит flags и выполняет cancel+replace.
      */
     private suspend fun applyPartialClose(
         pos: Position,
@@ -962,14 +985,20 @@ class OrderExecutionEngine(
         pos.closeOrderId = null
         pos.pendingClose = false
         pos.currentPrice = avg
-        // Защитные SL/TP стояли на полный объём — снимаем и перевыставляем на остаток.
-        cancelProtectionOrders(pos)
+        // Durable protection replacement: mark old SL/TP for replacement.
+        // Old orders remain active on the exchange (over-protected for the
+        // larger pre-close quantity) until reconciliation cancels them and
+        // places correctly-sized replacements.
+        if (protectionOrdersEnabled && pos.status == PositionStatus.OPEN) {
+            if (pos.slOrderId != null && !pos.slPendingReplace) pos.slPendingReplace = true
+            if (pos.tpOrderId != null && !pos.tpPendingReplace) pos.tpPendingReplace = true
+        }
+        // Single atomic save: quantity, P&L, close state, and protection flags.
         positionRepo.save(pos)
-        attachProtectionOrders(pos)
         meterRegistry.counter("$metricPrefix.partial_close", Tags.of("ticker", pos.ticker)).increment()
         logger.warn {
             "PARTIAL close ${pos.ticker}: closed=$filled remainder=${pos.quantity} @ $avg " +
-                "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); remainder will be re-closed"
+                "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); protection replacement deferred to reconciliation"
         }
     }
 

@@ -92,15 +92,29 @@ class ExitRulesTest {
     // ── alignToGrid edge cases ──────────────────────────────
 
     @Test
-    fun `alignToGrid with zero priceStep falls back to scale 2`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("100.50"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("1.0"),
-            priceStep = BigDecimal("0"),
-        )
-        // priceStep <= 0 → setScale(2, FLOOR) → 99.49
-        assertEquals(0, BigDecimal("99.49").compareTo(sl))
+    fun `alignToGrid with zero priceStep throws IllegalArgumentException`() {
+        val ex = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("100.50"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("1.0"),
+                priceStep = BigDecimal("0"),
+            )
+        }
+        assertTrue(ex.message!!.contains("priceStep must be positive"))
+    }
+
+    @Test
+    fun `alignToGrid with negative priceStep throws IllegalArgumentException`() {
+        val ex = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            ExitRules.calcTP(
+                entryPrice = BigDecimal("100.50"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("1.0"),
+                priceStep = BigDecimal("-0.01"),
+            )
+        }
+        assertTrue(ex.message!!.contains("priceStep must be positive"))
     }
 
     @Test

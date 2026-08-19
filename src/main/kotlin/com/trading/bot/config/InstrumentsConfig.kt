@@ -1,5 +1,6 @@
 package com.trading.bot.config
 
+import jakarta.annotation.PostConstruct
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -149,6 +150,18 @@ class InstrumentsConfig {
                 commissionRub = BigDecimal("10.0"),
             ),
         )
+
+    @PostConstruct
+    fun validateSpecs() {
+        instruments.forEach { spec ->
+            require(spec.ticker.isNotBlank()) { "Instrument ticker must not be blank" }
+            require(spec.lotSize > 0) { "Instrument ${spec.ticker}: lotSize must be > 0, got ${spec.lotSize}" }
+            require(spec.priceStep > BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStep must be > 0, got ${spec.priceStep}" }
+            if (spec.slPercent != null) require(spec.slPercent!! > BigDecimal.ZERO) { "Instrument ${spec.ticker}: slPercent must be > 0, got ${spec.slPercent}" }
+            if (spec.tpPercent != null) require(spec.tpPercent!! > BigDecimal.ZERO) { "Instrument ${spec.ticker}: tpPercent must be > 0, got ${spec.tpPercent}" }
+            if (spec.commissionRub != null) require(spec.commissionRub!! >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: commissionRub must be >= 0, got ${spec.commissionRub}" }
+        }
+    }
 
     data class InstrumentSpec(
         var ticker: String = "Si",

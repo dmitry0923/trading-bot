@@ -133,7 +133,7 @@ object ExitRules {
      *   - [RoundingMode.HALF_UP] — нейтральное (entry price)
      */
     private fun alignToGrid(price: BigDecimal, priceStep: BigDecimal, roundingMode: RoundingMode): BigDecimal {
-        if (priceStep <= BigDecimal.ZERO) return price.setScale(2, roundingMode)
+        require(priceStep > BigDecimal.ZERO) { "priceStep must be positive: $priceStep" }
         val scale = priceStep.scale()
         return price.divide(priceStep, 0, roundingMode).multiply(priceStep).setScale(scale, roundingMode)
     }

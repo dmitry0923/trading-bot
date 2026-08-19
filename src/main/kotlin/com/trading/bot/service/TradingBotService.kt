@@ -404,7 +404,10 @@ class TradingBotService(
     }
 
     /**
-     * Фоновый State Reconciliation для pendingEntry/pendingClose позиций (акции).
+     * Фоновый State Reconciliation для позиций (акции/валюты).
+     * Запрашивает ВСЕ открытые позиции (не только pending), чтобы
+     * обрабатывать slPendingReplace/tpPendingReplace флаги после partial close.
+     * Фьючерсы обрабатываются FuturesTradingBotService.reconcilePendingOrders().
      */
     @Scheduled(fixedDelay = 15000)
     fun reconcilePendingOrders() {
@@ -414,7 +417,8 @@ class TradingBotService(
                 ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
             ) {
                 try {
-                    val open = positionRepo.findPending()
+                    val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                        .filter { it.instrumentType != InstrumentType.FUTURES }
                     for (pos in open) {
                         try {
                             engine.reconcilePosition(pos)

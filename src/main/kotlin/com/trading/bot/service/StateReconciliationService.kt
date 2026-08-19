@@ -255,9 +255,10 @@ class StateReconciliationService(
                             } else {
                                 logger.error {
                                     "Reconcile ${pos.ticker}: exchange flat, no working order, pendingClose — " +
-                                        "missed fill during WS gap -> marking CLOSED (no trade price recovered)"
+                                        "missed fill during WS gap but NO trade price recovered -> " +
+                                        "RECONCILIATION_REQUIRED (closePrice unknown, manual intervention)"
                                 }
-                                finalizePhantom(pos, CloseReason.RECONCILE_CLOSED_ON_EXCHANGE)
+                                markReconciliationRequired(pos)
                             }
                             closed++
                         }
@@ -281,9 +282,10 @@ class StateReconciliationService(
                             } else {
                                 logger.error {
                                     "Reconcile ${pos.ticker}: PHANTOM position (exchange flat, no working orders) — " +
-                                        "closed on exchange during WS gap -> marking CLOSED (no trade price recovered)"
+                                        "closed on exchange during WS gap but NO trade price recovered -> " +
+                                        "RECONCILIATION_REQUIRED (closePrice unknown, manual intervention)"
                                 }
-                                finalizePhantom(pos, CloseReason.RECONCILE_PHANTOM)
+                                markReconciliationRequired(pos)
                             }
                             closed++
                         }

@@ -24,11 +24,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
-import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Delta-модель close fills (EXEC-008): WS Alor присылает кумулятивный
@@ -621,5 +621,108 @@ class OrderExecutionEngineDeltaModelTest {
         assertTrue(saved.tpPendingReplace)
         assertFalse(saved.pendingClose)
         assertNull(saved.closeOrderId)
+    }
+
+    // ─── Concurrency: partial close + SL/TP execution ───────────────
+
+    /**
+     * Race between WS close fill (partial) and SL fill on the same position.
+     *
+     * Scenario:
+     *   DB: qty=10, pendingClose=true, slOrderId="sl-1", tpOrderId="tp-1"
+     *   Coroutine A (WS): close order fills 4 → partial close → qty=6, slPendingReplace=true
+     *   Coroutine B (WS): SL order fills → applyExchangeProtectionClose → close remainder
+     *
+     * Both go through the per-position mutex. The second coroutine re-reads from DB
+     * and sees the updated state from the first. If the first already applied the
+     * partial close, the second sees pendingClose=false and the position state
+     * reflects the partial close. The SL fill then closes the remaining quantity.
+     *
+     * Without the mutex, both could read qty=10 and apply independently,
+     * resulting in double-close or incorrect quantity.
+     */
+    @Test
+    fun `concurrent partial close and SL fill are serialized by mutex`() {
+        val engineWithProtection =
+            OrderExecutionEngine(
+                alorClient = alorClient,
+                orderOutboxService = orderOutboxService,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                objectMapper = objectMapper,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                pnlCalculator = PnlCalculator.plain(),
+                instrumentFilter = { true },
+                metricPrefix = "test",
+                onEntryOpened = {},
+                onPositionClosed = { closedPositions.add(it) },
+                protectionOrdersEnabled = true,
+                portfolioResolver = { "D12345" },
+            )
+
+        val pos =
+            openPos(quantity = 10).apply {
+                slOrderId = "sl-1"
+                slOrderPrice = BigDecimal("90")
+                tpOrderId = "tp-1"
+                tpOrderPrice = BigDecimal("110")
+            }
+
+        val savedPositions = mutableListOf<Position>()
+        runBlocking {
+            Mockito.`when`(positionRepo.findById(Mockito.anyLong())).thenAnswer { pos }
+            Mockito.`when`(positionRepo.findByCloseOrderId(Mockito.anyString())).thenReturn(pos)
+            Mockito.`when`(positionRepo.findByAlorOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.findBySlOrderId("sl-1")).thenReturn(pos)
+            Mockito.`when`(positionRepo.findByTpOrderId("tp-1")).thenReturn(pos)
+            Mockito.`when`(positionRepo.save(anyPosition())).thenAnswer {
+                val arg = it.getArgument<Position>(0)
+                savedPositions.add(arg)
+                arg
+            }
+            stubTransitionToClosed()
+        }
+
+        runBlocking {
+            Mockito.`when`(
+                orderOutboxService.placeCancelOrder(Mockito.anyLong(), Mockito.anyString(), Mockito.any()),
+            ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, true))
+        }
+
+        val latch = CountDownLatch(1)
+        runBlocking {
+            val closeFill = async {
+                latch.await()
+                // WS close fill: cumulative=4, delta=4, 4 < 10 → partial close
+                engineWithProtection.handleExecutionReport(
+                    report(orderId = "close-1", cumulativeFilledQty = 4),
+                )
+            }
+            val slFill = async {
+                latch.await()
+                // SL fills the remaining position on the exchange.
+                // The SL path goes through findBySlOrderId → applyExchangeProtectionClose
+                // (NOT verifyOrder), so no Mockito.when needed here.
+                // cumulativeFilledQty=20 (oversized) so it always covers remaining qty
+                // regardless of whether closeFill ran first (qty=6) or not (qty=10).
+                engineWithProtection.handleExecutionReport(
+                    report(orderId = "sl-1", cumulativeFilledQty = 20, avgPrice = BigDecimal("89")),
+                )
+            }
+            latch.countDown()
+            awaitAll(closeFill, slFill)
+        }
+
+        // Both applied via mutex. The final position should be closed.
+        // If closeFill ran first: SL closes the remainder → CLOSED.
+        // If SL ran first: SL closes position, closeFill skips (pendingClose=false) → CLOSED.
+        // Either way, position is fully closed and no exception was thrown.
+        val finalState = savedPositions.last()
+        assertTrue(
+            finalState.status == PositionStatus.CLOSED ||
+                finalState.status == PositionStatus.TAKE_PROFIT,
+        ) { "Position should be fully closed after both fills: status=${finalState.status}" }
     }
 }

@@ -108,7 +108,7 @@ class StateReconciliationServiceTest {
         )
 
     @Test
-    fun `phantom position is closed when exchange is flat and no working orders`() {
+    fun `phantom position without trade price marks reconciliation required and halts`() {
         val pos = openPos("SBER", 10)
         stubOpenPositions(pos)
         stubReconcileOk()
@@ -118,14 +118,13 @@ class StateReconciliationServiceTest {
         val captor = argumentCaptor<Position>()
         runBlocking { verify(positionRepo).save(captor.capture()) }
         val saved = captor.firstValue
-        assertEquals(PositionStatus.CLOSED, saved.status)
-        assertEquals(CloseReason.RECONCILE_PHANTOM, saved.closeReason)
+        assertEquals(PositionStatus.RECONCILIATION_REQUIRED, saved.status)
         assertFalse(saved.pendingClose)
         verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
     }
 
     @Test
-    fun `pendingClose position without exchange position is finalized as closed on exchange`() {
+    fun `pendingClose position without exchange position and no trade price halts`() {
         val pos =
             openPos("Si", 2).apply {
                 pendingClose = true
@@ -138,8 +137,9 @@ class StateReconciliationServiceTest {
 
         val captor = argumentCaptor<Position>()
         runBlocking { verify(positionRepo).save(captor.capture()) }
-        assertEquals(PositionStatus.CLOSED, captor.firstValue.status)
-        assertEquals(CloseReason.RECONCILE_CLOSED_ON_EXCHANGE, captor.firstValue.closeReason)
+        assertEquals(PositionStatus.RECONCILIATION_REQUIRED, captor.firstValue.status)
+        assertFalse(captor.firstValue.pendingClose)
+        verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
     }
 
     @Test

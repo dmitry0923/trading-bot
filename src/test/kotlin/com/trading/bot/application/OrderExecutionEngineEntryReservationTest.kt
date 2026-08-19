@@ -383,6 +383,7 @@ class OrderExecutionEngineEntryReservationTest {
                         anyBigDecimal(),
                         anyCloseReason(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenReturn(true)
         }

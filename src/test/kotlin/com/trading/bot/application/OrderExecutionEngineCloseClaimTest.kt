@@ -196,6 +196,7 @@ class OrderExecutionEngineCloseClaimTest {
                         anyBigDecimal(),
                         anyCloseReason(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenReturn(true)
         }
@@ -209,7 +210,7 @@ class OrderExecutionEngineCloseClaimTest {
             Mockito.verify(positionRepo, times(1)).claimForClose(1L)
             Mockito
                 .verify(positionRepo, times(1))
-                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyCloseReason(), anyBigDecimal())
+                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyCloseReason(), anyBigDecimal(), Mockito.anyInt())
             Mockito.verify(tradeEventService, times(1)).recordPositionClosed(anyPosition(), anyString())
         }
     }
@@ -235,6 +236,7 @@ class OrderExecutionEngineCloseClaimTest {
                         anyBigDecimal(),
                         anyCloseReason(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenReturn(true)
         }
@@ -288,6 +290,7 @@ class OrderExecutionEngineCloseClaimTest {
                         anyBigDecimal(),
                         anyCloseReason(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenAnswer { transitionCounter.getAndIncrement() == 0 }
         }
@@ -312,7 +315,7 @@ class OrderExecutionEngineCloseClaimTest {
             Mockito.verify(tradeEventService, times(1)).recordPositionClosed(anyPosition(), anyString())
             Mockito
                 .verify(positionRepo, times(2))
-                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyCloseReason(), anyBigDecimal())
+                .transitionToClosed(Mockito.anyLong(), anyStatus(), anyBigDecimal(), anyCloseReason(), anyBigDecimal(), Mockito.anyInt())
         }
     }
 
@@ -330,6 +333,7 @@ class OrderExecutionEngineCloseClaimTest {
                         anyBigDecimal(),
                         anyCloseReason(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenReturn(true)
         }

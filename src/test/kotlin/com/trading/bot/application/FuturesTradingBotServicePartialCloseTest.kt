@@ -144,6 +144,7 @@ class FuturesTradingBotServicePartialCloseTest {
                         anyBigDecimal(),
                         anyCloseReason(),
                         anyBigDecimal(),
+                        Mockito.anyInt(),
                     ),
                 ).thenReturn(true)
         }

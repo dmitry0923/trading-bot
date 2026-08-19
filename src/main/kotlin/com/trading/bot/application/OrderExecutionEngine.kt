@@ -791,7 +791,6 @@ class OrderExecutionEngine(
                     // SL/TP was already cleared by another coroutine — skip
                     return true
                 }
-                positionRepo.save(fresh)
                 applyExchangeProtectionClose(
                     fresh,
                     AlorClient.OrderExecution(report.status.name, report.cumulativeFilledQty, fillPrice),
@@ -840,7 +839,6 @@ class OrderExecutionEngine(
                     return true
                 }
                 fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
-                positionRepo.save(fresh)
                 applyCloseExecution(fresh, delta, fillPrice, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
             }
             return true
@@ -900,7 +898,6 @@ class OrderExecutionEngine(
                 return
             }
             fresh.cumulativeCloseFillQty = cumulativeFill
-            positionRepo.save(fresh)
             applyCloseExecution(fresh, delta, avg, reason)
         }
     }
@@ -1001,7 +998,7 @@ class OrderExecutionEngine(
             }
         val remainderPnl = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
         val totalPnl = pos.realizedPnl.add(remainderPnl)
-        if (!positionRepo.transitionToClosed(positionId, targetStatus, closePrice, reason, totalPnl)) {
+        if (!positionRepo.transitionToClosed(positionId, targetStatus, closePrice, reason, totalPnl, pos.cumulativeCloseFillQty)) {
             logger.warn { "Finalize skip ${pos.ticker}: position already closed by another path" }
             return
         }
@@ -1016,6 +1013,7 @@ class OrderExecutionEngine(
         tradeEventService.recordPositionClosed(pos, reason.code)
         onPositionClosed(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
+        closeFillMutexes.remove(positionId)
         meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
         logger.info { "Closed ${pos.ticker} reason=$reason P&L=$totalPnl" }
     }
@@ -1176,6 +1174,7 @@ class OrderExecutionEngine(
         pos.closedAt = LocalDateTime.now()
         positionRepo.save(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
+        pos.id?.let { closeFillMutexes.remove(it) }
         meterRegistry.counter("$metricPrefix.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
     }
 }

@@ -138,6 +138,7 @@ class OrderExecutionEngineDeltaModelTest {
                     anyBigDecimal(),
                     anyCloseReason(),
                     anyBigDecimal(),
+                    Mockito.anyInt(),
                 ),
             ).thenReturn(true)
         }

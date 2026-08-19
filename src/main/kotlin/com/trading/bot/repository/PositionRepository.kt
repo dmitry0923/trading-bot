@@ -249,12 +249,14 @@ class PositionRepository(
         closePrice: BigDecimal,
         closeReason: CloseReason,
         pnl: BigDecimal,
+        cumulativeCloseFillQty: Int = 0,
     ): Boolean {
         val sql =
             """
             UPDATE positions SET
                 status = :status, closed_at = :closedAt, close_price = :closePrice,
-                close_reason = :closeReason, pnl = :pnl, pending_close = false, close_order_id = NULL
+                close_reason = :closeReason, pnl = :pnl, pending_close = false, close_order_id = NULL,
+                cumulative_close_fill_qty = :cumulativeCloseFillQty
             WHERE id = :id AND status = 'OPEN'
             """.trimIndent()
         return databaseClient
@@ -265,6 +267,7 @@ class PositionRepository(
             .bind("closePrice", closePrice)
             .bind("closeReason", closeReason.code)
             .bind("pnl", pnl)
+            .bind("cumulativeCloseFillQty", cumulativeCloseFillQty)
             .fetch()
             .rowsUpdated()
             .awaitSingle() == 1L

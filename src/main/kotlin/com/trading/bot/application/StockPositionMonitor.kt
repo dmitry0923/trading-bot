@@ -94,7 +94,8 @@ class StockPositionMonitor(
 
         val prevTrailing = pos.trailingStopPrice
         if (riskConfig.trailingStopEnabled) {
-            ExitRules.updateTrailingStop(pos, price, riskConfig.trailingStopPercent)
+            val priceStep = instrumentsConfig.find(pos.ticker)?.priceStep ?: BigDecimal("0.01")
+            ExitRules.updateTrailingStop(pos, price, riskConfig.trailingStopPercent, priceStep)
         }
         val trailingChanged = pos.trailingStopPrice != prevTrailing
 

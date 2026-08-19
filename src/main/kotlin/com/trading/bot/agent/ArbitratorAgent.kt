@@ -267,7 +267,7 @@ class ArbitratorAgent(
                 storageKey = storageKey,
             ),
         )
-        meterRegistry.counter("agent.arbitrator.decision", Tags.of("action", dec.action.name)).increment()
+        meterRegistry.counter("agent.arbitrator.decision", Tags.of("action", dec.action.name, "ticker", ticker)).increment()
         logger.info {
             "Agent 5 FINAL: ${dec.action} @ ${dec.targetPrice} " +
                 "conf=${String.format("%.2f", dec.signalStrength)} override=${dec.overrideReason}"

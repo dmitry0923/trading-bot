@@ -175,7 +175,7 @@ class AlorClientTest {
                 assertEquals("FILLED", execution?.status)
                 assertEquals(2, execution?.filledQuantity)
                 assertEquals(0, BigDecimal("99.5").compareTo(execution?.avgPrice))
-                assertEquals(1.0, registry.counter("trade.slippage.rub").count())
+                assertEquals(1.0, registry.counter("trade.slippage.rub", "ticker", "").count())
             }
         }
 

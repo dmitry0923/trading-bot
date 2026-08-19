@@ -1,6 +1,7 @@
 package com.trading.bot.config
 
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
@@ -19,7 +20,9 @@ class MetricsConfig {
     @Bean
     fun slaHistograms(registry: MeterRegistry): Boolean {
         listOf("alor.api.latency", "llm.latency", "bot.latency").forEach { name ->
-            registry.timer(name)
+            Timer.builder(name)
+                .publishPercentileHistogram()
+                .register(registry)
         }
         return true
     }

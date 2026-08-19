@@ -104,7 +104,7 @@ class FuturesPositionSizer(
         val commissionPerContract = instrument.commissionRub ?: BigDecimal.ZERO
 
         // 4. Максимум контрактов по риску (с учётом комиссии)
-        val effectiveRiskPerContract = lossPerContract.add(commissionPerContract)
+        val effectiveRiskPerContract = lossPerContract.add(commissionPerContract.multiply(BigDecimal(2)))
         val maxContractsByRisk =
             riskAmount
                 .divide(effectiveRiskPerContract, 4, RoundingMode.DOWN)

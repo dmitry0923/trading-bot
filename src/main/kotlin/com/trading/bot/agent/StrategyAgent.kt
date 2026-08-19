@@ -244,7 +244,7 @@ class StrategyAgent(
                 storageKey = storageKey,
             ),
         )
-        meterRegistry.counter("agent.strategy.decision", Tags.of("action", draft.action.name)).increment()
+        meterRegistry.counter("agent.strategy.decision", Tags.of("action", draft.action.name, "ticker", ticker)).increment()
         return draft
     }
 }

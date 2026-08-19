@@ -181,7 +181,10 @@ class TradingGate(
                 "EMERGENCY_STOP" -> TradingBlockReason.EMERGENCY_STOP
                 "SL_PROTECTION_FAILED" -> TradingBlockReason.SL_PROTECTION_FAILED
                 "MANUAL", "MANUAL_DISABLE" -> TradingBlockReason.MANUAL_DISABLE
-                else -> return null
+                else -> {
+                    logger.warn { "Unknown halt reason '$reason' in DB — persistent block ignored on restart" }
+                    return null
+                }
             }
         val source =
             when (reason) {

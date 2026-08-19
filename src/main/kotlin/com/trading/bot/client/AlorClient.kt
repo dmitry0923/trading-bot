@@ -593,9 +593,10 @@ class AlorClient(
         expectedPrice: BigDecimal,
         filledPrice: BigDecimal,
         qty: Int,
+        ticker: String = "",
     ) {
         val slippageRub = expectedPrice.subtract(filledPrice).abs().multiply(BigDecimal(qty))
-        meterRegistry.counter("trade.slippage.rub").increment(slippageRub.toDouble())
+        meterRegistry.counter("trade.slippage.rub", Tags.of("ticker", ticker)).increment(slippageRub.toDouble())
         logger.info { "Slippage: expected=$expectedPrice filled=$filledPrice qty=$qty => $slippageRub RUB" }
     }
 

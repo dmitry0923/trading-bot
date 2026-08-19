@@ -117,7 +117,7 @@ class FundamentalAnalysisAgent(
                 storageKey = resp.storageKey,
             ),
         )
-        meterRegistry.counter("agent.fundamental.decision", Tags.of("action", report.conclusion)).increment()
+        meterRegistry.counter("agent.fundamental.decision", Tags.of("action", report.conclusion, "ticker", ticker)).increment()
         return report
     }
 }

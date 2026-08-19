@@ -224,7 +224,7 @@ class TechnicalAnalysisAgent(
                 storageKey = storageKey,
             ),
         )
-        meterRegistry.counter("agent.technical.decision", Tags.of("action", report.conclusion)).increment()
+        meterRegistry.counter("agent.technical.decision", Tags.of("action", report.conclusion, "ticker", ticker)).increment()
         return report
     }
 

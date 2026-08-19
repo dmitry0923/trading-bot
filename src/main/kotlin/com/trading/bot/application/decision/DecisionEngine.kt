@@ -144,7 +144,8 @@ class DecisionEngine(
 
         val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val snapshot = alorClient.getMarketSnapshot(ticker)
-        val entryPrice = snapshot?.microprice ?: snapshot?.currentPrice ?: signal.targetPrice
+        val rawEntryPrice = snapshot?.microprice ?: snapshot?.currentPrice ?: signal.targetPrice
+        val entryPrice = alignPriceToGrid(rawEntryPrice, instrumentsConfig.find(ticker)?.priceStep ?: BigDecimal("0.01"))
 
         // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью).
         // null = legacy single-account (таблица пуста) или все аккаунты переполнены.
@@ -342,5 +343,15 @@ class DecisionEngine(
                     "sl=${decision.stopLoss} tp=${decision.takeProfit}"
             }
         }
+    }
+
+    /**
+     * Округление цены до сетки цен инструмента (priceStep).
+     * Гарантирует, что лимитный ордер будет выставлен на валидном уровне MOEX.
+     */
+    private fun alignPriceToGrid(price: BigDecimal, priceStep: BigDecimal): BigDecimal {
+        if (priceStep <= BigDecimal.ZERO) return price
+        val scale = priceStep.scale()
+        return price.divide(priceStep, 0, RoundingMode.HALF_UP).multiply(priceStep).setScale(scale, RoundingMode.HALF_UP)
     }
 }

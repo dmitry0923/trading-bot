@@ -181,10 +181,10 @@ class FuturesPositionSizerTest {
                 ),
             )
         }
-        // stopLossPoints=50, lossPerContract = 50 * 1.0 = 50 RUB, commission = 10 RUB
-        // effectiveRiskPerContract = 60; riskAmount = 500; maxContractsByRisk = floor(500/60) = 8
+        // stopLossPoints=50, lossPerContract = 50 * 1.0 = 50 RUB, commission = 10 RUB (2x = 20)
+        // effectiveRiskPerContract = 70; riskAmount = 500; maxContractsByRisk = floor(500/70) = 7
         // marginBudget = 50000 * 30% = 15000; marginPerContract=1000; maxContractsByMargin = 15
-        // final = min(8, 15, 1) = 1  → need to raise maxContractsPerPosition
+        // final = min(7, 15, 1) = 1  → need to raise maxContractsPerPosition
         val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
         val sizer2 = FuturesPositionSizer(riskConfig2, commInstrument)
         val result = sizer2.calculateContracts(
@@ -193,7 +193,7 @@ class FuturesPositionSizerTest {
             stopLossPoints = 50,
             currentGo = BigDecimal("1000"),
         )
-        assertEquals(8, result.quantity)
+        assertEquals(7, result.quantity)
     }
 
     @Test
@@ -215,14 +215,14 @@ class FuturesPositionSizerTest {
         }
         val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
         val sizer = FuturesPositionSizer(riskConfig2, commInstrument)
-        // effectiveRiskPerContract = 50 + 100 = 150; riskAmount = 500; floor(500/150) = 3
+        // effectiveRiskPerContract = 50 + 100*2 = 250; riskAmount = 500; floor(500/250) = 2
         val result = sizer.calculateContracts(
             ticker = "CNYRUB_TOM",
             portfolioMoney = BigDecimal("50000"),
             stopLossPoints = 50,
             currentGo = BigDecimal("1000"),
         )
-        assertEquals(3, result.quantity)
+        assertEquals(2, result.quantity)
     }
 
     @Test

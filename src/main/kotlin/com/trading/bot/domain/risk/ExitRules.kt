@@ -124,20 +124,22 @@ object ExitRules {
     }
 
     /**
-     * Подтягивание трейлинг-стопа по текущей цене (акции).
+     * Подтягивание трейлинг-стопа по текущей цене (акции / FX).
+     * Результат округляется до сетки цен инструмента ([priceStep]).
      */
     fun updateTrailingStop(
         pos: Position,
         price: BigDecimal,
         percent: Double,
+        priceStep: BigDecimal = BigDecimal("0.01"),
     ) {
         val p = BigDecimal(percent.toString()).divide(BigDecimal("100"))
-        val newStop =
+        val raw =
             when (pos.direction) {
                 PositionDirection.LONG -> price.multiply(BigDecimal.ONE.subtract(p))
                 PositionDirection.SHORT -> price.multiply(BigDecimal.ONE.add(p))
             }
-        pos.trailingStopPrice = newStop.setScale(2, RoundingMode.HALF_UP)
+        pos.trailingStopPrice = alignToGrid(raw, priceStep)
     }
 
     /**

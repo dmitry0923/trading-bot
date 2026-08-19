@@ -559,7 +559,7 @@ security:
     access-ttl-minutes: ${JWT_ACCESS_TTL_MINUTES:15}
     refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:30}
     issuer: ${JWT_ISSUER:trading-bot}
-    cookie-secure: ${JWT_COOKIE_SECURE:false}
+    cookie-secure: ${JWT_COOKIE_SECURE:true}
 
 lockbox:
   enabled: ${LOCKBOX_ENABLED:false}

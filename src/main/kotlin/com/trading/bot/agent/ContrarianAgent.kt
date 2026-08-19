@@ -168,7 +168,7 @@ class ContrarianAgent(
                 storageKey = storageKey,
             ),
         )
-        meterRegistry.counter("agent.contrarian.decision", Tags.of("riskLevel", report.riskLevel)).increment()
+        meterRegistry.counter("agent.contrarian.decision", Tags.of("riskLevel", report.riskLevel, "ticker", ticker)).increment()
         return report
     }
 }

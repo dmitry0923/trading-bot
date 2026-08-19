@@ -177,13 +177,22 @@ class StockEntryProfile(
         pending: Boolean,
         fillPrice: BigDecimal,
         qty: Int,
-    ): Position =
-        Position(
+    ): Position {
+        val spec = instrumentsConfig.find(decision.ticker)
+        val instrumentType = spec?.let {
+            when (it.type.uppercase()) {
+                "FUTURES" -> InstrumentType.FUTURES
+                "FX" -> InstrumentType.STOCK
+                else -> InstrumentType.STOCK
+            }
+        } ?: InstrumentType.STOCK
+        return Position(
             ticker = decision.ticker,
             direction = decision.direction,
             quantity = qty,
             entryPrice = fillPrice,
             currentPrice = fillPrice,
+            instrumentType = instrumentType,
             stopLoss = decision.stopLoss,
             takeProfit = decision.takeProfit,
             trailingStopPrice = if (decision.trailingStop) decision.stopLoss else null,
@@ -191,6 +200,7 @@ class StockEntryProfile(
             pendingEntry = pending,
             cycleId = decision.cycleId,
         )
+    }
 
     override suspend fun onOpened(
         decision: TradeRiskDecision,

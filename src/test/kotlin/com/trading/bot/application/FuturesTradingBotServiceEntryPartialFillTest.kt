@@ -267,6 +267,9 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private fun stubEntryAllowed() {
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
         Mockito.`when`(instrumentsConfig.isFutures("Si")).thenReturn(true)
+        Mockito.`when`(instrumentsConfig.find("Si")).thenReturn(
+            InstrumentsConfig.InstrumentSpec(ticker = "Si", type = "FUTURES", lotSize = 1),
+        )
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
         runBlocking {
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())

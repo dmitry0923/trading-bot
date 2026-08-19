@@ -86,9 +86,10 @@ class OrderBuilder(
         entryPrice: BigDecimal,
     ): OrderParams {
         val spec = instrumentsConfig.find(ticker)
-        val priceStep = spec?.priceStep ?: BigDecimal("0.01")
-        val slPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent) ?: riskConfig.defaultStopLossPercent
-        val tpPercent = spec?.effectiveTpPercent(riskConfig.defaultTakeProfitPercent) ?: riskConfig.defaultTakeProfitPercent
+            ?: return OrderParams(direction = direction, quantity = 0)
+        val priceStep = spec.priceStep
+        val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+        val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
         val stopLoss = ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
         val takeProfit = ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
         return OrderParams(

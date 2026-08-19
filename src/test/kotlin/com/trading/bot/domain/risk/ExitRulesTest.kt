@@ -23,8 +23,8 @@ class ExitRulesTest {
             percent = BigDecimal("0.5"),
             priceStep = BigDecimal("0.0005"),
         )
-        // raw = 12.42 * (1 - 0.005) = 12.3579 → alignToGrid → 12.3580
-        assertEquals(0, BigDecimal("12.3580").compareTo(sl))
+        // raw = 12.42 * (1 - 0.005) = 12.3579 → FLOOR to 0.0005 → 12.3575 (wider stop)
+        assertEquals(0, BigDecimal("12.3575").compareTo(sl))
     }
 
     @Test
@@ -35,8 +35,8 @@ class ExitRulesTest {
             percent = BigDecimal("0.5"),
             priceStep = BigDecimal("0.0005"),
         )
-        // raw = 12.42 * (1 + 0.005) = 12.4821 → alignToGrid → 12.4820
-        assertEquals(0, BigDecimal("12.4820").compareTo(sl))
+        // raw = 12.42 * (1 + 0.005) = 12.4821 → CEILING to 0.0005 → 12.4825 (wider stop)
+        assertEquals(0, BigDecimal("12.4825").compareTo(sl))
     }
 
     @Test
@@ -45,8 +45,9 @@ class ExitRulesTest {
             entryPrice = BigDecimal("100.50"),
             direction = PositionDirection.LONG,
             percent = BigDecimal("2.0"),
+            priceStep = BigDecimal("0.01"),
         )
-        // raw = 100.50 * 0.98 = 98.49 → alignToGrid → 98.49
+        // raw = 100.50 * 0.98 = 98.49 → FLOOR to 0.01 → 98.49
         assertEquals(0, BigDecimal("98.49").compareTo(sl))
     }
 
@@ -60,8 +61,8 @@ class ExitRulesTest {
             percent = BigDecimal("1.0"),
             priceStep = BigDecimal("0.0005"),
         )
-        // raw = 12.42 * 1.01 = 12.5442 → alignToGrid → 12.5440
-        assertEquals(0, BigDecimal("12.5440").compareTo(tp))
+        // raw = 12.42 * 1.01 = 12.5442 → CEILING to 0.0005 → 12.5445 (more profit)
+        assertEquals(0, BigDecimal("12.5445").compareTo(tp))
     }
 
     @Test
@@ -72,8 +73,8 @@ class ExitRulesTest {
             percent = BigDecimal("1.0"),
             priceStep = BigDecimal("0.0005"),
         )
-        // raw = 12.42 * 0.99 = 12.2958 → alignToGrid → 12.2960
-        assertEquals(0, BigDecimal("12.2960").compareTo(tp))
+        // raw = 12.42 * 0.99 = 12.2958 → FLOOR to 0.0005 → 12.2955 (more profit)
+        assertEquals(0, BigDecimal("12.2955").compareTo(tp))
     }
 
     @Test
@@ -82,6 +83,7 @@ class ExitRulesTest {
             entryPrice = BigDecimal("100.50"),
             direction = PositionDirection.LONG,
             percent = BigDecimal("4.0"),
+            priceStep = BigDecimal("0.01"),
         )
         // raw = 100.50 * 1.04 = 104.52 → alignToGrid → 104.52
         assertEquals(0, BigDecimal("104.52").compareTo(tp))
@@ -97,8 +99,8 @@ class ExitRulesTest {
             percent = BigDecimal("1.0"),
             priceStep = BigDecimal("0"),
         )
-        // priceStep <= 0 → setScale(2) → 99.50
-        assertEquals(0, BigDecimal("99.50").compareTo(sl))
+        // priceStep <= 0 → setScale(2, FLOOR) → 99.49
+        assertEquals(0, BigDecimal("99.49").compareTo(sl))
     }
 
     @Test
@@ -111,6 +113,88 @@ class ExitRulesTest {
         )
         // raw = 10.00 * 0.99 = 9.90 → already on grid
         assertEquals(0, BigDecimal("9.90").compareTo(sl))
+    }
+
+    // ── directional rounding (C1) ────────────────────────────
+
+    @Test
+    fun `LONG SL raw 99_97 step 0_10 rounds to 99_90 not 100_00`() {
+        val sl = ExitRules.calcSL(
+            entryPrice = BigDecimal("100.00"),
+            direction = PositionDirection.LONG,
+            percent = BigDecimal("0.03"),
+            priceStep = BigDecimal("0.10"),
+        )
+        // raw = 100.00 * 0.9997 = 99.97 → FLOOR → 99.90 (wider stop, protective)
+        assertEquals(0, BigDecimal("99.90").compareTo(sl))
+    }
+
+    @Test
+    fun `SHORT SL raw 100_04 step 0_10 rounds to 100_10 not 100_00`() {
+        val sl = ExitRules.calcSL(
+            entryPrice = BigDecimal("100.00"),
+            direction = PositionDirection.SHORT,
+            percent = BigDecimal("0.04"),
+            priceStep = BigDecimal("0.10"),
+        )
+        // raw = 100.00 * 1.0004 = 100.04 → CEILING → 100.10 (wider stop, protective)
+        assertEquals(0, BigDecimal("100.10").compareTo(sl))
+    }
+
+    @Test
+    fun `LONG TP raw 100_04 step 0_10 rounds to 100_10 not 100_00`() {
+        val tp = ExitRules.calcTP(
+            entryPrice = BigDecimal("100.00"),
+            direction = PositionDirection.LONG,
+            percent = BigDecimal("0.04"),
+            priceStep = BigDecimal("0.10"),
+        )
+        // raw = 100.00 * 1.0004 = 100.04 → CEILING → 100.10 (more profit)
+        assertEquals(0, BigDecimal("100.10").compareTo(tp))
+    }
+
+    @Test
+    fun `SHORT TP raw 99_96 step 0_10 rounds to 99_90 not 100_00`() {
+        val tp = ExitRules.calcTP(
+            entryPrice = BigDecimal("100.00"),
+            direction = PositionDirection.SHORT,
+            percent = BigDecimal("0.04"),
+            priceStep = BigDecimal("0.10"),
+        )
+        // raw = 100.00 * 0.9996 = 99.96 → FLOOR → 99.90 (more profit)
+        assertEquals(0, BigDecimal("99.90").compareTo(tp))
+    }
+
+    @Test
+    fun `updateTrailingStop LONG 100_04 step 0_10 rounds to 100_10`() {
+        val pos = makePos(direction = PositionDirection.LONG)
+        ExitRules.updateTrailingStop(pos, BigDecimal("100.04"), 0.0, BigDecimal("0.10"))
+        // raw = 100.04 * 1.0 = 100.04 → CEILING → 100.10 (tighter protection)
+        assertEquals(0, BigDecimal("100.10").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `updateTrailingStop SHORT 99_96 step 0_10 rounds to 99_90`() {
+        val pos = makePos(direction = PositionDirection.SHORT)
+        ExitRules.updateTrailingStop(pos, BigDecimal("99.96"), 0.0, BigDecimal("0.10"))
+        // raw = 99.96 * 1.0 = 99.96 → FLOOR → 99.90 (tighter protection)
+        assertEquals(0, BigDecimal("99.90").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `updateTrailingStop does not weaken existing stop LONG`() {
+        val pos = makePos(direction = PositionDirection.LONG, trailingStop = BigDecimal("100.10"))
+        ExitRules.updateTrailingStop(pos, BigDecimal("100.04"), 0.0, BigDecimal("0.10"))
+        // candidate = 100.10 but currentStop = 100.10 → not improved → stays 100.10
+        assertEquals(0, BigDecimal("100.10").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `updateTrailingStop does not weaken existing stop SHORT`() {
+        val pos = makePos(direction = PositionDirection.SHORT, trailingStop = BigDecimal("99.90"))
+        ExitRules.updateTrailingStop(pos, BigDecimal("99.96"), 0.0, BigDecimal("0.10"))
+        // candidate = 99.90 but currentStop = 99.90 → not improved → stays 99.90
+        assertEquals(0, BigDecimal("99.90").compareTo(pos.trailingStopPrice))
     }
 
     // ── shouldCloseBySL ─────────────────────────────────────
@@ -309,8 +393,8 @@ class ExitRulesTest {
     @Test
     fun `updateTrailingStop default priceStep 0_01`() {
         val pos = makePos(direction = PositionDirection.LONG)
-        ExitRules.updateTrailingStop(pos, BigDecimal("100.50"), 2.0)
-        // newStop = 100.50 * 0.98 = 98.49 → alignToGrid(0.01) → 98.49
+        ExitRules.updateTrailingStop(pos, BigDecimal("100.50"), 2.0, BigDecimal("0.01"))
+        // newStop = 100.50 * 0.98 = 98.49 → CEILING to 0.01 → 98.49
         assertEquals(0, BigDecimal("98.49").compareTo(pos.trailingStopPrice))
     }
 

@@ -37,10 +37,10 @@ class OrderBuilderTest {
             quantity = 1,
             entryPrice = BigDecimal("12.4200"),
         )
-        // SL: 12.42 * (1 - 0.005) = 12.3579 → align to 0.0005 → 12.3580
-        assertEquals(0, BigDecimal("12.3580").compareTo(params.stopLossPrice))
-        // TP: 12.42 * (1 + 0.01) = 12.5442 → align to 0.0005 → 12.5440
-        assertEquals(0, BigDecimal("12.5440").compareTo(params.takeProfitPrice))
+        // SL: 12.42 * (1 - 0.005) = 12.3579 → FLOOR to 0.0005 → 12.3575
+        assertEquals(0, BigDecimal("12.3575").compareTo(params.stopLossPrice))
+        // TP: 12.42 * (1 + 0.01) = 12.5442 → CEILING to 0.0005 → 12.5445
+        assertEquals(0, BigDecimal("12.5445").compareTo(params.takeProfitPrice))
     }
 
     @Test
@@ -51,10 +51,10 @@ class OrderBuilderTest {
             quantity = 1,
             entryPrice = BigDecimal("12.4200"),
         )
-        // SL SHORT: 12.42 * (1 + 0.005) = 12.4821 → 12.4820
-        assertEquals(0, BigDecimal("12.4820").compareTo(params.stopLossPrice))
-        // TP SHORT: 12.42 * (1 - 0.01) = 12.2958 → 12.2960
-        assertEquals(0, BigDecimal("12.2960").compareTo(params.takeProfitPrice))
+        // SL SHORT: 12.42 * (1 + 0.005) = 12.4821 → CEILING to 0.0005 → 12.4825
+        assertEquals(0, BigDecimal("12.4825").compareTo(params.stopLossPrice))
+        // TP SHORT: 12.42 * (1 - 0.01) = 12.2958 → FLOOR to 0.0005 → 12.2955
+        assertEquals(0, BigDecimal("12.2955").compareTo(params.takeProfitPrice))
     }
 
     @Test
@@ -65,31 +65,23 @@ class OrderBuilderTest {
             quantity = 1,
             entryPrice = BigDecimal("12.4200"),
         )
-        // If default 0.01 was used: SL = 12.42 * 0.99 = 12.30, TP = 12.42 * 1.01 = 12.54
-        // With 0.0005: SL = 12.3580, TP = 12.5440
-        assertEquals(0, BigDecimal("12.3580").compareTo(params.stopLossPrice))
-        assertEquals(0, BigDecimal("12.5440").compareTo(params.takeProfitPrice))
+        // If default 0.01 was used: SL = 12.42 * 0.98 = 12.30, TP = 12.42 * 1.01 = 12.54
+        // With 0.0005: SL = 12.3575, TP = 12.5445
+        assertEquals(0, BigDecimal("12.3575").compareTo(params.stopLossPrice))
+        assertEquals(0, BigDecimal("12.5445").compareTo(params.takeProfitPrice))
     }
 
-    // ── Unknown ticker fallback ─────────────────────────────
+    // ── Unknown ticker returns quantity=0 ────────────────────
 
     @Test
-    fun `unknown ticker falls back to default priceStep and RiskConfig percents`() {
-        val rc = RiskConfig().apply {
-            defaultStopLossPercent = BigDecimal("2.0")
-            defaultTakeProfitPercent = BigDecimal("4.0")
-        }
-        val params = builder(rc).buildSpotOrderParams(
+    fun `unknown ticker returns zero quantity`() {
+        val params = builder().buildSpotOrderParams(
             ticker = "UNKNOWN_TICKER",
             direction = PositionDirection.LONG,
             quantity = 5,
             entryPrice = BigDecimal("100.50"),
         )
-        // SL: 100.50 * 0.98 = 98.49 → align to 0.01 → 98.49
-        assertEquals(0, BigDecimal("98.49").compareTo(params.stopLossPrice))
-        // TP: 100.50 * 1.04 = 104.52 → align to 0.01 → 104.52
-        assertEquals(0, BigDecimal("104.52").compareTo(params.takeProfitPrice))
-        assertEquals(5, params.quantity)
+        assertEquals(0, params.quantity)
     }
 
     // ── Trailing stop ───────────────────────────────────────

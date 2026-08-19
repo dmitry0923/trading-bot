@@ -182,8 +182,13 @@ class TradingGate(
                 "SL_PROTECTION_FAILED" -> TradingBlockReason.SL_PROTECTION_FAILED
                 "MANUAL", "MANUAL_DISABLE" -> TradingBlockReason.MANUAL_DISABLE
                 else -> {
-                    logger.warn { "Unknown halt reason '$reason' in DB — persistent block ignored on restart" }
-                    return null
+                    logger.error { "Unknown persistent halt reason '$reason' — trading remains blocked (fail-closed)" }
+                    return TradingBlock(
+                        reason = TradingBlockReason.STATE_DESYNC,
+                        source = TradingBlockSource.STATE_RECONCILIATION,
+                        detail = "Unknown persistent halt reason: $reason",
+                        timestamp = haltedAt,
+                    )
                 }
             }
         val source =

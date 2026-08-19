@@ -143,9 +143,17 @@ class DecisionEngine(
         }
 
         val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        val spec = instrumentsConfig.find(ticker)
+        if (spec == null) {
+            logger.error { "No instrument spec for $ticker — entry blocked (unknown instrument)" }
+            meterRegistry
+                .counter("${profile.metricPrefix}.entry.rejected", Tags.of("ticker", ticker, "reason", "UNKNOWN_INSTRUMENT"))
+                .increment()
+            return
+        }
         val snapshot = alorClient.getMarketSnapshot(ticker)
         val rawEntryPrice = snapshot?.microprice ?: snapshot?.currentPrice ?: signal.targetPrice
-        val entryPrice = alignPriceToGrid(rawEntryPrice, instrumentsConfig.find(ticker)?.priceStep ?: BigDecimal("0.01"))
+        val entryPrice = alignPriceToGrid(rawEntryPrice, spec.priceStep)
 
         // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью).
         // null = legacy single-account (таблица пуста) или все аккаунты переполнены.
@@ -237,10 +245,8 @@ class DecisionEngine(
         // Портфельный риск (агрегат): VaR95 / эффективное число ставок / направленная
         // концентрация. ENFORCED — блок/уменьшение размера; READ_ONLY — только метрики.
         val initialDecision = TradeRiskDecision.from(signal, request, size, params)
-        val spec = instrumentsConfig.find(ticker)
         val candidatePrice = initialDecision.entryPrice ?: entryPrice
-        val portfolioNotional = spec?.notional(initialDecision.quantity, candidatePrice)
-            ?: candidatePrice.multiply(BigDecimal(initialDecision.quantity))
+        val portfolioNotional = spec.notional(initialDecision.quantity, candidatePrice)
         val portfolioReport =
             portfolioRiskEngine.evaluate(
                 PortfolioRiskRequest(
@@ -277,8 +283,7 @@ class DecisionEngine(
                     if (scaledQty != params.quantity) {
                         finalSize = size.copy(quantity = scaledQty)
                         params = profile.buildOrderParams(ticker, direction, entryPrice, finalSize, request)
-                        val scaledNotional = spec?.notional(scaledQty, entryPrice)
-                            ?: entryPrice.multiply(BigDecimal(scaledQty))
+                        val scaledNotional = spec.notional(scaledQty, entryPrice)
                         val recheck = portfolioRiskEngine.evaluate(
                             PortfolioRiskRequest(
                                 candidateTicker = ticker,

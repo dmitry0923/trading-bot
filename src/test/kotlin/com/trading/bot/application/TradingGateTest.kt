@@ -211,13 +211,13 @@ class TradingGateTest {
     }
 
     @Test
-    fun `unknown halt reason is ignored`() {
+    fun `unknown halt reason blocks trading fail-closed as STATE_DESYNC`() {
         val halt = TradingHaltRecord(reason = "SOMETHING_NEW", source = "RISK_SYSTEM", haltedAt = Instant.now())
         val g = gate(halt = halt)
         val status = runBlocking { g.getStatus() }
 
-        assertTrue(status.enabled)
-        assertNull(status.reason)
+        assertFalse(g.isTradingEnabled())
+        assertTrue(status.blocks.any { it.reason == TradingBlockReason.STATE_DESYNC })
     }
 
     @Test

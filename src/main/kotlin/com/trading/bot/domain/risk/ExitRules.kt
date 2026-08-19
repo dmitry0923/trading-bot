@@ -78,13 +78,14 @@ object ExitRules {
 
     /**
      * Цена стоп-лосса по проценту от цены входа (акции).
-     * Если передан [priceStep], результат округляется до сетки цен инструмента.
+     * Округление направленное (направлено от цены входа → расширяет защитный диапазон):
+     * LONG SL → FLOOR, SHORT SL → CEILING.
      */
     fun calcSL(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         percent: BigDecimal,
-        priceStep: BigDecimal = BigDecimal("0.01"),
+        priceStep: BigDecimal,
     ): BigDecimal {
         val p = percent.divide(BigDecimal("100"), 8, RoundingMode.HALF_UP)
         val raw =
@@ -92,18 +93,23 @@ object ExitRules {
                 PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
                 PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.add(p))
             }
-        return alignToGrid(raw, priceStep)
+        val rounding = when (direction) {
+            PositionDirection.LONG -> RoundingMode.FLOOR
+            PositionDirection.SHORT -> RoundingMode.CEILING
+        }
+        return alignToGrid(raw, priceStep, rounding)
     }
 
     /**
      * Цена тейк-профита по проценту от цены входа (акции).
-     * Если передан [priceStep], результат округляется до сетки цен инструмента.
+     * Округление направленное (направлено к большей прибыли):
+     * LONG TP → CEILING, SHORT TP → FLOOR.
      */
     fun calcTP(
         entryPrice: BigDecimal,
         direction: PositionDirection,
         percent: BigDecimal,
-        priceStep: BigDecimal = BigDecimal("0.01"),
+        priceStep: BigDecimal,
     ): BigDecimal {
         val p = percent.divide(BigDecimal("100"), 8, RoundingMode.HALF_UP)
         val raw =
@@ -111,27 +117,37 @@ object ExitRules {
                 PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(p))
                 PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
             }
-        return alignToGrid(raw, priceStep)
+        val rounding = when (direction) {
+            PositionDirection.LONG -> RoundingMode.CEILING
+            PositionDirection.SHORT -> RoundingMode.FLOOR
+        }
+        return alignToGrid(raw, priceStep, rounding)
     }
 
     /**
-     * Округление цены до ближайшего шага сетки.
+     * Направленное округление цены до шага сетки.
+     *
+     * @param roundingMode определяет направление:
+     *   - [RoundingMode.FLOOR] — от entry для LONG SL / к прибыли для SHORT TP / tighter trailing SHORT
+     *   - [RoundingMode.CEILING] — от entry для SHORT SL / к прибыли для LONG TP / tighter trailing LONG
+     *   - [RoundingMode.HALF_UP] — нейтральное (entry price)
      */
-    private fun alignToGrid(price: BigDecimal, priceStep: BigDecimal): BigDecimal {
-        if (priceStep <= BigDecimal.ZERO) return price.setScale(2, RoundingMode.HALF_UP)
+    private fun alignToGrid(price: BigDecimal, priceStep: BigDecimal, roundingMode: RoundingMode): BigDecimal {
+        if (priceStep <= BigDecimal.ZERO) return price.setScale(2, roundingMode)
         val scale = priceStep.scale()
-        return price.divide(priceStep, 0, RoundingMode.HALF_UP).multiply(priceStep).setScale(scale, RoundingMode.HALF_UP)
+        return price.divide(priceStep, 0, roundingMode).multiply(priceStep).setScale(scale, roundingMode)
     }
 
     /**
      * Подтягивание трейлинг-стопа по текущей цене (акции / FX).
-     * Результат округляется до сетки цен инструмента ([priceStep]).
+     * Направленное округление: LONG → CEILING (tighter), SHORT → FLOOR (tighter).
+     * Стоп обновляется ТОЛЬКО если улучшает защиту (не ослабляет).
      */
     fun updateTrailingStop(
         pos: Position,
         price: BigDecimal,
         percent: Double,
-        priceStep: BigDecimal = BigDecimal("0.01"),
+        priceStep: BigDecimal,
     ) {
         val p = BigDecimal(percent.toString()).divide(BigDecimal("100"))
         val raw =
@@ -139,7 +155,20 @@ object ExitRules {
                 PositionDirection.LONG -> price.multiply(BigDecimal.ONE.subtract(p))
                 PositionDirection.SHORT -> price.multiply(BigDecimal.ONE.add(p))
             }
-        pos.trailingStopPrice = alignToGrid(raw, priceStep)
+        val rounding = when (pos.direction) {
+            PositionDirection.LONG -> RoundingMode.CEILING
+            PositionDirection.SHORT -> RoundingMode.FLOOR
+        }
+        val candidate = alignToGrid(raw, priceStep, rounding)
+        val currentStop = pos.trailingStopPrice
+        val improved =
+            when (pos.direction) {
+                PositionDirection.LONG -> currentStop == null || candidate > currentStop
+                PositionDirection.SHORT -> currentStop == null || candidate < currentStop
+            }
+        if (improved) {
+            pos.trailingStopPrice = candidate
+        }
     }
 
     /**

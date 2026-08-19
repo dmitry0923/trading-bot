@@ -14,6 +14,8 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -23,6 +25,9 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Delta-модель close fills (EXEC-008): WS Alor присылает кумулятивный
@@ -141,6 +146,10 @@ class OrderExecutionEngineDeltaModelTest {
     private fun stubFindCloseOrderId(pos: Position) {
         runBlocking {
             Mockito.`when`(positionRepo.findByCloseOrderId(Mockito.anyString())).thenReturn(pos)
+            Mockito.`when`(positionRepo.findByAlorOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.findBySlOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.findByTpOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.findById(Mockito.anyLong())).thenReturn(pos)
         }
     }
 
@@ -319,6 +328,129 @@ class OrderExecutionEngineDeltaModelTest {
         // REST: cumulative=5, prevApplied=5, delta=0, skip
         runBlocking { engine.reconcilePosition(pos) }
         assertEquals(2, pos.quantity)
+        assertEquals(0, closedPositions.size)
+    }
+
+    // ─── Concurrency: WS + REST race ────────────────────────────────
+
+    /**
+     * The critical race: WS and REST verifyOrder both read cumulativeCloseFillQty=0
+     * concurrently. Without the mutex, both would compute delta=cumulative and apply
+     * duplicate partial closes (doubled P&L, wrong quantity). With the mutex, the
+     * second coroutine re-reads from DB under lock and gets delta=0 (skip).
+     *
+     * Scenario:
+     *   DB: qty=10, cumulativeCloseFillQty=0, pendingClose=true
+     *   Coroutine A (WS): cumulative=4, delta=4, partial close → qty=6
+     *   Coroutine B (REST): cumulative=4, but re-reads cumulative=4 (already applied) → delta=0 → skip
+     */
+    @Test
+    fun `concurrent WS and REST close fills do not double-close`() {
+        val pos = openPos(quantity = 10, cumulativeCloseFillQty = 0)
+
+        // findById returns the same mutable object — simulates DB returning updated state
+        runBlocking {
+            Mockito.`when`(positionRepo.findById(Mockito.anyLong())).thenAnswer { pos }
+            Mockito.`when`(positionRepo.findByCloseOrderId(Mockito.anyString())).thenReturn(pos)
+            Mockito.`when`(positionRepo.findByAlorOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.findBySlOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.findByTpOrderId(Mockito.anyString())).thenReturn(null)
+            Mockito.`when`(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+            Mockito.`when`(
+                alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
+            ).thenReturn(
+                AlorClient.OrderExecution(status = "FILLED", filledQuantity = 4, avgPrice = BigDecimal("110")),
+            )
+        }
+
+        // Both coroutines see cumulative=4 from REST/WS
+        // Mutex ensures second re-reads and sees cumulative already advanced
+        val latch = CountDownLatch(1)
+        runBlocking {
+            val ws = async {
+                latch.await()
+                engine.handleExecutionReport(report(cumulativeFilledQty = 4))
+            }
+            val rest = async {
+                latch.await()
+                // REST path: reconcilePosition → confirmCloseFill
+                engine.reconcilePosition(pos)
+            }
+            latch.countDown()
+            awaitAll(ws, rest)
+        }
+
+        // Cumulative should be 4 (applied once), quantity should be 10-4=6
+        assertEquals(4, pos.cumulativeCloseFillQty)
+        assertEquals(6, pos.quantity)
+        // Partial close applied only once
+        assertFalse(pos.pendingClose)
+    }
+
+    /**
+     * Two concurrent WS events with the same cumulative value.
+     * Mutex ensures only one applies the delta.
+     */
+    @Test
+    fun `concurrent duplicate WS events apply delta only once`() {
+        val pos = openPos(quantity = 5, cumulativeCloseFillQty = 0)
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        val latch = CountDownLatch(1)
+        runBlocking {
+            val a = async {
+                latch.await()
+                engine.handleExecutionReport(report(cumulativeFilledQty = 3))
+            }
+            val b = async {
+                latch.await()
+                engine.handleExecutionReport(report(cumulativeFilledQty = 3))
+            }
+            latch.countDown()
+            awaitAll(a, b)
+        }
+
+        // delta=3 applied once; quantity=5-3=2
+        assertEquals(3, pos.cumulativeCloseFillQty)
+        assertEquals(2, pos.quantity)
+    }
+
+    /**
+     * Concurrent WS events with DIFFERENT cumulative values (partial then full fill).
+     * Mutex ensures the second coroutine re-reads from DB and sees the first coroutine's
+     * partial close (pendingClose=false, closeOrderId=null) — skips because position
+     * is no longer pendingClose. No duplicate delta applied.
+     *
+     * This matches real architecture: partial close clears pendingClose, the remainder
+     * is re-closed by a fresh close order on the next cycle.
+     */
+    @Test
+    fun `concurrent WS events with different cumulative values are serialized correctly`() {
+        val pos = openPos(quantity = 5, cumulativeCloseFillQty = 0)
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        val latch = CountDownLatch(1)
+        runBlocking {
+            val a = async {
+                latch.await()
+                engine.handleExecutionReport(report(cumulativeFilledQty = 3))
+            }
+            val b = async {
+                latch.await()
+                engine.handleExecutionReport(report(cumulativeFilledQty = 5))
+            }
+            latch.countDown()
+            awaitAll(a, b)
+        }
+
+        // First event applied delta=3 → qty=2, pendingClose=false, cumul=3
+        // Second event re-reads: pendingClose=false → skip (no duplicate)
+        assertEquals(3, pos.cumulativeCloseFillQty)
+        assertEquals(2, pos.quantity)
+        assertFalse(pos.pendingClose)
         assertEquals(0, closedPositions.size)
     }
 }

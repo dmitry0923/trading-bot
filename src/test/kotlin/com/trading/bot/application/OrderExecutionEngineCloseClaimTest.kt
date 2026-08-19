@@ -30,6 +30,7 @@ import java.math.BigDecimal
 import java.util.UUID
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Unit-тест атомарного claim позиции на закрытие (EXEC-001, MR-A).
@@ -217,13 +218,15 @@ class OrderExecutionEngineCloseClaimTest {
     fun `concurrent double close creates only one close order and records one close`() {
         val pos = openPos()
         val claimCounter = AtomicInteger(0)
+        // Track the latest saved position so findById reflects DB writes.
+        // confirmCloseFill now re-reads from DB under mutex — without this,
+        // the re-read always sees closeOrderId=null and skips finalization.
+        val latestSaved = AtomicReference<Position?>(null)
         runBlocking {
-            // Кто бы из двух потоков ни получил claim первым — findById всегда возвращает
-            // состояние "pendingClose=true, closeOrderId=null" (close-ордер ещё не создан).
             Mockito.`when`(positionRepo.claimForClose(1L)).thenAnswer { claimCounter.getAndIncrement() == 0 }
             Mockito
                 .`when`(positionRepo.findById(1L))
-                .thenAnswer { pos.copy(pendingClose = true, closeOrderId = null) }
+                .thenAnswer { latestSaved.get() ?: pos.copy(pendingClose = true, closeOrderId = null) }
             Mockito
                 .`when`(
                     positionRepo.transitionToClosed(
@@ -235,7 +238,13 @@ class OrderExecutionEngineCloseClaimTest {
                     ),
                 ).thenReturn(true)
         }
-        stubSaveReturnsArg()
+        runBlocking {
+            Mockito.`when`(positionRepo.save(anyPosition())).thenAnswer { inv ->
+                val arg = inv.getArgument<Position>(0)
+                latestSaved.set(arg)
+                arg
+            }
+        }
         stubFill()
         stubPlaceOrder(successResult("c1"))
 

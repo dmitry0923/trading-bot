@@ -18,10 +18,13 @@ import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.LocalDateTime
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /**
@@ -108,6 +111,19 @@ class OrderExecutionEngine(
     private val portfolioResolver: suspend (Long?) -> String = { alorConfig.portfolio },
 ) {
     private val logger = KotlinLogging.logger {}
+
+    /**
+     * Per-position mutex: serializes close-fill processing (WS handleExecutionReport
+     * vs REST confirmCloseFill) for the same position. Without this, two concurrent
+     * coroutines can both read the same cumulativeCloseFillQty, compute independent
+     * deltas, and apply duplicate partial closes — resulting in doubled P&L and
+     * incorrect quantity.
+     *
+     * Key = position.id. For multi-instance deployments, this is NOT sufficient —
+     * a distributed lock would be needed. For single-instance (current deployment),
+     * ConcurrentHashMap + Mutex provides correct serialization within the JVM.
+     */
+    private val closeFillMutexes = ConcurrentHashMap<Long, Mutex>()
 
     /**
      * Вход: размещение limit-ордера через outbox с обработкой трёх исходов.
@@ -757,22 +773,31 @@ class OrderExecutionEngine(
         // Проверяем РАНЬШЕ pendingClose: стоп-заявка могла сработать, пока
         // локальный close-ордер ещё «в полёте».
         if (orderId == pos.slOrderId || orderId == pos.tpOrderId) {
+            val positionId = pos.id ?: return false
             val reason = if (orderId == pos.slOrderId) CloseReason.STOP_LOSS else CloseReason.TAKE_PROFIT
-            if (orderId == pos.slOrderId) {
-                pos.slOrderId = null
-                pos.slOrderPrice = null
-                pos.slPendingReplace = false
-            } else {
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
+            val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
+            mutex.withLock {
+                val fresh = positionRepo.findById(positionId)
+                if (fresh.status != PositionStatus.OPEN) return true
+                if (orderId == fresh.slOrderId) {
+                    fresh.slOrderId = null
+                    fresh.slOrderPrice = null
+                    fresh.slPendingReplace = false
+                } else if (orderId == fresh.tpOrderId) {
+                    fresh.tpOrderId = null
+                    fresh.tpOrderPrice = null
+                    fresh.tpPendingReplace = false
+                } else {
+                    // SL/TP was already cleared by another coroutine — skip
+                    return true
+                }
+                positionRepo.save(fresh)
+                applyExchangeProtectionClose(
+                    fresh,
+                    AlorClient.OrderExecution(report.status.name, report.cumulativeFilledQty, fillPrice),
+                    reason,
+                )
             }
-            positionRepo.save(pos)
-            applyExchangeProtectionClose(
-                pos,
-                AlorClient.OrderExecution(report.status.name, report.cumulativeFilledQty, fillPrice),
-                reason,
-            )
             return true
         }
 
@@ -797,18 +822,27 @@ class OrderExecutionEngine(
         // Alor filledQtyBatch — накопительное значение. Только инкремент
         // с момента последнего применения реально уменьшает позицию.
         if (pos.pendingClose) {
-            val prevApplied = pos.cumulativeCloseFillQty
-            val delta = report.cumulativeFilledQty - prevApplied
-            if (delta <= 0) {
-                logger.debug {
-                    "Close fill delta=0 for ${pos.ticker}: cumulative=${report.cumulativeFilledQty} " +
-                        "already_applied=$prevApplied — skipping"
+            val positionId = pos.id ?: return false
+            val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
+            mutex.withLock {
+                // Re-read position under lock to get fresh cumulativeCloseFillQty.
+                // Without this, two concurrent coroutines could both read the same
+                // cumulative value and apply duplicate deltas.
+                val fresh = positionRepo.findById(positionId)
+                if (fresh.status != PositionStatus.OPEN) return true
+                val prevApplied = fresh.cumulativeCloseFillQty
+                val delta = report.cumulativeFilledQty - prevApplied
+                if (delta <= 0) {
+                    logger.debug {
+                        "Close fill delta=0 for ${fresh.ticker}: cumulative=${report.cumulativeFilledQty} " +
+                            "already_applied=$prevApplied — skipping"
+                    }
+                    return true
                 }
-                return true
+                fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
+                positionRepo.save(fresh)
+                applyCloseExecution(fresh, delta, fillPrice, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
             }
-            pos.cumulativeCloseFillQty = report.cumulativeFilledQty
-            positionRepo.save(pos)
-            applyCloseExecution(pos, delta, fillPrice, pos.closeReason ?: CloseReason.EXECUTION_FILL)
             return true
         }
 
@@ -817,43 +851,58 @@ class OrderExecutionEngine(
 
     /**
      * Подтверждение исполнения close-ордера через verifyOrder.
+     *
+     * Обёрнуто в per-position mutex: WS handleExecutionReport и REST confirmCloseFill
+     * могут вызываться конкурентно для одной позиции. Без mutex оба корутина прочитают
+     * одинаковый cumulativeCloseFillQty, вычислят дублирующие delta и применят
+     * partial close дважды (удвоенный P&L, неверное quantity).
      */
     private suspend fun confirmCloseFill(
         pos: Position,
         expectedPrice: BigDecimal,
         reason: CloseReason,
     ) {
-        val orderId = pos.closeOrderId ?: return
-        val execution = alorClient.verifyOrder(orderId, expectedPrice = expectedPrice, portfolio = portfolioResolver(pos.accountId))
-        if (execution == null) {
-            // verifyOrder недоступен → вторичная сверка по qty позиции на бирже:
-            // если позиция закрыта/уменьшена, close-ордер исполнился (защита от
-            // зависшего pendingClose после исчерпания REST-сверки заявок).
-            if (closeConfirmedByPositionDelta(pos)) {
-                logger.warn {
-                    "Close order $orderId for ${pos.ticker} confirmed by position delta " +
-                        "(exchange position reduced) — finalizing at $expectedPrice"
+        val positionId = pos.id ?: return
+        val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
+        mutex.withLock {
+            // Re-read position under lock for fresh cumulativeCloseFillQty.
+            val fresh = positionRepo.findById(positionId)
+            if (fresh.status != PositionStatus.OPEN) return
+
+            val orderId = fresh.closeOrderId ?: return
+            val execution =
+                alorClient.verifyOrder(
+                    orderId,
+                    expectedPrice = expectedPrice,
+                    portfolio = portfolioResolver(fresh.accountId),
+                )
+            if (execution == null) {
+                if (closeConfirmedByPositionDelta(fresh)) {
+                    logger.warn {
+                        "Close order $orderId for ${fresh.ticker} confirmed by position delta " +
+                            "(exchange position reduced) — finalizing at $expectedPrice"
+                    }
+                    applyCloseExecution(fresh, fresh.quantity, expectedPrice, reason)
+                } else {
+                    logger.warn { "Close order $orderId for ${fresh.ticker} state UNKNOWN; pending reconciliation" }
                 }
-                applyCloseExecution(pos, pos.quantity, expectedPrice, reason)
-            } else {
-                logger.warn { "Close order $orderId for ${pos.ticker} state UNKNOWN; pending reconciliation" }
+                return
             }
-            return
-        }
-        val avg = execution.avgPrice ?: expectedPrice
-        val cumulativeFill = execution.filledQuantity
-        val prevApplied = pos.cumulativeCloseFillQty
-        val delta = cumulativeFill - prevApplied
-        if (delta <= 0) {
-            logger.debug {
-                "confirmCloseFill delta=0 for ${pos.ticker}: REST cumulative=$cumulativeFill " +
-                    "already_applied=$prevApplied — skipping"
+            val avg = execution.avgPrice ?: expectedPrice
+            val cumulativeFill = execution.filledQuantity
+            val prevApplied = fresh.cumulativeCloseFillQty
+            val delta = cumulativeFill - prevApplied
+            if (delta <= 0) {
+                logger.debug {
+                    "confirmCloseFill delta=0 for ${fresh.ticker}: REST cumulative=$cumulativeFill " +
+                        "already_applied=$prevApplied — skipping"
+                }
+                return
             }
-            return
+            fresh.cumulativeCloseFillQty = cumulativeFill
+            positionRepo.save(fresh)
+            applyCloseExecution(fresh, delta, avg, reason)
         }
-        pos.cumulativeCloseFillQty = cumulativeFill
-        positionRepo.save(pos)
-        applyCloseExecution(pos, delta, avg, reason)
     }
 
     /**

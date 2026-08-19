@@ -153,13 +153,29 @@ class InstrumentsConfig {
 
     @PostConstruct
     fun validateSpecs() {
+        require(instruments.isNotEmpty()) { "No trading instruments configured" }
         instruments.forEach { spec ->
             require(spec.ticker.isNotBlank()) { "Instrument ticker must not be blank" }
             require(spec.lotSize > 0) { "Instrument ${spec.ticker}: lotSize must be > 0, got ${spec.lotSize}" }
             require(spec.priceStep > BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStep must be > 0, got ${spec.priceStep}" }
-            if (spec.slPercent != null) require(spec.slPercent!! > BigDecimal.ZERO) { "Instrument ${spec.ticker}: slPercent must be > 0, got ${spec.slPercent}" }
-            if (spec.tpPercent != null) require(spec.tpPercent!! > BigDecimal.ZERO) { "Instrument ${spec.ticker}: tpPercent must be > 0, got ${spec.tpPercent}" }
-            if (spec.commissionRub != null) require(spec.commissionRub!! >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: commissionRub must be >= 0, got ${spec.commissionRub}" }
+            require(spec.priceStepCost >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStepCost must be >= 0, got ${spec.priceStepCost}" }
+            require(spec.go >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: go must be >= 0, got ${spec.go}" }
+            require(spec.leverage > BigDecimal.ZERO) { "Instrument ${spec.ticker}: leverage must be > 0, got ${spec.leverage}" }
+            spec.slPercent?.let {
+                require(it > BigDecimal.ZERO) { "Instrument ${spec.ticker}: slPercent must be > 0, got $it" }
+            }
+            spec.tpPercent?.let {
+                require(it > BigDecimal.ZERO) { "Instrument ${spec.ticker}: tpPercent must be > 0, got $it" }
+            }
+            spec.maxSpreadPercent?.let {
+                require(it > BigDecimal.ZERO) { "Instrument ${spec.ticker}: maxSpreadPercent must be > 0, got $it" }
+            }
+            spec.maxGapPercent?.let {
+                require(it > BigDecimal.ZERO) { "Instrument ${spec.ticker}: maxGapPercent must be > 0, got $it" }
+            }
+            spec.commissionRub?.let {
+                require(it >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: commissionRub must be >= 0, got $it" }
+            }
         }
     }
 
@@ -223,7 +239,8 @@ class InstrumentsConfig {
      * Для Si: 10 / 0.01 = 1000 ₽ — это размер контракта (1000 USD).
      */
     fun pointValue(ticker: String): BigDecimal {
-        val spec = find(ticker) ?: return BigDecimal("1000")
+        val spec = find(ticker)
+            ?: throw IllegalArgumentException("Unknown instrument for pointValue: $ticker")
         return spec.priceStepCost.divide(spec.priceStep, 6, RoundingMode.HALF_UP)
     }
 }

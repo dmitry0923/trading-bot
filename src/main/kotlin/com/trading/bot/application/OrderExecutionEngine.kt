@@ -666,10 +666,10 @@ class OrderExecutionEngine(
                 if (result == AlorClient.CancelResult.REJECTED) {
                     val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
                     if (ex != null && isFilledStatus(ex)) {
-                        pos.slOrderId = null
-                        pos.slOrderPrice = null
-                        pos.slPendingReplace = false
-                        positionRepo.save(pos)
+                        // IDs and pendingReplace flag are cleared atomically inside
+                        // applyExchangeProtectionClose → applyCloseExecution (single DB write).
+                        // No premature save() — crash between save and applyCloseExecution
+                        // would leave execution unapplied and WS events unmatchable.
                         applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
                         return
                     }
@@ -702,10 +702,7 @@ class OrderExecutionEngine(
                 if (result == AlorClient.CancelResult.REJECTED) {
                     val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
                     if (ex != null && isFilledStatus(ex)) {
-                        pos.tpOrderId = null
-                        pos.tpOrderPrice = null
-                        pos.tpPendingReplace = false
-                        positionRepo.save(pos)
+                        // Same crash-consistency as SL path above.
                         applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
                         return
                     }

@@ -37,6 +37,8 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 /**
  * Координатор торговли фьючерсами (Si).
  *
@@ -79,6 +81,7 @@ class FuturesTradingBotService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileRunning = AtomicBoolean(false)
 
     @PreDestroy
     fun close() {
@@ -217,25 +220,30 @@ class FuturesTradingBotService(
      */
     @Scheduled(fixedDelay = 15000)
     fun reconcilePendingOrders() {
+        if (!reconcileRunning.compareAndSet(false, true)) return
         scope.launch {
-            distributedLockService.runExclusive(
-                name = "scheduler:reconcile-futures",
-                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
-            ) {
-                try {
-                    val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
-                    for (pos in open) {
-                        try {
-                            TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-                            TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
-                            engine.reconcilePosition(pos)
-                        } catch (e: Exception) {
-                            logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
+            try {
+                distributedLockService.runExclusive(
+                    name = "scheduler:reconcile-futures",
+                    ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+                ) {
+                    try {
+                        val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
+                        for (pos in open) {
+                            try {
+                                TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
+                                TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
+                                engine.reconcilePosition(pos)
+                            } catch (e: Exception) {
+                                logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
+                            }
                         }
+                    } catch (e: Exception) {
+                        logger.error(e) { "Futures reconciler error" }
                     }
-                } catch (e: Exception) {
-                    logger.error(e) { "Futures reconciler error" }
                 }
+            } finally {
+                reconcileRunning.set(false)
             }
         }
     }

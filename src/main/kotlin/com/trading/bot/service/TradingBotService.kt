@@ -48,6 +48,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Исполнительный сервис торгового бота (акции/валюты).
@@ -88,6 +89,7 @@ class TradingBotService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reconcileRunning = AtomicBoolean(false)
 
     /** Lot-based P&L — единый источник для engine и ws-fill handler. */
     private val pnlCalculator: PnlCalculator =
@@ -411,24 +413,29 @@ class TradingBotService(
      */
     @Scheduled(fixedDelay = 15000)
     fun reconcilePendingOrders() {
+        if (!reconcileRunning.compareAndSet(false, true)) return
         scope.launch {
-            distributedLockService.runExclusive(
-                name = "scheduler:reconcile-stocks",
-                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
-            ) {
-                try {
-                    val open = positionRepo.findByStatus(PositionStatus.OPEN)
-                        .filter { it.instrumentType != InstrumentType.FUTURES }
-                    for (pos in open) {
-                        try {
-                            engine.reconcilePosition(pos)
-                        } catch (e: Exception) {
-                            logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
+            try {
+                distributedLockService.runExclusive(
+                    name = "scheduler:reconcile-stocks",
+                    ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+                ) {
+                    try {
+                        val open = positionRepo.findByStatus(PositionStatus.OPEN)
+                            .filter { it.instrumentType != InstrumentType.FUTURES }
+                        for (pos in open) {
+                            try {
+                                engine.reconcilePosition(pos)
+                            } catch (e: Exception) {
+                                logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
+                            }
                         }
+                    } catch (e: Exception) {
+                        logger.error(e) { "Stock reconciler error" }
                     }
-                } catch (e: Exception) {
-                    logger.error(e) { "Stock reconciler error" }
                 }
+            } finally {
+                reconcileRunning.set(false)
             }
         }
     }

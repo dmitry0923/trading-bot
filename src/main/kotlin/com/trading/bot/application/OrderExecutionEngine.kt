@@ -535,15 +535,15 @@ class OrderExecutionEngine(
      * Проверяет статус выставленных защитных заявок через verifyOrder: исполнена →
      * финализация закрытия (STOP_LOSS/TAKE_PROFIT); отменена/отклонена → заявки
      * больше нет, уровень будет перевыставлен.
+     *
+     * ID-очистка и save() происходят атомарно внутри [applyExchangeProtectionClose]
+     * → [applyCloseExecution] → save/transitionToClosed. Нет промежуточного save(),
+     * который бы сохранил ID=null до применения execution (crash-consistency).
      */
     private suspend fun checkProtectionFills(pos: Position) {
         pos.slOrderId?.let { id ->
             val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
             if (isFilledStatus(ex)) {
-                pos.slOrderId = null
-                pos.slOrderPrice = null
-                pos.slPendingReplace = false
-                positionRepo.save(pos)
                 applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
                 return
             }
@@ -558,10 +558,6 @@ class OrderExecutionEngine(
             if (pos.status != PositionStatus.OPEN) return@let
             val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
             if (isFilledStatus(ex)) {
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
-                positionRepo.save(pos)
                 applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
                 return
             }
@@ -579,6 +575,12 @@ class OrderExecutionEngine(
      * Финализация закрытия по исполнению биржевой защитной заявки: если локальный
      * close-ордер был «в полёте» — снимаем его (позицию уже закрыла защитная
      * заявка), снимаем контр-заявку и применяем исполнение.
+     *
+     * Очищает ID исполненной заявки (SL/TP) и применяет fill атомарно —
+     * первый save() внутри [applyCloseExecution] фиксирует и cleared ID,
+     * и new quantity/P&L/status. Crash до save() → позиция остаётся как есть
+     * (старый ID жив в DB, повторный WS event найдёт позицию).
+     * Crash после save() → исполнение применено, ID очищен.
      */
     private suspend fun applyExchangeProtectionClose(
         pos: Position,
@@ -587,6 +589,26 @@ class OrderExecutionEngine(
     ) {
         val filled = execution.filledQuantity.coerceIn(0, pos.quantity)
         if (filled <= 0) return
+
+        // Atomically clear the filled protection order's identity BEFORE save.
+        // This ensures that a crash after the atomic save in applyCloseExecution
+        // persists both the cleared ID and the position state change together.
+        // Without this, a crash between premature save(ID=null) and applyCloseExecution
+        // would leave the execution unapplied and the WS event unmatchable.
+        when (reason) {
+            CloseReason.STOP_LOSS -> {
+                pos.slOrderId = null
+                pos.slOrderPrice = null
+                pos.slPendingReplace = false
+            }
+            CloseReason.TAKE_PROFIT -> {
+                pos.tpOrderId = null
+                pos.tpOrderPrice = null
+                pos.tpPendingReplace = false
+            }
+            else -> {}
+        }
+
         if (pos.pendingClose) {
             val closeId = pos.closeOrderId
             val positionId = pos.id
@@ -600,6 +622,8 @@ class OrderExecutionEngine(
             pos.pendingClose = false
             pos.closeReason = null
         }
+        // Cancel the OTHER protection order. The fired order's ID was already
+        // cleared above, so cancelProtectionOrders will skip it naturally.
         cancelProtectionOrders(pos)
         applyCloseExecution(pos, filled, execution.avgPrice ?: pos.currentPrice ?: pos.entryPrice, reason)
         // After SL/TP execution, re-attach protection for the remaining position.
@@ -787,15 +811,7 @@ class OrderExecutionEngine(
             mutex.withLock {
                 val fresh = positionRepo.findById(positionId)
                 if (fresh.status != PositionStatus.OPEN) return true
-                if (orderId == fresh.slOrderId) {
-                    fresh.slOrderId = null
-                    fresh.slOrderPrice = null
-                    fresh.slPendingReplace = false
-                } else if (orderId == fresh.tpOrderId) {
-                    fresh.tpOrderId = null
-                    fresh.tpOrderPrice = null
-                    fresh.tpPendingReplace = false
-                } else {
+                if (orderId != fresh.slOrderId && orderId != fresh.tpOrderId) {
                     // SL/TP was already cleared by another coroutine — skip
                     return true
                 }

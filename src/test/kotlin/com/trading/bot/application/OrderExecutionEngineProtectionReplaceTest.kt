@@ -191,7 +191,14 @@ class OrderExecutionEngineProtectionReplaceTest {
         assertEquals(1, transitionCalls.size, "transitionToClosed must be called exactly once")
 
         val saveCalls = invocations.filter { it.method.name == "save" }
-        assertEquals(0, saveCalls.size, "save() must NOT be called - transitionToClosed handles persistence atomically")
+        assertEquals(0, saveCalls.size, "save() must NOT be called - checkProtectionFills returns early at line 548, skipping save() at line 571")
+
+        val releaseCalls = invocations.filter { it.method.name == "releaseEntry" }
+        assertEquals(1, releaseCalls.size, "releaseEntry must be called exactly once after transitionToClosed")
+
+        val tradeEventCalls = Mockito.mockingDetails(tradeEventService).invocations
+            .filter { it.method.name == "recordPositionClosed" }
+        assertEquals(1, tradeEventCalls.size, "recordPositionClosed must be called exactly once")
 
         assertEquals(PositionStatus.CLOSED, pos.status)
     }

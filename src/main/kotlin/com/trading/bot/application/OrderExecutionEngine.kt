@@ -807,7 +807,6 @@ class OrderExecutionEngine(
             "CANCELLED",
             "REJECTED",
             "EXPIRED",
-            "DONE",
             -> true
             else -> false
         }

@@ -174,6 +174,26 @@ class OrderExecutionEngineProtectionReplaceTest {
     }
 
     @Test
+    fun `SL FILLED close is atomic - transitionToClosed before any premature save`() = runBlocking {
+        stubVerifyOrderById(
+            slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
+        )
+        stubCancelProtectionSafe()
+        stubNewProtectionPlacementSafe()
+        stubSave()
+        stubFullClose()
+
+        val pos = pendingReplacePos()
+        engine.reconcilePosition(pos)
+
+        val transitionCalls = Mockito.mockingDetails(positionRepo).invocations
+            .filter { it.method.name == "transitionToClosed" }
+        assertEquals(1, transitionCalls.size, "transitionToClosed must be called exactly once")
+
+        assertEquals(PositionStatus.CLOSED, pos.status)
+    }
+
+    @Test
     fun `SL rejected + verify CANCELED clears SL ID via checkProtectionFills`() = runBlocking {
         stubVerifyOrderById(
             slResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),

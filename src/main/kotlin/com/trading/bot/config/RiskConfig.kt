@@ -233,9 +233,16 @@ class RiskConfig {
     /**
      * Минимальная доля Kelly / notionalPerLot для срабатывания MinimumLotPolicy.
      * 0.3 = Kelly должен рекомендовать минимум 30% стоимости лота, чтобы override
-     * был допущен. Защита от marginal edge, который не покрывает交易成本.
+     * был допущен.
      */
-    var minimumLotPolicyMinKellyFraction: Double = 0.30
+    var minimumLotPolicyMinKellyFraction: BigDecimal = BigDecimal("0.30")
+
+    /**
+     * Минимальный ожидаемый чистый прибыль на лот (RUB) для MinimumLotPolicy.
+     * Рассчитывается: winRate × avgWin − (1−winRate) × avgLoss (уже с учётом комиссии).
+     * Если чистое мат. ожидание < порога — override запрещён.
+     */
+    var minimumLotPolicyMinNetProfitRub: BigDecimal = BigDecimal("5")
 
     /** Максимум открытых фьючерсных позиций (Si: 1). Отдельно от акций. */
     var futuresMaxOpenPositions: Int = 1

@@ -229,6 +229,33 @@ class AdaptiveRiskService(
     }
 
     /**
+     * Ожидаемый чистый прибыль на 1 лот (RUB), рассчитанный из статистики сделок.
+     * Уже включает комиссию (PnlCalculator вычитает её из realized P&L).
+     *
+     * expectedNet = Wilson(winRate) × avgWin − (1 − Wilson(winRate)) × avgLoss
+     *
+     * @return чистый прибыль на лот, или null при недостатке статистики.
+     */
+    suspend fun expectedNetProfitPerLot(
+        ticker: String,
+        accountId: Long? = null,
+    ): BigDecimal? {
+        val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker] ?: return null
+        if (stats.totalTrades < riskConfig.kellyMinTrades) return null
+        if (stats.avgWin <= BigDecimal.ZERO && stats.avgLoss <= BigDecimal.ZERO) return null
+
+        val w = wilsonLowerBound(stats.winRate, stats.totalTrades, riskConfig.kellyWilsonZ)
+        val wBd = BigDecimal(w)
+        val oneMinusW = BigDecimal(1 - w)
+
+        // avgWin и avgLoss — положительные величины (средний выигрыш/проигрыш в RUB).
+        // PnlCalculator уже вычел комиссию из realized P&L.
+        val grossExpected = wBd.multiply(stats.avgWin)
+            .subtract(oneMinusW.multiply(stats.avgLoss))
+        return grossExpected
+    }
+
+    /**
      * Wilson lower bound для win rate — консервативный шринкейдж при малой выборке.
      *
      * p_lower = (p + z²/2n - z*sqrt((p(1-p) + z²/4n)/n)) / (1 + z²/n)

@@ -118,14 +118,17 @@ class StockEntryProfileTest {
     fun `sizePosition allows 1 lot via MinimumLotPolicy when Kelly budget too small`() = runBlocking {
         // kellySizeRub = 5000 (positive → trade has expected value)
         // notionalPerLot = 12.42 * 1000 = 12420
-        // kellyFractionOfLot = 5000 / 12420 = 0.40 > 0.30 (minKellyFraction)
+        // 5000 >= 12420 * 0.30 = 3726 ✓
         // kellyLots = floor(5000 / 12420) = 0
         // maxLotsByRisk = floor(500 / 82.1) = 6 → risk allows 1 lot
+        // expectedNetProfitPerLot = 10 > 5 (minNetProfitRub)
         // MinimumLotPolicy: all conditions met → 1 lot
         riskConfig.minimumLotPolicyEnabled = true
         Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
         Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
             .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+        Mockito.doReturn(BigDecimal("10")).`when`(adaptiveRisk)
+            .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
 
         val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
         val request = EntryRequest(
@@ -229,12 +232,15 @@ class StockEntryProfileTest {
     @Test
     fun `sizePosition MinimumLotPolicy at boundary Kelly just below notional`() = runBlocking {
         // kellySizeRub = 12419.99, notionalPerLot = 12420
-        // kellyFractionOfLot = 12419.99/12420 ≈ 1.0 > 0.30
+        // 12419.99 >= 12420 * 0.30 = 3726 ✓
         // kellyLots = floor(12419.99/12420) = 0 → policy path
+        // expectedNetProfitPerLot = 10 > 5 ✓
         riskConfig.minimumLotPolicyEnabled = true
         Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
         Mockito.doReturn(BigDecimal("12419.99")).`when`(adaptiveRisk)
             .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+        Mockito.doReturn(BigDecimal("10")).`when`(adaptiveRisk)
+            .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
 
         val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
         val request = EntryRequest(
@@ -252,6 +258,66 @@ class StockEntryProfileTest {
 
         assertEquals(1, size.quantity)
         assertEquals("MINIMUM_LOT_OVERRIDE", size.reason)
+        riskConfig.minimumLotPolicyEnabled = false
+    }
+
+    @Test
+    fun `sizePosition returns MINIMUM_LOT_NET_EV_TOO_LOW when expected profit below threshold`() = runBlocking {
+        // kellySizeRub = 5000, kelly fraction check passes (5000 >= 3726)
+        // riskAllows = 6 ≥ 1 ✓
+        // But expectedNetProfitPerLot = 2 < 5 (minNetProfitRub) → blocked
+        riskConfig.minimumLotPolicyEnabled = true
+        Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
+        Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
+            .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+        Mockito.doReturn(BigDecimal("2")).`when`(adaptiveRisk)
+            .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
+
+        val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+        val request = EntryRequest(
+            ticker = "CNYRUB_TOM",
+            action = StrategyAction.BUY,
+            entryPrice = BigDecimal("12.42"),
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal("50000"),
+            currentGo = BigDecimal.ZERO,
+            atr = null,
+            openPositions = emptyList(),
+        )
+
+        val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
+
+        assertEquals(0, size.quantity)
+        assertEquals("MINIMUM_LOT_NET_EV_TOO_LOW", size.reason)
+        riskConfig.minimumLotPolicyEnabled = false
+    }
+
+    @Test
+    fun `sizePosition returns MINIMUM_LOT_NET_EV_TOO_LOW when stats unavailable`() = runBlocking {
+        // Kelly fraction passes, risk passes, but expectedNetProfitPerLot returns null (no stats)
+        riskConfig.minimumLotPolicyEnabled = true
+        Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
+        Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
+            .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+        Mockito.doReturn(null).`when`(adaptiveRisk)
+            .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
+
+        val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+        val request = EntryRequest(
+            ticker = "CNYRUB_TOM",
+            action = StrategyAction.BUY,
+            entryPrice = BigDecimal("12.42"),
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal("50000"),
+            currentGo = BigDecimal.ZERO,
+            atr = null,
+            openPositions = emptyList(),
+        )
+
+        val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
+
+        assertEquals(0, size.quantity)
+        assertEquals("MINIMUM_LOT_NET_EV_TOO_LOW", size.reason)
         riskConfig.minimumLotPolicyEnabled = false
     }
 

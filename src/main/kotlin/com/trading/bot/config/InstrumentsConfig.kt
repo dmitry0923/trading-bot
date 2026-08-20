@@ -154,11 +154,19 @@ class InstrumentsConfig {
     @PostConstruct
     fun validateSpecs() {
         require(instruments.isNotEmpty()) { "No trading instruments configured" }
+        val duplicates = instruments
+            .groupBy { it.ticker.uppercase() }
+            .filterValues { it.size > 1 }
+            .keys
+        require(duplicates.isEmpty()) { "Duplicate instrument tickers: $duplicates" }
         instruments.forEach { spec ->
             require(spec.ticker.isNotBlank()) { "Instrument ticker must not be blank" }
+            require(spec.type.uppercase() in setOf("STOCK", "FUTURES", "FX")) {
+                "Instrument ${spec.ticker}: unknown type '${spec.type}', expected STOCK/FUTURES/FX"
+            }
             require(spec.lotSize > 0) { "Instrument ${spec.ticker}: lotSize must be > 0, got ${spec.lotSize}" }
             require(spec.priceStep > BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStep must be > 0, got ${spec.priceStep}" }
-            require(spec.priceStepCost >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStepCost must be >= 0, got ${spec.priceStepCost}" }
+            require(spec.priceStepCost > BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStepCost must be > 0, got ${spec.priceStepCost}" }
             require(spec.go >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: go must be >= 0, got ${spec.go}" }
             require(spec.leverage > BigDecimal.ZERO) { "Instrument ${spec.ticker}: leverage must be > 0, got ${spec.leverage}" }
             spec.slPercent?.let {

@@ -665,13 +665,25 @@ class OrderExecutionEngine(
                     }
                 if (result == AlorClient.CancelResult.REJECTED) {
                     val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
-                    if (ex != null && isFilledStatus(ex)) {
-                        // IDs and pendingReplace flag are cleared atomically inside
-                        // applyExchangeProtectionClose → applyCloseExecution (single DB write).
-                        // No premature save() — crash between save and applyCloseExecution
-                        // would leave execution unapplied and WS events unmatchable.
-                        applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
-                        return
+                    when {
+                        // FILLED — order executed before cancel arrived. Close position
+                        // atomically via applyCloseExecution (IDs cleared in same write).
+                        ex != null && isFilledStatus(ex) -> {
+                            applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
+                            return
+                        }
+                        // GONE — order was cancelled/rejected/expired. Fall through to
+                        // common cleanup code below which clears IDs and sets dirty.
+                        ex != null && isGoneStatus(ex) -> {
+                            logger.info { "SL replaced: old order $oldId confirmed gone (${ex.status}) for ${pos.ticker}" }
+                        }
+                        // UNKNOWN — verifyOrder returned null or unrecognised status.
+                        // Do NOT clear slOrderId: order may still be alive. Retry next cycle.
+                        else -> {
+                            val status = ex?.status ?: "null"
+                            logger.warn { "SL cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle" }
+                            return
+                        }
                     }
                 }
                 if (result == AlorClient.CancelResult.UNCERTAIN) return
@@ -679,7 +691,9 @@ class OrderExecutionEngine(
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
                 dirty = true
-                logger.info { "SL replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
+                if (result == AlorClient.CancelResult.CONFIRMED) {
+                    logger.info { "SL replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
+                }
             }
         }
 
@@ -701,10 +715,19 @@ class OrderExecutionEngine(
                     }
                 if (result == AlorClient.CancelResult.REJECTED) {
                     val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
-                    if (ex != null && isFilledStatus(ex)) {
-                        // Same crash-consistency as SL path above.
-                        applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
-                        return
+                    when {
+                        ex != null && isFilledStatus(ex) -> {
+                            applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
+                            return
+                        }
+                        ex != null && isGoneStatus(ex) -> {
+                            logger.info { "TP replaced: old order $oldId confirmed gone (${ex.status}) for ${pos.ticker}" }
+                        }
+                        else -> {
+                            val status = ex?.status ?: "null"
+                            logger.warn { "TP cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle" }
+                            return
+                        }
                     }
                 }
                 if (result == AlorClient.CancelResult.UNCERTAIN) return
@@ -712,7 +735,14 @@ class OrderExecutionEngine(
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
                 dirty = true
-                logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
+                if (result == AlorClient.CancelResult.CONFIRMED) {
+                    logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
+                }
+                if (result == AlorClient.CancelResult.UNCERTAIN) return
+                pos.tpOrderId = null
+                pos.tpOrderPrice = null
+                pos.tpPendingReplace = false
+                dirty = true
             }
         }
 

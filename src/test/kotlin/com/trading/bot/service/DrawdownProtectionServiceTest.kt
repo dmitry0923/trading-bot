@@ -574,4 +574,197 @@ class DrawdownProtectionServiceTest {
             assertTrue(s.isEntryBlocked(7L))
             assertFalse(s.isEntryBlocked(8L))
         }
+
+    // ===================== Rolling loss boundary tests =====================
+
+    @Test
+    fun `7d rolling loss just below limit allows entry`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 7% of 50000 = 3500. Loss of -3499 is just above the limit → not breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3499"), LocalDateTime.now().minusDays(3))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-3499").compareTo(status.rolling7dPnlRub))
+            assertFalse(status.rolling7dBreached)
+            assertFalse(status.blocking())
+        }
+
+    @Test
+    fun `7d rolling loss exactly at limit breaches`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 7% of 50000 = 3500. Loss of -3500 is exactly at limit → breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3500"), LocalDateTime.now().minusDays(3))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-3500").compareTo(status.rolling7dPnlRub))
+            assertTrue(status.rolling7dBreached)
+            assertTrue(status.blocking())
+            assertTrue(status.reasons.any { it.startsWith("ROLLING_7D_LOSS") })
+        }
+
+    @Test
+    fun `7d rolling loss just above limit breaches`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 7% of 50000 = 3500. Loss of -3501 is just beyond → breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3501"), LocalDateTime.now().minusDays(3))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertTrue(status.rolling7dBreached)
+            assertTrue(status.blocking())
+        }
+
+    @Test
+    fun `30d rolling loss just below limit allows entry`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 12% of 50000 = 6000. Loss of -5999 is just above the limit → not breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-5999"), LocalDateTime.now().minusDays(20))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-5999").compareTo(status.rolling30dPnlRub))
+            assertFalse(status.rolling30dBreached)
+            assertFalse(status.rolling7dBreached)
+            assertFalse(status.blocking())
+        }
+
+    @Test
+    fun `30d rolling loss exactly at limit breaches`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 12% of 50000 = 6000. Loss of -6000 is exactly at limit → breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now().minusDays(20))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-6000").compareTo(status.rolling30dPnlRub))
+            assertTrue(status.rolling30dBreached)
+            assertFalse(status.rolling7dBreached)
+            assertTrue(status.blocking())
+            assertTrue(status.reasons.any { it.startsWith("ROLLING_30D_LOSS") })
+        }
+
+    @Test
+    fun `30d rolling loss just above limit breaches`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 12% of 50000 = 6000. Loss of -6001 is just beyond → breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6001"), LocalDateTime.now().minusDays(20))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertTrue(status.rolling30dBreached)
+            assertTrue(status.blocking())
+        }
+
+    @Test
+    fun `7d and 30d checked independently — 7d OK but 30d breached`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // One position 20 days ago with -7000 (outside 7d, inside 30d).
+            // 7d window is empty → rolling7d = 0. 30d = -7000 > -6000 → breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-7000"), LocalDateTime.now().minusDays(20))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("0").compareTo(status.rolling7dPnlRub))
+            assertFalse(status.rolling7dBreached)
+            assertEquals(0, BigDecimal("-7000").compareTo(status.rolling30dPnlRub))
+            assertTrue(status.rolling30dBreached)
+            assertTrue(status.blocking())
+        }
+
+    @Test
+    fun `rolling loss sums winners and losers — net P and L matters`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // Winner + loser in 7d window: net = -1000 + 800 = -200.
+            // 7% of 50000 = 3500. -200 > -3500 → not breached.
+            stubClosedPositions(
+                listOf(
+                    closedPosition(BigDecimal("-1000"), LocalDateTime.now().minusDays(2)),
+                    closedPosition(BigDecimal("800"), LocalDateTime.now().minusDays(1)),
+                ),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-200").compareTo(status.rolling7dPnlRub))
+            assertFalse(status.rolling7dBreached)
+        }
+
+    @Test
+    fun `daily and rolling limits checked independently — daily triggers but 7d does not`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // Today: -1500 (below 2% limit of 1000 → daily breached).
+            // 7d: only the same -1500 (7% = 3500 → not breached).
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-1500"), LocalDateTime.now().minusMinutes(30))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertTrue(status.dailyLimitBreached)
+            assertFalse(status.rolling7dBreached)
+            assertTrue(status.blocking())
+        }
+
+    @Test
+    fun `rolling loss is net realized only — open positions do not count`() =
+        runBlocking {
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-2000"), LocalDateTime.now().minusDays(2))),
+            )
+            // Open position with small unrealized loss — should NOT affect rolling.
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        currentPrice = BigDecimal("99"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now(),
+                    ),
+                ),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            // Rolling 7d only sees realized -2000, not the unrealized from the open position.
+            assertEquals(0, BigDecimal("-2000").compareTo(status.rolling7dPnlRub))
+            assertFalse(status.rolling7dBreached)
+        }
 }

@@ -316,6 +316,30 @@ class OrderExecutionEngineProtectionReplaceTest {
         assertTrue(gone("EXPIRED"))
     }
 
+    // ── isFilledStatus strict whitelist ─────────────────────────────────────
+
+    @Test
+    fun `isFilledStatus rejects false positives and matches only filled statuses`() {
+        val engine = Mockito.mock(OrderExecutionEngine::class.java)
+        val method = OrderExecutionEngine::class.java.getDeclaredMethod("isFilledStatus", AlorClient.OrderExecution::class.java)
+        method.isAccessible = true
+
+        fun filled(s: String, qty: Int = 100) =
+            method.invoke(engine, AlorClient.OrderExecution(status = s, filledQuantity = qty, avgPrice = BigDecimal("150"))) as Boolean
+
+        assertFalse(filled("UNFILLED"), "UNFILLED must NOT be treated as filled")
+        assertFalse(filled("NOT_FILLED"), "NOT_FILLED must NOT be treated as filled")
+        assertFalse(filled("FILLED", 0), "FILLED with qty=0 must NOT be treated as filled")
+        assertFalse(filled("CANCELED"))
+        assertFalse(filled("CANCEL_REJECTED"))
+        assertFalse(filled("REJECTED"))
+        assertFalse(filled("UNKNOWN"))
+        assertFalse(filled("NEW"))
+
+        assertTrue(filled("FILLED"), "FILLED with qty>0 must be treated as filled")
+        assertTrue(filled("PARTIALLY_FILLED"), "PARTIALLY_FILLED with qty>0 must be treated as filled")
+    }
+
     // ── Entry status whitelist (resolveEntryViaOutbox) ──────────────────────
 
     private fun pendingEntryPos(): Position =
@@ -432,6 +456,7 @@ class OrderExecutionEngineProtectionReplaceTest {
             status = PositionStatus.CLOSED,
             slOrderId = "orphan-sl",
             slOrderPrice = BigDecimal("149000"),
+            accountId = 1L,
         )
         stubCancelProtectionSafe()
         stubSave()
@@ -440,6 +465,7 @@ class OrderExecutionEngineProtectionReplaceTest {
 
         assertEquals(null, pos.slOrderId, "orphan SL ID must be cleared")
         assertEquals(null, pos.slOrderPrice, "orphan SL price must be cleared")
+        Mockito.verify(orderOutboxService).placeCancelOrder(20L, "orphan-sl", accountId = 1L)
         Mockito.verify(positionRepo).save(pos)
     }
 
@@ -455,6 +481,7 @@ class OrderExecutionEngineProtectionReplaceTest {
             status = PositionStatus.CLOSED,
             tpOrderId = "orphan-tp",
             tpOrderPrice = BigDecimal("151000"),
+            accountId = 1L,
         )
         stubCancelProtectionSafe()
         stubSave()
@@ -463,6 +490,7 @@ class OrderExecutionEngineProtectionReplaceTest {
 
         assertEquals(null, pos.tpOrderId, "orphan TP ID must be cleared")
         assertEquals(null, pos.tpOrderPrice, "orphan TP price must be cleared")
+        Mockito.verify(orderOutboxService).placeCancelOrder(21L, "orphan-tp", accountId = 1L)
     }
 
     @Test

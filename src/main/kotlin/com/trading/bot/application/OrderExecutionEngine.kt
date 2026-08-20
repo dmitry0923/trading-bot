@@ -800,8 +800,18 @@ class OrderExecutionEngine(
         return false
     }
 
+    /**
+     * Filled order statuses — order has been (at least partially) executed.
+     * Explicit whitelist (not string contains) to avoid false positives like
+     * "UNFILLED" or "NOT_FILLED" matching on substring "fill".
+     */
     private fun isFilledStatus(execution: AlorClient.OrderExecution): Boolean =
-        execution.status.contains("fill", ignoreCase = true) && execution.filledQuantity > 0
+        when (execution.status.uppercase()) {
+            "FILLED",
+            "PARTIALLY_FILLED",
+            -> execution.filledQuantity > 0
+            else -> false
+        }
 
     /**
      * Terminal order statuses — order is definitively gone from the exchange.
@@ -966,9 +976,13 @@ class OrderExecutionEngine(
     }
 
     /**
-     * Вторичная State Reconciliation close-ордера: позиция на бирже закрыта
-     * (qty=0) или уменьшилась в абсолюте → close исполнился, даже если
-     * verifyOrder/список заявок не подтверждают (eventual consistency).
+     * Вторичная State Reconciliation close-ордера: позиция на бирже полностью
+     * исчезла (qty=0) → close исполнился, даже если
+     * verifyOrder не подтверждает (eventual consistency).
+     *
+     * Частичное уменьшение (qty < localQty) НЕ считается доказательством,
+     * так как может быть вызвано внешним действием, частичным SL или
+     * другим ордером — позиция остаётся открытой до следующей итерации.
      */
     private suspend fun closeConfirmedByPositionDelta(pos: Position): Boolean =
         when (val result = alorClient.getPositions(portfolio = portfolioResolver(pos.accountId))) {

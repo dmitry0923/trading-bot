@@ -26,6 +26,7 @@ import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -76,6 +77,7 @@ class DrawdownProtectionService(
     private val meterRegistry: MeterRegistry,
     private val aumProvider: AumProvider,
     private val tradingAccountService: TradingAccountService,
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) : DailyRiskGuard {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -164,9 +166,7 @@ class DrawdownProtectionService(
             resetDailyStateIfNewDay()
         }
         aumProvider.currentAum(accountId) // обновление баланса из Alor перед расчётом лимитов
-        // МСК, а не серверный LocalDateTime.now() — иначе граница дня в computeStatus
-        // может разойтись с аккумулятором (resetDailyStateIfNewDay/updateDailyPnl).
-        val now = LocalDateTime.now(moscowZone)
+        val now = LocalDateTime.now(clock)
         val todayStart = now.toLocalDate().atStartOfDay()
         // Оконные запросы вместо полного сканирования всех закрытых позиций (по аккаунту).
         val closedSince30d = positionRepo.findClosedByAccountSince(accountId, now.minusDays(30))
@@ -218,7 +218,7 @@ class DrawdownProtectionService(
 
         val consecutive = consecutiveLosses(closedSince30d)
         val shadowUntil = refreshShadowMode(consecutive, accountId)
-        val shadowActive = shadowUntil != null && Instant.now().isBefore(shadowUntil)
+        val shadowActive = shadowUntil != null && Instant.now(clock).isBefore(shadowUntil)
 
         val reasons =
             buildList {
@@ -247,7 +247,7 @@ class DrawdownProtectionService(
                 shadowModeActive = shadowActive,
                 shadowModeUntil = shadowUntil,
                 reasons = reasons,
-                timestamp = Instant.now(),
+                timestamp = Instant.now(clock),
             )
         cachedStatusByAccount[key(accountId)] = status
         recordMetrics(status, accountId)
@@ -296,7 +296,7 @@ class DrawdownProtectionService(
             shadowModeActive = isShadowModeActive(accountId),
             shadowModeUntil = shadowModeUntilByAccount[key(accountId)],
             reasons = emptyList(),
-            timestamp = Instant.now(),
+            timestamp = Instant.now(clock),
         )
     }
 
@@ -346,7 +346,7 @@ class DrawdownProtectionService(
         accountId: Long,
         pnl: BigDecimal,
     ) {
-        val day = LocalDate.now(moscowZone)
+        val day = LocalDate.now(clock)
         loadAccountDailyState(accountId, day)
         val newPnl = (accountPnl[accountId] ?: BigDecimal.ZERO).add(pnl)
         accountPnl[accountId] = newPnl
@@ -397,7 +397,7 @@ class DrawdownProtectionService(
      */
     override fun isDailyLossLimitReached(accountId: Long?): Boolean {
         if (accountId == null) return cachedOrNeutral().dailyLimitBreached
-        val day = LocalDate.now(moscowZone)
+        val day = LocalDate.now(clock)
         if (accountLoadedDate[accountId] != day) {
             loadAccountDailyState(accountId, day)
         }
@@ -409,7 +409,7 @@ class DrawdownProtectionService(
      */
     override fun getDailyPnl(accountId: Long?): BigDecimal {
         if (accountId == null) return cachedOrNeutral().dailyPnlRub
-        val day = LocalDate.now(moscowZone)
+        val day = LocalDate.now(clock)
         if (accountLoadedDate[accountId] != day) {
             loadAccountDailyState(accountId, day)
         }
@@ -435,7 +435,7 @@ class DrawdownProtectionService(
      */
     fun isShadowModeActive(accountId: Long? = null): Boolean {
         val until = shadowModeUntilByAccount[key(accountId)] ?: return false
-        return Instant.now().isBefore(until)
+        return Instant.now(clock).isBefore(until)
     }
 
     /**
@@ -607,7 +607,7 @@ class DrawdownProtectionService(
             shadowModeUntilByAccount.remove(accountKey)
             return null
         }
-        val now = Instant.now()
+        val now = Instant.now(clock)
         val until = shadowModeUntilByAccount[accountKey] ?: Instant.EPOCH
         if (until.isBefore(now)) {
             val extended = now.plus(Duration.ofHours(riskConfig.shadowModeCooldownHours))
@@ -628,7 +628,7 @@ class DrawdownProtectionService(
      * При рестарте в течение дня восстанавливает значения из daily_risk_snapshot.
      */
     private fun resetDailyStateIfNewDay() {
-        val today = LocalDate.now(moscowZone)
+        val today = LocalDate.now(clock)
         if (lastTradingDate == today) return
         lastTradingDate = today
         accumulatorDirty = false
@@ -660,7 +660,7 @@ class DrawdownProtectionService(
     private fun persistDailyState(accountId: Long) {
         try {
             dailyRiskSnapshotRepo.upsert(
-                LocalDate.now(moscowZone),
+                LocalDate.now(clock),
                 accountPnl[accountId] ?: BigDecimal.ZERO,
                 accountLossReached[accountId] ?: false,
                 (accountPnl[accountId] ?: BigDecimal.ZERO).coerceAtMost(BigDecimal.ZERO),

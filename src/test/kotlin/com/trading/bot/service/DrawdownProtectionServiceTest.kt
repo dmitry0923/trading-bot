@@ -19,6 +19,8 @@ import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -38,6 +40,7 @@ class DrawdownProtectionServiceTest {
     private fun service(
         config: RiskConfig = RiskConfig(),
         balance: BigDecimal = config.maxPositionRub,
+        clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
     ): DrawdownProtectionService {
         val aumProvider = Mockito.mock(AumProvider::class.java)
         // latestAum() = ТЕКУЩИЙ баланс счёта (moneyAmount), уже включает реализованный P&L.
@@ -50,6 +53,7 @@ class DrawdownProtectionServiceTest {
             SimpleMeterRegistry(),
             aumProvider,
             Mockito.mock(TradingAccountService::class.java),
+            clock,
         )
     }
 
@@ -798,14 +802,16 @@ class DrawdownProtectionServiceTest {
     fun `rolling 7d exactly 7 days ago is INCLUDED (inclusive boundary)`() =
         runBlocking {
             stubNoOpenPositions()
-            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
-            // Position closed 7 days ago minus 10s safety margin to compensate for
-            // time gap between test 'now' and computeStatus()'s own now.
+            val moscowZone = ZoneId.of("Europe/Moscow")
+            // Fixed clock: 2026-08-20 12:00:00 MSK.
+            val clock = Clock.fixed(Instant.parse("2026-08-20T09:00:00Z"), moscowZone)
+            val now = LocalDateTime.now(clock) // 2026-08-20 12:00:00 MSK
+            // Position closed exactly 7 days ago → included (>=).
             stubClosedPositions(
-                listOf(closedPosition(BigDecimal("-3499"), now.minusDays(7).plusSeconds(10))),
+                listOf(closedPosition(BigDecimal("-3499"), now.minusDays(7))),
             )
 
-            val s = service()
+            val s = service(clock = clock)
             val status = s.computeStatus()
 
             assertEquals(0, BigDecimal("-3499").compareTo(status.rolling7dPnlRub))
@@ -816,13 +822,15 @@ class DrawdownProtectionServiceTest {
     fun `rolling 7d one second before boundary is EXCLUDED`() =
         runBlocking {
             stubNoOpenPositions()
-            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
-            // Position closed 7 days + 10s ago — safely outside 7d window.
+            val moscowZone = ZoneId.of("Europe/Moscow")
+            val clock = Clock.fixed(Instant.parse("2026-08-20T09:00:00Z"), moscowZone)
+            val now = LocalDateTime.now(clock) // 2026-08-20 12:00:00 MSK
+            // Position closed 7 days + 1 second ago → outside 7d window.
             stubClosedPositions(
-                listOf(closedPosition(BigDecimal("-3499"), now.minusDays(7).minusSeconds(10))),
+                listOf(closedPosition(BigDecimal("-3499"), now.minusDays(7).minusSeconds(1))),
             )
 
-            val s = service()
+            val s = service(clock = clock)
             val status = s.computeStatus()
 
             assertEquals(0, BigDecimal("0").compareTo(status.rolling7dPnlRub))
@@ -833,12 +841,14 @@ class DrawdownProtectionServiceTest {
     fun `rolling 30d exactly 30 days ago is INCLUDED (inclusive boundary)`() =
         runBlocking {
             stubNoOpenPositions()
-            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
+            val moscowZone = ZoneId.of("Europe/Moscow")
+            val clock = Clock.fixed(Instant.parse("2026-08-20T09:00:00Z"), moscowZone)
+            val now = LocalDateTime.now(clock)
             stubClosedPositions(
-                listOf(closedPosition(BigDecimal("-5999"), now.minusDays(30).plusSeconds(10))),
+                listOf(closedPosition(BigDecimal("-5999"), now.minusDays(30))),
             )
 
-            val s = service()
+            val s = service(clock = clock)
             val status = s.computeStatus()
 
             assertEquals(0, BigDecimal("-5999").compareTo(status.rolling30dPnlRub))
@@ -849,12 +859,14 @@ class DrawdownProtectionServiceTest {
     fun `rolling 30d one second before boundary is EXCLUDED`() =
         runBlocking {
             stubNoOpenPositions()
-            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
+            val moscowZone = ZoneId.of("Europe/Moscow")
+            val clock = Clock.fixed(Instant.parse("2026-08-20T09:00:00Z"), moscowZone)
+            val now = LocalDateTime.now(clock)
             stubClosedPositions(
-                listOf(closedPosition(BigDecimal("-5999"), now.minusDays(30).minusSeconds(10))),
+                listOf(closedPosition(BigDecimal("-5999"), now.minusDays(30).minusSeconds(1))),
             )
 
-            val s = service()
+            val s = service(clock = clock)
             val status = s.computeStatus()
 
             assertEquals(0, BigDecimal("0").compareTo(status.rolling30dPnlRub))

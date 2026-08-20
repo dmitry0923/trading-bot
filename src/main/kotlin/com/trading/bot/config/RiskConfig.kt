@@ -218,16 +218,24 @@ class RiskConfig {
      * но Kelly имеет положительное мат. ожидание и риск-кап позволяет 1 лот.
      *
      * Условия (все должны быть выполнены):
-     * 1. kellySizeRub > 0 — Kelly вычислил положительное мат. ожидание
-     * 2. kellySizeRub < notionalPerLot — бюджет Kelly < стоимости 1 лота
-     * 3. maxLotsByRisk >= 1 — риск-кап на сделку позволяет 1 лот
-     * 4. Портфельный лимит allows 1 lot (проверяется в postSizingChecks)
+     * 1. minimumLotPolicyEnabled = true (выключена по умолчанию)
+     * 2. kellySizeRub > 0 — Kelly вычислил положительное мат. ожидание
+     * 3. kellySizeRub < notionalPerLot — бюджет Kelly < стоимости 1 лота
+     * 4. kellySizeRub / notionalPerLot >= minimumLotPolicyMinKellyFraction — edge достаточен
+     * 5. maxLotsByRisk >= 1 — риск-кап на сделку позволяет 1 лот
+     * 6. Портфельный лимит allows 1 lot (проверяется в postSizingChecks)
      *
-     * Это НЕ Kelly sizing. Это отдельная, аудитируемая политика, которая
-     * не обходит Kelly, а разрешает минимальное участие когда Kelly
-     * не может позволить полный размер.
+     * Выключена по умолчанию. Включать только после backtest/forward-test.
+     * Это НЕ Kelly sizing. Это отдельная, аудитируемая политика.
      */
-    var minimumLotPolicyEnabled: Boolean = true
+    var minimumLotPolicyEnabled: Boolean = false
+
+    /**
+     * Минимальная доля Kelly / notionalPerLot для срабатывания MinimumLotPolicy.
+     * 0.3 = Kelly должен рекомендовать минимум 30% стоимости лота, чтобы override
+     * был допущен. Защита от marginal edge, который не покрывает交易成本.
+     */
+    var minimumLotPolicyMinKellyFraction: Double = 0.30
 
     /** Максимум открытых фьючерсных позиций (Si: 1). Отдельно от акций. */
     var futuresMaxOpenPositions: Int = 1

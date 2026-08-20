@@ -131,10 +131,16 @@ class StockEntryProfile(
         if (finalQty < 1) {
             // Minimum Lot Override: отдельная политика, не обход Kelly.
             // Разрешает ровно 1 лот когда Kelly budget < notionalPerLot,
-            // но Kelly имеет положительное мат. ожидание и риск-кап позволяет.
+            // но Kelly имеет достаточный edge и риск-кап позволяет.
+            val kellyFractionOfLot = if (notionalPerLot > BigDecimal.ZERO) {
+                kellySizeRub.divide(notionalPerLot, 4, RoundingMode.HALF_UP)
+            } else {
+                BigDecimal.ZERO
+            }
             if (riskConfig.minimumLotPolicyEnabled
                 && kellySizeRub > BigDecimal.ZERO
                 && kellySizeRub < notionalPerLot
+                && kellyFractionOfLot >= BigDecimal(riskConfig.minimumLotPolicyMinKellyFraction.toString())
                 && maxLotsByRisk >= 1
             ) {
                 return PositionSizeResult(
@@ -143,7 +149,7 @@ class StockEntryProfile(
                         ?: entryPrice.multiply(BigDecimal.ONE),
                     riskAmount = riskAmount,
                     liquidationPrice = null,
-                    reason = null,
+                    reason = "MINIMUM_LOT_OVERRIDE",
                 )
             }
             val reason = when {

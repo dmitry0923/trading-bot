@@ -217,8 +217,10 @@ class InstrumentsConfig {
          *   - "Валютный" (0.05%):     6.25 RUB/side
          *   - "Единый" (0.1%):        12.50 RUB/side
          *
-         * **Must be verified against actual Alor account tariff before LIVE deployment.**
-         * Value of 10.0 is a conservative estimate covering broker + exchange fees.
+         * Value of 10.0 is a provisional estimate and must be verified against the
+         * actual Alor account tariff before LIVE deployment. At 12.50 RUB/side the
+         * current value underestimates commission, which can overstate expected P&L
+         * and inflate position sizing.
          */
         var commissionRub: BigDecimal? = null,
     ) {

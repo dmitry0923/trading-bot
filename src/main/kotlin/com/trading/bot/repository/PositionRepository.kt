@@ -464,6 +464,29 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    suspend fun findClosedByTickerAndAccountSince(
+        ticker: String,
+        accountId: Long,
+        since: LocalDateTime,
+    ): List<Position> {
+        val sql =
+            """
+            SELECT * FROM positions
+            WHERE status != 'OPEN' AND ticker = :ticker
+              AND account_id = :accountId AND closed_at >= :since
+            ORDER BY closed_at DESC
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("ticker", ticker)
+            .bind("accountId", accountId)
+            .bind("since", since)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     suspend fun save(position: Position): Position =
         if (position.id == null) {
             insert(position)

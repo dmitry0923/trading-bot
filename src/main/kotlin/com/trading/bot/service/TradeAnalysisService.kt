@@ -12,7 +12,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 /**
@@ -23,10 +25,13 @@ import java.time.temporal.ChronoUnit
  * - Детектирует и персистит «слепые зоны» (BlindSpot): частые SL, убыточные часы
  * - timePatternAnalysis(): почасовая статистика win rate по тикеру
  */
+private val moscowZone = ZoneId.of("Europe/Moscow")
+
 @Service
 class TradeAnalysisService(
     private val positionRepo: PositionRepository,
     private val blindSpotRepo: BlindSpotRepository,
+    private val clock: Clock = Clock.system(moscowZone),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -34,11 +39,13 @@ class TradeAnalysisService(
      * Анализирует закрытые позиции за последние N дней и возвращает статистику по тикерам.
      *
      * @param days количество дней для анализа (по умолчанию 14)
-     * @param accountId ID аккаунта (null = все аккаунты, legacy single-account)
+     * @param accountId ID аккаунта.
+     *   null = все аккаунты (включая legacy без привязки).
+     *   non-null = только указанный аккаунт.
      * @return карта тикер -> TradeStats (пустая, если закрытых позиций нет)
      */
     suspend fun analyzeLastNDays(days: Int = 14, accountId: Long? = null): Map<String, TradeStats> {
-        val since = LocalDateTime.now().minusDays(days.toLong())
+        val since = LocalDateTime.now(clock).minusDays(days.toLong())
         val closed = if (accountId != null) {
             positionRepo.findClosedByAccountSince(accountId, since)
         } else {
@@ -219,14 +226,20 @@ class TradeAnalysisService(
      *
      * @param ticker тикер инструмента
      * @param days количество дней для анализа (по умолчанию 30)
+     * @param accountId ID аккаунта. null = все аккаунты, non-null = только указанный.
      * @return почасовая карта час -> win rate
      */
     suspend fun timePatternAnalysis(
         ticker: String,
         days: Int = 30,
+        accountId: Long? = null,
     ): TimePattern {
-        val since = LocalDateTime.now().minusDays(days.toLong())
-        val trades = positionRepo.findClosedByTickerSince(ticker, since)
+        val since = LocalDateTime.now(clock).minusDays(days.toLong())
+        val trades = if (accountId != null) {
+            positionRepo.findClosedByTickerAndAccountSince(ticker, accountId, since)
+        } else {
+            positionRepo.findClosedByTickerSince(ticker, since)
+        }
         val hourly = hourlyWinRate(trades)
         return TimePattern(ticker, hourly)
     }

@@ -738,11 +738,6 @@ class OrderExecutionEngine(
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
                 }
-                if (result == AlorClient.CancelResult.UNCERTAIN) return
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
-                dirty = true
             }
         }
 
@@ -801,10 +796,21 @@ class OrderExecutionEngine(
     private fun isFilledStatus(execution: AlorClient.OrderExecution): Boolean =
         execution.status.contains("fill", ignoreCase = true) && execution.filledQuantity > 0
 
+    /**
+     * Terminal order statuses — order is definitively gone from the exchange.
+     * Explicit whitelist (not string contains) to avoid false positives like
+     * "CANCEL_REJECTED" matching on substring "reject".
+     */
     private fun isGoneStatus(execution: AlorClient.OrderExecution): Boolean =
-        execution.status.contains("cancel", ignoreCase = true) ||
-            execution.status.contains("reject", ignoreCase = true) ||
-            execution.status.contains("expire", ignoreCase = true)
+        when (execution.status.uppercase()) {
+            "CANCELED",
+            "CANCELLED",
+            "REJECTED",
+            "EXPIRED",
+            "DONE",
+            -> true
+            else -> false
+        }
 
     /**
      * Применяет ExecutionReport из WebSocket: фиксация фактического исполнения

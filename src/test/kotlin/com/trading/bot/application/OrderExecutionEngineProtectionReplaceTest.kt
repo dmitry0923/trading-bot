@@ -16,18 +16,13 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.whenever
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
 
-/**
- * Unit-тест идемпотентной отмены при перевыставлении защитных заявок SL/TP (P1).
- *
- * При UNKNOWN/UNCERTAIN отмене engine ретраит на следующем цикле С ТЕМ ЖЕ
- * idempotency-ключом (`prot-cancel-<orderId>`) — биржа дедуплицирует повторную
- * отмену, двойного снятия/зависания нет. UNCERTAIN не снимает флаг
- * slPendingReplace/tpPendingReplace.
- */
 class OrderExecutionEngineProtectionReplaceTest {
     private val alorClient = Mockito.mock(AlorClient::class.java)
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
@@ -56,16 +51,6 @@ class OrderExecutionEngineProtectionReplaceTest {
             portfolioResolver = { "D12345" },
         )
 
-    private fun anyString(): String {
-        Mockito.any(String::class.java)
-        return "x"
-    }
-
-    private fun anyPosition(): Position {
-        Mockito.any(Position::class.java)
-        return pendingReplacePos()
-    }
-
     private fun pendingReplacePos(): Position =
         Position(
             id = 1L,
@@ -82,64 +67,217 @@ class OrderExecutionEngineProtectionReplaceTest {
             tpOrderPrice = BigDecimal("151000"),
         )
 
-    private fun stubVerificationInconclusive() {
-        runBlocking {
-            Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.isNull(), anyString()))
-                .thenReturn(null)
+    /**
+     * orderId-conditional verifyOrder stub: returns [slResult] for "old-sl",
+     * [tpResult] for "old-tp", null for anything else.
+     *
+     * reconcileProtectionOrders calls checkProtectionFills FIRST (which verifies
+     * both SL and TP), then finishProtectionReplacement. We must return the right
+     * result per orderId to avoid checkProtectionFills clearing the wrong order.
+     */
+    private suspend fun stubVerifyOrderById(
+        slResult: AlorClient.OrderExecution? = null,
+        tpResult: AlorClient.OrderExecution? = null,
+    ) {
+        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenAnswer { invocation ->
+            val orderId = invocation.getArgument<String>(0)
+            when (orderId) {
+                "old-sl" -> slResult
+                "old-tp" -> tpResult
+                else -> null
+            }
         }
     }
 
-    private fun stubNewProtectionPlacementSafe() {
-        runBlocking {
-            Mockito
-                .`when`(
-                    orderOutboxService.placeOrder(
-                        Mockito.anyString(),
-                        Mockito.anyString(),
-                        Mockito.anyInt(),
-                        Mockito.any(),
-                        Mockito.anyString(),
-                        Mockito.any(),
-                        Mockito.any(),
-                        Mockito.any(),
-                        Mockito.anyString(),
-                        Mockito.any(),
-                    ),
-                ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = false))
-        }
+    private suspend fun stubCancelOrderSafe() {
+        whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+            .thenReturn(AlorClient.CancelResult.REJECTED)
     }
+
+    private suspend fun stubCancelProtectionSafe() {
+        whenever(
+            orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())
+        ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = true))
+    }
+
+    private suspend fun stubNewProtectionPlacementSafe() {
+        whenever(
+            orderOutboxService.placeOrder(
+                anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
+                anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
+            )
+        ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = false))
+    }
+
+    private suspend fun stubSave() {
+        whenever(positionRepo.save(anyOrNull<Position>())).thenAnswer { it.getArgument<Position>(0) }
+    }
+
+    private suspend fun stubFullClose() {
+        whenever(positionRepo.transitionToClosed(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), Mockito.anyInt()))
+            .thenReturn(true)
+        whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
+        doReturn(Unit).whenever(tradeEventService).recordPositionClosed(anyOrNull(), anyOrNull())
+    }
+
+    // ── UNCERTAIN ─────────────────────────────────────────────────────────
 
     @Test
-    fun `uncertain cancel keeps replace pending and retry reuses same idempotency key`() {
-        stubVerificationInconclusive()
+    fun `uncertain cancel keeps replace pending and retry reuses same idempotency key`() = runBlocking {
+        stubVerifyOrderById()
         stubNewProtectionPlacementSafe()
-        runBlocking {
-            Mockito
-                .`when`(alorClient.cancelOrder(anyString(), anyString(), anyString()))
-                .thenReturn(AlorClient.CancelResult.UNCERTAIN)
-                .thenReturn(AlorClient.CancelResult.CONFIRMED)
-            Mockito.`when`(positionRepo.save(anyPosition())).thenAnswer { inv -> inv.getArgument<Position>(0) }
-        }
+        stubSave()
+
+        whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+            .thenReturn(AlorClient.CancelResult.UNCERTAIN)
+            .thenReturn(AlorClient.CancelResult.CONFIRMED)
 
         val pos = pendingReplacePos()
-        runBlocking {
-            engine.reconcilePosition(pos)
-        }
+        engine.reconcilePosition(pos)
         assertTrue(pos.slPendingReplace)
         assertEquals("old-sl", pos.slOrderId)
 
-        runBlocking {
-            engine.reconcilePosition(pos)
-        }
+        engine.reconcilePosition(pos)
         assertFalse(pos.slPendingReplace)
 
         val cancelKeys =
-            Mockito
-                .mockingDetails(alorClient)
-                .invocations
+            Mockito.mockingDetails(alorClient).invocations
                 .filter { it.method.name == "cancelOrder" }
                 .map { it.arguments[1] as String }
         assertEquals(listOf("prot-cancel-old-sl", "prot-cancel-old-sl"), cancelKeys)
+    }
+
+    // ── REJECTED state machine: SL ────────────────────────────────────────
+    //
+    // reconcileProtectionOrders calls checkProtectionFills FIRST which verifies
+    // both SL and TP. When checkProtectionFills sees CANCELED/FILLED for an order,
+    // it handles it BEFORE finishProtectionReplacement runs.
+    //
+    // - CANCELED test: checkProtectionFills catches CANCELED → clears SL (GONE path)
+    // - FILLED test: checkProtectionFills catches FILLED → full close via applyExchangeProtectionClose
+    // - UNKNOWN tests: checkProtectionFills gets null → skip; finishProtectionReplacement gets REJECTED → verify → null → return
+
+    @Test
+    fun `SL rejected + verify FILLED closes position atomically`() = runBlocking {
+        stubVerifyOrderById(
+            slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
+        )
+        stubCancelProtectionSafe()
+        stubNewProtectionPlacementSafe()
+        stubSave()
+        stubFullClose()
+
+        val pos = pendingReplacePos()
+        engine.reconcilePosition(pos)
+
+        assertEquals(PositionStatus.CLOSED, pos.status)
+    }
+
+    @Test
+    fun `SL rejected + verify CANCELED clears SL ID via checkProtectionFills`() = runBlocking {
+        stubVerifyOrderById(
+            slResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
+        )
+        stubSave()
+        stubNewProtectionPlacementSafe()
+
+        val pos = pendingReplacePos()
+        engine.reconcilePosition(pos)
+
+        assertEquals(null, pos.slOrderId)
+        assertEquals(null, pos.slOrderPrice)
+        assertFalse(pos.slPendingReplace)
+        assertEquals("old-tp", pos.tpOrderId)
+    }
+
+    @Test
+    fun `SL rejected + verify null preserves SL ID (UNKNOWN)`() = runBlocking {
+        stubVerifyOrderById()
+        stubCancelOrderSafe()
+        stubNewProtectionPlacementSafe()
+
+        val pos = pendingReplacePos()
+        engine.reconcilePosition(pos)
+
+        assertEquals("old-sl", pos.slOrderId)
+        assertTrue(pos.slPendingReplace)
+        assertEquals("old-tp", pos.tpOrderId)
+    }
+
+    @Test
+    fun `SL rejected + verify unknown status preserves SL ID`() = runBlocking {
+        stubVerifyOrderById(
+            slResult = AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 0, avgPrice = null),
+        )
+        stubCancelOrderSafe()
+        stubNewProtectionPlacementSafe()
+
+        val pos = pendingReplacePos()
+        engine.reconcilePosition(pos)
+
+        assertEquals("old-sl", pos.slOrderId)
+        assertTrue(pos.slPendingReplace)
+        assertEquals("old-tp", pos.tpOrderId)
+    }
+
+    // ── REJECTED state machine: TP ────────────────────────────────────────
+
+    @Test
+    fun `TP rejected + verify CANCELED clears TP ID`() = runBlocking {
+        val pos = pendingReplacePos().copy(
+            slOrderId = null,
+            slOrderPrice = null,
+            slPendingReplace = false,
+            tpPendingReplace = true,
+        )
+        stubVerifyOrderById(
+            tpResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
+        )
+        stubSave()
+        stubNewProtectionPlacementSafe()
+
+        engine.reconcilePosition(pos)
+
+        assertFalse(pos.tpPendingReplace)
+        assertEquals(null, pos.tpOrderId)
+        assertEquals(null, pos.tpOrderPrice)
+    }
+
+    @Test
+    fun `TP rejected + verify null preserves TP ID (UNKNOWN)`() = runBlocking {
+        val pos = pendingReplacePos().copy(
+            slOrderId = null,
+            slOrderPrice = null,
+            slPendingReplace = false,
+            tpPendingReplace = true,
+        )
+        stubVerifyOrderById()
+        stubCancelOrderSafe()
+        stubNewProtectionPlacementSafe()
+
+        engine.reconcilePosition(pos)
+
+        assertEquals("old-tp", pos.tpOrderId)
+        assertTrue(pos.tpPendingReplace)
+    }
+
+    // ── isGoneStatus strict whitelist ─────────────────────────────────────
+
+    @Test
+    fun `isGoneStatus rejects CANCEL_REJECTED and matches terminal statuses`() {
+        val engine = Mockito.mock(OrderExecutionEngine::class.java)
+        val method = OrderExecutionEngine::class.java.getDeclaredMethod("isGoneStatus", AlorClient.OrderExecution::class.java)
+        method.isAccessible = true
+
+        fun gone(s: String) = method.invoke(engine, AlorClient.OrderExecution(status = s, filledQuantity = 0, avgPrice = null)) as Boolean
+
+        assertFalse(gone("CANCEL_REJECTED"))
+        assertFalse(gone("NEW"))
+        assertFalse(gone("PARTIALLY_FILLED"))
+        assertFalse(gone("FILLED"))
+
+        assertTrue(gone("CANCELED"))
+        assertTrue(gone("REJECTED"))
+        assertTrue(gone("EXPIRED"))
     }
 }

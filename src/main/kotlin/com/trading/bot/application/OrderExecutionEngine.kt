@@ -475,7 +475,14 @@ class OrderExecutionEngine(
      */
     private suspend fun reconcileProtectionOrders(pos: Position) {
         if (!protectionOrdersEnabled) return
-        if (pos.status != PositionStatus.OPEN) return
+        if (pos.status != PositionStatus.OPEN) {
+            if (pos.slOrderId != null || pos.tpOrderId != null) {
+                logger.warn { "Orphan SL/TP detected for ${pos.ticker} (${pos.status}); cancelling via outbox" }
+                cancelProtectionOrders(pos)
+                positionRepo.save(pos)
+            }
+            return
+        }
         resolveProtectionOutbox(pos)
         if (pos.status != PositionStatus.OPEN) return
         checkProtectionFills(pos)
@@ -970,18 +977,16 @@ class OrderExecutionEngine(
             }
 
             is AlorClient.ReconcileResult.Ok -> {
-                val signed =
-                    if (pos.direction == PositionDirection.LONG) {
-                        pos.quantity.toLong()
-                    } else {
-                        -pos.quantity.toLong()
-                    }
                 val exchangeQty =
                     result.items
                         .firstOrNull { it.ticker.equals(pos.ticker, ignoreCase = true) }
                         ?.qty
                         ?: 0L
-                exchangeQty == 0L || abs(exchangeQty) < abs(signed)
+                // Conservative: only treat full disappearance (qty=0) as confirmation.
+                // Partial reduction (e.g. exchangeQty=60 vs local=100) may be caused by
+                // external action, partial SL fill, or another order — NOT safe to assume
+                // our close order was the cause. Retry next cycle.
+                exchangeQty == 0L
             }
         }
 
@@ -1118,7 +1123,7 @@ class OrderExecutionEngine(
         when {
             outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
                 val execution = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId)) ?: return
-                if (execution.status.contains("reject") || execution.status.contains("cancel")) {
+                if (isGoneStatus(execution)) {
                     abandonEntry(pos, CloseReason.ENTRY_REJECTED)
                     return
                 }

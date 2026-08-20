@@ -186,9 +186,12 @@ class OrderExecutionEngineProtectionReplaceTest {
         val pos = pendingReplacePos()
         engine.reconcilePosition(pos)
 
-        val transitionCalls = Mockito.mockingDetails(positionRepo).invocations
-            .filter { it.method.name == "transitionToClosed" }
+        val invocations = Mockito.mockingDetails(positionRepo).invocations
+        val transitionCalls = invocations.filter { it.method.name == "transitionToClosed" }
         assertEquals(1, transitionCalls.size, "transitionToClosed must be called exactly once")
+
+        val saveCalls = invocations.filter { it.method.name == "save" }
+        assertEquals(0, saveCalls.size, "save() must NOT be called - transitionToClosed handles persistence atomically")
 
         assertEquals(PositionStatus.CLOSED, pos.status)
     }

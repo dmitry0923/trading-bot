@@ -722,7 +722,202 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
-    fun `daily and rolling limits checked independently — daily triggers but 7d does not`() =
+    fun `rolling limit scales with AUM — same loss blocked at 50k but allowed at 100k`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 7% of 50 000 = 3 500. Loss of -3 500 → exactly at limit → BREACHED.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3500"), LocalDateTime.now().minusDays(2))),
+            )
+
+            val s50k = service(balance = BigDecimal("50000"))
+            val status50k = s50k.computeStatus()
+
+            assertTrue(status50k.rolling7dBreached)
+            assertEquals(0, BigDecimal("3500").compareTo(status50k.rolling7dLimitRub))
+
+            // Same loss, but AUM doubled → 7% of 100 000 = 7 000 → NOT breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3500"), LocalDateTime.now().minusDays(2))),
+            )
+
+            val s100k = service(balance = BigDecimal("100000"))
+            val status100k = s100k.computeStatus()
+
+            assertFalse(status100k.rolling7dBreached)
+            assertEquals(0, BigDecimal("7000").compareTo(status100k.rolling7dLimitRub))
+        }
+
+    @Test
+    fun `rolling limit scales with AUM — same loss blocked at 12pct but allowed at 200k`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // 12% of 50 000 = 6 000. Loss of -6 000 → exactly at limit → BREACHED.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now().minusDays(20))),
+            )
+
+            val s50k = service(balance = BigDecimal("50000"))
+            val status50k = s50k.computeStatus()
+            assertTrue(status50k.rolling30dBreached)
+            assertEquals(0, BigDecimal("6000").compareTo(status50k.rolling30dLimitRub))
+
+            // Same loss, AUM quadrupled → 12% of 200 000 = 24 000 → NOT breached.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now().minusDays(20))),
+            )
+
+            val s200k = service(balance = BigDecimal("200000"))
+            val status200k = s200k.computeStatus()
+            assertFalse(status200k.rolling30dBreached)
+            assertEquals(0, BigDecimal("24000").compareTo(status200k.rolling30dLimitRub))
+        }
+
+    @Test
+    fun `capital growth raises rolling limit — profit earned then loss stays below new limit`() =
+        runBlocking {
+            stubNoOpenPositions()
+            // Scenario: started at 50k, earned +10k profit (AUM now 60k).
+            // Then lost -3 500.  7% of 60k = 4 200.  -3500 > -4200 → NOT breached.
+            stubClosedPositions(
+                listOf(
+                    closedPosition(BigDecimal("10000"), LocalDateTime.now().minusDays(3)),
+                    closedPosition(BigDecimal("-3500"), LocalDateTime.now().minusDays(1)),
+                ),
+            )
+
+            val s = service(balance = BigDecimal("60000"))
+            val status = s.computeStatus()
+
+            assertFalse(status.rolling7dBreached)
+            assertEquals(0, BigDecimal("6500").compareTo(status.rolling7dPnlRub))
+            assertEquals(0, BigDecimal("4200").compareTo(status.rolling7dLimitRub))
+        }
+
+    @Test
+    fun `rolling 7d exactly 7 days ago is INCLUDED (inclusive boundary)`() =
+        runBlocking {
+            stubNoOpenPositions()
+            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
+            // Position closed 7 days ago minus 10s safety margin to compensate for
+            // time gap between test 'now' and computeStatus()'s own now.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3499"), now.minusDays(7).plusSeconds(10))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-3499").compareTo(status.rolling7dPnlRub))
+            assertFalse(status.rolling7dBreached)
+        }
+
+    @Test
+    fun `rolling 7d one second before boundary is EXCLUDED`() =
+        runBlocking {
+            stubNoOpenPositions()
+            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
+            // Position closed 7 days + 10s ago — safely outside 7d window.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3499"), now.minusDays(7).minusSeconds(10))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("0").compareTo(status.rolling7dPnlRub))
+            assertFalse(status.rolling7dBreached)
+        }
+
+    @Test
+    fun `rolling 30d exactly 30 days ago is INCLUDED (inclusive boundary)`() =
+        runBlocking {
+            stubNoOpenPositions()
+            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-5999"), now.minusDays(30).plusSeconds(10))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("-5999").compareTo(status.rolling30dPnlRub))
+            assertFalse(status.rolling30dBreached)
+        }
+
+    @Test
+    fun `rolling 30d one second before boundary is EXCLUDED`() =
+        runBlocking {
+            stubNoOpenPositions()
+            val now = LocalDateTime.now(ZoneId.of("Europe/Moscow"))
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-5999"), now.minusDays(30).minusSeconds(10))),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("0").compareTo(status.rolling30dPnlRub))
+            assertFalse(status.rolling30dBreached)
+        }
+
+    @Test
+    fun `AUM with unrealized P and L changes rolling limit`() =
+        runBlocking {
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3499"), LocalDateTime.now().minusDays(2))),
+            )
+            // Open LONG position: entry=100, current=99 → unrealized = -10 (SBER lotSize=10)
+            // AUM = 50000 + (-10) = 49990. 7% = 3499.30. -3499 > -3499.30 → NOT breached.
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        currentPrice = BigDecimal("99"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now().minusDays(1),
+                    ),
+                ),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            // AUM decreased by unrealized loss → tighter rolling limit.
+            assertTrue(status.aum < BigDecimal("50000"))
+            assertFalse(status.rolling7dBreached)
+
+            // Now unrealized profit → AUM higher → looser limit.
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-3499"), LocalDateTime.now().minusDays(2))),
+            )
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        currentPrice = BigDecimal("102"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now().minusDays(1),
+                    ),
+                ),
+            )
+
+            val s2 = service()
+            val status2 = s2.computeStatus()
+
+            // AUM = 50000 + 20 = 50020. 7% = 3501.40. -3499 > -3501.40 → still not breached.
+            assertTrue(status2.aum > BigDecimal("50000"))
+            assertFalse(status2.rolling7dBreached)
+        }
+
+    @Test
+    fun `daily limit can block while rolling 7d remains below limit`() =
         runBlocking {
             stubNoOpenPositions()
             // Today: -1500 (below 2% limit of 1000 → daily breached).

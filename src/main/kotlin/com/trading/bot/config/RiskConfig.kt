@@ -230,10 +230,10 @@ class RiskConfig {
     var maxDailyLossPercent: Double = 2.0
 
     /** Скользящий лимит убытка за 7 дней, % от AUM (защита от «смерти от тысячи порезов»). */
-    var maxRollingLossPercent7d: Double = 15.0
+    var maxRollingLossPercent7d: Double = 7.0
 
     /** Скользящий лимит убытка за 30 дней, % от AUM. */
-    var maxRollingLossPercent30d: Double = 25.0
+    var maxRollingLossPercent30d: Double = 12.0
 
     /**
      * Лимит серии убыточных сделок подряд. При достижении LLM-агент переводится

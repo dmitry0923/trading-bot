@@ -493,8 +493,8 @@ risk:
   trading-hours-end: "18:30"
   # Multi-Tier Drawdown Protection (% от AUM)
   max-daily-loss-percent: 2.0
-  max-rolling-loss-7d-percent: 15.0
-  max-rolling-loss-30d-percent: 25.0
+  max-rolling-loss-7d-percent: 7.0
+  max-rolling-loss-30d-percent: 12.0
   max-consecutive-losses: 3
   shadow-mode-enabled: true
   shadow-mode-cooldown-hours: 24

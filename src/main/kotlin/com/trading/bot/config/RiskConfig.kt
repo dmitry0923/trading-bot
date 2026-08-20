@@ -213,6 +213,22 @@ class RiskConfig {
     /** Жёсткий лимит контрактов на позицию (Si: 1). */
     var maxContractsPerPosition: Int = 1
 
+    /**
+     * Minimum Lot Override: разрешает ровно 1 лот когда Kelly budget < 1 лота,
+     * но Kelly имеет положительное мат. ожидание и риск-кап позволяет 1 лот.
+     *
+     * Условия (все должны быть выполнены):
+     * 1. kellySizeRub > 0 — Kelly вычислил положительное мат. ожидание
+     * 2. kellySizeRub < notionalPerLot — бюджет Kelly < стоимости 1 лота
+     * 3. maxLotsByRisk >= 1 — риск-кап на сделку позволяет 1 лот
+     * 4. Портфельный лимит allows 1 lot (проверяется в postSizingChecks)
+     *
+     * Это НЕ Kelly sizing. Это отдельная, аудитируемая политика, которая
+     * не обходит Kelly, а разрешает минимальное участие когда Kelly
+     * не может позволить полный размер.
+     */
+    var minimumLotPolicyEnabled: Boolean = true
+
     /** Максимум открытых фьючерсных позиций (Si: 1). Отдельно от акций. */
     var futuresMaxOpenPositions: Int = 1
 

@@ -129,6 +129,23 @@ class StockEntryProfile(
 
         val finalQty = minOf(kellyLots, maxLotsByRisk)
         if (finalQty < 1) {
+            // Minimum Lot Override: отдельная политика, не обход Kelly.
+            // Разрешает ровно 1 лот когда Kelly budget < notionalPerLot,
+            // но Kelly имеет положительное мат. ожидание и риск-кап позволяет.
+            if (riskConfig.minimumLotPolicyEnabled
+                && kellySizeRub > BigDecimal.ZERO
+                && kellySizeRub < notionalPerLot
+                && maxLotsByRisk >= 1
+            ) {
+                return PositionSizeResult(
+                    quantity = 1,
+                    marginRequired = spec?.notional(1, entryPrice)
+                        ?: entryPrice.multiply(BigDecimal.ONE),
+                    riskAmount = riskAmount,
+                    liquidationPrice = null,
+                    reason = null,
+                )
+            }
             val reason = when {
                 kellySizeRub > BigDecimal.ZERO && kellySizeRub < notionalPerLot -> "KELLY_BELOW_MIN_LOT"
                 else -> "ZERO_RISK_SIZE"

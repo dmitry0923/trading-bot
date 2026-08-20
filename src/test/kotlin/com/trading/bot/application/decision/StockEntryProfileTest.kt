@@ -115,11 +115,37 @@ class StockEntryProfileTest {
     }
 
     @Test
-    fun `sizePosition returns KELLY_BELOW_MIN_LOT when Kelly budget too small for 1 lot`() = runBlocking {
+    fun `sizePosition allows 1 lot via MinimumLotPolicy when Kelly budget too small`() = runBlocking {
         // kellySizeRub = 5000 (positive → trade has expected value)
         // notionalPerLot = 12.42 * 1000 = 12420
         // kellyLots = floor(5000 / 12420) = 0
-        // Correct: no trade, because Kelly's optimal size < 1 lot minimum
+        // maxLotsByRisk = floor(500 / 82.1) = 6 → risk allows 1 lot
+        // MinimumLotPolicy: kelly > 0, kelly < notional, risk allows → 1 lot
+        Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
+        Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
+            .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+
+        val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+        val request = EntryRequest(
+            ticker = "CNYRUB_TOM",
+            action = StrategyAction.BUY,
+            entryPrice = BigDecimal("12.42"),
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal("50000"),
+            currentGo = BigDecimal.ZERO,
+            atr = null,
+            openPositions = emptyList(),
+        )
+
+        val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
+
+        assertEquals(1, size.quantity)
+        assertNull(size.reason)
+    }
+
+    @Test
+    fun `sizePosition returns KELLY_BELOW_MIN_LOT when MinimumLotPolicy disabled`() = runBlocking {
+        riskConfig.minimumLotPolicyEnabled = false
         Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
         Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
             .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
@@ -140,40 +166,15 @@ class StockEntryProfileTest {
 
         assertEquals(0, size.quantity)
         assertEquals("KELLY_BELOW_MIN_LOT", size.reason)
+        riskConfig.minimumLotPolicyEnabled = true
     }
 
     @Test
-    fun `sizePosition returns ZERO_RISK_SIZE when Kelly rejects trade`() = runBlocking {
-        // kellySizeRub = 0 → Kelly has negative expected value → should not trade
-        Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
-        Mockito.doReturn(BigDecimal.ZERO).`when`(adaptiveRisk)
-            .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
-
-        val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
-        val request = EntryRequest(
-            ticker = "CNYRUB_TOM",
-            action = StrategyAction.BUY,
-            entryPrice = BigDecimal("12.42"),
-            direction = PositionDirection.LONG,
-            portfolioMoney = BigDecimal("50000"),
-            currentGo = BigDecimal.ZERO,
-            atr = null,
-            openPositions = emptyList(),
-        )
-
-        val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
-
-        assertEquals(0, size.quantity)
-        assertEquals("ZERO_RISK_SIZE", size.reason)
-    }
-
-    @Test
-    fun `sizePosition returns KELLY_BELOW_MIN_LOT when Kelly positive but risk cap also blocks`() = runBlocking {
+    fun `sizePosition returns KELLY_BELOW_MIN_LOT when risk cap also blocks`() = runBlocking {
         // kellySizeRub = 5000 (positive but < notionalPerLot = 12420)
         // riskAmount = 100 * 1.0 / 100 = 1.0
         // lossPerLot = 12.42 * 0.005 * 1000 + 2 * 10 = 82.1
-        // maxLotsByRisk = floor(1.0 / 82.1) = 0 → even 1 lot exceeds risk cap
-        // Primary reason: Kelly budget < 1 lot notional
+        // maxLotsByRisk = floor(1.0 / 82.1) = 0 → policy condition 3 fails
         Mockito.doReturn(BigDecimal("100")).`when`(aumProvider).currentAum(null)
         Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
             .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
@@ -194,6 +195,31 @@ class StockEntryProfileTest {
 
         assertEquals(0, size.quantity)
         assertEquals("KELLY_BELOW_MIN_LOT", size.reason)
+    }
+
+    @Test
+    fun `sizePosition returns ZERO_RISK_SIZE when Kelly rejects trade`() = runBlocking {
+        // kellySizeRub = 0 → Kelly has negative expected value → no override possible
+        Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
+        Mockito.doReturn(BigDecimal.ZERO).`when`(adaptiveRisk)
+            .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+
+        val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+        val request = EntryRequest(
+            ticker = "CNYRUB_TOM",
+            action = StrategyAction.BUY,
+            entryPrice = BigDecimal("12.42"),
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal("50000"),
+            currentGo = BigDecimal.ZERO,
+            atr = null,
+            openPositions = emptyList(),
+        )
+
+        val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
+
+        assertEquals(0, size.quantity)
+        assertEquals("ZERO_RISK_SIZE", size.reason)
     }
 
     @Test

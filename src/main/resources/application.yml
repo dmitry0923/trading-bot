@@ -449,6 +449,9 @@ risk:
   kelly-min-trades: 15
   kelly-no-data-fraction: 0.25
   kelly-max-position-fraction: 0.10
+  # Minimum Lot Override: разрешает 1 лот когда Kelly budget < notionalPerLot,
+  # но Kelly > 0 и риск-кап позволяет. Отдельная политика, не обход Kelly.
+  minimum-lot-policy-enabled: true
   # Online-калибровка порога уверенности по исходам сделок (roadmap 13.11.8)
   confidence-calibration-enabled: true
   confidence-calibration-days: 14

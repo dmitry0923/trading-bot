@@ -34,11 +34,16 @@ class TradeAnalysisService(
      * Анализирует закрытые позиции за последние N дней и возвращает статистику по тикерам.
      *
      * @param days количество дней для анализа (по умолчанию 14)
+     * @param accountId ID аккаунта (null = все аккаунты, legacy single-account)
      * @return карта тикер -> TradeStats (пустая, если закрытых позиций нет)
      */
-    suspend fun analyzeLastNDays(days: Int = 14): Map<String, TradeStats> {
+    suspend fun analyzeLastNDays(days: Int = 14, accountId: Long? = null): Map<String, TradeStats> {
         val since = LocalDateTime.now().minusDays(days.toLong())
-        val closed = positionRepo.findClosedSince(since)
+        val closed = if (accountId != null) {
+            positionRepo.findClosedByAccountSince(accountId, since)
+        } else {
+            positionRepo.findClosedSince(since)
+        }
 
         if (closed.isEmpty()) {
             logger.info { "No closed positions in last $days days" }

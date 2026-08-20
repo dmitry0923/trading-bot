@@ -163,7 +163,7 @@ class AdaptiveRiskService(
         accountId: Long? = null,
     ): BigDecimal {
         val aum = aumProvider.currentAum(accountId)
-        val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker]
+        val stats = tradeAnalysisService.analyzeLastNDays(30, accountId)[ticker]
         // No-data fallback тоже ограничен жёстким капом: min(noDataFraction, kellyMaxPositionFraction).
         val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
         val base =
@@ -240,7 +240,7 @@ class AdaptiveRiskService(
         ticker: String,
         accountId: Long? = null,
     ): BigDecimal? {
-        val stats = tradeAnalysisService.analyzeLastNDays(30)[ticker] ?: return null
+        val stats = tradeAnalysisService.analyzeLastNDays(30, accountId)[ticker] ?: return null
         if (stats.totalTrades < riskConfig.kellyMinTrades) return null
         if (stats.avgWin <= BigDecimal.ZERO && stats.avgLoss <= BigDecimal.ZERO) return null
 
@@ -250,9 +250,9 @@ class AdaptiveRiskService(
 
         // avgWin и avgLoss — положительные величины (средний выигрыш/проигрыш в RUB).
         // PnlCalculator уже вычел комиссию из realized P&L.
-        val grossExpected = wBd.multiply(stats.avgWin)
+        val expectedNetProfit = wBd.multiply(stats.avgWin)
             .subtract(oneMinusW.multiply(stats.avgLoss))
-        return grossExpected
+        return expectedNetProfit
     }
 
     /**

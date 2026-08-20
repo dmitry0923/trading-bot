@@ -208,7 +208,7 @@ class InstrumentsConfig {
         var maxSpreadPercent: BigDecimal? = null,
         /** Per-instrument max gap % — overrides RiskConfig.maxGapPercent when non-null. */
         var maxGapPercent: BigDecimal? = null,
-        /** Commission per lot per side in RUB. Used by risk sizing (×2 for round-trip) and backtest. */
+        /** Estimated commission per lot per side in RUB. Used by risk sizing (×2 for round-trip) and realized P&L. Must match actual broker tariff. */
         var commissionRub: BigDecimal? = null,
     ) {
         /** Effective SL%: per-instrument override or global default. */

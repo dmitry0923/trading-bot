@@ -468,7 +468,7 @@ risk:
   volatility-fallback-candles-per-day: 57
   min-volatility-size-multiplier: 0.25
   max-volatility-size-multiplier: 2.0
-  max-gross-exposure-percent: 150.0
+  max-gross-exposure-percent: 100.0
   max-net-exposure-percent: 100.0
   max-sector-correlation: 0.7
   kelly-drawdown-reduction: 0.5
@@ -492,7 +492,7 @@ risk:
   trading-hours-start: "10:00"
   trading-hours-end: "18:30"
   # Multi-Tier Drawdown Protection (% от AUM)
-  max-daily-loss-percent: 10.0
+  max-daily-loss-percent: 2.0
   max-rolling-loss-7d-percent: 15.0
   max-rolling-loss-30d-percent: 25.0
   max-consecutive-losses: 3

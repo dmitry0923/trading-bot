@@ -141,10 +141,10 @@ class DrawdownProtectionServiceTest {
             // Баланс (latestAum) = 50 000 уже содержит реализованный P&L (+20 000);
             // добавлять totalRealized нельзя — двойной счёт.
             assertEquals(0, BigDecimal("50000").compareTo(status.aum))
-            // дневной лимит = 10% от AUM = 5 000
-            assertEquals(0, BigDecimal("5000").compareTo(status.dailyLimitRub))
+            // дневной лимит = 2% от AUM = 1 000
+            assertEquals(0, BigDecimal("1000").compareTo(status.dailyLimitRub))
             // эффективный лимит берётся из кэша
-            assertEquals(0, BigDecimal("5000").compareTo(s.effectiveDailyLossLimitRub()))
+            assertEquals(0, BigDecimal("1000").compareTo(s.effectiveDailyLossLimitRub()))
             assertFalse(status.blocking())
         }
 
@@ -293,7 +293,7 @@ class DrawdownProtectionServiceTest {
         assertEquals(0, BigDecimal("50000").compareTo(status.aum))
         assertFalse(status.blocking())
         assertFalse(s.isEntryBlocked())
-        assertEquals(0, BigDecimal("5000").compareTo(status.dailyLimitRub))
+        assertEquals(0, BigDecimal("1000").compareTo(status.dailyLimitRub))
     }
 
     @Test
@@ -388,7 +388,7 @@ class DrawdownProtectionServiceTest {
     fun `small losses do not trigger the limit`() {
         val s = service()
 
-        s.updateDailyPnl(BigDecimal("-3000"))
+        s.updateDailyPnl(BigDecimal("-500"))
 
         assertFalse(s.isDailyLossLimitReached())
     }
@@ -399,9 +399,9 @@ class DrawdownProtectionServiceTest {
             DailyRiskSnapshot(
                 id = 1,
                 tradeDate = moscowToday,
-                dailyPnl = BigDecimal("-3000"),
+                dailyPnl = BigDecimal("-500"),
                 limitReached = false,
-                maxDrawdownToday = BigDecimal("-3000"),
+                maxDrawdownToday = BigDecimal("-500"),
             ),
         )
         val s = service()
@@ -409,7 +409,7 @@ class DrawdownProtectionServiceTest {
         // любая точка дневного аккумулятора при первом касании дня восстанавливает снапшот
         s.updateDailyPnl(BigDecimal.ZERO)
 
-        assertEquals(0, BigDecimal("-3000").compareTo(s.getDailyPnl()))
+        assertEquals(0, BigDecimal("-500").compareTo(s.getDailyPnl()))
         assertFalse(s.isDailyLossLimitReached())
     }
 
@@ -498,7 +498,7 @@ class DrawdownProtectionServiceTest {
             // dirty-аккумулятор НЕ перезаписывается stale-recompute (0): оба персиста
             // (updateDailyPnl и computeStatus) сохраняют -1000, а не 0 (без dirty-гварда
             // второй был бы 0 — потеря инкремента в daily_risk_snapshot при рестарте).
-            Mockito.verify(snapshotRepo, Mockito.times(2)).upsert(moscowToday, BigDecimal("-1000"), false, BigDecimal("-1000"))
+            Mockito.verify(snapshotRepo, Mockito.times(2)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"))
         }
 
     // ===================== Per-account скоуп (F-1/F-13/F-14) =====================

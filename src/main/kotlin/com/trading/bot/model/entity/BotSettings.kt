@@ -39,7 +39,7 @@ data class BotSettings(
     val userLeverage: Double = 2.0,
     val minLeverage: Double = 1.0,
     val maxLeverage: Double = 3.0,
-    val maxDailyLossPercent: Double = 10.0,
+    val maxDailyLossPercent: Double = 2.0,
     val maxRollingLossPercent7d: Double = 15.0,
     val maxRollingLossPercent30d: Double = 25.0,
     val maxConsecutiveLosses: Int = 3,

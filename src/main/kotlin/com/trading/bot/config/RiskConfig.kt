@@ -147,7 +147,7 @@ class RiskConfig {
      * Жёсткий лимит Gross Exposure, % от депозита. Сумма всех открытых позиций
      * (нотионал long + short) не может превышать этот предел. Защита от коррелированных шоков.
      */
-    var maxGrossExposurePercent: Double = 150.0
+    var maxGrossExposurePercent: Double = 100.0
 
     /**
      * Жёсткий лимит Net Exposure, % от депозита. Чистый directional риск
@@ -225,9 +225,9 @@ class RiskConfig {
     /**
      * Дневной лимит убытка, % от AUM. Если `maxDailyLossRub > 0` тоже включён,
      * эффективный лимит = `min(AUM * percent / 100, maxDailyLossRub)` (жёсткий потолок).
-     * 10.0 = нельзя терять более 10% капитала за день.
+     * 2.0 = максимально допустимый дневной убыток — 2% капитала.
      */
-    var maxDailyLossPercent: Double = 10.0
+    var maxDailyLossPercent: Double = 2.0
 
     /** Скользящий лимит убытка за 7 дней, % от AUM (защита от «смерти от тысячи порезов»). */
     var maxRollingLossPercent7d: Double = 15.0

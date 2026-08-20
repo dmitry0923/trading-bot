@@ -127,22 +127,18 @@ class StockEntryProfile(
                 0
             }
 
-        val finalQty = if (kellyLots > 0) {
-            minOf(kellyLots, maxLotsByRisk)
-        } else if (kellySizeRub > BigDecimal.ZERO && maxLotsByRisk > 0) {
-            // Kelly has positive expected value but its budget < 1 lot notional.
-            // Allow exactly 1 lot (minimum tradeable) if risk-per-trade cap permits it.
-            1
-        } else {
-            0
-        }
+        val finalQty = minOf(kellyLots, maxLotsByRisk)
         if (finalQty < 1) {
+            val reason = when {
+                kellySizeRub > BigDecimal.ZERO && kellySizeRub < notionalPerLot -> "KELLY_BELOW_MIN_LOT"
+                else -> "ZERO_RISK_SIZE"
+            }
             return PositionSizeResult(
                 quantity = 0,
                 marginRequired = BigDecimal.ZERO,
                 riskAmount = riskAmount,
                 liquidationPrice = null,
-                reason = "ZERO_RISK_SIZE",
+                reason = reason,
             )
         }
         return PositionSizeResult(

@@ -115,11 +115,11 @@ class StockEntryProfileTest {
     }
 
     @Test
-    fun `sizePosition falls back to 1 lot when Kelly budget too small but risk allows`() = runBlocking {
-        // kellySizeRub = 5000 (positive → Kelly thinks trade is OK)
+    fun `sizePosition returns KELLY_BELOW_MIN_LOT when Kelly budget too small for 1 lot`() = runBlocking {
+        // kellySizeRub = 5000 (positive → trade has expected value)
         // notionalPerLot = 12.42 * 1000 = 12420
-        // kellyLots = floor(5000 / 12420) = 0 → fallback to 1 lot
-        // maxLotsByRisk = floor(500 / 82.1) = 6 → 1 is within risk cap
+        // kellyLots = floor(5000 / 12420) = 0
+        // Correct: no trade, because Kelly's optimal size < 1 lot minimum
         Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
         Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
             .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
@@ -138,8 +138,8 @@ class StockEntryProfileTest {
 
         val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
 
-        assertEquals(1, size.quantity)
-        assertNull(size.reason)
+        assertEquals(0, size.quantity)
+        assertEquals("KELLY_BELOW_MIN_LOT", size.reason)
     }
 
     @Test
@@ -168,11 +168,12 @@ class StockEntryProfileTest {
     }
 
     @Test
-    fun `sizePosition returns ZERO_RISK_SIZE when both Kelly budget too small and risk cap blocks`() = runBlocking {
-        // kellySizeRub = 5000 (positive but < notionalPerLot)
+    fun `sizePosition returns KELLY_BELOW_MIN_LOT when Kelly positive but risk cap also blocks`() = runBlocking {
+        // kellySizeRub = 5000 (positive but < notionalPerLot = 12420)
         // riskAmount = 100 * 1.0 / 100 = 1.0
         // lossPerLot = 12.42 * 0.005 * 1000 + 2 * 10 = 82.1
         // maxLotsByRisk = floor(1.0 / 82.1) = 0 → even 1 lot exceeds risk cap
+        // Primary reason: Kelly budget < 1 lot notional
         Mockito.doReturn(BigDecimal("100")).`when`(aumProvider).currentAum(null)
         Mockito.doReturn(BigDecimal("5000")).`when`(adaptiveRisk)
             .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
@@ -192,7 +193,7 @@ class StockEntryProfileTest {
         val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
 
         assertEquals(0, size.quantity)
-        assertEquals("ZERO_RISK_SIZE", size.reason)
+        assertEquals("KELLY_BELOW_MIN_LOT", size.reason)
     }
 
     @Test

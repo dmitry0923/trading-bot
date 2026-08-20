@@ -29,7 +29,7 @@ import kotlin.math.abs
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
- * - акции/FX: (exit - entry) * qty * lotSize (qty = число лотов);
+ * - акции/FX: (exit - entry) * qty * lotSize − qty × commissionRub × 2 (qty = число лотов);
  * - фьючерсы: (exit - entry) * pointValue * qty.
  */
 fun interface PnlCalculator {
@@ -41,16 +41,29 @@ fun interface PnlCalculator {
     ): BigDecimal
 
     companion object {
-        fun plain(): PnlCalculator = lotBased { 1L }
+        fun plain(): PnlCalculator = lotBased(lotSize = { 1L })
 
-        /** lot-based P&L для акций и FX: Δprice × qty × lotSize. */
-        fun lotBased(lotSize: (String) -> Long): PnlCalculator =
+        /**
+         * lot-based P&L для акций и FX: Δprice × qty × lotSize − round-trip commission.
+         *
+         * @param lotSize количество базовых единиц в лоте (ticker → lotSize)
+         * @param commissionRub комиссия за лот за сторону в RUB (ticker → commissionRub).
+         *        Вычитается как qty × commissionRub × 2 (вход + выход).
+         */
+        fun lotBased(
+            lotSize: (String) -> Long,
+            commissionRub: (String) -> BigDecimal? = { null },
+        ): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
                 val lots = BigDecimal(lotSize(pos.ticker))
-                when (pos.direction) {
-                    PositionDirection.LONG -> to.subtract(from).multiply(qty).multiply(lots)
-                    PositionDirection.SHORT -> from.subtract(to).multiply(qty).multiply(lots)
-                }
+                val pricePnl =
+                    when (pos.direction) {
+                        PositionDirection.LONG -> to.subtract(from).multiply(qty).multiply(lots)
+                        PositionDirection.SHORT -> from.subtract(to).multiply(qty).multiply(lots)
+                    }
+                val commPerSide = commissionRub(pos.ticker) ?: BigDecimal.ZERO
+                val totalCommission = commPerSide.multiply(qty).multiply(BigDecimal(2))
+                pricePnl.subtract(totalCommission)
             }
 
         fun futures(pointValue: (String) -> BigDecimal): PnlCalculator =

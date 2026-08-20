@@ -91,9 +91,12 @@ class TradingBotService(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val reconcileRunning = AtomicBoolean(false)
 
-    /** Lot-based P&L — единый источник для engine и ws-fill handler. */
+    /** Lot-based P&L — единый источник для engine и ws-fill handler. Включает вычет комиссии. */
     private val pnlCalculator: PnlCalculator =
-        PnlCalculator.lotBased { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L }
+        PnlCalculator.lotBased(
+            lotSize = { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L },
+            commissionRub = { ticker -> instrumentsConfig.find(ticker)?.commissionRub },
+        )
 
     @PreDestroy
     fun close() {

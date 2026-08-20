@@ -208,7 +208,18 @@ class InstrumentsConfig {
         var maxSpreadPercent: BigDecimal? = null,
         /** Per-instrument max gap % — overrides RiskConfig.maxGapPercent when non-null. */
         var maxGapPercent: BigDecimal? = null,
-        /** Estimated commission per lot per side in RUB. Used by risk sizing (×2 for round-trip) and realized P&L. Must match actual broker tariff. */
+        /**
+         * Per-side commission in RUB for one lot. Used by risk sizing (×2 for round-trip)
+         * and realized P&L via PnlCalculator.
+         *
+         * Alor tariff research (CNYRUB_TOM, ~12,500 RUB notional per lot):
+         *   - "Профессионал" (0.04%): 5.00 RUB/side
+         *   - "Валютный" (0.05%):     6.25 RUB/side
+         *   - "Единый" (0.1%):        12.50 RUB/side
+         *
+         * **Must be verified against actual Alor account tariff before LIVE deployment.**
+         * Value of 10.0 is a conservative estimate covering broker + exchange fees.
+         */
         var commissionRub: BigDecimal? = null,
     ) {
         /** Effective SL%: per-instrument override or global default. */

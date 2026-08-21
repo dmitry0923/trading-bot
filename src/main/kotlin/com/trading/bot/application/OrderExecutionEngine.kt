@@ -290,11 +290,16 @@ class OrderExecutionEngine(
         // ордер необходим для дозакрытия остатка.
         if (current.closeOrderId != null) {
             if (prevCumulativeFill > 0) {
+                // CRITICAL: cancel the stale close order on the exchange BEFORE creating
+                // a replacement. Without this, the old order remains LIVE and can fill
+                // simultaneously with the new order → over-sell.
+                val staleCloseId = current.closeOrderId!!
                 logger.info {
                     "Partial close already applied for ${current.ticker} " +
-                        "(cumulativeFill=$prevCumulativeFill) — clearing stale closeOrderId " +
-                        "${current.closeOrderId} to create fresh close order"
+                        "(cumulativeFill=$prevCumulativeFill) — cancelling stale close " +
+                        "order $staleCloseId and creating fresh close order"
                 }
+                orderOutboxService.placeCancelOrder(positionId, staleCloseId, accountId = current.accountId)
                 current.closeOrderId = null
                 current.closeReason = null
                 positionRepo.save(current)

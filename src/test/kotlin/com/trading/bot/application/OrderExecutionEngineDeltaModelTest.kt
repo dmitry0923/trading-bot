@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 
 import tools.jackson.module.kotlin.jacksonObjectMapper
+import org.mockito.Mockito.verify
 import java.math.BigDecimal
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -906,5 +907,121 @@ class OrderExecutionEngineDeltaModelTest {
             )
         }
         assertEquals(5, pos.quantity) { "position unchanged when avgPrice is null" }
+    }
+
+    // ─── Stale close order cancellation (closePosition) ────────────────
+
+    /**
+     * CRITICAL: closePosition() cancels the old close order before creating a replacement.
+     *
+     * Scenario:
+     * 1. Order A partially fills 40/100 → applyPartialClose → qty=60, cumulativeFillQty=40
+     * 2. SL tick → closePosition() → prevCumulativeFill=40 → must cancel A before creating B
+     *
+     * Without the cancel, order A remains LIVE on the exchange and could fill
+     * simultaneously with B → over-sell (40 + 60 + 60 = 160 lots sold for 60 remaining).
+     */
+    @Test
+    fun `closePosition cancels stale close order before creating replacement`() {
+        val pos = openPos(
+            quantity = 6,
+            pendingClose = false,
+            closeOrderId = "stale-order-A",
+            cumulativeCloseFillQty = 40,
+        )
+
+        runBlocking {
+            Mockito.`when`(positionRepo.claimForClose(pos.id!!)).thenReturn(true)
+            Mockito.`when`(positionRepo.findById(pos.id!!)).thenReturn(pos)
+            stubSaveReturnsArg()
+            stubTransitionToClosed()
+
+            // New order placement succeeds
+            Mockito.`when`(
+                orderOutboxService.placeOrder(
+                    ticker = Mockito.anyString(),
+                    side = Mockito.anyString(),
+                    qty = Mockito.anyInt(),
+                    price = Mockito.nullable(BigDecimal::class.java),
+                    type = Mockito.anyString(),
+                    positionId = Mockito.nullable(Long::class.java),
+                    closeReason = Mockito.nullable(String::class.java),
+                    stopPrice = Mockito.nullable(BigDecimal::class.java),
+                    purpose = Mockito.nullable(String::class.java),
+                    accountId = Mockito.nullable(Long::class.java),
+                ),
+            ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "stale-order-B", success = true))
+
+            // verifyOrder returns FILLED for the new order B
+            Mockito.`when`(
+                alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
+            ).thenReturn(AlorClient.OrderExecution("FILLED", 6, BigDecimal("110")))
+
+            engine.closePosition(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
+        }
+
+        // CRITICAL: stale order A must be cancelled via outbox
+        runBlocking {
+            verify(orderOutboxService).placeCancelOrder(pos.id!!, "stale-order-A", accountId = pos.accountId)
+        }
+
+        // New order B must be placed
+        runBlocking {
+            verify(orderOutboxService).placeOrder(
+                ticker = Mockito.anyString(),
+                side = Mockito.anyString(),
+                qty = Mockito.anyInt(),
+                price = Mockito.nullable(BigDecimal::class.java),
+                type = Mockito.anyString(),
+                positionId = Mockito.nullable(Long::class.java),
+                closeReason = Mockito.nullable(String::class.java),
+                stopPrice = Mockito.nullable(BigDecimal::class.java),
+                purpose = Mockito.nullable(String::class.java),
+                accountId = Mockito.nullable(Long::class.java),
+            )
+        }
+
+        // closeOrderId cleared by finalizeClosePosition — position fully closed
+        assertNull(pos.closeOrderId)
+        assertEquals(PositionStatus.CLOSED, pos.status)
+    }
+
+    /**
+     * Late WS fill for cancelled order A arrives after B is created — must be a no-op.
+     *
+     * After closePosition clears A and creates B, closeOrderId="B". A late
+     * ExecutionReport for order A cannot find the position via findByCloseOrderId
+     * and is silently dropped.
+     */
+    @Test
+    fun `late WS fill for stale close order is silently dropped after replacement`() {
+        val pos = openPos(
+            quantity = 6,
+            pendingClose = true,
+            closeOrderId = "new-order-B",
+            cumulativeCloseFillQty = 0,
+        )
+
+        val handled = runBlocking {
+            // Late fill for old order A — position lookup fails because closeOrderId is now B
+            Mockito.`when`(positionRepo.findByCloseOrderId("stale-order-A")).thenReturn(null)
+            Mockito.`when`(positionRepo.findByAlorOrderId("stale-order-A")).thenReturn(null)
+            Mockito.`when`(positionRepo.findBySlOrderId("stale-order-A")).thenReturn(null)
+            Mockito.`when`(positionRepo.findByTpOrderId("stale-order-A")).thenReturn(null)
+
+            engine.handleExecutionReport(
+                ExecutionReport(
+                    orderId = "stale-order-A",
+                    status = OrderStatus.FILLED,
+                    cumulativeFilledQty = 100,
+                    avgPrice = BigDecimal("110"),
+                    ticker = "SBER",
+                    side = "sell",
+                ),
+            )
+        }
+
+        assertFalse(handled) { "late fill for stale order returns false" }
+        assertEquals(6, pos.quantity) { "position unchanged — stale fill dropped" }
     }
 }

@@ -37,8 +37,10 @@ import java.util.UUID
  * Unit-тест partial fills при закрытии фьючерсной позиции (дозакрытие остатка):
  *
  * - SL-тик → market close на qty=3 → Alor исполнил только 2 → [Position.realizedPnl]
- *   фиксирует P&L закрытой части, quantity уменьшается до 1, стейт-машина сбрасывается
- *   (pendingClose=false, closeOrderId=null) → остаток дозакрывается новой итерацией;
+ *   фиксирует P&L закрытой части, quantity уменьшается до 1, pendingClose=false,
+ *   closeOrderId сохраняется (для delta-model WS fills) → остаток дозакрывается
+ *   новой итерацией через [OrderExecutionEngine.closePosition], которая обнаружит
+ *   prevCumulativeCloseFillQty > 0 и очистит stale closeOrderId;
  * - повторный SL-тик → новый close-ордер на остаток (qty=1) → полное исполнение →
  *   итоговый pnl = realizedPnl (partial) + P&L остатка.
  *
@@ -200,7 +202,9 @@ class FuturesTradingBotServicePartialCloseTest {
         assertEquals(0, BigDecimal("200000").compareTo(pos.realizedPnl))
         assertEquals(0, BigDecimal("90100").compareTo(pos.currentPrice!!))
         assertTrue(!pos.pendingClose)
-        assertNull(pos.closeOrderId)
+        // closeOrderId preserved — subsequent fills (WS/handleCloseFill) find position by it;
+        // closePosition() detects prevCumulativeCloseFillQty > 0 and clears it before new order.
+        assertEquals("ord-close-1", pos.closeOrderId)
         runBlocking {
             Mockito.verify(positionRepo, Mockito.timeout(3000)).findByStatus(PositionStatus.OPEN)
             Mockito.verify(alorClient, Mockito.timeout(3000)).verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString())

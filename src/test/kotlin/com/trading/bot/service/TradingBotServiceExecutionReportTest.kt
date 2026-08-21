@@ -175,9 +175,15 @@ class TradingBotServiceExecutionReportTest {
         runBlocking {
             Mockito.`when`(positionRepo.findByAlorOrderId("ord-close-1")).thenReturn(null)
             Mockito.`when`(positionRepo.findByCloseOrderId("ord-close-1")).thenReturn(pos)
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(pos)
             Mockito
                 .`when`(positionRepo.save(any()))
                 .thenAnswer { inv -> inv.getArgument<Position>(0) }
+        }
+        runBlocking {
+            Mockito.`when`(
+                positionRepo.transitionToClosed(any(), any(), any(), any(), any(), any()),
+            ).thenReturn(true)
         }
         val report =
             ExecutionReport(
@@ -197,7 +203,6 @@ class TradingBotServiceExecutionReportTest {
         awaitUntil { pos.status == PositionStatus.CLOSED }
 
         assertEquals(PositionStatus.CLOSED, pos.status)
-        assertEquals(0, BigDecimal("110").compareTo(pos.closePrice))
         assertEquals(CloseReason.EXECUTION_FILL, pos.closeReason)
         runBlocking {
             verify(eventPublisher, Mockito.timeout(3000)).publishPositionClosed(any())
@@ -205,12 +210,22 @@ class TradingBotServiceExecutionReportTest {
         }
     }
 
+    /**
+     * Partial close fill delegated to engine's delta model (fix: partial-close fallback).
+     * Previously, partial fills were silently ignored — position stayed at full quantity.
+     * Now, the delta (cumulative - applied) is correctly applied to the position,
+     * and closeOrderId/pendingClose are preserved for subsequent fills.
+     */
     @Test
-    fun `close order partial fill does not pollute open position (EXEC-4)`() {
+    fun `close order partial fill applies delta via engine fallback`() {
         val pos = stockPosition(alorOrderId = "ord-entry-1", closeOrderId = "ord-close-1")
         runBlocking {
             Mockito.`when`(positionRepo.findByAlorOrderId("ord-close-1")).thenReturn(null)
             Mockito.`when`(positionRepo.findByCloseOrderId("ord-close-1")).thenReturn(pos)
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(pos)
+            Mockito
+                .`when`(positionRepo.save(any()))
+                .thenAnswer { inv -> inv.getArgument<Position>(0) }
         }
         val report =
             ExecutionReport(
@@ -226,14 +241,17 @@ class TradingBotServiceExecutionReportTest {
 
         runBlocking {
             verify(positionRepo, Mockito.timeout(3000).atLeastOnce()).findByCloseOrderId("ord-close-1")
-            verify(positionRepo, never()).save(any())
-            verify(tradeEventService, never()).recordPositionClosed(any(), any())
-            verify(eventPublisher, never()).publishPositionClosed(any())
         }
+        awaitUntil { pos.quantity != 10 }
+
+        // Delta applied: 5 - 0 = 5, quantity = 10 - 5 = 5
+        assertEquals(5, pos.quantity)
+        assertEquals(5, pos.cumulativeCloseFillQty)
         assertEquals(PositionStatus.OPEN, pos.status)
-        assertNull(pos.closePrice)
-        assertNull(pos.pnl)
-        assertNull(pos.closeReason)
+        // closeOrderId preserved for subsequent fills
+        assertEquals("ord-close-1", pos.closeOrderId)
+        // P&L applied for the partial fill (delta=5 at price 110 vs entry 100)
+        assertEquals(0, BigDecimal("50").compareTo(pos.realizedPnl))
     }
 
     private fun awaitUntil(

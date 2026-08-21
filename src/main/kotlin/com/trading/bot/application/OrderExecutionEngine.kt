@@ -280,13 +280,28 @@ class OrderExecutionEngine(
 
         val current = positionRepo.findById(positionId)
         // Сброс накопленного fill для нового close-ордера (дельта-модель).
+        val prevCumulativeFill = current.cumulativeCloseFillQty
         current.cumulativeCloseFillQty = 0
         // Повторная попытка закрытия при уже существующем close-ордере (например,
         // после UNCERTAIN-доставки без closeOrderId реконсилятор мог проставить id) —
         // новый ордер НЕ создаём, только сверяем исполнение.
+        // Если partial close уже был применён (prevCumulativeFill > 0), stale
+        // closeOrderId очищается — предыдущий ордер исполнен частично, новый
+        // ордер необходим для дозакрытия остатка.
         if (current.closeOrderId != null) {
-            confirmCloseFill(current, price, reason)
-            return
+            if (prevCumulativeFill > 0) {
+                logger.info {
+                    "Partial close already applied for ${current.ticker} " +
+                        "(cumulativeFill=$prevCumulativeFill) — clearing stale closeOrderId " +
+                        "${current.closeOrderId} to create fresh close order"
+                }
+                current.closeOrderId = null
+                current.closeReason = null
+                positionRepo.save(current)
+            } else {
+                confirmCloseFill(current, price, reason)
+                return
+            }
         }
 
         val side =
@@ -934,6 +949,37 @@ class OrderExecutionEngine(
     }
 
     /**
+     * Delta-model close fill для fallback-path (handleRegularStockFill).
+     *
+     * Используется когда handleExecutionReport() вернул false (pendingClose=false,
+     * но closeOrderId установлен — например, после releaseCloseClaim). Та же модель:
+     * cumulativeFilledQty − cumulativeCloseFillQty = delta → applyCloseExecution.
+     *
+     * Защищён per-position mutex от конкурентного применения с confirmCloseFill/WS.
+     */
+    suspend fun handleCloseFill(pos: Position, report: ExecutionReport) {
+        val fillPrice = report.avgPrice ?: return
+        val positionId = pos.id ?: return
+        val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
+        mutex.withLock {
+            val fresh = positionRepo.findById(positionId)
+            if (fresh.status != PositionStatus.OPEN) return
+            if (fresh.closeOrderId == null) return
+            val prevApplied = fresh.cumulativeCloseFillQty
+            val delta = report.cumulativeFilledQty - prevApplied
+            if (delta <= 0) {
+                logger.debug {
+                    "handleCloseFill delta=0 for ${fresh.ticker}: cumulative=${report.cumulativeFilledQty} " +
+                        "already_applied=$prevApplied — skipping"
+                }
+                return
+            }
+            fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
+            applyCloseExecution(fresh, delta, fillPrice, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
+        }
+    }
+
+    /**
      * Подтверждение исполнения close-ордера через verifyOrder.
      *
      * Обёрнуто в per-position mutex: WS handleExecutionReport и REST confirmCloseFill
@@ -1062,7 +1108,13 @@ class OrderExecutionEngine(
         val partialPnl = pnlCalculator.pnl(pos, pos.entryPrice, avg, BigDecimal(filled))
         pos.realizedPnl = pos.realizedPnl.add(partialPnl)
         pos.quantity -= filled
-        pos.closeOrderId = null
+        // closeOrderId НЕ очищается: последующие fill'ы для того же close-ордера
+        // должны находить позицию через findByCloseOrderId. Модель дельты
+        // (cumulativeCloseFillQty) гарантирует идемпотентность: delta=0 → skip.
+        //
+        // pendingClose = false: позиция готова к перезакрытию (новый close-ордер
+        // при следующем триггере). closePosition() обнаружит prevCumulativeCloseFillQty > 0
+        // и очистит stale closeOrderId перед созданием нового ордера.
         pos.pendingClose = false
         pos.currentPrice = avg
         // Durable protection replacement: mark old SL/TP for replacement.
@@ -1078,7 +1130,8 @@ class OrderExecutionEngine(
         meterRegistry.counter("$metricPrefix.partial_close", Tags.of("ticker", pos.ticker)).increment()
         logger.warn {
             "PARTIAL close ${pos.ticker}: closed=$filled remainder=${pos.quantity} @ $avg " +
-                "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); protection replacement deferred to reconciliation"
+                "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); " +
+                "closeOrderId kept, pendingClose=false, protection replacement deferred to reconciliation"
         }
     }
 

@@ -319,52 +319,20 @@ class TradingBotService(
     }
 
     /**
-     * Обычный (не pendingEntry/pendingClose) WS fill по акции: фиксирует фактическую
-     * цену исполнения и P&L, при полном исполнении закрывает позицию.
+     * Fallback WS close fill: delegate to engine's delta model.
+     *
+     * Обрабатывает close-филы, которые engine.handleExecutionReport() пропустил
+     * (например, pendingClose=false после releaseCloseClaim, но closeOrderId установлен).
+     * Использует ту же cumulativeFilledQty − cumulativeCloseFillQty дельта-модель,
+     * что и основной путь — P&L считается по фактическому delta, а не по всему qty.
      */
     private suspend fun handleRegularStockFill(report: ExecutionReport) {
         if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return
         val orderId = report.orderId
-        // EXEC-1 (roadmap 13.27): close-филом считается ТОЛЬКО исполнение close-ордера.
-        // Fill входного ордера (alorOrderId) финализирует OrderExecutionEngine в pendingEntry;
-        // совпадение по входному ордеру здесь закрыло бы открытую позицию (ложное закрытие).
         val pos = positionRepo.findByCloseOrderId(orderId) ?: return
         if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return
-        if (pos.instrumentType == InstrumentType.FUTURES) return // фьючерсы обрабатывает FuturesTradingBotService
-        val fillPrice = report.avgPrice ?: return
-
-        if (report.status == OrderStatus.PARTIALLY_FILLED) {
-            // EXEC-4 (roadmap 13.27): частичный close-фил не пишет closePrice/pnl/closeReason
-            // в OPEN-позицию (раньше — display-мусор, маскировавший реальное закрытие:
-            // closeReason уже не null, pnl на полный qty). Позиция остаётся нетронутой,
-            // остаток сверяет State Reconciliation (qty-adjust).
-            logger.info {
-                "WS partial close fill for ${pos.ticker}: order=$orderId filled=${report.cumulativeFilledQty} @ $fillPrice — " +
-                    "position left OPEN, remainder handled by State Reconciliation"
-            }
-            return
-        }
-
-        pos.closePrice = fillPrice
-        val pnl = pnlCalculator.pnl(pos, pos.entryPrice, fillPrice, BigDecimal(pos.quantity))
-        pos.pnl = pnl
-        pos.status = PositionStatus.CLOSED
-        pos.closedAt = LocalDateTime.now()
-        pos.closeReason = pos.closeReason ?: CloseReason.EXECUTION_FILL
-        positionRepo.save(pos)
-        engine.cancelProtectionOrders(pos)
-        positionRepo.releaseEntry(pos.ticker, pos.accountId)
-        tradeEventService.recordPositionClosed(pos, CloseReason.EXECUTION_FILL.code)
-        // F-4 (roadmap 13.25): WS-путь закрытия минует callback OrderExecutionEngine
-        // onPositionClosed — событие публикуем здесь: DailyLossCircuitBreaker учтёт
-        // P&L и проверит дневной лимит, DrawdownProtectionService пересчитает
-        // multi-tier статус (прямой вызов updateDailyPnL дал бы двойной счёт).
-        eventPublisher.publishPositionClosed(pos)
-        // EXEC-4: slippage закрытия фиксирует engine (confirmCloseFill → verifyOrder
-        // с expectedPrice); здесь entryPrice как «ожидаемая» цена семантически неверен —
-        // запись убрана.
-        meterRegistry.counter("bot.ws.fill_applied", Tags.of("ticker", pos.ticker)).increment()
-        logger.info { "WS fill applied for ${pos.ticker}: order=$orderId price=$fillPrice pnl=$pnl" }
+        if (pos.instrumentType == InstrumentType.FUTURES) return
+        engine.handleCloseFill(pos, report)
     }
 
     /**

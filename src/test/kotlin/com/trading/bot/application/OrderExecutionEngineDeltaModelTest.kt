@@ -38,8 +38,10 @@ import java.util.concurrent.CountDownLatch
  * Ключевые инварианты:
  * - delta = cumulativeFilledQty - cumulativeCloseFillQty;
  * - delta <= 0 → skip (дубликат или out-of-order event);
- * - delta > 0 && delta < quantity → partial close (quantity -= delta, pendingClose=false);
- * - delta >= quantity → full finalize (status= CLOSED).
+ * - delta > 0 && delta < quantity → partial close (quantity -= delta, pendingClose=false, closeOrderId kept);
+ * - delta >= quantity → full finalize (status=CLOSED);
+ * - после partial close: closeOrderId и pendingClose СОХРАНЯЮТСЯ —
+ *   последующие fill'ы для того же close-ордера находят позицию через findByCloseOrderId.
  */
 class OrderExecutionEngineDeltaModelTest {
     private val alorClient = Mockito.mock(AlorClient::class.java)
@@ -203,7 +205,7 @@ class OrderExecutionEngineDeltaModelTest {
     }
 
     @Test
-    fun `partial fill reduces quantity and clears pendingClose`() {
+    fun `partial fill reduces quantity and keeps closeOrderId while clearing pendingClose`() {
         val pos = openPos(quantity = 10)
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
@@ -213,7 +215,11 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(6, pos.quantity)
         assertEquals(4, pos.cumulativeCloseFillQty)
         assertEquals(0, BigDecimal("40").compareTo(pos.realizedPnl))
+        // closeOrderId сохраняется — последующие fill'ы для того же close-ордера
+        // должны находить позицию через findByCloseOrderId.
+        // pendingClose=false — позиция готова к перезакрытию.
         assertFalse(pos.pendingClose)
+        assertEquals("close-1", pos.closeOrderId)
     }
 
     @Test
@@ -311,7 +317,9 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(5, pos.cumulativeCloseFillQty)
         assertEquals(2, pos.quantity) // 5 - 3 = 2
         assertEquals(0, BigDecimal("30").compareTo(pos.realizedPnl))
+        // pendingClose cleared, closeOrderId preserved after partial fill
         assertFalse(pos.pendingClose)
+        assertEquals("close-1", pos.closeOrderId)
     }
 
     @Test
@@ -385,8 +393,9 @@ class OrderExecutionEngineDeltaModelTest {
         // Cumulative should be 4 (applied once), quantity should be 10-4=6
         assertEquals(4, pos.cumulativeCloseFillQty)
         assertEquals(6, pos.quantity)
-        // Partial close applied only once
+        // Partial close applied only once — closeOrderId preserved, pendingClose cleared
         assertFalse(pos.pendingClose)
+        assertEquals("close-1", pos.closeOrderId)
     }
 
     /**
@@ -420,15 +429,15 @@ class OrderExecutionEngineDeltaModelTest {
 
     /**
      * Concurrent WS events with DIFFERENT cumulative values (partial then full fill).
-     * Mutex ensures the second coroutine re-reads from DB and sees the first coroutine's
-     * partial close (pendingClose=false, closeOrderId=null) — skips because position
-     * is no longer pendingClose. No duplicate delta applied.
+     * First event via handleExecutionReport (pendingClose=true) applies delta=3.
+     * Second event via handleCloseFill (fallback path, since pendingClose=false after partial)
+     * applies remaining delta=2 → finalize → CLOSED.
      *
-     * This matches real architecture: partial close clears pendingClose, the remainder
-     * is re-closed by a fresh close order on the next cycle.
+     * In production: TradingBotService.onExecutionReport calls handleExecutionReport first;
+     * if it returns false (pendingClose=false), handleRegularStockFill delegates to handleCloseFill.
      */
     @Test
-    fun `concurrent WS events with different cumulative values are serialized correctly`() {
+    fun `concurrent WS events with different cumulative values finalize correctly`() {
         val pos = openPos(quantity = 5, cumulativeCloseFillQty = 0)
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
@@ -442,18 +451,17 @@ class OrderExecutionEngineDeltaModelTest {
             }
             val b = async {
                 latch.await()
-                engine.handleExecutionReport(report(cumulativeFilledQty = 5))
+                // Simulates production path: handleExecutionReport returns false (pendingClose=false),
+                // TradingBotService delegates to handleCloseFill.
+                engine.handleCloseFill(pos, report(cumulativeFilledQty = 5))
             }
             latch.countDown()
             awaitAll(a, b)
         }
 
-        // First event applied delta=3 → qty=2, pendingClose=false, cumul=3
-        // Second event re-reads: pendingClose=false → skip (no duplicate)
-        assertEquals(3, pos.cumulativeCloseFillQty)
-        assertEquals(2, pos.quantity)
-        assertFalse(pos.pendingClose)
-        assertEquals(0, closedPositions.size)
+        assertEquals(5, pos.cumulativeCloseFillQty)
+        assertEquals(PositionStatus.CLOSED, pos.status)
+        assertEquals(1, closedPositions.size)
     }
 
     // ─── Durable protection replacement (crash-consistency) ─────────
@@ -619,8 +627,9 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(4, saved.cumulativeCloseFillQty)
         assertTrue(saved.slPendingReplace) { "flags must be saved atomically with quantity" }
         assertTrue(saved.tpPendingReplace)
+        // closeOrderId сохраняется дляsequent WS fills, pendingClose=false для перезакрытия
         assertFalse(saved.pendingClose)
-        assertNull(saved.closeOrderId)
+        assertEquals("close-1", saved.closeOrderId)
     }
 
     // ─── Concurrency: partial close + SL/TP execution ───────────────
@@ -630,13 +639,13 @@ class OrderExecutionEngineDeltaModelTest {
      *
      * Scenario:
      *   DB: qty=10, pendingClose=true, slOrderId="sl-1", tpOrderId="tp-1"
-     *   Coroutine A (WS): close order fills 4 → partial close → qty=6, slPendingReplace=true
+     *   Coroutine A (WS): close order fills 4 → partial close → qty=6, slPendingReplace=true,
+     *     pendingClose=false, closeOrderId stays "close-1"
      *   Coroutine B (WS): SL order fills → applyExchangeProtectionClose → close remainder
      *
      * Both go through the per-position mutex. The second coroutine re-reads from DB
      * and sees the updated state from the first. If the first already applied the
-     * partial close, the second sees pendingClose=false and the position state
-     * reflects the partial close. The SL fill then closes the remaining quantity.
+     * partial close, the second sees the updated quantity (6) and applies SL fill on remainder.
      *
      * Without the mutex, both could read qty=10 and apply independently,
      * resulting in double-close or incorrect quantity.
@@ -724,5 +733,178 @@ class OrderExecutionEngineDeltaModelTest {
             finalState.status == PositionStatus.CLOSED ||
                 finalState.status == PositionStatus.TAKE_PROFIT,
         ) { "Position should be fully closed after both fills: status=${finalState.status}" }
+    }
+
+    // ─── Multi-step partial fill: 100 → 37 → 100 → duplicate 100 ──
+
+    /**
+     * CRITICAL: multi-step partial close scenario from production audit.
+     *
+     * 100 лотов → 37 исполнено → позиция уменьшается до 63,
+     * затем handleCloseFill (fallback path) → delta=63 → финализация → CLOSED,
+     * затем дубликат → delta=0 → skip.
+     *
+     * P&L: 37 @ (110-100)=370, 63 @ (110-100)=630, total = 1000 (plain calculator).
+     * P&L считается по частям (partial fill P&L + finalize remainder P&L), а не
+     * по всему qty одной ценой.
+     *
+     * Flow:
+     * 1. First WS fill → handleExecutionReport (pendingClose=true) → delta model
+     * 2. Second fill → handleExecutionReport returns false (pendingClose=false),
+     *    then TradingBotService calls engine.handleCloseFill (fallback path)
+     * 3. Duplicate → handleCloseFill → delta=0 → skip
+     */
+    @Test
+    fun `multi-step partial fill 100 then 100 then duplicate correctly closes`() {
+        val pos = openPos(quantity = 100)
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        // Step 1: WS fill via handleExecutionReport — cumulative=37, delta=37, partial close
+        runBlocking { engine.handleExecutionReport(report(cumulativeFilledQty = 37)) }
+        assertEquals(63, pos.quantity)
+        assertEquals(37, pos.cumulativeCloseFillQty)
+        assertEquals(0, BigDecimal("370").compareTo(pos.realizedPnl))
+        assertFalse(pos.pendingClose) { "pendingClose cleared after partial" }
+        assertEquals("close-1", pos.closeOrderId) { "closeOrderId preserved for subsequent fills" }
+
+        // Step 2: fallback path via handleCloseFill — cumulative=100, delta=63, finalize
+        runBlocking { engine.handleCloseFill(pos, report(cumulativeFilledQty = 100)) }
+        assertEquals(100, pos.cumulativeCloseFillQty)
+        assertEquals(1, closedPositions.size)
+        assertEquals(PositionStatus.CLOSED, pos.status)
+
+        // Step 3: duplicate cumulative=100, delta=100-100=0 → skip (already closed)
+        val sizeBefore = closedPositions.size
+        runBlocking { engine.handleCloseFill(pos, report(cumulativeFilledQty = 100)) }
+        assertEquals(sizeBefore, closedPositions.size) { "duplicate event does not re-close" }
+    }
+
+    /**
+     * Multi-step partial fill with different prices — P&L is computed per-fill, not
+     * for the entire position at the last price.
+     *
+     * 37 @ 110 → P&L=37×(110-100)=370
+     * 63 @ 108 → P&L=63×(108-100)=504
+     * total = 874
+     */
+    @Test
+    fun `multi-step partial fill with different prices computes correct P and L`() {
+        val pos = openPos(quantity = 100)
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        // Step 1: 37 @ 110 via handleExecutionReport
+        runBlocking {
+            engine.handleExecutionReport(
+                report(cumulativeFilledQty = 37, avgPrice = BigDecimal("110")),
+            )
+        }
+        assertEquals(63, pos.quantity)
+        assertEquals(0, BigDecimal("370").compareTo(pos.realizedPnl))
+
+        // Step 2: 63 @ 108 via handleCloseFill (fallback) → finalize
+        runBlocking {
+            engine.handleCloseFill(
+                pos,
+                report(cumulativeFilledQty = 100, avgPrice = BigDecimal("108")),
+            )
+        }
+        // total P&L = realizedPnl(370) + remainder(63×(108-100)=504) = 874
+        assertEquals(1, closedPositions.size)
+        val closed = closedPositions.first()
+        assertEquals(PositionStatus.CLOSED, closed.status)
+        assertEquals(0, BigDecimal("874").compareTo(closed.pnl))
+    }
+
+    // ─── handleCloseFill fallback path ─────────────────────────────
+
+    /**
+     * handleCloseFill fallback: pendingClose=false, closeOrderId set (e.g. after releaseCloseClaim).
+     * Delta model correctly applies fills that handleExecutionReport would skip.
+     */
+    @Test
+    fun `handleCloseFill fallback applies delta when pendingClose is false`() {
+        val pos = openPos(quantity = 10, pendingClose = false, closeOrderId = "close-1")
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        // handleCloseFill: cumulative=10, delta=10-0=10 >= 10 → finalize
+        runBlocking {
+            engine.handleCloseFill(
+                pos,
+                report(cumulativeFilledQty = 10),
+            )
+        }
+        assertEquals(10, pos.cumulativeCloseFillQty)
+        assertEquals(1, closedPositions.size)
+        assertEquals(PositionStatus.CLOSED, pos.status)
+    }
+
+    /**
+     * handleCloseFill: delta=0 → skip (idempotent).
+     */
+    @Test
+    fun `handleCloseFill skips when delta is zero`() {
+        val pos = openPos(quantity = 5, pendingClose = false, cumulativeCloseFillQty = 5)
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        val sizeBefore = closedPositions.size
+        runBlocking {
+            engine.handleCloseFill(
+                pos,
+                report(cumulativeFilledQty = 5),
+            )
+        }
+        assertEquals(sizeBefore, closedPositions.size)
+        assertEquals(5, pos.quantity) { "position unchanged" }
+    }
+
+    /**
+     * handleCloseFill: position already closed → skip.
+     */
+    @Test
+    fun `handleCloseFill skips closed position`() {
+        val pos = openPos(quantity = 5, pendingClose = false, closeOrderId = "close-1")
+        pos.status = PositionStatus.CLOSED
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        runBlocking {
+            engine.handleCloseFill(
+                pos,
+                report(cumulativeFilledQty = 5),
+            )
+        }
+        assertEquals(0, closedPositions.size)
+    }
+
+    /**
+     * handleCloseFill: null report.avgPrice → skip.
+     */
+    @Test
+    fun `handleCloseFill skips when avgPrice is null`() {
+        val pos = openPos(quantity = 5, pendingClose = false, closeOrderId = "close-1")
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        runBlocking {
+            engine.handleCloseFill(
+                pos,
+                ExecutionReport(
+                    orderId = "close-1",
+                    status = OrderStatus.FILLED,
+                    cumulativeFilledQty = 5,
+                    avgPrice = null,
+                    ticker = "SBER",
+                    side = "sell",
+                ),
+            )
+        }
+        assertEquals(5, pos.quantity) { "position unchanged when avgPrice is null" }
     }
 }

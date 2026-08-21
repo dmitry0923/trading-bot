@@ -300,44 +300,57 @@ class OrderExecutionEngineProtectionReplaceTest {
 
     @Test
     fun `isGoneStatus rejects CANCEL_REJECTED and matches terminal statuses`() {
-        val engine = Mockito.mock(OrderExecutionEngine::class.java)
-        val method = OrderExecutionEngine::class.java.getDeclaredMethod("isGoneStatus", AlorClient.OrderExecution::class.java)
-        method.isAccessible = true
+        val processor = CloseFillProcessor(
+            positionRepo = positionRepo,
+            alorClient = alorClient,
+            pnlCalculator = PnlCalculator.plain(),
+            tradeEventService = tradeEventService,
+            meterRegistry = meterRegistry,
+            metricPrefix = "test",
+            portfolioResolver = { "D12345" },
+            onPositionClosed = {},
+            cancelProtectionOrders = {},
+            attachProtectionOrders = {},
+        )
 
-        fun gone(s: String) = method.invoke(engine, AlorClient.OrderExecution(status = s, filledQuantity = 0, avgPrice = null)) as Boolean
+        assertFalse(processor.isGoneStatus(AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 0, avgPrice = null)))
+        assertFalse(processor.isGoneStatus(AlorClient.OrderExecution(status = "NEW", filledQuantity = 0, avgPrice = null)))
+        assertFalse(processor.isGoneStatus(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 0, avgPrice = null)))
+        assertFalse(processor.isGoneStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 0, avgPrice = null)))
 
-        assertFalse(gone("CANCEL_REJECTED"))
-        assertFalse(gone("NEW"))
-        assertFalse(gone("PARTIALLY_FILLED"))
-        assertFalse(gone("FILLED"))
-
-        assertTrue(gone("CANCELED"))
-        assertTrue(gone("REJECTED"))
-        assertTrue(gone("EXPIRED"))
+        assertTrue(processor.isGoneStatus(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null)))
+        assertTrue(processor.isGoneStatus(AlorClient.OrderExecution(status = "REJECTED", filledQuantity = 0, avgPrice = null)))
+        assertTrue(processor.isGoneStatus(AlorClient.OrderExecution(status = "EXPIRED", filledQuantity = 0, avgPrice = null)))
     }
 
     // ── isFilledStatus strict whitelist ─────────────────────────────────────
 
     @Test
     fun `isFilledStatus rejects false positives and matches only filled statuses`() {
-        val engine = Mockito.mock(OrderExecutionEngine::class.java)
-        val method = OrderExecutionEngine::class.java.getDeclaredMethod("isFilledStatus", AlorClient.OrderExecution::class.java)
-        method.isAccessible = true
+        val processor = CloseFillProcessor(
+            positionRepo = positionRepo,
+            alorClient = alorClient,
+            pnlCalculator = PnlCalculator.plain(),
+            tradeEventService = tradeEventService,
+            meterRegistry = meterRegistry,
+            metricPrefix = "test",
+            portfolioResolver = { "D12345" },
+            onPositionClosed = {},
+            cancelProtectionOrders = {},
+            attachProtectionOrders = {},
+        )
 
-        fun filled(s: String, qty: Int = 100) =
-            method.invoke(engine, AlorClient.OrderExecution(status = s, filledQuantity = qty, avgPrice = BigDecimal("150"))) as Boolean
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "UNFILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "UNFILLED must NOT be treated as filled")
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "NOT_FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "NOT_FILLED must NOT be treated as filled")
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 0, avgPrice = BigDecimal("150"))), "FILLED with qty=0 must NOT be treated as filled")
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 100, avgPrice = BigDecimal("150"))))
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 100, avgPrice = BigDecimal("150"))))
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "REJECTED", filledQuantity = 100, avgPrice = BigDecimal("150"))))
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "UNKNOWN", filledQuantity = 100, avgPrice = BigDecimal("150"))))
+        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "NEW", filledQuantity = 100, avgPrice = BigDecimal("150"))))
 
-        assertFalse(filled("UNFILLED"), "UNFILLED must NOT be treated as filled")
-        assertFalse(filled("NOT_FILLED"), "NOT_FILLED must NOT be treated as filled")
-        assertFalse(filled("FILLED", 0), "FILLED with qty=0 must NOT be treated as filled")
-        assertFalse(filled("CANCELED"))
-        assertFalse(filled("CANCEL_REJECTED"))
-        assertFalse(filled("REJECTED"))
-        assertFalse(filled("UNKNOWN"))
-        assertFalse(filled("NEW"))
-
-        assertTrue(filled("FILLED"), "FILLED with qty>0 must be treated as filled")
-        assertTrue(filled("PARTIALLY_FILLED"), "PARTIALLY_FILLED with qty>0 must be treated as filled")
+        assertTrue(processor.isFilledStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "FILLED with qty>0 must be treated as filled")
+        assertTrue(processor.isFilledStatus(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "PARTIALLY_FILLED with qty>0 must be treated as filled")
     }
 
     // ── Entry status whitelist (resolveEntryViaOutbox) ──────────────────────

@@ -2,14 +2,12 @@ package com.trading.bot.application
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
-import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.ExecutionReport
 import com.trading.bot.model.dto.OrderStatus
-import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
@@ -18,14 +16,8 @@ import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
-import java.time.Duration
-import java.time.LocalDateTime
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
@@ -78,32 +70,17 @@ fun interface PnlCalculator {
 }
 
 /**
- * Общее ядро исполнения ордеров (акции и фьючерсы).
+ * Общее ядро исполнения ордеров (акции и фьючерсы) — orchestrator.
  *
- * Единая реализация защиты от double execution / потери контроля над позицией:
- * - close-стейт-машина ([closePosition]): пока [Position.pendingClose] — новый ордер
- *   НЕ создаётся, [Position.closeOrderId] сверяется через verifyOrder / position delta /
- *   outbox-запись;
- * - partial fills (вход и закрытие): [applyPartialClose] реализует P&L закрытой части,
- *   остаток дозакрывается следующей итерацией;
- * - реконсиляция pendingEntry/pendingClose через outbox ([resolveEntryViaOutbox],
- *   [resolveCloseViaOutbox], [reconcilePosition]);
- * - применение WS ExecutionReport ([handleExecutionReport]);
- * - вход ([placeEntryOrder]) с обработкой UNCERTAIN / PARTIAL / full fill;
- * - биржевые защитные заявки SL/TP ([attachProtectionOrders], [onProtectionLevelsChanged],
- *   [reconcileProtectionOrders], [cancelProtectionOrders]) — «точный контроль SL/TP»
- *   (roadmap v2.2): стоп/тейк выставляются на бирже при открытии позиции, исполняются
- *   биржей, перевыставляются при сдвиге trailing/стратегии и снимаются при закрытии.
+ * Делегирует:
+ * - Delta-model close fills → [CloseFillProcessor];
+ * - SL/TP protection orders → [ProtectionOrderManager];
+ * - State Reconciliation → [ExecutionReconciler].
  *
- * Различия инструментов инкапсулированы через:
- * - [PnlCalculator] — P&L (акции без pointValue, фьючерсы с pointValue);
- * - [instrumentFilter] — какие позиции обрабатывать (акции/фьючерсы);
- * - [onEntryOpened] / [onPositionClosed] — побочные эффекты (например, публикация
- *   PositionOpened/PositionClosed для фьючерсов, учёт дневного P&L для акций);
- * - [metricPrefix] — префикс метрик (bot.* / futures.*).
- *
- * НЕ является Spring-бином: создаётся внутри TradingBotService /
- * FuturesTradingBotService из их зависимостей (стейтлесс — все данные в БД).
+ * Оркестрирует:
+ * - Entry ([placeEntryOrder]);
+ * - Close state machine ([closePosition]);
+ * - WS ExecutionReport dispatch ([handleExecutionReport]).
  */
 class OrderExecutionEngine(
     private val alorClient: AlorClient,
@@ -111,7 +88,7 @@ class OrderExecutionEngine(
     private val orderOutboxRepo: OrderOutboxRepository,
     private val positionRepo: PositionRepository,
     private val alorConfig: AlorConfig,
-    private val objectMapper: ObjectMapper,
+    private val objectMapper: tools.jackson.databind.ObjectMapper,
     private val tradeEventService: TradeEventService,
     private val meterRegistry: MeterRegistry,
     private val pnlCalculator: PnlCalculator,
@@ -125,32 +102,77 @@ class OrderExecutionEngine(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    /**
-     * Per-position mutex: serializes close-fill processing (WS handleExecutionReport
-     * vs REST confirmCloseFill) for the same position. Without this, two concurrent
-     * coroutines can both read the same cumulativeCloseFillQty, compute independent
-     * deltas, and apply duplicate partial closes — resulting in doubled P&L and
-     * incorrect quantity.
-     *
-     * Key = position.id. For multi-instance deployments, this is NOT sufficient —
-     * a distributed lock would be needed. For single-instance (current deployment),
-     * ConcurrentHashMap + Mutex provides correct serialization within the JVM.
-     */
-    private val closeFillMutexes = ConcurrentHashMap<Long, Mutex>()
+    /** Delegates set after construction to break circular dependency. */
+    internal lateinit var closeFill: CloseFillProcessor
+    internal lateinit var protection: ProtectionOrderManager
+    internal lateinit var reconciler: ExecutionReconciler
+
+    init {
+        closeFill = CloseFillProcessor(
+            positionRepo = positionRepo,
+            alorClient = alorClient,
+            pnlCalculator = pnlCalculator,
+            tradeEventService = tradeEventService,
+            meterRegistry = meterRegistry,
+            metricPrefix = metricPrefix,
+            portfolioResolver = portfolioResolver,
+            onPositionClosed = onPositionClosed,
+            cancelProtectionOrders = { pos ->
+                protection.cancelProtectionOrders(pos)
+            },
+            attachProtectionOrders = { pos ->
+                protection.attachProtectionOrders(pos)
+            },
+        )
+        protection = ProtectionOrderManager(
+            alorClient = alorClient,
+            orderOutboxService = orderOutboxService,
+            orderOutboxRepo = orderOutboxRepo,
+            positionRepo = positionRepo,
+            alorConfig = alorConfig,
+            meterRegistry = meterRegistry,
+            metricPrefix = metricPrefix,
+            portfolioResolver = portfolioResolver,
+            onSlProtectionFailed = onSlProtectionFailed,
+            protectionOrdersEnabled = protectionOrdersEnabled,
+            applyCloseExecution = { pos, filled, avg, reason ->
+                closeFill.applyCloseExecution(pos, filled, avg, reason)
+            },
+        )
+        reconciler = ExecutionReconciler(
+            alorClient = alorClient,
+            orderOutboxRepo = orderOutboxRepo,
+            positionRepo = positionRepo,
+            alorConfig = alorConfig,
+            objectMapper = objectMapper,
+            tradeEventService = tradeEventService,
+            meterRegistry = meterRegistry,
+            metricPrefix = metricPrefix,
+            portfolioResolver = portfolioResolver,
+            onEntryOpened = onEntryOpened,
+            isGoneStatus = { closeFill.isGoneStatus(it) },
+            isFilledStatus = { closeFill.isFilledStatus(it) },
+            attachProtectionOrders = { pos -> protection.attachProtectionOrders(pos) },
+            confirmCloseFill = { pos, price, reason -> closeFill.confirmCloseFill(pos, price, reason) },
+            reconcileProtectionOrders = { pos -> protection.reconcileProtectionOrders(pos) },
+            onAbandonCleanup = { posId -> posId?.let { closeFill.closeFillMutexes.remove(it) } },
+        )
+    }
+
+    // ═══════════════════════════ DELEGATIONS ═══════════════════════════════
+
+    suspend fun onProtectionLevelsChanged(pos: Position) = protection.onProtectionLevelsChanged(pos)
+
+    suspend fun handleCloseFill(pos: Position, report: ExecutionReport) = closeFill.handleCloseFill(pos, report)
+
+    suspend fun reconcilePosition(pos: Position) = reconciler.reconcilePosition(pos)
+
+    suspend fun resolveEntryViaOutbox(pos: Position) = reconciler.resolveEntryViaOutbox(pos)
+
+    // ═══════════════════════════ ENTRY ═══════════════════════════════════
 
     /**
-     * Вход: размещение limit-ордера через outbox с обработкой трёх исходов.
-     *
-     * - UNCERTAIN → позиция создаётся в pendingEntry (факт подтвердит реконсилятор);
-     * - PARTIAL fill → позиция в pendingEntry на фактическом объёме, остаток лимитки
-     *   отменяет реконсилятор после [AlorConfig.entryPartialFillCancelAfterMs];
-     * - полное исполнение → фиксация входа, [TradeEventService.recordPositionOpened] +
-     *   [onEntryOpened].
-     *
-     * @param buildPosition строит позицию инструмента (акции/фьючерсы): аргументы
-     *   (orderId, pending, fillPrice, qty) — orderId=null при UNCERTAIN, fillPrice=entryPrice
-     *   до подтверждения исполнения.
-     * @return открытая позиция при полном исполнении, иначе null.
+     * Entry: place limit order via outbox with three outcomes.
      */
     suspend fun placeEntryOrder(
         ticker: String,
@@ -166,10 +188,6 @@ class OrderExecutionEngine(
             return null
         }
 
-        // Атомарная резервация слота (EXEC-002, MR-B): ДО отправки ордера. Уникальный
-        // индекс entry_reservations (ticker, account) гарантирует, что из конкурентных
-        // входов по одному слоту выигрывает один — остальные не создают второй
-        // entry-ордер (distributed lock выключен по умолчанию, см. DistributedLockConfig).
         val reservedId = positionRepo.reserveEntry(ticker, direction, accountId)
         if (reservedId == null) {
             logger.warn { "Duplicate entry blocked $ticker (${direction.name}) — slot already reserved or position OPEN" }
@@ -181,15 +199,12 @@ class OrderExecutionEngine(
         val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit", accountId = accountId)
         if (!placed.success || placed.alorOrderId == null) {
             if (placed.uncertain) {
-                // Заявка могла дойти до Alor — создаём позицию в статусе pendingEntry;
-                // факт исполнения подтвердит реконсилятор (State Reconciliation).
                 logger.warn { "Entry for $ticker UNCERTAIN (outbox=${placed.outboxId}); position created as pendingEntry" }
                 val pos = buildPosition(null, true, entryPrice, qty).also { it.accountId = accountId }
                 positionRepo.save(pos)
                 meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
             } else {
                 logger.error { "Order failed for $ticker" }
-                // Определённый отказ — ордер НЕ создан: освобождаем слот входа.
                 positionRepo.releaseEntry(ticker, accountId)
                 meterRegistry.counter("$metricPrefix.order.failed", Tags.of("ticker", ticker)).increment()
             }
@@ -199,13 +214,6 @@ class OrderExecutionEngine(
         val orderId = placed.alorOrderId
         val execution = alorClient.verifyOrder(orderId, portfolio = portfolioResolver(accountId))
         if (execution == null) {
-            // EXEC-3 (roadmap 13.27): verifyOrder недоступен — факт исполнения входа НЕ
-            // подтверждён. Раньше сбой трактовался как полное исполнение (non-pending OPEN
-            // позиция по цене входа): локальный стейт завышался, SL/TP армовались на полный
-            // qty, а пришедший позже fill уходил в ложное закрытие (EXEC-1). Теперь позиция
-            // создаётся в pendingEntry (как при UNCERTAIN-доставке): fill подтвердит
-            // handleExecutionReport (WS), отмену/режект/незаполненность — resolveEntryViaOutbox
-            // и State Reconciliation.
             logger.warn {
                 "verifyOrder UNKNOWN for $ticker (order=$orderId) — entry kept as pendingEntry until confirmed"
             }
@@ -218,10 +226,6 @@ class OrderExecutionEngine(
         val filledQty = execution.filledQuantity.takeIf { it in 1 until qty }
 
         if (filledQty != null) {
-            // Частичное исполнение входа: остаток лимитки ещё «висит» на бирже.
-            // Позиция создаётся в pendingEntry — реконсилятор (resolveEntryViaOutbox)
-            // после entryPartialFillCancelAfterMs отменит остаток и зафиксирует
-            // фактический объём (защита от скрытого роста позиции без ведома бота).
             logger.warn {
                 "PARTIAL entry $ticker: filled=$filledQty of $qty (order=$orderId) — " +
                     "pendingEntry until remainder cancelled/filled"
@@ -236,23 +240,39 @@ class OrderExecutionEngine(
         val savedPos = positionRepo.save(pos)
         tradeEventService.recordPositionOpened(savedPos)
         onEntryOpened(savedPos)
-        attachProtectionOrders(savedPos)
+        protection.attachProtectionOrders(savedPos)
         meterRegistry.counter("$metricPrefix.position.opened", Tags.of("ticker", ticker, "direction", direction.name)).increment()
         logger.info { "Opened $ticker ${direction.name} $qty @ $fillPrice" }
         return savedPos
     }
 
+    // ═══════════════════════════ CLOSE ═══════════════════════════════════
+
+    private suspend fun handleProtectionFill(
+        pos: Position,
+        report: ExecutionReport,
+        orderId: String,
+        fillPrice: BigDecimal,
+    ) {
+        val positionId = pos.id ?: return
+        val reason = if (orderId == pos.slOrderId) CloseReason.STOP_LOSS else CloseReason.TAKE_PROFIT
+        val mutex = closeFill.closeFillMutexes.getOrPut(positionId) { kotlinx.coroutines.sync.Mutex() }
+        mutex.withLock {
+            val fresh = positionRepo.findById(positionId)
+            if (fresh.status == PositionStatus.OPEN && (orderId == fresh.slOrderId || orderId == fresh.tpOrderId)) {
+                protection.applyExchangeProtectionClosePublic(
+                    fresh,
+                    AlorClient.OrderExecution(report.status.name, report.cumulativeFilledQty, fillPrice),
+                    reason,
+                )
+            }
+        }
+    }
+
     /**
-     * Закрытие позиции (стейт-машина, защита от double execution).
+     * Close position (state machine, double-execution protection).
      *
-     * Атомарный claim (EXEC-001): [PositionRepository.claimForClose] делает одиночный
-     * `UPDATE ... SET pending_close = true WHERE status='OPEN' AND pending_close=false`
-     * и возвращает затронул ли он 1 строку. PostgreSQL row lock сериализует
-     * конкурентные закрытия (монитор ликвидации, стоп-лосс, стратегия, реконсилятор) —
-     * второй поток получит false и НЕ создаст close-ордер, а только свернёт состояние
-     * уже существующего (confirmCloseFill / resolveCloseViaOutbox). Раньше между
-     * чтением `pendingClose` и записью было окно гонки, в котором два потока могли
-     * поставить два независимых close-ордера (два idempotency key, двойное закрытие).
+     * Atomic claim: [PositionRepository.claimForClose] serializes concurrent closes.
      */
     suspend fun closePosition(
         pos: Position,
@@ -265,34 +285,24 @@ class OrderExecutionEngine(
                 return
             }
 
-        // Атомарный claim: только один поток получает право создавать close-ордер.
         if (!positionRepo.claimForClose(positionId)) {
             val current = positionRepo.findById(positionId)
             if (current.pendingClose) {
                 if (current.closeOrderId != null) {
-                    confirmCloseFill(current, price, reason)
+                    closeFill.confirmCloseFill(current, price, reason)
                 } else {
-                    resolveCloseViaOutbox(current)
+                    reconciler.reconcilePosition(current)
                 }
             }
             return
         }
 
         val current = positionRepo.findById(positionId)
-        // Сброс накопленного fill для нового close-ордера (дельта-модель).
         val prevCumulativeFill = current.cumulativeCloseFillQty
         current.cumulativeCloseFillQty = 0
-        // Повторная попытка закрытия при уже существующем close-ордере (например,
-        // после UNCERTAIN-доставки без closeOrderId реконсилятор мог проставить id) —
-        // новый ордер НЕ создаём, только сверяем исполнение.
-        // Если partial close уже был применён (prevCumulativeFill > 0), stale
-        // closeOrderId очищается — предыдущий ордер исполнен частично, новый
-        // ордер необходим для дозакрытия остатка.
+
         if (current.closeOrderId != null) {
             if (prevCumulativeFill > 0) {
-                // CRITICAL: cancel the stale close order on the exchange BEFORE creating
-                // a replacement. Without this, the old order remains LIVE and can fill
-                // simultaneously with the new order → over-sell.
                 val staleCloseId = current.closeOrderId!!
                 logger.info {
                     "Partial close already applied for ${current.ticker} " +
@@ -304,7 +314,7 @@ class OrderExecutionEngine(
                 current.closeReason = null
                 positionRepo.save(current)
             } else {
-                confirmCloseFill(current, price, reason)
+                closeFill.confirmCloseFill(current, price, reason)
                 return
             }
         }
@@ -330,8 +340,6 @@ class OrderExecutionEngine(
                     "Close for ${current.ticker} UNCERTAIN (outbox=${placed.outboxId}); " +
                         "position stays open, pending outbox reconciliation"
                 }
-                // Claim уже поставил pending_close=true; позиция остаётся открытой,
-                // ордер мог дойти до биржи — реконсилятор outbox доведёт до конца.
                 current.pendingClose = true
                 current.closeOrderId = null
                 current.closeReason = reason
@@ -340,9 +348,6 @@ class OrderExecutionEngine(
             } else {
                 logger.error { "Close order NOT accepted for ${current.ticker} ($reason); position stays OPEN" }
                 meterRegistry.counter("$metricPrefix.close.rejected", Tags.of("ticker", current.ticker)).increment()
-                // Определённый отказ биржи — ордер НЕ создан: освобождаем claim,
-                // позиция снова закрываема. Guard `close_order_id IS NULL` защищает от
-                // затирания closeOrderId, который реконсилятор мог успеть проставить.
                 positionRepo.releaseCloseClaim(positionId)
             }
             return
@@ -352,524 +357,15 @@ class OrderExecutionEngine(
         current.pendingClose = true
         current.closeReason = reason
         positionRepo.save(current)
-        confirmCloseFill(current, price, reason)
+        closeFill.confirmCloseFill(current, price, reason)
     }
 
-    /**
-     * Пер-позиционный шаг фоновой State Reconciliation (pendingEntry/pendingClose).
-     */
-    suspend fun reconcilePosition(pos: Position) {
-        when {
-            pos.pendingEntry -> {
-                resolveEntryViaOutbox(pos)
-            }
-
-            pos.pendingClose -> {
-                if (pos.closeOrderId != null) {
-                    confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
-                } else {
-                    resolveCloseViaOutbox(pos)
-                }
-            }
-
-            else -> {
-                // Открытая позиция без pending-состояния: сверяем биржевые защитные
-                // заявки SL/TP (пропагация id из outbox, детект исполнения/отмены,
-                // завершение перевыставлений, выставление недостающих).
-                reconcileProtectionOrders(pos)
-            }
-        }
-    }
-
-    // ===================== Биржевые защитные заявки (SL/TP) =====================
-    //
-    // «Точный контроль SL/TP в лимитных заявках» (roadmap v2.2): при подтверждении
-    // входа выставляем на бирже стоп- и тейк-заявки через outbox (гарантия доставки).
-    // - [attachProtectionOrders] — выставить недостающие заявки на текущих уровнях;
-    // - [onProtectionLevelsChanged] — сдвиг уровня (trailing/стратегия) → перевыставление;
-    // - [reconcileProtectionOrders] — фоновое обслуживание: пропагация id из outbox,
-    //   детект исполнения/отмены заявок, завершение перевыставлений;
-    // - [cancelProtectionOrders] — снять защитные заявки при закрытии позиции.
-    //
-    // Уровни: SL = [ExitRules.effectiveSl] (жёсткий stopLoss либо trailing, если он
-    // «строже»), TP = takeProfit. Пока старая заявка не снята (slPendingReplace/
-    // tpPendingReplace) — НОВАЯ не выставляется (защита от двойного стопа/тейка).
-
-    private fun protectionCloseSide(pos: Position): String =
-        when (pos.direction) {
-            PositionDirection.LONG -> "sell"
-            PositionDirection.SHORT -> "buy"
-        }
+    // ═══════════════════════════ WS DISPATCH ═════════════════════════════
 
     /**
-     * Выставляет недостающие биржевые SL/TP-заявки (идемпотентно). Вызывается при
-     * подтверждении входа (полное исполнение / WS fill / resolve через outbox) и
-     * из [reconcileProtectionOrders].
-     */
-    suspend fun attachProtectionOrders(pos: Position) {
-        if (!protectionOrdersEnabled) return
-        if (pos.status != PositionStatus.OPEN) return
-        val positionId =
-            pos.id ?: run {
-                logger.error { "Cannot attach protection orders for ${pos.ticker}: position has no id" }
-                return
-            }
-        var dirty = false
-
-        // SL: эффективный уровень (жёсткий стоп либо trailing, если строже).
-        val effSl = ExitRules.effectiveSl(pos)
-        if (effSl != null && pos.slOrderId == null && !pos.slPendingReplace && !protectionOutboxActive(positionId, "sl")) {
-            val placed =
-                orderOutboxService.placeOrder(
-                    pos.ticker,
-                    protectionCloseSide(pos),
-                    pos.quantity,
-                    null,
-                    "stop",
-                    positionId = positionId,
-                    stopPrice = effSl,
-                    purpose = "sl",
-                )
-            if (placed.alorOrderId != null) {
-                pos.slOrderId = placed.alorOrderId
-                pos.slOrderPrice = effSl
-                dirty = true
-                logger.info { "Exchange SL placed ${pos.ticker} @ $effSl qty=${pos.quantity} -> ${placed.alorOrderId}" }
-            } else {
-                logger.warn { "Exchange SL for ${pos.ticker} @ $effSl not confirmed (uncertain/rejected) — reconcile will resolve" }
-            }
-        }
-
-        // TP: тейк-профит на takeProfit.
-        val tp = pos.takeProfit
-        if (tp != null && pos.tpOrderId == null && !pos.tpPendingReplace && !protectionOutboxActive(positionId, "tp")) {
-            val placed =
-                orderOutboxService.placeOrder(
-                    pos.ticker,
-                    protectionCloseSide(pos),
-                    pos.quantity,
-                    null,
-                    "take-profit",
-                    positionId = positionId,
-                    stopPrice = tp,
-                    purpose = "tp",
-                )
-            if (placed.alorOrderId != null) {
-                pos.tpOrderId = placed.alorOrderId
-                pos.tpOrderPrice = tp
-                dirty = true
-                logger.info { "Exchange TP placed ${pos.ticker} @ $tp qty=${pos.quantity} -> ${placed.alorOrderId}" }
-            } else {
-                logger.warn { "Exchange TP for ${pos.ticker} @ $tp not confirmed (uncertain/rejected) — reconcile will resolve" }
-            }
-        }
-
-        if (dirty) positionRepo.save(pos)
-    }
-
-    /**
-     * Сдвиг SL/TP-уровня (trailing-стоп, обновление стратегией): если уровень
-     * изменился относительно выставленного — планируем перевыставление
-     * ([Position.slPendingReplace]/[Position.tpPendingReplace]); фактическую
-     * отмену+перестановку выполнит [finishProtectionReplacement]. Недостающие
-     * заявки выставляются сразу.
-     */
-    suspend fun onProtectionLevelsChanged(pos: Position) {
-        if (!protectionOrdersEnabled) return
-        if (pos.status != PositionStatus.OPEN) return
-        var dirty = false
-
-        val effSl = ExitRules.effectiveSl(pos)
-        if (effSl != null && pos.slOrderId != null && pos.slOrderPrice != null &&
-            effSl.compareTo(pos.slOrderPrice) != 0 && !pos.slPendingReplace
-        ) {
-            pos.slPendingReplace = true
-            dirty = true
-            logger.info { "SL level changed ${pos.ticker}: ${pos.slOrderPrice} -> $effSl (replace scheduled)" }
-        }
-
-        val tp = pos.takeProfit
-        if (tp != null && pos.tpOrderId != null && pos.tpOrderPrice != null &&
-            tp.compareTo(pos.tpOrderPrice) != 0 && !pos.tpPendingReplace
-        ) {
-            pos.tpPendingReplace = true
-            dirty = true
-            logger.info { "TP level changed ${pos.ticker}: ${pos.tpOrderPrice} -> $tp (replace scheduled)" }
-        }
-
-        if (dirty) positionRepo.save(pos)
-        attachProtectionOrders(pos)
-    }
-
-    /**
-     * Фоновое обслуживание защитных заявок открытой позиции (цикл State Reconciliation):
-     * пропагация orderId из outbox, детект исполнения/отмены, завершение
-     * перевыставлений, выставление недостающих заявок.
-     */
-    private suspend fun reconcileProtectionOrders(pos: Position) {
-        if (!protectionOrdersEnabled) return
-        if (pos.status != PositionStatus.OPEN) {
-            if (pos.slOrderId != null || pos.tpOrderId != null) {
-                logger.warn { "Orphan SL/TP detected for ${pos.ticker} (${pos.status}); cancelling via outbox" }
-                cancelProtectionOrders(pos)
-                positionRepo.save(pos)
-            }
-            return
-        }
-        resolveProtectionOutbox(pos)
-        if (pos.status != PositionStatus.OPEN) return
-        checkProtectionFills(pos)
-        if (pos.status != PositionStatus.OPEN) return
-        finishProtectionReplacement(pos)
-        attachProtectionOrders(pos)
-    }
-
-    /**
-     * Переносит подтверждённый orderId из outbox-строки в позицию (доставка могла
-     * быть UNCERTAIN — id вернулся только на повторном цикле outbox worker).
-     * НЕ пере-армирует заявку, если по этому orderId уже есть подтверждённая отмена.
-     */
-    private suspend fun resolveProtectionOutbox(pos: Position) {
-        val positionId = pos.id ?: return
-        var dirty = false
-        if (pos.slOrderId == null) {
-            orderOutboxRepo.findLatestByPositionId(positionId, "sl")?.let { row ->
-                if (row.status == OutboxStatus.SENT && row.alorOrderId != null) {
-                    val cancelled = orderOutboxRepo.findLatestConfirmedCancel(positionId, row.alorOrderId)
-                    if (cancelled == null) {
-                        pos.slOrderId = row.alorOrderId
-                        pos.slOrderPrice = ExitRules.effectiveSl(pos)
-                        dirty = true
-                        logger.info { "Exchange SL id resolved ${pos.ticker} -> ${row.alorOrderId}" }
-                    } else {
-                        logger.info { "Exchange SL ${row.alorOrderId} for ${pos.ticker} was cancelled — not re-arming" }
-                    }
-                } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
-                    logger.warn { "Exchange SL for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure" }
-                    onSlProtectionFailed(pos)
-                }
-            }
-        }
-        if (pos.tpOrderId == null) {
-            orderOutboxRepo.findLatestByPositionId(positionId, "tp")?.let { row ->
-                if (row.status == OutboxStatus.SENT && row.alorOrderId != null) {
-                    val cancelled = orderOutboxRepo.findLatestConfirmedCancel(positionId, row.alorOrderId)
-                    if (cancelled == null) {
-                        pos.tpOrderId = row.alorOrderId
-                        pos.tpOrderPrice = pos.takeProfit
-                        dirty = true
-                        logger.info { "Exchange TP id resolved ${pos.ticker} -> ${row.alorOrderId}" }
-                    } else {
-                        logger.info { "Exchange TP ${row.alorOrderId} for ${pos.ticker} was cancelled — not re-arming" }
-                    }
-                } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
-                    logger.warn { "Exchange TP for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure" }
-                    onSlProtectionFailed(pos)
-                }
-            }
-        }
-        if (dirty) positionRepo.save(pos)
-    }
-
-    /**
-     * Проверяет статус выставленных защитных заявок через verifyOrder: исполнена →
-     * финализация закрытия (STOP_LOSS/TAKE_PROFIT); отменена/отклонена → заявки
-     * больше нет, уровень будет перевыставлен.
+     * WS ExecutionReport: dispatch to entry close, SL/TP, or pendingClose delta model.
      *
-     * ID-очистка и save() происходят атомарно внутри [applyExchangeProtectionClose]
-     * → [applyCloseExecution] → save/transitionToClosed. Нет промежуточного save(),
-     * который бы сохранил ID=null до применения execution (crash-consistency).
-     */
-    private suspend fun checkProtectionFills(pos: Position) {
-        pos.slOrderId?.let { id ->
-            val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
-            if (isFilledStatus(ex)) {
-                applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
-                return
-            }
-            if (isGoneStatus(ex)) {
-                pos.slOrderId = null
-                pos.slOrderPrice = null
-                pos.slPendingReplace = false
-                logger.warn { "Exchange SL order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
-            }
-        }
-        pos.tpOrderId?.let { id ->
-            if (pos.status != PositionStatus.OPEN) return@let
-            val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
-            if (isFilledStatus(ex)) {
-                applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
-                return
-            }
-            if (isGoneStatus(ex)) {
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
-                logger.warn { "Exchange TP order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
-            }
-        }
-        positionRepo.save(pos)
-    }
-
-    /**
-     * Финализация закрытия по исполнению биржевой защитной заявки: если локальный
-     * close-ордер был «в полёте» — снимаем его (позицию уже закрыла защитная
-     * заявка), снимаем контр-заявку и применяем исполнение.
-     *
-     * Очищает ID исполненной заявки (SL/TP) и применяет fill атомарно —
-     * первый save() внутри [applyCloseExecution] фиксирует и cleared ID,
-     * и new quantity/P&L/status. Crash до save() → позиция остаётся как есть
-     * (старый ID жив в DB, повторный WS event найдёт позицию).
-     * Crash после save() → исполнение применено, ID очищен.
-     */
-    private suspend fun applyExchangeProtectionClose(
-        pos: Position,
-        execution: AlorClient.OrderExecution,
-        reason: CloseReason,
-    ) {
-        val filled = execution.filledQuantity.coerceIn(0, pos.quantity)
-        if (filled <= 0) return
-
-        // Atomically clear the filled protection order's identity BEFORE save.
-        // This ensures that a crash after the atomic save in applyCloseExecution
-        // persists both the cleared ID and the position state change together.
-        // Without this, a crash between premature save(ID=null) and applyCloseExecution
-        // would leave the execution unapplied and the WS event unmatchable.
-        when (reason) {
-            CloseReason.STOP_LOSS -> {
-                pos.slOrderId = null
-                pos.slOrderPrice = null
-                pos.slPendingReplace = false
-            }
-            CloseReason.TAKE_PROFIT -> {
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
-            }
-            else -> {}
-        }
-
-        if (pos.pendingClose) {
-            val closeId = pos.closeOrderId
-            val positionId = pos.id
-            if (closeId != null && positionId != null) {
-                orderOutboxService.placeCancelOrder(positionId, closeId, accountId = pos.accountId)
-                logger.info {
-                    "Protection $reason closed ${pos.ticker} first — cancelling pending close order $closeId"
-                }
-            }
-            pos.closeOrderId = null
-            pos.pendingClose = false
-            pos.closeReason = null
-        }
-        // Cancel the OTHER protection order. The fired order's ID was already
-        // cleared above, so cancelProtectionOrders will skip it naturally.
-        cancelProtectionOrders(pos)
-        applyCloseExecution(pos, filled, execution.avgPrice ?: pos.currentPrice ?: pos.entryPrice, reason)
-        // After SL/TP execution, re-attach protection for the remaining position.
-        // applyPartialClose no longer calls attachProtectionOrders (it defers to
-        // reconciliation via PendingReplace flags), but in the SL/TP execution path
-        // the IDs were already cleared by cancelProtectionOrders above, so flags
-        // are not set. We must re-attach directly here to protect the remainder.
-        if (pos.status == PositionStatus.OPEN) {
-            attachProtectionOrders(pos)
-        }
-    }
-
-    /**
-     * Завершает перевыставление заявки: снимает старую (только после подтверждения
-     * отмены!) и очищает флаг — новую выставят [attachProtectionOrders]/[reconcileProtectionOrders].
-     * При UNCERTAIN отмены — ждёт следующего цикла (защита от двойного стопа/тейка).
-     */
-    private suspend fun finishProtectionReplacement(pos: Position) {
-        var dirty = false
-
-        if (pos.slPendingReplace) {
-            val oldId = pos.slOrderId
-            if (oldId == null) {
-                pos.slPendingReplace = false
-                dirty = true
-            } else {
-                // P1: стабильный idempotency-ключ — ретраи при UNKNOWN/UNCERTAIN идут с
-                // тем же ключом, биржа дедуплицирует повторную отмену (CANCEL_UNKNOWN
-                // безопасен: либо отменится, либо REJECTED -> verifyOrder разрешит).
-                val cancelIdem = "prot-cancel-$oldId"
-                val result =
-                    try {
-                        alorClient.cancelOrder(oldId, cancelIdem, portfolio = portfolioResolver(pos.accountId))
-                    } catch (e: Exception) {
-                        logger.warn(e) {
-                            "SL replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId idem=$cancelIdem) — retry next cycle"
-                        }
-                        return
-                    }
-                if (result == AlorClient.CancelResult.REJECTED) {
-                    val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
-                    when {
-                        // FILLED — order executed before cancel arrived. Close position
-                        // atomically via applyCloseExecution (IDs cleared in same write).
-                        ex != null && isFilledStatus(ex) -> {
-                            applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
-                            return
-                        }
-                        // GONE — order was cancelled/rejected/expired. Fall through to
-                        // common cleanup code below which clears IDs and sets dirty.
-                        ex != null && isGoneStatus(ex) -> {
-                            logger.info { "SL replaced: old order $oldId confirmed gone (${ex.status}) for ${pos.ticker}" }
-                        }
-                        // UNKNOWN — verifyOrder returned null or unrecognised status.
-                        // Do NOT clear slOrderId: order may still be alive. Retry next cycle.
-                        else -> {
-                            val status = ex?.status ?: "null"
-                            logger.warn { "SL cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle" }
-                            return
-                        }
-                    }
-                }
-                if (result == AlorClient.CancelResult.UNCERTAIN) return
-                pos.slOrderId = null
-                pos.slOrderPrice = null
-                pos.slPendingReplace = false
-                dirty = true
-                if (result == AlorClient.CancelResult.CONFIRMED) {
-                    logger.info { "SL replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
-                }
-            }
-        }
-
-        if (pos.tpPendingReplace) {
-            val oldId = pos.tpOrderId
-            if (oldId == null) {
-                pos.tpPendingReplace = false
-                dirty = true
-            } else {
-                val cancelIdem = "prot-cancel-$oldId"
-                val result =
-                    try {
-                        alorClient.cancelOrder(oldId, cancelIdem, portfolio = portfolioResolver(pos.accountId))
-                    } catch (e: Exception) {
-                        logger.warn(e) {
-                            "TP replacement cancel UNKNOWN for ${pos.ticker} (order=$oldId idem=$cancelIdem) — retry next cycle"
-                        }
-                        return
-                    }
-                if (result == AlorClient.CancelResult.REJECTED) {
-                    val ex = alorClient.verifyOrder(oldId, portfolio = portfolioResolver(pos.accountId))
-                    when {
-                        ex != null && isFilledStatus(ex) -> {
-                            applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
-                            return
-                        }
-                        ex != null && isGoneStatus(ex) -> {
-                            logger.info { "TP replaced: old order $oldId confirmed gone (${ex.status}) for ${pos.ticker}" }
-                        }
-                        else -> {
-                            val status = ex?.status ?: "null"
-                            logger.warn { "TP cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle" }
-                            return
-                        }
-                    }
-                }
-                if (result == AlorClient.CancelResult.UNCERTAIN) return
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
-                dirty = true
-                if (result == AlorClient.CancelResult.CONFIRMED) {
-                    logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
-                }
-            }
-        }
-
-        if (dirty) positionRepo.save(pos)
-    }
-
-    /**
-     * Снимает биржевые защитные заявки позиции (через outbox — гарантированная
-     * доставка отмены). Вызывается при любом закрытии позиции; [skip] — тип заявки,
-     * которую НЕ снимаем (например, сработавшую — она уже исполнена).
-     */
-    suspend fun cancelProtectionOrders(
-        pos: Position,
-        skip: String? = null,
-    ) {
-        if (!protectionOrdersEnabled) return
-        val positionId = pos.id ?: return
-        val slId = pos.slOrderId
-        if (slId != null && skip != "SL") {
-            orderOutboxService.placeCancelOrder(positionId, slId, accountId = pos.accountId)
-            logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=$slId)" }
-            pos.slOrderId = null
-            pos.slOrderPrice = null
-            pos.slPendingReplace = false
-        }
-        val tpId = pos.tpOrderId
-        if (tpId != null && skip != "TP") {
-            orderOutboxService.placeCancelOrder(positionId, tpId, accountId = pos.accountId)
-            logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=$tpId)" }
-            pos.tpOrderId = null
-            pos.tpOrderPrice = null
-            pos.tpPendingReplace = false
-        }
-    }
-
-    /**
-     * Жива ли outbox-строка защитной заявки (нельзя выставлять дубликат):
-     * - PENDING / FAILED с запасом ретраев — доставка ещё «в полёте»;
-     * - SENT без подтверждённой отмены — заявка жива на бирже;
-     * - SENT с подтверждённой отменой / FAILED с исчерпанными ретраями — заявки
-     *   больше нет, новую выставлять можно.
-     */
-    private suspend fun protectionOutboxActive(
-        positionId: Long,
-        purpose: String,
-    ): Boolean {
-        val row = orderOutboxRepo.findLatestByPositionId(positionId, purpose) ?: return false
-        if (row.status == OutboxStatus.PENDING) return true
-        if (row.status == OutboxStatus.FAILED && row.retryCount < alorConfig.maxOrderRetries) return true
-        if (row.status == OutboxStatus.SENT && row.alorOrderId != null) {
-            return orderOutboxRepo.findLatestConfirmedCancel(positionId, row.alorOrderId) == null
-        }
-        return false
-    }
-
-    /**
-     * Filled order statuses — order has been (at least partially) executed.
-     * Explicit whitelist (not string contains) to avoid false positives like
-     * "UNFILLED" or "NOT_FILLED" matching on substring "fill".
-     */
-    private fun isFilledStatus(execution: AlorClient.OrderExecution): Boolean =
-        when (execution.status.uppercase()) {
-            "FILLED",
-            "PARTIALLY_FILLED",
-            -> execution.filledQuantity > 0
-            else -> false
-        }
-
-    /**
-     * Terminal order statuses — order is definitively gone from the exchange.
-     * Explicit whitelist (not string contains) to avoid false positives like
-     * "CANCEL_REJECTED" matching on substring "reject".
-     */
-    private fun isGoneStatus(execution: AlorClient.OrderExecution): Boolean =
-        when (execution.status.uppercase()) {
-            "CANCELED",
-            "CANCELLED",
-            "REJECTED",
-            "EXPIRED",
-            -> true
-            else -> false
-        }
-
-    /**
-     * Применяет ExecutionReport из WebSocket: фиксация фактического исполнения
-     * входа (pendingEntry), закрытия (pendingClose) и биржевых защитных заявок
-     * (SL/TP-фил исполняется биржей — позиция финализируется с reason
-     * STOP_LOSS / TAKE_PROFIT), с учётом partial fills.
-     *
-     * @return true, если отчёт обработан ядром (вход/закрытие/защитная заявка);
-     *   false — отчёт не относится к pending-состоянию (например, обычный fill
-     *   акции — обрабатывает TradingBotService).
+     * @return true if the report was handled by the engine.
      */
     suspend fun handleExecutionReport(report: ExecutionReport): Boolean {
         if (report.status != OrderStatus.FILLED && report.status != OrderStatus.PARTIALLY_FILLED) return false
@@ -883,30 +379,13 @@ class OrderExecutionEngine(
         TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
         val fillPrice = report.avgPrice ?: return false
 
-        // Исполнение биржевой защитной заявки (SL/TP) — позицию закрыла биржа.
-        // Проверяем РАНЬШЕ pendingClose: стоп-заявка могла сработать, пока
-        // локальный close-ордер ещё «в полёте».
+        // SL/TP execution
         if (orderId == pos.slOrderId || orderId == pos.tpOrderId) {
-            val positionId = pos.id ?: return false
-            val reason = if (orderId == pos.slOrderId) CloseReason.STOP_LOSS else CloseReason.TAKE_PROFIT
-            val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
-            mutex.withLock {
-                val fresh = positionRepo.findById(positionId)
-                if (fresh.status != PositionStatus.OPEN) return true
-                if (orderId != fresh.slOrderId && orderId != fresh.tpOrderId) {
-                    // SL/TP was already cleared by another coroutine — skip
-                    return true
-                }
-                applyExchangeProtectionClose(
-                    fresh,
-                    AlorClient.OrderExecution(report.status.name, report.cumulativeFilledQty, fillPrice),
-                    reason,
-                )
-            }
+            handleProtectionFill(pos, report, orderId, fillPrice)
             return true
         }
 
-        // Подтверждение входа (pendingEntry).
+        // Entry confirmation (pendingEntry)
         if (pos.pendingEntry) {
             if (report.status == OrderStatus.FILLED) {
                 pos.alorOrderId = orderId
@@ -916,432 +395,17 @@ class OrderExecutionEngine(
                 positionRepo.save(pos)
                 tradeEventService.recordPositionOpened(pos)
                 onEntryOpened(pos)
-                attachProtectionOrders(pos)
+                protection.attachProtectionOrders(pos)
                 logger.info { "WS entry fill applied for ${pos.ticker}: order=$orderId qty=${pos.quantity} @ $fillPrice" }
             }
-            // PARTIALLY_FILLED вход — оставляем реконсилятору (verifyOrder даст кумулятивный fill).
             return true
         }
 
-        // Подтверждение закрытия (pendingClose) — дельта-модель.
-        // Alor filledQtyBatch — накопительное значение. Только инкремент
-        // с момента последнего применения реально уменьшает позицию.
-        if (pos.pendingClose) {
-            val positionId = pos.id ?: return false
-            val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
-            mutex.withLock {
-                // Re-read position under lock to get fresh cumulativeCloseFillQty.
-                // Without this, two concurrent coroutines could both read the same
-                // cumulative value and apply duplicate deltas.
-                val fresh = positionRepo.findById(positionId)
-                if (fresh.status != PositionStatus.OPEN) return true
-                val prevApplied = fresh.cumulativeCloseFillQty
-                val delta = report.cumulativeFilledQty - prevApplied
-                if (delta <= 0) {
-                    logger.debug {
-                        "Close fill delta=0 for ${fresh.ticker}: cumulative=${report.cumulativeFilledQty} " +
-                            "already_applied=$prevApplied — skipping"
-                    }
-                    return true
-                }
-                fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
-                applyCloseExecution(fresh, delta, fillPrice, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
-            }
-            return true
-        }
-
-        return false
+        // Close confirmation (pendingClose) — delta model
+        return closeFill.handlePendingCloseReport(pos, report)
     }
 
-    /**
-     * Delta-model close fill для fallback-path (handleRegularStockFill).
-     *
-     * Используется когда handleExecutionReport() вернул false (pendingClose=false,
-     * но closeOrderId установлен — например, после releaseCloseClaim). Та же модель:
-     * cumulativeFilledQty − cumulativeCloseFillQty = delta → applyCloseExecution.
-     *
-     * Защищён per-position mutex от конкурентного применения с confirmCloseFill/WS.
-     */
-    suspend fun handleCloseFill(pos: Position, report: ExecutionReport) {
-        val fillPrice = report.avgPrice ?: return
-        val positionId = pos.id ?: return
-        val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
-        mutex.withLock {
-            val fresh = positionRepo.findById(positionId)
-            if (fresh.status != PositionStatus.OPEN) return
-            if (fresh.closeOrderId == null) return
-            val prevApplied = fresh.cumulativeCloseFillQty
-            val delta = report.cumulativeFilledQty - prevApplied
-            if (delta <= 0) {
-                logger.debug {
-                    "handleCloseFill delta=0 for ${fresh.ticker}: cumulative=${report.cumulativeFilledQty} " +
-                        "already_applied=$prevApplied — skipping"
-                }
-                return
-            }
-            fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
-            applyCloseExecution(fresh, delta, fillPrice, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
-        }
-    }
+    // ═══════════════════════════ ABANDON ═════════════════════════════════
 
-    /**
-     * Подтверждение исполнения close-ордера через verifyOrder.
-     *
-     * Обёрнуто в per-position mutex: WS handleExecutionReport и REST confirmCloseFill
-     * могут вызываться конкурентно для одной позиции. Без mutex оба корутина прочитают
-     * одинаковый cumulativeCloseFillQty, вычислят дублирующие delta и применят
-     * partial close дважды (удвоенный P&L, неверное quantity).
-     */
-    private suspend fun confirmCloseFill(
-        pos: Position,
-        expectedPrice: BigDecimal,
-        reason: CloseReason,
-    ) {
-        val positionId = pos.id ?: return
-        val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
-        mutex.withLock {
-            // Re-read position under lock for fresh cumulativeCloseFillQty.
-            val fresh = positionRepo.findById(positionId)
-            if (fresh.status != PositionStatus.OPEN) return
-
-            val orderId = fresh.closeOrderId ?: return
-            val execution =
-                alorClient.verifyOrder(
-                    orderId,
-                    expectedPrice = expectedPrice,
-                    portfolio = portfolioResolver(fresh.accountId),
-                )
-            if (execution == null) {
-                if (closeConfirmedByPositionDelta(fresh)) {
-                    logger.warn {
-                        "Close order $orderId for ${fresh.ticker} confirmed by position delta " +
-                            "(exchange position reduced) — finalizing at $expectedPrice"
-                    }
-                    applyCloseExecution(fresh, fresh.quantity, expectedPrice, reason)
-                } else {
-                    logger.warn { "Close order $orderId for ${fresh.ticker} state UNKNOWN; pending reconciliation" }
-                }
-                return
-            }
-            val avg = execution.avgPrice ?: expectedPrice
-            val cumulativeFill = execution.filledQuantity
-            val prevApplied = fresh.cumulativeCloseFillQty
-            val delta = cumulativeFill - prevApplied
-            if (delta <= 0) {
-                logger.debug {
-                    "confirmCloseFill delta=0 for ${fresh.ticker}: REST cumulative=$cumulativeFill " +
-                        "already_applied=$prevApplied — skipping"
-                }
-                return
-            }
-            fresh.cumulativeCloseFillQty = cumulativeFill
-            applyCloseExecution(fresh, delta, avg, reason)
-        }
-    }
-
-    /**
-     * Вторичная State Reconciliation close-ордера: позиция на бирже полностью
-     * исчезла (qty=0) → close исполнился, даже если
-     * verifyOrder не подтверждает (eventual consistency).
-     *
-     * Частичное уменьшение (qty < localQty) НЕ считается доказательством,
-     * так как может быть вызвано внешним действием, частичным SL или
-     * другим ордером — позиция остаётся открытой до следующей итерации.
-     */
-    private suspend fun closeConfirmedByPositionDelta(pos: Position): Boolean =
-        when (val result = alorClient.getPositions(portfolio = portfolioResolver(pos.accountId))) {
-            is AlorClient.ReconcileResult.Failed -> {
-                false
-            }
-
-            is AlorClient.ReconcileResult.Ok -> {
-                val exchangeQty =
-                    result.items
-                        .firstOrNull { it.ticker.equals(pos.ticker, ignoreCase = true) }
-                        ?.qty
-                        ?: 0L
-                // Conservative: only treat full disappearance (qty=0) as confirmation.
-                // Partial reduction (e.g. exchangeQty=60 vs local=100) may be caused by
-                // external action, partial SL fill, or another order — NOT safe to assume
-                // our close order was the cause. Retry next cycle.
-                exchangeQty == 0L
-            }
-        }
-
-    /**
-     * Применяет результат исполнения close-ордера (verifyOrder или WS):
-     * полное → финализация, частичное → дозакрытие остатка.
-     */
-    private suspend fun applyCloseExecution(
-        pos: Position,
-        filled: Int,
-        avg: BigDecimal,
-        reason: CloseReason,
-    ) {
-        val filledQty = filled.coerceIn(0, pos.quantity)
-        if (filledQty <= 0) return
-        if (filledQty >= pos.quantity) {
-            finalizeClosePosition(pos, avg, reason)
-        } else {
-            applyPartialClose(pos, filledQty, avg)
-        }
-    }
-
-    /**
-     * Partial fill: реализуем P&L закрытой части, уменьшаем quantity, остаток дозакрываем.
-     *
-     * Защитные SL/TP перевыставляются через durable PendingReplace flags:
-     * - Если SL/TP IDs ещё установлены (ручной путь закрытия через WS/REST),
-     *   устанавливаем slPendingReplace/tpPendingReplace. Отмена старых ордеров
-     *   и размещение новых происходит в [reconcileProtectionOrders] →
-     *   [finishProtectionReplacement] + [attachProtectionOrders].
-     * - Если SL/TP IDs уже очищены (путь исполнения SL/TP через [applyExchangeProtectionClose]),
-     *   флаги не устанавливаются. Вызывающий код ([applyExchangeProtectionClose])
-     *   уже вызвал [cancelProtectionOrders] и должен вызвать [attachProtectionOrders]
-     *   после applyCloseExecution.
-     *
-     * Ключевое свойство: одна атомарная save() фиксирует и quantity/P&L,
-     * и флаги замены защиты. При crash до save — старые SL/TP (для полного
-     * объёма) остаются на бирже (over-protected, не unprotected). После
-     * restart reconciliation видит flags и выполняет cancel+replace.
-     */
-    private suspend fun applyPartialClose(
-        pos: Position,
-        filled: Int,
-        avg: BigDecimal,
-    ) {
-        val partialPnl = pnlCalculator.pnl(pos, pos.entryPrice, avg, BigDecimal(filled))
-        pos.realizedPnl = pos.realizedPnl.add(partialPnl)
-        pos.quantity -= filled
-        // closeOrderId НЕ очищается: последующие fill'ы для того же close-ордера
-        // должны находить позицию через findByCloseOrderId. Модель дельты
-        // (cumulativeCloseFillQty) гарантирует идемпотентность: delta=0 → skip.
-        //
-        // pendingClose = false: позиция готова к перезакрытию (новый close-ордер
-        // при следующем триггере). closePosition() обнаружит prevCumulativeCloseFillQty > 0
-        // и очистит stale closeOrderId перед созданием нового ордера.
-        pos.pendingClose = false
-        pos.currentPrice = avg
-        // Durable protection replacement: mark old SL/TP for replacement.
-        // Old orders remain active on the exchange (over-protected for the
-        // larger pre-close quantity) until reconciliation cancels them and
-        // places correctly-sized replacements.
-        if (protectionOrdersEnabled && pos.status == PositionStatus.OPEN) {
-            if (pos.slOrderId != null && !pos.slPendingReplace) pos.slPendingReplace = true
-            if (pos.tpOrderId != null && !pos.tpPendingReplace) pos.tpPendingReplace = true
-        }
-        // Single atomic save: quantity, P&L, close state, and protection flags.
-        positionRepo.save(pos)
-        meterRegistry.counter("$metricPrefix.partial_close", Tags.of("ticker", pos.ticker)).increment()
-        logger.warn {
-            "PARTIAL close ${pos.ticker}: closed=$filled remainder=${pos.quantity} @ $avg " +
-                "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); " +
-                "closeOrderId kept, pendingClose=false, protection replacement deferred to reconciliation"
-        }
-    }
-
-    /**
-     * Полное закрытие: P&L = realizedPnl (partial) + P&L остатка.
-     *
-     * Атомарный переход в закрытое состояние ([PositionRepository.transitionToClosed]):
-     * из конкурирующих вызовов (claim-поток + сверяющие потоки по тому же close-ордеру)
-     * побочные эффекты (recordPositionClosed / onPositionClosed / снятие защитных заявок)
-     * выполняет только тот, чей UPDATE перевёл строку из OPEN.
-     */
-    private suspend fun finalizeClosePosition(
-        pos: Position,
-        closePrice: BigDecimal,
-        reason: CloseReason,
-    ) {
-        val positionId =
-            pos.id ?: run {
-                logger.error { "Cannot finalize close for ${pos.ticker}: position has no id" }
-                return
-            }
-        val targetStatus =
-            when (reason) {
-                CloseReason.TAKE_PROFIT -> PositionStatus.TAKE_PROFIT
-                else -> PositionStatus.CLOSED
-            }
-        val remainderPnl = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
-        val totalPnl = pos.realizedPnl.add(remainderPnl)
-        if (!positionRepo.transitionToClosed(positionId, targetStatus, closePrice, reason, totalPnl, pos.cumulativeCloseFillQty)) {
-            logger.warn { "Finalize skip ${pos.ticker}: position already closed by another path" }
-            return
-        }
-        pos.status = targetStatus
-        pos.closedAt = LocalDateTime.now()
-        pos.closePrice = closePrice
-        pos.closeReason = reason
-        pos.pnl = totalPnl
-        pos.pendingClose = false
-        pos.closeOrderId = null
-        cancelProtectionOrders(pos)
-        tradeEventService.recordPositionClosed(pos, reason.code)
-        onPositionClosed(pos)
-        positionRepo.releaseEntry(pos.ticker, pos.accountId)
-        closeFillMutexes.remove(positionId)
-        meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
-        logger.info { "Closed ${pos.ticker} reason=$reason P&L=$totalPnl" }
-    }
-
-    /**
-     * Сверка pendingEntry-позиции через outbox-запись.
-     *
-     * Управляет остатком лимитного входа после частичного исполнения:
-     * - кумулятивный fill обновляет [Position.quantity] до полного исполнения;
-     * - остаток, «висящий» на бирже дольше [AlorConfig.entryPartialFillCancelAfterMs],
-     *   отменяется ([AlorClient.cancelOrder]), вход фиксируется на фактическом объёме
-     *   (защита от скрытого роста позиции без ведома бота).
-     */
-    suspend fun resolveEntryViaOutbox(pos: Position) {
-        val positionId =
-            pos.id ?: run {
-                logger.error { "Pending entry ${pos.ticker} has no id — cannot reconcile via outbox" }
-                return
-            }
-        val outbox = orderOutboxRepo.findLatestByPositionId(positionId)
-        if (outbox == null) {
-            logger.warn { "No outbox row for pending entry ${pos.id}/${pos.ticker}; leaving pending" }
-            return
-        }
-        when {
-            outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
-                val execution = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId)) ?: return
-                if (isGoneStatus(execution)) {
-                    abandonEntry(pos, CloseReason.ENTRY_REJECTED)
-                    return
-                }
-                if (execution.filledQuantity <= 0) return // лимитный ордер ещё не исполнился
-
-                val requestedQty =
-                    objectMapper
-                        .readTree(outbox.payloadJson)
-                        .path("qty")
-                        .asInt(0)
-                        .takeIf { it > 0 }
-                        ?: pos.quantity
-                val cumulative = execution.filledQuantity.coerceIn(1, requestedQty)
-                val remainder = requestedQty - cumulative
-
-                // Частичное исполнение с остатком на бирже.
-                if (remainder > 0) {
-                    if (cumulative != pos.quantity) {
-                        pos.quantity = cumulative
-                        pos.entryPrice = execution.avgPrice ?: pos.entryPrice
-                        positionRepo.save(pos)
-                    }
-                    val elapsedMs = Duration.between(outbox.createdAt, LocalDateTime.now()).toMillis()
-                    if (elapsedMs < alorConfig.entryPartialFillCancelAfterMs) {
-                        logger.info {
-                            "Pending entry ${pos.ticker}: partial fill ${pos.quantity}/$requestedQty, " +
-                                "remainder $remainder still resting " +
-                                "(${elapsedMs}ms < ${alorConfig.entryPartialFillCancelAfterMs}ms)"
-                        }
-                        return
-                    }
-                    // Порог пройден → снимаем остаток лимитки.
-                    val cancelled =
-                        try {
-                            alorClient.cancelOrder(
-                                outbox.alorOrderId,
-                                outbox.idempotencyKey ?: "",
-                                portfolio = portfolioResolver(pos.accountId),
-                            )
-                        } catch (e: Exception) {
-                            logger.error(e) {
-                                "Entry remainder cancel FAILED for ${pos.ticker} " +
-                                    "(order=${outbox.alorOrderId}) — retry next cycle"
-                            }
-                            AlorClient.CancelResult.UNCERTAIN
-                        }
-                    if (cancelled != AlorClient.CancelResult.CONFIRMED) return // отмена не подтверждена → ждём следующего цикла
-                    val finalExec = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId))
-                    val finalQty = (finalExec?.filledQuantity ?: cumulative).coerceIn(1, requestedQty)
-                    pos.alorOrderId = outbox.alorOrderId
-                    pos.pendingEntry = false
-                    pos.entryPrice = finalExec?.avgPrice ?: execution.avgPrice ?: pos.entryPrice
-                    pos.quantity = finalQty
-                    positionRepo.save(pos)
-                    tradeEventService.recordPositionOpened(pos)
-                    onEntryOpened(pos)
-                    attachProtectionOrders(pos)
-                    meterRegistry.counter("$metricPrefix.entry.remainder_cancelled", Tags.of("ticker", pos.ticker)).increment()
-                    logger.info {
-                        "Pending entry ${pos.ticker} finalized after remainder cancel: " +
-                            "qty=${pos.quantity} @ ${pos.entryPrice} (order=${outbox.alorOrderId})"
-                    }
-                    return
-                }
-
-                // Полное исполнение → фиксируем вход.
-                pos.alorOrderId = outbox.alorOrderId
-                pos.pendingEntry = false
-                pos.entryPrice = execution.avgPrice ?: pos.entryPrice
-                pos.quantity = cumulative
-                positionRepo.save(pos)
-                tradeEventService.recordPositionOpened(pos)
-                onEntryOpened(pos)
-                attachProtectionOrders(pos)
-                logger.info {
-                    "Pending entry resolved ${pos.ticker}: order=${outbox.alorOrderId} qty=${pos.quantity} @ ${pos.entryPrice}"
-                }
-            }
-
-            outbox.status == OutboxStatus.FAILED && outbox.retryCount >= alorConfig.maxOrderRetries -> {
-                abandonEntry(pos, CloseReason.ENTRY_NOT_CONFIRMED)
-            }
-
-            else -> {} // PENDING / FAILED (ещё ретраится) → ждём
-        }
-    }
-
-    /**
-     * Сверка pendingClose-позиции без closeOrderId через outbox-запись.
-     */
-    suspend fun resolveCloseViaOutbox(pos: Position) {
-        val positionId =
-            pos.id ?: run {
-                logger.error { "Pending close ${pos.ticker} has no id — cannot reconcile via outbox" }
-                return
-            }
-        val outbox = orderOutboxRepo.findLatestByPositionId(positionId)
-        if (outbox == null) {
-            logger.warn { "No outbox row for pending close ${pos.id}/${pos.ticker}; resetting pendingClose" }
-            pos.pendingClose = false
-            positionRepo.save(pos)
-            return
-        }
-        when {
-            outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
-                pos.closeOrderId = outbox.alorOrderId
-                positionRepo.save(pos)
-                confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
-            }
-
-            outbox.status == OutboxStatus.FAILED && outbox.retryCount >= alorConfig.maxOrderRetries -> {
-                logger.warn { "Pending close ${pos.id}/${pos.ticker} permanently failed; resetting for a fresh close order" }
-                pos.pendingClose = false
-                pos.closeOrderId = null
-                positionRepo.save(pos)
-            }
-
-            else -> {} // PENDING / FAILED (ещё ретраится) → ждём outbox worker
-        }
-    }
-
-    private suspend fun abandonEntry(
-        pos: Position,
-        reason: CloseReason,
-    ) {
-        logger.warn { "Entry for ${pos.ticker} abandoned: $reason" }
-        pos.pendingEntry = false
-        pos.status = PositionStatus.CLOSED
-        pos.closeReason = reason
-        pos.closedAt = LocalDateTime.now()
-        positionRepo.save(pos)
-        positionRepo.releaseEntry(pos.ticker, pos.accountId)
-        pos.id?.let { closeFillMutexes.remove(it) }
-        meterRegistry.counter("$metricPrefix.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
-    }
+    internal suspend fun abandonEntry(pos: Position, reason: CloseReason) = reconciler.abandonEntry(pos, reason)
 }

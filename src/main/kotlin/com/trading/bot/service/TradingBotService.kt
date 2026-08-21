@@ -352,6 +352,8 @@ class TradingBotService(
         pos.closedAt = LocalDateTime.now()
         pos.closeReason = pos.closeReason ?: CloseReason.EXECUTION_FILL
         positionRepo.save(pos)
+        engine.cancelProtectionOrders(pos)
+        positionRepo.releaseEntry(pos.ticker, pos.accountId)
         tradeEventService.recordPositionClosed(pos, CloseReason.EXECUTION_FILL.code)
         // F-4 (roadmap 13.25): WS-путь закрытия минует callback OrderExecutionEngine
         // onPositionClosed — событие публикуем здесь: DailyLossCircuitBreaker учтёт

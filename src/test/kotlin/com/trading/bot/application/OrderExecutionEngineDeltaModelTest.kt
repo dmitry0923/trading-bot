@@ -283,7 +283,7 @@ class OrderExecutionEngineDeltaModelTest {
 
     @Test
     fun `new close order with fresh cumulative applies full delta from zero`() {
-        val pos = openPos(quantity = 3, cumulativeCloseFillQty = 0)
+        val pos = openPos(quantity = 3, cumulativeCloseFillQty = 0, closeOrderId = "close-2")
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         stubTransitionToClosed()
@@ -1023,5 +1023,159 @@ class OrderExecutionEngineDeltaModelTest {
 
         assertFalse(handled) { "late fill for stale order returns false" }
         assertEquals(6, pos.quantity) { "position unchanged — stale fill dropped" }
+    }
+
+    // ─── P0: stale order identity in handleCloseFill ────────────────────
+
+    /**
+     * handleCloseFill receives late WS event for order A after B was created.
+     * closeOrderId = B, report.orderId = A → must be ignored, no state mutation.
+     */
+    @Test
+    fun `handleCloseFill ignores late fill from wrong order id`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = false,
+            closeOrderId = "order-B",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+
+        val lateReport = ExecutionReport(
+            orderId = "order-A",
+            status = OrderStatus.PARTIALLY_FILLED,
+            cumulativeFilledQty = 40,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        runBlocking { engine.handleCloseFill(pos, lateReport) }
+
+        assertEquals(60, pos.quantity) { "quantity unchanged — stale event ignored" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative unchanged — stale event ignored" }
+        assertEquals("order-B", pos.closeOrderId) { "closeOrderId unchanged — stale event ignored before mutation" }
+    }
+
+    /**
+     * handleCloseFill accepts event for correct order but ignores if
+     * cumulative has not increased.
+     */
+    @Test
+    fun `handleCloseFill accepts correct order id with valid delta`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = false,
+            closeOrderId = "order-B",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        val report = ExecutionReport(
+            orderId = "order-B",
+            status = OrderStatus.PARTIALLY_FILLED,
+            cumulativeFilledQty = 20,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        runBlocking { engine.handleCloseFill(pos, report) }
+
+        assertEquals(40, pos.quantity) { "quantity reduced by delta=20" }
+        assertEquals(20, pos.cumulativeCloseFillQty) { "cumulative updated to 20" }
+    }
+
+    // ─── P0: stale order identity in handlePendingCloseReport ───────────
+
+    /**
+     * handlePendingCloseReport receives late WS event for order A after B was created.
+     * closeOrderId = B, report.orderId = A → must be ignored.
+     */
+    @Test
+    fun `handlePendingCloseReport ignores late fill from wrong order id`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = true,
+            closeOrderId = "order-B",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+
+        val lateReport = ExecutionReport(
+            orderId = "order-A",
+            status = OrderStatus.PARTIALLY_FILLED,
+            cumulativeFilledQty = 40,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        val handled = runBlocking { engine.handleExecutionReport(lateReport) }
+
+        assertTrue(handled) { "report was matched by closeOrderId path" }
+        assertEquals(60, pos.quantity) { "quantity unchanged — stale event ignored" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative unchanged — stale event ignored" }
+    }
+
+    // ─── P0: impossible delta > quantity ─────────────────────────────────
+
+    /**
+     * applyCloseExecution: filled > position.quantity → no state mutation, no finalize.
+     * Impossible fill must be stopped, not silently clamped.
+     */
+    @Test
+    fun `applyCloseExecution rejects filled greater than position quantity`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = false,
+            closeOrderId = "order-A",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        val report = ExecutionReport(
+            orderId = "order-A",
+            status = OrderStatus.FILLED,
+            cumulativeFilledQty = 80,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        runBlocking { engine.handleCloseFill(pos, report) }
+
+        assertEquals(60, pos.quantity) { "quantity unchanged — impossible fill rejected" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated — impossible fill rejected before assignment" }
+        assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
+    }
+
+    /**
+     * Delta > quantity through confirmCloseFill (REST path) must also be rejected.
+     */
+    @Test
+    fun `confirmCloseFill rejects cumulative delta greater than position quantity`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = false,
+            closeOrderId = "order-A",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        runBlocking {
+            Mockito.`when`(
+                alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
+            ).thenReturn(AlorClient.OrderExecution("FILLED", 80, BigDecimal("110")))
+        }
+
+        runBlocking { engine.closeFill.confirmCloseFill(pos, BigDecimal("110"), CloseReason.RECONCILIATION) }
+
+        assertEquals(60, pos.quantity) { "quantity unchanged — impossible cumulative rejected" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated — impossible delta rejected before assignment" }
+        assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
     }
 }

@@ -69,6 +69,15 @@ class CloseFillProcessor(
             val fresh = positionRepo.findById(positionId)
             if (fresh.status != PositionStatus.OPEN) return
             if (fresh.closeOrderId == null) return
+            if (fresh.closeOrderId != report.orderId) {
+                logger.warn {
+                    "Ignoring stale close fill: " +
+                        "position=${fresh.id}, ticker=${fresh.ticker}, " +
+                        "currentOrder=${fresh.closeOrderId}, reportOrder=${report.orderId}"
+                }
+                meterRegistry.counter("$metricPrefix.close.stale_order", Tags.of("ticker", fresh.ticker)).increment()
+                return
+            }
             val prevApplied = fresh.cumulativeCloseFillQty
             val delta = report.cumulativeFilledQty - prevApplied
             if (delta <= 0) {
@@ -76,6 +85,15 @@ class CloseFillProcessor(
                     "handleCloseFill delta=0 for ${fresh.ticker}: cumulative=${report.cumulativeFilledQty} " +
                         "already_applied=$prevApplied — skipping"
                 }
+                return
+            }
+            if (delta > fresh.quantity) {
+                logger.error {
+                    "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
+                        "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
+                        "NOT setting cumulativeCloseFillQty, pending reconciliation"
+                }
+                meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
                 return
             }
             fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
@@ -129,6 +147,15 @@ class CloseFillProcessor(
                 }
                 return
             }
+            if (delta > fresh.quantity) {
+                logger.error {
+                    "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
+                        "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
+                        "NOT setting cumulativeCloseFillQty, pending reconciliation"
+                }
+                meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
+                return
+            }
             fresh.cumulativeCloseFillQty = cumulativeFill
             applyCloseExecution(fresh, delta, avg, reason)
         }
@@ -150,6 +177,15 @@ class CloseFillProcessor(
             mutex.withLock {
                 val fresh = positionRepo.findById(positionId)
                 if (fresh.status != PositionStatus.OPEN) return true
+                if (fresh.closeOrderId != null && fresh.closeOrderId != report.orderId) {
+                    logger.warn {
+                        "Ignoring stale pending-close fill: " +
+                            "position=${fresh.id}, ticker=${fresh.ticker}, " +
+                            "currentOrder=${fresh.closeOrderId}, reportOrder=${report.orderId}"
+                    }
+                    meterRegistry.counter("$metricPrefix.close.stale_order", Tags.of("ticker", fresh.ticker)).increment()
+                    return true
+                }
                 val prevApplied = fresh.cumulativeCloseFillQty
                 val delta = report.cumulativeFilledQty - prevApplied
                 if (delta <= 0) {
@@ -157,6 +193,15 @@ class CloseFillProcessor(
                         "Close fill delta=0 for ${fresh.ticker}: cumulative=${report.cumulativeFilledQty} " +
                             "already_applied=$prevApplied — skipping"
                     }
+                    return true
+                }
+                if (delta > fresh.quantity) {
+                    logger.error {
+                        "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
+                            "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
+                            "NOT setting cumulativeCloseFillQty, pending reconciliation"
+                    }
+                    meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
                     return true
                 }
                 fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
@@ -176,12 +221,19 @@ class CloseFillProcessor(
         avg: BigDecimal,
         reason: CloseReason,
     ) {
-        val filledQty = filled.coerceIn(0, pos.quantity)
-        if (filledQty <= 0) return
-        if (filledQty >= pos.quantity) {
+        if (filled <= 0) return
+        if (filled > pos.quantity) {
+            logger.error {
+                "Impossible close fill: filled=$filled > positionQuantity=${pos.quantity}, " +
+                    "positionId=${pos.id}, ticker=${pos.ticker} — skipping, pending reconciliation"
+            }
+            meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", pos.ticker)).increment()
+            return
+        }
+        if (filled == pos.quantity) {
             finalizeClosePosition(pos, avg, reason)
         } else {
-            applyPartialClose(pos, filledQty, avg)
+            applyPartialClose(pos, filled, avg)
         }
     }
 

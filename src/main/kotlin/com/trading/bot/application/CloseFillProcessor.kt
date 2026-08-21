@@ -90,11 +90,10 @@ class CloseFillProcessor(
             if (delta > fresh.quantity) {
                 logger.error {
                     "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
-                        "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
-                        "resetting close state to clean OPEN"
+                        "positionId=${fresh.id}, ticker=${fresh.ticker}"
                 }
                 meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
-                resetCloseState(fresh)
+                handleImpossibleClose(fresh)
                 return
             }
             fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
@@ -151,11 +150,10 @@ class CloseFillProcessor(
             if (delta > fresh.quantity) {
                 logger.error {
                     "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
-                        "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
-                        "resetting close state to clean OPEN"
+                        "positionId=${fresh.id}, ticker=${fresh.ticker}"
                 }
                 meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
-                resetCloseState(fresh)
+                handleImpossibleClose(fresh)
                 return
             }
             fresh.cumulativeCloseFillQty = cumulativeFill
@@ -200,11 +198,10 @@ class CloseFillProcessor(
                 if (delta > fresh.quantity) {
                     logger.error {
                         "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
-                            "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
-                            "resetting close state to clean OPEN"
+                            "positionId=${fresh.id}, ticker=${fresh.ticker}"
                     }
                     meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
-                    resetCloseState(fresh)
+                    handleImpossibleClose(fresh)
                     return true
                 }
                 fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
@@ -228,10 +225,10 @@ class CloseFillProcessor(
         if (filled > pos.quantity) {
             logger.error {
                 "Impossible close fill: filled=$filled > positionQuantity=${pos.quantity}, " +
-                    "positionId=${pos.id}, ticker=${pos.ticker} — resetting close state to clean OPEN"
+                    "positionId=${pos.id}, ticker=${pos.ticker}"
             }
             meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", pos.ticker)).increment()
-            resetCloseState(pos)
+            handleImpossibleClose(pos)
             return
         }
         if (filled == pos.quantity) {
@@ -242,8 +239,60 @@ class CloseFillProcessor(
     }
 
     /**
-     * Reset close state to clean OPEN: position goes back to untracked state.
-     * StockPositionMonitor will handle the next close signal (SL/TP/trailing/strategy).
+     * Handle impossible close delta: cancel the live order, then clear state.
+     *
+     * [closeOrderId] is only cleared AFTER the exchange confirms the order is terminal.
+     * This prevents over-sell: StockPositionMonitor skips positions with pendingClose=true
+     * and closeOrderId set, so a new close order cannot be created while the old one
+     * is still live.
+     *
+     * Flow:
+     * 1. Keep pendingClose=true (prevent monitor from creating new close);
+     * 2. Cancel the live order on exchange;
+     * 3. CONFIRMED → clear state (clean OPEN);
+     * 4. UNCERTAIN → leave for reconciler (will call confirmCloseFill → verifyOrder);
+     * 5. REJECTED (already terminal) → clear state.
+     */
+    internal suspend fun handleImpossibleClose(pos: Position) {
+        val orderId = pos.closeOrderId
+        if (orderId == null) {
+            resetCloseState(pos)
+            return
+        }
+
+        pos.pendingClose = true
+        positionRepo.save(pos)
+
+        val cancelResult =
+            try {
+                alorClient.cancelOrder(
+                    orderId = orderId,
+                    idempotencyKey = "impossible-cancel-${pos.id}-$orderId",
+                    portfolio = portfolioResolver(pos.accountId),
+                )
+            } catch (e: Exception) {
+                logger.error(e) { "Impossible close: cancel failed for ${pos.ticker} order=$orderId — leaving for reconciler" }
+                AlorClient.CancelResult.UNCERTAIN
+            }
+
+        when (cancelResult) {
+            AlorClient.CancelResult.CONFIRMED -> {
+                logger.warn { "Impossible close: order $orderId for ${pos.ticker} cancelled — clearing close state" }
+                resetCloseState(pos)
+            }
+            AlorClient.CancelResult.REJECTED -> {
+                logger.warn { "Impossible close: order $orderId for ${pos.ticker} cancel rejected (already terminal) — clearing close state" }
+                resetCloseState(pos)
+            }
+            AlorClient.CancelResult.UNCERTAIN -> {
+                logger.warn { "Impossible close: order $orderId for ${pos.ticker} cancel uncertain — leaving pendingClose=true for reconciler" }
+                meterRegistry.counter("$metricPrefix.close.impossible_uncertain", Tags.of("ticker", pos.ticker)).increment()
+            }
+        }
+    }
+
+    /**
+     * Reset close state to clean OPEN. Only called AFTER exchange order is confirmed terminal.
      */
     private suspend fun resetCloseState(pos: Position) {
         pos.pendingClose = false

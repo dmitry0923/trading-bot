@@ -84,7 +84,7 @@ class OrderExecutionEngineDeltaModelTest {
     private fun openPos(
         quantity: Int = 5,
         pendingClose: Boolean = true,
-        closeOrderId: String = "close-1",
+        closeOrderId: String? = "close-1",
         cumulativeCloseFillQty: Int = 0,
     ): Position =
         Position(
@@ -155,6 +155,22 @@ class OrderExecutionEngineDeltaModelTest {
             Mockito.`when`(positionRepo.findBySlOrderId(Mockito.anyString())).thenReturn(null)
             Mockito.`when`(positionRepo.findByTpOrderId(Mockito.anyString())).thenReturn(null)
             Mockito.`when`(positionRepo.findById(Mockito.anyLong())).thenReturn(pos)
+        }
+    }
+
+    private fun stubCancelOrderConfirmed() {
+        runBlocking {
+            Mockito.`when`(
+                alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
+            ).thenReturn(AlorClient.CancelResult.CONFIRMED)
+        }
+    }
+
+    private fun stubCancelOrderUncertain() {
+        runBlocking {
+            Mockito.`when`(
+                alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
+            ).thenReturn(AlorClient.CancelResult.UNCERTAIN)
         }
     }
 
@@ -1120,10 +1136,10 @@ class OrderExecutionEngineDeltaModelTest {
     }
 
     /**
-     * handlePendingCloseReport with impossible delta — position reset to clean OPEN.
+     * handlePendingCloseReport with impossible delta — cancel order then reset to clean OPEN.
      */
     @Test
-    fun `handlePendingCloseReport resets close state on impossible delta`() {
+    fun `handlePendingCloseReport cancels order then resets close state on impossible delta`() {
         val pos = openPos(
             quantity = 60,
             pendingClose = true,
@@ -1132,6 +1148,7 @@ class OrderExecutionEngineDeltaModelTest {
         )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
+        stubCancelOrderConfirmed()
 
         val report = ExecutionReport(
             orderId = "order-A",
@@ -1148,19 +1165,17 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(60, pos.quantity) { "quantity unchanged — impossible delta rejected" }
         assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated" }
         assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
-        assertNull(pos.closeOrderId) { "closeOrderId cleared — position reset to clean OPEN" }
-        assertFalse(pos.pendingClose) { "pendingClose=false — position reset to clean OPEN" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared after cancel confirmed" }
+        assertFalse(pos.pendingClose) { "pendingClose=false after cancel confirmed" }
     }
 
     // ─── P0: impossible delta > quantity ─────────────────────────────────
 
     /**
-     * applyCloseExecution: filled > position.quantity → no state mutation, no finalize.
-     * Impossible fill must be stopped, not silently clamped.
-     * Close state must be reset to clean OPEN.
+     * applyCloseExecution: filled > position.quantity → cancel order, reset to clean OPEN.
      */
     @Test
-    fun `applyCloseExecution rejects filled greater than position quantity`() {
+    fun `applyCloseExecution cancels order on filled greater than position quantity`() {
         val pos = openPos(
             quantity = 60,
             pendingClose = false,
@@ -1169,6 +1184,7 @@ class OrderExecutionEngineDeltaModelTest {
         )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
+        stubCancelOrderConfirmed()
 
         val report = ExecutionReport(
             orderId = "order-A",
@@ -1184,15 +1200,15 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(60, pos.quantity) { "quantity unchanged — impossible fill rejected" }
         assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated — impossible fill rejected before assignment" }
         assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
-        assertNull(pos.closeOrderId) { "closeOrderId cleared — position reset to clean OPEN" }
-        assertFalse(pos.pendingClose) { "pendingClose=false — position reset to clean OPEN" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared after cancel confirmed" }
+        assertFalse(pos.pendingClose) { "pendingClose=false after cancel confirmed" }
     }
 
     /**
-     * Delta > quantity through confirmCloseFill (REST path) must also be rejected.
+     * Delta > quantity through confirmCloseFill (REST path) → cancel order, reset to clean OPEN.
      */
     @Test
-    fun `confirmCloseFill rejects cumulative delta greater than position quantity`() {
+    fun `confirmCloseFill cancels order on cumulative delta greater than position quantity`() {
         val pos = openPos(
             quantity = 60,
             pendingClose = false,
@@ -1201,6 +1217,7 @@ class OrderExecutionEngineDeltaModelTest {
         )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
+        stubCancelOrderConfirmed()
 
         runBlocking {
             Mockito.`when`(
@@ -1213,6 +1230,71 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(60, pos.quantity) { "quantity unchanged — impossible cumulative rejected" }
         assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated — impossible delta rejected before assignment" }
         assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
-        assertNull(pos.closeOrderId) { "closeOrderId cleared — position reset to clean OPEN" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared after cancel confirmed" }
+    }
+
+    /**
+     * Impossible delta + cancel UNCERTAIN → closeOrderId preserved, pendingClose=true.
+     * Reconciler will pick up and verify via confirmCloseFill.
+     */
+    @Test
+    fun `impossible delta with uncertain cancel leaves state for reconciler`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = true,
+            closeOrderId = "order-A",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubCancelOrderUncertain()
+
+        val report = ExecutionReport(
+            orderId = "order-A",
+            status = OrderStatus.PARTIALLY_FILLED,
+            cumulativeFilledQty = 80,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        val handled = runBlocking { engine.handleExecutionReport(report) }
+
+        assertTrue(handled) { "report matched by closeOrderId path" }
+        assertEquals(60, pos.quantity) { "quantity unchanged" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated" }
+        assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
+        assertEquals("order-A", pos.closeOrderId) { "closeOrderId PRESERVED — order state uncertain" }
+        assertTrue(pos.pendingClose) { "pendingClose=true — reconciler must handle" }
+    }
+
+    /**
+     * Impossible delta with no closeOrderId → immediate reset (no cancel needed).
+     */
+    @Test
+    fun `impossible delta with no closeOrderId resets immediately`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = true,
+            closeOrderId = null,
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        val report = ExecutionReport(
+            orderId = "order-A",
+            status = OrderStatus.PARTIALLY_FILLED,
+            cumulativeFilledQty = 80,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        val handled = runBlocking { engine.handleExecutionReport(report) }
+
+        assertTrue(handled) { "report matched by pendingClose=true path" }
+        assertFalse(pos.pendingClose) { "pendingClose=false — immediate reset" }
+        assertNull(pos.closeOrderId) { "closeOrderId null — no order to cancel" }
     }
 }

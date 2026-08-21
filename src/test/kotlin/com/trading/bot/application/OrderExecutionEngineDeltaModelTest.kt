@@ -1119,11 +1119,45 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative unchanged — stale event ignored" }
     }
 
+    /**
+     * handlePendingCloseReport with impossible delta — position reset to clean OPEN.
+     */
+    @Test
+    fun `handlePendingCloseReport resets close state on impossible delta`() {
+        val pos = openPos(
+            quantity = 60,
+            pendingClose = true,
+            closeOrderId = "order-A",
+            cumulativeCloseFillQty = 0,
+        )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+
+        val report = ExecutionReport(
+            orderId = "order-A",
+            status = OrderStatus.PARTIALLY_FILLED,
+            cumulativeFilledQty = 80,
+            avgPrice = BigDecimal("110"),
+            ticker = "SBER",
+            side = "sell",
+        )
+
+        val handled = runBlocking { engine.handleExecutionReport(report) }
+
+        assertTrue(handled) { "report matched by closeOrderId path" }
+        assertEquals(60, pos.quantity) { "quantity unchanged — impossible delta rejected" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated" }
+        assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared — position reset to clean OPEN" }
+        assertFalse(pos.pendingClose) { "pendingClose=false — position reset to clean OPEN" }
+    }
+
     // ─── P0: impossible delta > quantity ─────────────────────────────────
 
     /**
      * applyCloseExecution: filled > position.quantity → no state mutation, no finalize.
      * Impossible fill must be stopped, not silently clamped.
+     * Close state must be reset to clean OPEN.
      */
     @Test
     fun `applyCloseExecution rejects filled greater than position quantity`() {
@@ -1150,6 +1184,8 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(60, pos.quantity) { "quantity unchanged — impossible fill rejected" }
         assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated — impossible fill rejected before assignment" }
         assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared — position reset to clean OPEN" }
+        assertFalse(pos.pendingClose) { "pendingClose=false — position reset to clean OPEN" }
     }
 
     /**
@@ -1177,5 +1213,6 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(60, pos.quantity) { "quantity unchanged — impossible cumulative rejected" }
         assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated — impossible delta rejected before assignment" }
         assertEquals(PositionStatus.OPEN, pos.status) { "position NOT finalized" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared — position reset to clean OPEN" }
     }
 }

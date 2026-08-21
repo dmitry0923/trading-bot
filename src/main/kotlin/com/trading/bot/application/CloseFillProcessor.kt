@@ -91,9 +91,10 @@ class CloseFillProcessor(
                 logger.error {
                     "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
                         "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
-                        "NOT setting cumulativeCloseFillQty, pending reconciliation"
+                        "resetting close state to clean OPEN"
                 }
                 meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
+                resetCloseState(fresh)
                 return
             }
             fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
@@ -151,9 +152,10 @@ class CloseFillProcessor(
                 logger.error {
                     "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
                         "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
-                        "NOT setting cumulativeCloseFillQty, pending reconciliation"
+                        "resetting close state to clean OPEN"
                 }
                 meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
+                resetCloseState(fresh)
                 return
             }
             fresh.cumulativeCloseFillQty = cumulativeFill
@@ -199,9 +201,10 @@ class CloseFillProcessor(
                     logger.error {
                         "Impossible close delta: delta=$delta > positionQuantity=${fresh.quantity}, " +
                             "positionId=${fresh.id}, ticker=${fresh.ticker} — " +
-                            "NOT setting cumulativeCloseFillQty, pending reconciliation"
+                            "resetting close state to clean OPEN"
                     }
                     meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", fresh.ticker)).increment()
+                    resetCloseState(fresh)
                     return true
                 }
                 fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
@@ -225,9 +228,10 @@ class CloseFillProcessor(
         if (filled > pos.quantity) {
             logger.error {
                 "Impossible close fill: filled=$filled > positionQuantity=${pos.quantity}, " +
-                    "positionId=${pos.id}, ticker=${pos.ticker} — skipping, pending reconciliation"
+                    "positionId=${pos.id}, ticker=${pos.ticker} — resetting close state to clean OPEN"
             }
             meterRegistry.counter("$metricPrefix.close.impossible_delta", Tags.of("ticker", pos.ticker)).increment()
+            resetCloseState(pos)
             return
         }
         if (filled == pos.quantity) {
@@ -235,6 +239,18 @@ class CloseFillProcessor(
         } else {
             applyPartialClose(pos, filled, avg)
         }
+    }
+
+    /**
+     * Reset close state to clean OPEN: position goes back to untracked state.
+     * StockPositionMonitor will handle the next close signal (SL/TP/trailing/strategy).
+     */
+    private suspend fun resetCloseState(pos: Position) {
+        pos.pendingClose = false
+        pos.closeOrderId = null
+        pos.closeReason = null
+        positionRepo.save(pos)
+        logger.info { "Close state reset for ${pos.ticker} (${pos.id}) — position back to clean OPEN" }
     }
 
     /**

@@ -12,7 +12,7 @@
    curl http://localhost:8080/api/v1/analytics/adaptive-params/SBER
    ```
    - `TRADING_MODE=SIMULATION` и `MAX_OPEN_POS=0` → бот сознательно не открывает. Это **не баг**.
-   - `dailyPnl <= -50000` → сработал дневной лимит (`bot.halted.daily_loss` в метриках).
+   - `dailyPnl <= -5000` → сработал дневной лимит (`bot.halted.daily_loss` в метриках).
 2. **Решение арбитра**:
    ```bash
    curl "http://localhost:8080/api/v1/logs" | grep Agent-5-Arbitrator
@@ -243,7 +243,7 @@ A: Да, он не ходит в LLM и не размещает ордера. Е
 **Q: Почему при `MAX_OPEN_POS>0` в SIMULATION бот открывает позиции в БД?**
 A: SIMULATION заменяет только исполнение ордеров (фиктивные цены/ордера), но не управление позициями — они пишутся в PostgreSQL. Это позволяет тестировать весь цикл, включая мониторинг и P&L.
 
-**Q: Что значит `dailyPnl <= -50000` в метрике `bot.halted.daily_loss`?**
+**Q: Что значит `dailyPnl <= -5000` в метрике `bot.halted.daily_loss`?**
 A: Сработал дневной лимит убытка: дневной P&L опустился до `-maxDailyLossRub`. Бот переходит в HALT до конца торгового дня (значение персистится в `daily_risk_snapshot`, сброс — по календарной дате 00:00 МСК, раздел 5.6).
 
 **Q: Как проверить, что event-driven слой работает?**

@@ -34,7 +34,7 @@
 |---|---|---|
 | Ожидаемая доходность (gross) | не заявлена | Бот в SIMULATION/боевом режиме; метрики накапливаются в `positions.pnl` |
 | Максимальный риск на 1 позицию | 50 000 ₽ | `risk.max-position-rub` |
-| Дневной лимит убытка | 50 000 ₽ | `risk.max-daily-loss-rub`, при достижении — глобальный HOLD |
+| Дневной лимит убытка | 5 000 ₽ | `risk.max-daily-loss-rub`, при достижении — глобальный HOLD |
 | Максимум одновременных позиций | 5 | `risk.max-open-positions` |
 | Стоп-лосс по умолчанию | 2% от входа | `risk.default-stop-loss-percent` |
 | Тейк-профит по умолчанию | 4% от входа | `risk.default-take-profit-percent` |

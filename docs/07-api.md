@@ -92,7 +92,7 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8080/api/v1/auth/log
   "tradingEnabled": true,
   "riskEnabled": true,
   "maxPositionRub": 50000,
-  "maxDailyLossRub": 50000
+  "maxDailyLossRub": 5000
 }
 ```
 

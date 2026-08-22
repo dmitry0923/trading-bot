@@ -56,7 +56,7 @@
 | `CBR_RATE` / `BRENT_PRICE` / `USD_RUB` | макро fallback | `16.0` / `75.0` / `90.0` |
 | `LLM_SEMANTIC_CACHE` / `LLM_SEMANTIC_CACHE_TTL` | семантический кэш | `true` / `10` |
 | `TRADING_MODE` | `SIMULATION` или `LIVE` | `SIMULATION` |
-| `BOT_INTERVAL_MS` / `STRATEGY_INTERVAL_MS` / `MONITOR_INTERVAL_MS` | интервалы циклов | `300000` / `600000` / `600000` |
+| `BOT_INTERVAL_MS` / `STRATEGY_INTERVAL_MS` / `MONITOR_INTERVAL_MS` | интервалы циклов | `300000` / `600000` / `10000` |
 | `MAX_OPEN_POS` | макс. новых позиций за цикл | `0` |
 
 ## 14.4. Файл `.env`
@@ -82,7 +82,7 @@ TRADING_MODE=SIMULATION
 MAX_OPEN_POS=0
 BOT_INTERVAL_MS=300000
 STRATEGY_INTERVAL_MS=600000
-MONITOR_INTERVAL_MS=600000
+MONITOR_INTERVAL_MS=10000
 ```
 
 ## 14.5. docker-compose.yml (текущий)

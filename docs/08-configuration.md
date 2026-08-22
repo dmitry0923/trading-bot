@@ -169,14 +169,14 @@ trading:
     - ALRS
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}       # цикл бота: 5 мин
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}  # цикл стратегий: 10 мин
-  monitor-interval-ms: ${MONITOR_INTERVAL_MS:600000}    # мониторинг позиций: 10 мин
+  monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}    # мониторинг позиций: 10 сек
   max-open-positions-for-new-entry: ${MAX_OPEN_POS:0}   # 0 = НЕ открывать позиции (страховка)
   timeframe: MINUTE_10
 
 risk:
   enabled: true
   max-position-rub: 50000
-  max-daily-loss-rub: 50000
+  max-daily-loss-rub: 5000
   max-open-positions: 5
   max-sector-exposure: 2              # макс. открытых позиций в одном секторе
   max-volatility-percent: 5.0         # ATR% от цены, выше которого вход запрещён
@@ -270,7 +270,7 @@ lockbox:                             # Yandex Lockbox (секреты как env
 | `TRADING_MODE` | `SIMULATION` | **да** | SIMULATION / LIVE | `SIMULATION` |
 | `BOT_INTERVAL_MS` | `300000` | | интервал бот-цикла | `300000` |
 | `STRATEGY_INTERVAL_MS` | `600000` | | интервал стратегий | `600000` |
-| `MONITOR_INTERVAL_MS` | `600000` | | интервал мониторинга | `600000` |
+| `MONITOR_INTERVAL_MS` | `10000` | | интервал мониторинга | `10000` |
 | `MAX_OPEN_POS` | `0` | | макс. новых позиций за цикл (0 = не открывать) | `3` |
 | `AUTH_USER` | `` | **да** | админ (роль ADMIN), пусто = отказ старта | `admin` |
 | `AUTH_PASSWORD` | `` | **да** | пароль админа | `Str0ng!Pass` |
@@ -347,7 +347,7 @@ TRADING_MODE=SIMULATION
 MAX_OPEN_POS=0
 BOT_INTERVAL_MS=300000
 STRATEGY_INTERVAL_MS=600000
-MONITOR_INTERVAL_MS=600000
+MONITOR_INTERVAL_MS=10000
 
 # Auth (JWT) — без дефолтов, обязательны
 AUTH_USER=admin
@@ -422,7 +422,7 @@ METRICS_SCRAPE_TOKEN=change-me-prometheus-token
 
 ```
 TRADING_MODE=SIMULATION, MAX_OPEN_POS=0
-risk: enabled=true, maxPosition=50000, maxDailyLoss=50000, sectorExposure=2, volatility=5.0%
+risk: enabled=true, maxPosition=50000, maxDailyLoss=5000, sectorExposure=2, volatility=5.0%
 llm: model=kimi-k3, timeout=30s, cb=true, rl=true, retry=true, cache=true
 ```
 

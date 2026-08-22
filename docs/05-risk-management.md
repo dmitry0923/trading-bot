@@ -17,7 +17,7 @@
 |---|---|---|---|
 | `risk.enabled` | `true` | Boolean | мастер-выключатель риск-движка |
 | `risk.max-position-rub` | `50000` | BigDecimal | максимальный размер позиции в рублях (база для Kelly) |
-| `risk.max-daily-loss-rub` | `50000` | BigDecimal | дневной лимит убытка (закрытые сделки) |
+| `risk.max-daily-loss-rub` | `5000` | BigDecimal | дневной лимит убытка (закрытые сделки) |
 | `risk.max-open-positions` | `5` | Integer | максимум одновременных открытых позиций |
 | `risk.max-sector-exposure` | `2` | Integer | макс. открытых позиций в одном секторе |
 | `risk.max-volatility-percent` | `5.0` | Double | ATR% от цены, выше которого вход запрещён |
@@ -332,7 +332,7 @@ finalQty < 1 → вход отклонён (ZERO_RISK_SIZE)
 
 ## 5.7. Position Monitoring
 
-Выполняется `TradingBotService.monitor()` каждые `monitor-interval-ms` (10 мин):
+Выполняется `TradingBotService.monitor()` каждые `monitor-interval-ms` (10 сек):
 
 1. Берём все OPEN-позиции из БД.
 2. `price = alorClient.getLastPrice(ticker)`.

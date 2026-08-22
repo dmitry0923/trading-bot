@@ -166,7 +166,7 @@ sequenceDiagram
 |---|---|---|
 | `TradingBotService.pollMarketData` | `bot-interval-ms` (5 мин) | загрузка котировок, публикация `PriceChangedEvent` |
 | `StrategyService.run` | `strategy-interval-ms` (10 мин) | конвейер агентов → сохранение стратегии + событие |
-| `TradingBotService.monitor` | `monitor-interval-ms` (10 мин) | фоновый мониторинг позиций (SL/TP/trailing) |
+| `TradingBotService.monitor` | `monitor-interval-ms` (10 сек) | фоновый мониторинг позиций (SL/TP/trailing) |
 | `OrderOutboxService.processPending` | 10 сек | переотправка PENDING ордеров |
 
 ### Шина данных между циклами (Redis)
@@ -337,7 +337,7 @@ flowchart TB
     subgraph Планировщики
         S1[StrategyService.run<br/>10 мин]
         S2[TradingBotService.run<br/>5 мин]
-        S3[TradingBotService.monitor<br/>10 мин]
+        S3[TradingBotService.monitor<br/>10 сек]
         S4[OrderOutboxService.processPending<br/>10 сек]
     end
 

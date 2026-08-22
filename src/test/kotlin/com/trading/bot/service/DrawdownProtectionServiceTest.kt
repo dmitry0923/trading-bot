@@ -372,8 +372,8 @@ class DrawdownProtectionServiceTest {
 
         assertEquals(0, BigDecimal("600").compareTo(s.getDailyPnl()))
         assertFalse(s.isDailyLossLimitReached())
-        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("1000"), false, BigDecimal.ZERO)
-        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("600"), false, BigDecimal.ZERO)
+        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("1000"), false, BigDecimal.ZERO, peakEquity = BigDecimal.ZERO)
+        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("600"), false, BigDecimal.ZERO, peakEquity = BigDecimal.ZERO)
     }
 
     @Test
@@ -385,7 +385,7 @@ class DrawdownProtectionServiceTest {
         // лимит = 10% от 50 000 = 5 000 (без рублёвого пола)
         assertTrue(s.isDailyLossLimitReached())
         assertEquals(0, BigDecimal("-5001").compareTo(s.getDailyPnl()))
-        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("-5001"), true, BigDecimal("-5001"))
+        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("-5001"), true, BigDecimal("-5001"), peakEquity = BigDecimal.ZERO)
     }
 
     @Test
@@ -502,7 +502,9 @@ class DrawdownProtectionServiceTest {
             // dirty-аккумулятор НЕ перезаписывается stale-recompute (0): оба персиста
             // (updateDailyPnl и computeStatus) сохраняют -1000, а не 0 (без dirty-гварда
             // второй был бы 0 — потеря инкремента в daily_risk_snapshot при рестарте).
-            Mockito.verify(snapshotRepo, Mockito.times(2)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"))
+            // computeStatus updates peakEquity to max(0, equity=50000) = 50000
+            Mockito.verify(snapshotRepo, Mockito.times(1)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal.ZERO)
+            Mockito.verify(snapshotRepo, Mockito.times(1)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
         }
 
     // ===================== Per-account скоуп (F-1/F-13/F-14) =====================

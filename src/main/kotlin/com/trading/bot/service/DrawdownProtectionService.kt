@@ -135,6 +135,12 @@ class DrawdownProtectionService(
     private val accountLossReached: java.util.concurrent.ConcurrentHashMap<Long, Boolean> = java.util.concurrent.ConcurrentHashMap()
     private val accountLoadedDate: java.util.concurrent.ConcurrentHashMap<Long, LocalDate> = java.util.concurrent.ConcurrentHashMap()
 
+    // Equity HWM tracking (peakEquity = max equity seen today, equity = balance + unrealized).
+    // Enables drawdown breaker on unrealized losses, not just realized.
+    @Volatile
+    private var todayPeakEquity: BigDecimal = BigDecimal.ZERO
+    private val accountPeakEquity: java.util.concurrent.ConcurrentHashMap<Long, BigDecimal> = java.util.concurrent.ConcurrentHashMap()
+
     /**
      * Загрузка дневного состояния из daily_risk_snapshot при старте (ApplicationReadyEvent),
      * чтобы дневной P&L не «обнулялся» до первого стратегического цикла/закрытия позиции
@@ -174,7 +180,7 @@ class DrawdownProtectionService(
         val open = positionRepo.findOpenByAccount(accountId)
         val aggregates = positionRepo.findClosedAggregates(accountId)
         val aum = currentAum(open, accountId)
-        val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates, accountId)
+        val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates, accountId, open)
 
         val realizedToday = sumPnl(closedToday)
         val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
@@ -387,6 +393,7 @@ class DrawdownProtectionService(
             }
         accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
         accountLossReached[accountId] = snapshot?.limitReached ?: false
+        accountPeakEquity[accountId] = snapshot?.peakEquity ?: BigDecimal.ZERO
         accountLoadedDate[accountId] = day
     }
 
@@ -506,33 +513,45 @@ class DrawdownProtectionService(
     /**
      * Пиковый AUM и текущая просадка от пика в %.
      *
-     * Running equity: стартовый депозит + накопленный реализованный P&L
-     * в хронологическом порядке закрытий (агрегируется в БД). Просадка =
-     * (peak - current) / peak * 100. (Нереализованный P&L в пике не учитывается —
-     * только реализованные закрытия.)
+     * Equity-based (P0 audit): running = balance + unrealized P&L.
+     * Peak equity (HWM) tracked per-day: resets at new trading day.
+     * On restart, peakEquity is restored from daily_risk_snapshot.
      *
-     * F-3 (roadmap 13.25): latestAum — ТЕКУЩИЙ баланс счёта (уже включает
-     * реализованный P&L), а не стартовый депозит. Стартовый депозит восстанавливается
-     * как deposit = balance - totalRealized; текущая equity running = balance;
-     * peak = deposit + peakRealized.
+     * F-3 (roadmap 13.25): latestAum = текущий баланс счёта (уже включает
+     * реализованный P&L).
      *
      * @return (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
     private fun peakAumAndDrawdown(
         aggregates: PositionRepository.ClosedPositionAggregates,
         accountId: Long?,
+        open: List<Position>,
     ): PeakAndDrawdown {
         val balance = aumProvider.latestAum(accountId)
+        val unrealized = unrealizedPnl(open)
+        val equity = balance.add(unrealized).coerceAtLeast(BigDecimal.ZERO)
+        val realizedPeak = aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO)
         val deposit = balance.subtract(aggregates.totalRealized).coerceAtLeast(BigDecimal.ZERO)
-        val running = balance
-        val peak = deposit.add(aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO))
+        val realizedPeakAum = deposit.add(realizedPeak)
+
+        // Track equity HWM (high water mark) — resets each trading day
+        val currentPeakEquity = if (accountId == null) todayPeakEquity else (accountPeakEquity[accountId] ?: BigDecimal.ZERO)
+        val newPeakEquity = maxOf(currentPeakEquity, equity)
+        if (accountId == null) {
+            todayPeakEquity = newPeakEquity
+        } else {
+            accountPeakEquity[accountId] = newPeakEquity
+        }
+
+        val peak = maxOf(realizedPeakAum, newPeakEquity)
         val drawdownPercent =
             if (peak > BigDecimal.ZERO) {
                 peak
-                    .subtract(running)
+                    .subtract(equity)
                     .multiply(BigDecimal("100"))
                     .divide(peak, 4, RoundingMode.HALF_UP)
                     .toDouble()
+                    .coerceAtLeast(0.0)
             } else {
                 0.0
             }
@@ -632,7 +651,9 @@ class DrawdownProtectionService(
         if (lastTradingDate == today) return
         lastTradingDate = today
         accumulatorDirty = false
+        todayPeakEquity = BigDecimal.ZERO
         accountDirty.clear()
+        accountPeakEquity.clear()
         loadDailyState(today)
     }
 
@@ -646,12 +667,13 @@ class DrawdownProtectionService(
             }
         todayPnl = snapshot?.dailyPnl ?: BigDecimal.ZERO
         todayDailyLossReached = snapshot?.limitReached ?: false
-        logger.info { "Daily risk state for $today: dailyPnL=$todayPnl limitReached=$todayDailyLossReached" }
+        todayPeakEquity = snapshot?.peakEquity ?: BigDecimal.ZERO
+        logger.info { "Daily risk state for $today: dailyPnL=$todayPnl limitReached=$todayDailyLossReached peakEquity=$todayPeakEquity" }
     }
 
     private fun persistDailyState() {
         try {
-            dailyRiskSnapshotRepo.upsert(lastTradingDate, todayPnl, todayDailyLossReached, todayPnl.coerceAtMost(BigDecimal.ZERO))
+            dailyRiskSnapshotRepo.upsert(lastTradingDate, todayPnl, todayDailyLossReached, todayPnl.coerceAtMost(BigDecimal.ZERO), peakEquity = todayPeakEquity)
         } catch (e: Exception) {
             logger.warn(e) { "Failed to persist daily risk snapshot" }
         }
@@ -665,6 +687,7 @@ class DrawdownProtectionService(
                 accountLossReached[accountId] ?: false,
                 (accountPnl[accountId] ?: BigDecimal.ZERO).coerceAtMost(BigDecimal.ZERO),
                 accountId,
+                peakEquity = accountPeakEquity[accountId],
             )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to persist daily risk snapshot for account=$accountId" }

@@ -27,6 +27,7 @@ class DailyRiskSnapshotRepository(
             dailyPnl = row.require("daily_pnl", BigDecimal::class.java),
             limitReached = row.require("limit_reached", Boolean::class.javaObjectType),
             maxDrawdownToday = row.require("max_drawdown_today", BigDecimal::class.java),
+            peakEquity = row.get("peak_equity", BigDecimal::class.java),
         )
 
     fun findByDate(
@@ -91,26 +92,29 @@ class DailyRiskSnapshotRepository(
         limitReached: Boolean,
         maxDrawdownToday: BigDecimal,
         accountId: Long? = null,
+        peakEquity: BigDecimal? = null,
     ) {
         val sql =
             if (accountId == null) {
                 """
-                INSERT INTO daily_risk_snapshot (trade_date, daily_pnl, limit_reached, max_drawdown_today, updated_at)
-                VALUES (:tradeDate, :dailyPnl, :limitReached, :maxDrawdownToday, NOW())
+                INSERT INTO daily_risk_snapshot (trade_date, daily_pnl, limit_reached, max_drawdown_today, peak_equity, updated_at)
+                VALUES (:tradeDate, :dailyPnl, :limitReached, :maxDrawdownToday, :peakEquity, NOW())
                 ON CONFLICT (trade_date) WHERE account_id IS NULL DO UPDATE SET
                     daily_pnl = EXCLUDED.daily_pnl,
                     limit_reached = EXCLUDED.limit_reached,
                     max_drawdown_today = EXCLUDED.max_drawdown_today,
+                    peak_equity = EXCLUDED.peak_equity,
                     updated_at = NOW()
                 """.trimIndent()
             } else {
                 """
-                INSERT INTO daily_risk_snapshot (trade_date, account_id, daily_pnl, limit_reached, max_drawdown_today, updated_at)
-                VALUES (:tradeDate, :accountId, :dailyPnl, :limitReached, :maxDrawdownToday, NOW())
+                INSERT INTO daily_risk_snapshot (trade_date, account_id, daily_pnl, limit_reached, max_drawdown_today, peak_equity, updated_at)
+                VALUES (:tradeDate, :accountId, :dailyPnl, :limitReached, :maxDrawdownToday, :peakEquity, NOW())
                 ON CONFLICT (trade_date, account_id) DO UPDATE SET
                     daily_pnl = EXCLUDED.daily_pnl,
                     limit_reached = EXCLUDED.limit_reached,
                     max_drawdown_today = EXCLUDED.max_drawdown_today,
+                    peak_equity = EXCLUDED.peak_equity,
                     updated_at = NOW()
                 """.trimIndent()
             }
@@ -121,7 +125,8 @@ class DailyRiskSnapshotRepository(
                 .bind("dailyPnl", dailyPnl)
                 .bind("limitReached", limitReached)
                 .bind("maxDrawdownToday", maxDrawdownToday)
-        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        val withPeak = if (peakEquity != null) spec.bind("peakEquity", peakEquity) else spec.bindNull("peakEquity", BigDecimal::class.java)
+        val finalSpec = if (accountId != null) withPeak.bind("accountId", accountId) else withPeak
         finalSpec
             .then()
             .block()

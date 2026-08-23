@@ -14,6 +14,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
@@ -74,6 +75,8 @@ class DecisionEngine(
     private val higherTfTrendFilter: HigherTfTrendFilter,
     private val degenerateCaseGuard: DegenerateCaseGuard,
     private val instrumentsConfig: InstrumentsConfig,
+    private val netEvGate: NetEvGate,
+    private val adaptiveRisk: AdaptiveRiskService,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -240,6 +243,21 @@ class DecisionEngine(
         if (params.quantity <= 0) {
             logger.warn { "Order builder produced zero quantity for $ticker" }
             return
+        }
+
+        // NET EV Gate (P0 audit): блокируем сделки с отрицательным или слишком низким
+        // математическим ожиданием после учёта комиссии, спреда и adverse selection.
+        // expectedNetPerLot уже с вычетом комиссии (PnlCalculator).
+        val expectedNetPerLot = adaptiveRisk.expectedNetProfitPerLot(ticker, accountId)
+        when (val evResult = netEvGate.check(ticker, expectedNetPerLot, snapshot)) {
+            is NetEvGate.GateResult.Blocked -> {
+                logger.warn { "NET EV rejected $ticker: netEV=${evResult.netEV}" }
+                meterRegistry
+                    .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "NET_EV_TOO_LOW"))
+                    .increment()
+                return
+            }
+            is NetEvGate.GateResult.Pass -> {}
         }
 
         // Портфельный риск (агрегат): VaR95 / эффективное число ставок / направленная

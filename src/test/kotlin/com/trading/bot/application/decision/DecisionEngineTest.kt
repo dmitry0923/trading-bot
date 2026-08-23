@@ -73,6 +73,7 @@ class DecisionEngineTest {
     private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
     private val degenerateCaseGuard = Mockito.mock(DegenerateCaseGuard::class.java)
     private val instrumentsConfig = InstrumentsConfig()
+    private val netEvGate = PassThroughNetEvGate()
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -133,6 +134,8 @@ class DecisionEngineTest {
             higherTfTrendFilter,
             degenerateCaseGuard,
             instrumentsConfig,
+            netEvGate,
+            Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -645,5 +648,19 @@ class DecisionEngineTest {
         ) {
             onOpenedCalls++
         }
+    }
+
+    /**
+     * NetEvGate that always passes — avoids Mockito suspend-function issues.
+     */
+    private class PassThroughNetEvGate : NetEvGate(
+        instrumentsConfig = InstrumentsConfig(),
+        riskConfig = com.trading.bot.config.RiskConfig(),
+    ) {
+        override fun check(
+            ticker: String,
+            expectedNet: java.math.BigDecimal?,
+            snapshot: com.trading.bot.model.dto.MarketSnapshot?,
+        ) = GateResult.Pass
     }
 }

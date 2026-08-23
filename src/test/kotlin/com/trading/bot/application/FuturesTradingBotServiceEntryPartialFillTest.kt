@@ -2,6 +2,7 @@ package com.trading.bot.application
 
 import com.trading.bot.application.decision.DecisionEngine
 import com.trading.bot.application.decision.FuturesEntryProfile
+import com.trading.bot.application.decision.NetEvGate
 import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
@@ -94,6 +95,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     private val mlEntryFilter = Mockito.mock(MlEntryFilter::class.java)
     private val higherTfTrendFilter = Mockito.mock(HigherTfTrendFilter::class.java)
     private val degenerateCaseGuard = Mockito.mock(DegenerateCaseGuard::class.java)
+    private val netEvGate = Mockito.mock(NetEvGate::class.java)
 
     private val futuresEntryProfile =
         FuturesEntryProfile(
@@ -125,6 +127,8 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             higherTfTrendFilter,
             degenerateCaseGuard,
             instrumentsConfig,
+            netEvGate,
+            Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
         )
 
     private val service =

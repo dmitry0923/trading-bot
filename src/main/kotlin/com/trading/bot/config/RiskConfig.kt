@@ -244,6 +244,31 @@ class RiskConfig {
      */
     var minimumLotPolicyMinNetProfitRub: BigDecimal = BigDecimal("5")
 
+    // ===== NET EV Gate (P0 audit) =====
+
+    /**
+     * Включает проверку NET EV (Expected Value) перед каждым входом.
+     * Считает: EV = Wilson(winRate) × avgWin − (1−Wilson(winRate)) × avgLoss − spreadCost.
+     * Если EV < порога — вход блокируется. Защита от сделок с отрицательным
+     * математическим ожиданием после учёта комиссии, спреда и проскальзывания.
+     */
+    var netEvGateEnabled: Boolean = true
+
+    /**
+     * Минимальный NET EV (RUB) для допуска сделки.
+     * Если NET EV (уже с учётом комиссии, спреда и adverse selection) < порога — вход блокируется.
+     * 10 RUB ≈ 0.01% от AUM 50k — компенсирует реальную стоимость исполнения.
+     */
+    var minNetEvThresholdRub: BigDecimal = BigDecimal("10")
+
+    /**
+     * Множитель adverse selection для расчёта стоимости спреда.
+     * Стоимость исполнения = halfSpread × lotSize × adverseSelectionMultiplier.
+     * 1.5 = предполагаем, что проскальзывание добавляет 50% сверх спреда.
+     * Спред берётся из текущего snapshot (bid/ask).
+     */
+    var netEvAdverseSelectionMultiplier: BigDecimal = BigDecimal("1.5")
+
     /** Максимум открытых фьючерсных позиций (Si: 1). Отдельно от акций. */
     var futuresMaxOpenPositions: Int = 1
 

@@ -125,6 +125,52 @@ object ExitRules {
     }
 
     /**
+     * ATR-based стоп-лосс: SL = entryPrice ∓ ATR × slMultiplier.
+     * Направленное округление: LONG → FLOOR (шире защита), SHORT → CEILING.
+     */
+    fun calcSLByAtr(
+        entryPrice: BigDecimal,
+        direction: PositionDirection,
+        atr: BigDecimal,
+        slMultiplier: BigDecimal,
+        priceStep: BigDecimal,
+    ): BigDecimal {
+        val offset = atr.multiply(slMultiplier)
+        val raw = when (direction) {
+            PositionDirection.LONG -> entryPrice.subtract(offset)
+            PositionDirection.SHORT -> entryPrice.add(offset)
+        }
+        val rounding = when (direction) {
+            PositionDirection.LONG -> RoundingMode.FLOOR
+            PositionDirection.SHORT -> RoundingMode.CEILING
+        }
+        return alignToGrid(raw, priceStep, rounding)
+    }
+
+    /**
+     * ATR-based тейк-профит: TP = entryPrice ± ATR × tpMultiplier.
+     * Направленное округление: LONG → CEILING (больше прибыль), SHORT → FLOOR.
+     */
+    fun calcTPByAtr(
+        entryPrice: BigDecimal,
+        direction: PositionDirection,
+        atr: BigDecimal,
+        tpMultiplier: BigDecimal,
+        priceStep: BigDecimal,
+    ): BigDecimal {
+        val offset = atr.multiply(tpMultiplier)
+        val raw = when (direction) {
+            PositionDirection.LONG -> entryPrice.add(offset)
+            PositionDirection.SHORT -> entryPrice.subtract(offset)
+        }
+        val rounding = when (direction) {
+            PositionDirection.LONG -> RoundingMode.CEILING
+            PositionDirection.SHORT -> RoundingMode.FLOOR
+        }
+        return alignToGrid(raw, priceStep, rounding)
+    }
+
+    /**
      * Направленное округление цены до шага сетки.
      *
      * @param roundingMode определяет направление:

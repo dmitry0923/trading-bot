@@ -106,18 +106,24 @@ class StockEntryProfile(
             }
 
         // Риск-кап на сделку: убыток при срабатывании стопа не может превысить
-        // riskPerTradePercent% от AUM. lossPerLot = price × SL% × lotSize + 2×commission (entry + exit).
+        // riskPerTradePercent% от AUM. lossPerLot = slDistance × lotSize + 2×commission.
+        // ATR-based SL: slDistance = ATR × slMultiplier; fallback — effectiveSlPercent.
         val effectiveSlPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
             ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
+        val useAtr = request.atr != null && request.atr > BigDecimal.ZERO
+            && riskConfig.atrSlMultiplier > BigDecimal.ZERO
+        val slDistance = if (useAtr) {
+            request.atr!!.multiply(riskConfig.atrSlMultiplier)
+        } else {
+            entryPrice.multiply(effectiveSlPercent).divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+        }
         val riskAmount =
             request.portfolioMoney
                 .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerLot =
-            entryPrice
-                .multiply(effectiveSlPercent)
-                .divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+            slDistance
                 .multiply(BigDecimal(lotSize))
                 .add(commissionPerLot.multiply(BigDecimal(2)))
         val maxLotsByRisk =
@@ -202,7 +208,7 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         request: EntryRequest,
-    ): OrderParams = orderBuilder.buildSpotOrderParams(ticker, direction, size.quantity, entryPrice)
+    ): OrderParams = orderBuilder.buildSpotOrderParams(ticker, direction, size.quantity, entryPrice, request.atr)
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 

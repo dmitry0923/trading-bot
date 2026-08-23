@@ -439,4 +439,76 @@ class ExitRulesTest {
         tpOrderId = tpOrderId,
         tpOrderPrice = tpOrderPrice,
     )
+
+    // ── ATR-based SL/TP (P1#5) ──────────────────────────────
+
+    @Test
+    fun `calcSLByAtr LONG CNYRUB_TOM aligns to grid`() {
+        // ATR=0.10, slMultiplier=2.0 → offset=0.20
+        // 12.42 - 0.20 = 12.22 → FLOOR to 0.0005 → 12.2200
+        val sl = ExitRules.calcSLByAtr(
+            entryPrice = BigDecimal("12.4200"),
+            direction = PositionDirection.LONG,
+            atr = BigDecimal("0.10"),
+            slMultiplier = BigDecimal("2.0"),
+            priceStep = BigDecimal("0.0005"),
+        )
+        assertEquals(0, BigDecimal("12.2200").compareTo(sl))
+    }
+
+    @Test
+    fun `calcSLByAtr SHORT CNYRUB_TOM aligns to grid`() {
+        // ATR=0.10, slMultiplier=2.0 → offset=0.20
+        // 12.42 + 0.20 = 12.62 → CEILING to 0.0005 → 12.6200
+        val sl = ExitRules.calcSLByAtr(
+            entryPrice = BigDecimal("12.4200"),
+            direction = PositionDirection.SHORT,
+            atr = BigDecimal("0.10"),
+            slMultiplier = BigDecimal("2.0"),
+            priceStep = BigDecimal("0.0005"),
+        )
+        assertEquals(0, BigDecimal("12.6200").compareTo(sl))
+    }
+
+    @Test
+    fun `calcTPByAtr LONG CNYRUB_TOM aligns to grid`() {
+        // ATR=0.10, tpMultiplier=3.0 → offset=0.30
+        // 12.42 + 0.30 = 12.72 → CEILING to 0.0005 → 12.7200
+        val tp = ExitRules.calcTPByAtr(
+            entryPrice = BigDecimal("12.4200"),
+            direction = PositionDirection.LONG,
+            atr = BigDecimal("0.10"),
+            tpMultiplier = BigDecimal("3.0"),
+            priceStep = BigDecimal("0.0005"),
+        )
+        assertEquals(0, BigDecimal("12.7200").compareTo(tp))
+    }
+
+    @Test
+    fun `calcTPByAtr SHORT CNYRUB_TOM aligns to grid`() {
+        // ATR=0.10, tpMultiplier=3.0 → offset=0.30
+        // 12.42 - 0.30 = 12.12 → FLOOR to 0.0005 → 12.1200
+        val tp = ExitRules.calcTPByAtr(
+            entryPrice = BigDecimal("12.4200"),
+            direction = PositionDirection.SHORT,
+            atr = BigDecimal("0.10"),
+            tpMultiplier = BigDecimal("3.0"),
+            priceStep = BigDecimal("0.0005"),
+        )
+        assertEquals(0, BigDecimal("12.1200").compareTo(tp))
+    }
+
+    @Test
+    fun `ATR-based R ratio matches multiplier ratio`() {
+        // With ATR=1.0, slMultiplier=2.0, tpMultiplier=3.0:
+        // LONG: SL offset = 2.0, TP offset = 3.0 → R:R = 3.0/2.0 = 1.5
+        val entry = BigDecimal("100")
+        val atr = BigDecimal("1.0")
+        val sl = ExitRules.calcSLByAtr(entry, PositionDirection.LONG, atr, BigDecimal("2.0"), BigDecimal("0.01"))
+        val tp = ExitRules.calcTPByAtr(entry, PositionDirection.LONG, atr, BigDecimal("3.0"), BigDecimal("0.01"))
+        val slDistance = entry.subtract(sl) // 2.0
+        val tpDistance = tp.subtract(entry) // 3.0
+        // R:R = tpDistance / slDistance = 3.0 / 2.0 = 1.5
+        assertEquals(0, BigDecimal("1.5").compareTo(tpDistance.divide(slDistance, 4, java.math.RoundingMode.HALF_UP)))
+    }
 }

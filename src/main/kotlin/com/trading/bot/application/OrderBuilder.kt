@@ -74,24 +74,38 @@ class OrderBuilder(
     }
 
     /**
-     * Параметры заявки для spot-инструмента (акция / FX): SL/TP по проценту от цены входа,
-     * округлённые до сетки цен инструмента (priceStep).
+     * Параметры заявки для spot-инструмента (акция / FX): SL/TP по ATR (если доступен)
+     * или по проценту от цены входа, округлённые до сетки цен инструмента (priceStep).
      * Размер позиции (quantity) вычисляет адаптивный риск-менеджмент (Kelly)
      * в оркестраторе входа.
+     *
+     * @param atr текущий ATR (MINUTE_10, 14 периодов). Если null или множители = 0 —
+     *   fallback на процентный SL/TP из InstrumentSpec/RiskConfig.
      */
     fun buildSpotOrderParams(
         ticker: String,
         direction: PositionDirection,
         quantity: Int,
         entryPrice: BigDecimal,
+        atr: BigDecimal? = null,
     ): OrderParams {
         val spec = instrumentsConfig.find(ticker)
             ?: return OrderParams(direction = direction, quantity = 0)
         val priceStep = spec.priceStep
-        val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-        val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
-        val stopLoss = ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
-        val takeProfit = ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
+        val useAtr = atr != null && atr > BigDecimal.ZERO
+            && riskConfig.atrSlMultiplier > BigDecimal.ZERO && riskConfig.atrTpMultiplier > BigDecimal.ZERO
+        val stopLoss = if (useAtr) {
+            ExitRules.calcSLByAtr(entryPrice, direction, atr!!, riskConfig.atrSlMultiplier, priceStep)
+        } else {
+            val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+            ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
+        }
+        val takeProfit = if (useAtr) {
+            ExitRules.calcTPByAtr(entryPrice, direction, atr!!, riskConfig.atrTpMultiplier, priceStep)
+        } else {
+            val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
+            ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
+        }
         return OrderParams(
             direction = direction,
             quantity = quantity,

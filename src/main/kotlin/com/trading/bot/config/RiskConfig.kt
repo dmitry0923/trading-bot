@@ -22,6 +22,19 @@ class RiskConfig {
     var maxVolatilityPercent: Double = 5.0
     var defaultStopLossPercent: BigDecimal = BigDecimal("2.0")
     var defaultTakeProfitPercent: BigDecimal = BigDecimal("4.0")
+
+    // ===== ATR-based SL/TP (P1#5) =====
+
+    /**
+     * ATR-адаптивные множители для SL/TP. Когда ATR доступен, SL и TP считаются
+     * как ATR × множитель вместо фиксированного процента. Даёт более широкий стоп
+     * на волатильных инструментах и более узкий на спокойных.
+     *
+     * 0 = выключено (используется defaultStopLossPercent/defaultTakeProfitPercent).
+     * 2.0 = SL на расстоянии 2× ATR от входа; 3.0 = TP на 3× ATR (R:R = 1.5).
+     */
+    var atrSlMultiplier: BigDecimal = BigDecimal("2.0")
+    var atrTpMultiplier: BigDecimal = BigDecimal("3.0")
     var trailingStopEnabled: Boolean = true
     var trailingStopPercent: Double = 1.0
     var sectors: Map<String, String> = emptyMap()

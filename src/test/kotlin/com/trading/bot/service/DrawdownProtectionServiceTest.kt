@@ -319,7 +319,7 @@ class DrawdownProtectionServiceTest {
     }
 
     @Test
-    fun `drawdown percent is measured from peak aum`() =
+    fun `daily drawdown uses only daily equity peak not historical realized peak`() =
         runBlocking {
             stubNoOpenPositions()
             stubClosedPositions(
@@ -332,12 +332,12 @@ class DrawdownProtectionServiceTest {
             val s = service()
             val status = s.computeStatus()
 
-            // Баланс (latestAum) = 50 000. Депозит = balance - totalRealized =
-            // 50 000 - (-15 000) = 65 000. Пик equity = 65 000 + 10 000 (peak) = 75 000;
-            // текущая = 65 000 - 15 000 = 50 000; dd = (75 000 - 50 000)/75 000 = 33.33%
-            assertEquals(0, BigDecimal("75000").compareTo(status.peakAum))
+            // Баланс (latestAum) = 50 000. Equity = 50 000 + 0 = 50 000.
+            // Daily HWM = max(0, 50 000) = 50 000 (historical realized peak is ignored).
+            // DD = (50 000 - 50 000) / 50 000 = 0%
+            assertEquals(0, BigDecimal("50000").compareTo(status.peakAum))
             assertEquals(0, BigDecimal("50000").compareTo(status.aum))
-            assertEquals(33.33, status.drawdownPercent, 0.01)
+            assertEquals(0.0, status.drawdownPercent, 1e-9)
         }
 
     @Test
@@ -505,6 +505,157 @@ class DrawdownProtectionServiceTest {
             // computeStatus updates peakEquity to max(0, equity=50000) = 50000
             Mockito.verify(snapshotRepo, Mockito.times(1)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal.ZERO)
             Mockito.verify(snapshotRepo, Mockito.times(1)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
+        }
+
+    // ===================== Equity-based drawdown HWM regression =====================
+
+    @Test
+    fun `drawdown is zero when equity equals peak`() =
+        runBlocking {
+            stubClosedPositions(emptyList())
+            stubNoOpenPositions()
+
+            val s = service(balance = BigDecimal("100000"))
+            val status = s.computeStatus()
+
+            assertEquals(0.0, status.drawdownPercent, 1e-9)
+            assertEquals(0, BigDecimal("100000").compareTo(status.peakAum))
+        }
+
+    @Test
+    fun `drawdown reflects unrealized loss from open position`() =
+        runBlocking {
+            stubClosedPositions(emptyList())
+            // First call: establish HWM = 100000
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(emptyList())
+            val s = service(balance = BigDecimal("100000"))
+            s.computeStatus()
+
+            // Second call: open LONG LKOH (lotSize=1) position with unrealized loss
+            // entryPrice=1000, currentPrice=980, qty=100, lotSize=1 → unrealized = -2000
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "LKOH",
+                        direction = PositionDirection.LONG,
+                        quantity = 100,
+                        entryPrice = BigDecimal("1000"),
+                        currentPrice = BigDecimal("980"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now(),
+                    ),
+                ),
+            )
+            val status = s.computeStatus()
+
+            // equity = 100000 + (-2000) = 98000; HWM = 100000; DD = 2%
+            assertEquals(0, BigDecimal("98000").compareTo(status.aum))
+            assertEquals(2.0, status.drawdownPercent, 0.01)
+        }
+
+    @Test
+    fun `drawdown is 5 percent on larger unrealized loss`() =
+        runBlocking {
+            stubClosedPositions(emptyList())
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(emptyList())
+            val s = service(balance = BigDecimal("100000"))
+            s.computeStatus()
+
+            // LKOH lotSize=1: unrealized = (950 - 1000) * 100 * 1 = -5000
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "LKOH",
+                        direction = PositionDirection.LONG,
+                        quantity = 100,
+                        entryPrice = BigDecimal("1000"),
+                        currentPrice = BigDecimal("950"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now(),
+                    ),
+                ),
+            )
+            val status = s.computeStatus()
+
+            assertEquals(0, BigDecimal("95000").compareTo(status.aum))
+            assertEquals(5.0, status.drawdownPercent, 0.01)
+        }
+
+    @Test
+    fun `peak equity increases when unrealized profit exceeds previous peak`() =
+        runBlocking {
+            stubClosedPositions(emptyList())
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(emptyList())
+            val s = service(balance = BigDecimal("100000"))
+            val s1 = s.computeStatus()
+            assertEquals(0, BigDecimal("100000").compareTo(s1.peakAum))
+
+            // LKOH lotSize=1: equity = 100000 + (1050 - 1000) * 100 * 1 = 105000
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "LKOH",
+                        direction = PositionDirection.LONG,
+                        quantity = 100,
+                        entryPrice = BigDecimal("1000"),
+                        currentPrice = BigDecimal("1050"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now(),
+                    ),
+                ),
+            )
+            val s2 = s.computeStatus()
+            assertEquals(0, BigDecimal("105000").compareTo(s2.peakAum))
+            assertEquals(0.0, s2.drawdownPercent, 1e-9)
+        }
+
+    @Test
+    fun `drawdown resets to zero on new trading day`() =
+        runBlocking {
+            // Day 1: establish HWM = 105000 with open profit
+            stubClosedPositions(emptyList())
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "LKOH",
+                        direction = PositionDirection.LONG,
+                        quantity = 100,
+                        entryPrice = BigDecimal("1000"),
+                        currentPrice = BigDecimal("1050"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now(),
+                    ),
+                ),
+            )
+            val clock1 = Clock.fixed(Instant.parse("2025-03-15T12:00:00Z"), ZoneId.of("Europe/Moscow"))
+            val s = service(balance = BigDecimal("100000"), clock = clock1)
+            val status1 = s.computeStatus()
+            assertEquals(0, BigDecimal("105000").compareTo(status1.peakAum))
+
+            // Day 2: new day — HWM resets to current equity = 100000, DD = 0%
+            val clock2 = Clock.fixed(Instant.parse("2025-03-16T12:00:00Z"), ZoneId.of("Europe/Moscow"))
+            val s2 = service(balance = BigDecimal("100000"), clock = clock2)
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(emptyList())
+            val status2 = s2.computeStatus()
+            assertEquals(0, BigDecimal("100000").compareTo(status2.peakAum))
+            assertEquals(0.0, status2.drawdownPercent, 1e-9)
+        }
+
+    @Test
+    fun `historical realized peak does NOT inflate daily drawdown`() =
+        runBlocking {
+            // History: realized peak = 120000 (from previous days)
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("20000"), LocalDateTime.now().minusDays(5))),
+            )
+            stubNoOpenPositions()
+            val s = service(balance = BigDecimal("100000"))
+            val status = s.computeStatus()
+
+            // equity = 100000 + 0 = 100000; HWM = max(0, 100000) = 100000
+            // NOT max(realizedPeak=120000, 100000) — daily drawdown is 0%
+            assertEquals(0.0, status.drawdownPercent, 1e-9)
+            assertEquals(0, BigDecimal("100000").compareTo(status.peakAum))
         }
 
     // ===================== Per-account скоуп (F-1/F-13/F-14) =====================

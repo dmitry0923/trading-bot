@@ -180,7 +180,7 @@ class DrawdownProtectionService(
         val open = positionRepo.findOpenByAccount(accountId)
         val aggregates = positionRepo.findClosedAggregates(accountId)
         val aum = currentAum(open, accountId)
-        val (peakAum, drawdownPercent) = peakAumAndDrawdown(aggregates, accountId, open)
+        val (peakAum, drawdownPercent) = peakAumAndDrawdown(accountId, open)
 
         val realizedToday = sumPnl(closedToday)
         val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
@@ -513,9 +513,11 @@ class DrawdownProtectionService(
     /**
      * Пиковый AUM и текущая просадка от пика в %.
      *
-     * Equity-based (P0 audit): running = balance + unrealized P&L.
+     * Equity-based (P0 audit): equity = balance + unrealized P&L.
      * Peak equity (HWM) tracked per-day: resets at new trading day.
      * On restart, peakEquity is restored from daily_risk_snapshot.
+     * Daily drawdown uses ONLY daily peak equity — no mixing with
+     * historical realized peak to avoid inflated drawdown after restart.
      *
      * F-3 (roadmap 13.25): latestAum = текущий баланс счёта (уже включает
      * реализованный P&L).
@@ -523,18 +525,15 @@ class DrawdownProtectionService(
      * @return (peakAum, drawdownPercent), drawdownPercent в [0..100]
      */
     private fun peakAumAndDrawdown(
-        aggregates: PositionRepository.ClosedPositionAggregates,
         accountId: Long?,
         open: List<Position>,
     ): PeakAndDrawdown {
         val balance = aumProvider.latestAum(accountId)
         val unrealized = unrealizedPnl(open)
         val equity = balance.add(unrealized).coerceAtLeast(BigDecimal.ZERO)
-        val realizedPeak = aggregates.peakRealized.coerceAtLeast(BigDecimal.ZERO)
-        val deposit = balance.subtract(aggregates.totalRealized).coerceAtLeast(BigDecimal.ZERO)
-        val realizedPeakAum = deposit.add(realizedPeak)
 
-        // Track equity HWM (high water mark) — resets each trading day
+        // Track equity HWM (high water mark) — resets each trading day.
+        // Daily drawdown uses only the daily peak, NOT historical realized peak.
         val currentPeakEquity = if (accountId == null) todayPeakEquity else (accountPeakEquity[accountId] ?: BigDecimal.ZERO)
         val newPeakEquity = maxOf(currentPeakEquity, equity)
         if (accountId == null) {
@@ -543,7 +542,7 @@ class DrawdownProtectionService(
             accountPeakEquity[accountId] = newPeakEquity
         }
 
-        val peak = maxOf(realizedPeakAum, newPeakEquity)
+        val peak = newPeakEquity
         val drawdownPercent =
             if (peak > BigDecimal.ZERO) {
                 peak

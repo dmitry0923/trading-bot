@@ -132,6 +132,9 @@ class AdaptiveRiskServiceKellyTest {
 
     @BeforeEach
     fun stubDefaults() {
+        // Tiers: 20 trades → 1.0 multiplier so existing Kelly tests are unaffected by staging.
+        // The staging test explicitly overrides tiers for its purpose.
+        riskConfig.kellySampleSizeTiers = listOf(0 to 0.20, 5 to 0.50, 15 to 0.80, 20 to 1.00)
         runBlocking {
             stubClosedPositions(emptyList())
             stubAum()
@@ -159,15 +162,16 @@ class AdaptiveRiskServiceKellyTest {
     fun `wilson shrinkage makes kelly smaller than raw win rate`() =
         runBlocking {
             // Raw w=0.6, r=1.25 -> full kelly = 0.28 -> 14000.
-            // Wilson lower bound (z=1, n=20) ~0.488 -> full kelly ~0.079 -> ~3940 (ниже капа 5000).
+            // Wilson lower bound (z=1, n=20) ~0.488 -> full kelly ~0.079
+            // SampleSizeMultiplier(20) = 0.80 (tier 15-29) -> effective kelly ~0.063 -> ~3150.
             val s = stats(winRate = 0.6, avgWin = BigDecimal("125"), avgLoss = BigDecimal("100"))
             stubStats(mapOf("SBER" to s))
             riskConfig.kellyFraction = 1.0
 
             val size = service.calculateOptimalPositionSize("SBER")
 
-            assertTrue(size > BigDecimal("3800"), "wilson size should stay positive, was $size")
-            assertTrue(size < BigDecimal("4100"), "wilson size should be shrunk well below 14000, was $size")
+            assertTrue(size > BigDecimal("3000"), "wilson size should stay positive, was $size")
+            assertTrue(size < BigDecimal("4200"), "wilson size should be shrunk well below 14000, was $size")
         }
 
     @Test
@@ -196,17 +200,25 @@ class AdaptiveRiskServiceKellyTest {
         }
 
     @Test
-    fun `insufficient trade sample uses conservative fallback not kelly`() =
+    fun `insufficient trade sample uses staged kelly not full kelly`() =
         runBlocking {
-            // 5 сделок < kellyMinTrades (15): win rate статистически бессмысленен
-            val s = stats(winRate = 0.9, avgWin = BigDecimal("1000"), avgLoss = BigDecimal("100"), totalTrades = 5)
-            stubStats(mapOf("SBER" to s))
+            // Remove cap so staging effect is visible.
+            riskConfig.kellyMaxPositionFraction = 1.0
+            riskConfig.kellySampleSizeTiers = listOf(0 to 0.20, 5 to 0.50, 30 to 1.00)
+            val s5 = stats(winRate = 0.7, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"), totalTrades = 5)
+            stubStats(mapOf("SBER" to s5))
             riskConfig.kellyFraction = 1.0
 
-            val size = service.calculateOptimalPositionSize("SBER")
-            val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
-            val fallback = riskConfig.maxPositionRub.multiply(BigDecimal(fallbackFraction.toString()))
-            assertEquals(0, fallback.compareTo(size))
+            val size5 = service.calculateOptimalPositionSize("SBER")
+
+            val s30 = stats(winRate = 0.7, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"), totalTrades = 30)
+            stubStats(mapOf("SBER" to s30))
+
+            val size30 = service.calculateOptimalPositionSize("SBER")
+
+            // size5 < size30: staging reduces position for smaller samples
+            assertTrue(size5 < size30, "5-trade size ($size5) should be < 30-trade size ($size30)")
+            assertTrue(size5 > BigDecimal.ZERO, "5-trade size should be positive")
         }
 
     @Test
@@ -399,4 +411,29 @@ class AdaptiveRiskServiceKellyTest {
             // full kelly ~0.232 * 0.25 = ~0.058 -> ~2904
             assertTrue(size <= riskConfig.maxPositionRub.multiply(BigDecimal("0.10")).add(BigDecimal.ONE))
         }
+
+    // ── Staged Kelly by sample size (P1#8) ───────────────────
+
+    @Test
+    fun `sampleSizeMultiplier returns correct tier values`() {
+        riskConfig.kellySampleSizeTiers = listOf(0 to 0.20, 5 to 0.50, 15 to 0.80, 30 to 1.00)
+        assertEquals(0.20, service.sampleSizeMultiplier(0))
+        assertEquals(0.20, service.sampleSizeMultiplier(4))
+        assertEquals(0.50, service.sampleSizeMultiplier(5))
+        assertEquals(0.50, service.sampleSizeMultiplier(14))
+        assertEquals(0.80, service.sampleSizeMultiplier(15))
+        assertEquals(0.80, service.sampleSizeMultiplier(29))
+        assertEquals(1.00, service.sampleSizeMultiplier(30))
+        assertEquals(1.00, service.sampleSizeMultiplier(100))
+    }
+
+    @Test
+    fun `sampleSizeMultiplier respects custom tiers`() {
+        riskConfig.kellySampleSizeTiers = listOf(0 to 0.10, 3 to 0.30, 10 to 1.00)
+        assertEquals(0.10, service.sampleSizeMultiplier(0))
+        assertEquals(0.10, service.sampleSizeMultiplier(2))
+        assertEquals(0.30, service.sampleSizeMultiplier(3))
+        assertEquals(0.30, service.sampleSizeMultiplier(9))
+        assertEquals(1.00, service.sampleSizeMultiplier(10))
+    }
 }

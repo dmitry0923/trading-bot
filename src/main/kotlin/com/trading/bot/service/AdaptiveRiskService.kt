@@ -164,10 +164,12 @@ class AdaptiveRiskService(
     ): BigDecimal {
         val aum = aumProvider.currentAum(accountId)
         val stats = tradeAnalysisService.analyzeLastNDays(30, accountId)[ticker]
-        // No-data fallback тоже ограничен жёстким капом: min(noDataFraction, kellyMaxPositionFraction).
-        val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
+        val totalTrades = stats?.totalTrades ?: 0
+        val sampleMultiplier = sampleSizeMultiplier(totalTrades)
         val base =
-            if (stats == null || stats.totalTrades < riskConfig.kellyMinTrades) {
+            if (stats == null) {
+                // Совсем нет данных: используем жёсткий fallback, ограниченный капом.
+                val fallbackFraction = minOf(riskConfig.kellyNoDataFraction, riskConfig.kellyMaxPositionFraction)
                 aum.multiply(BigDecimal(fallbackFraction.toString()))
             } else {
                 val w = wilsonLowerBound(stats.winRate, stats.totalTrades, riskConfig.kellyWilsonZ)
@@ -175,9 +177,11 @@ class AdaptiveRiskService(
                 val r = stats.avgWin.toDouble() / avgLossAbs
                 val kelly = (w * r - (1 - w)) / r
 
-                // Дробный (Quarter/Half) Kelly с жёстким капом от депозита.
+                // Staged Kelly: sampleMultiplier масштабирует kellyFraction по размеру выборки.
+                // 0-4 сделки: ×0.20, 5-14: ×0.50, 15-29: ×0.80, 30+: ×1.00.
+                val effectiveFraction = riskConfig.kellyFraction * sampleMultiplier
                 val safeKelly =
-                    (kelly * riskConfig.kellyFraction)
+                    (kelly * effectiveFraction)
                         .coerceIn(0.0, riskConfig.kellyMaxPositionFraction)
                 if (safeKelly > 0) aum.multiply(BigDecimal(safeKelly)) else BigDecimal.ZERO
             }
@@ -226,6 +230,25 @@ class AdaptiveRiskService(
                 "confidenceFactor=$confidenceFactor, drawdownFactor=$drawdownFactor, regimeFactor=$regimeFactor)"
         }
         return finalSize
+    }
+
+    /**
+     * Множитель Kelly fraction по размеру выборки (P1#8).
+     * Плавная шкала вместо бинарного порога kellyMinTrades:
+     *   0-4 сделки:   ×0.20 (очень консервативно, «цифровой лото-билет»)
+     *   5-14 сделок:  ×0.50 (осторожный рост)
+     *   15-29 сделок: ×0.80 (почти полный Kelly)
+     *   30+ сделок:   ×1.00 (полный Kelly)
+     *
+     * Wilson lower bound уже шринкает win rate, а staging дополнительно
+     * режет размер на малых выборках — двойная защита от overfitting.
+     */
+    fun sampleSizeMultiplier(totalTrades: Int): Double {
+        var multiplier = 0.20
+        for ((threshold, mult) in riskConfig.kellySampleSizeTiers) {
+            if (totalTrades >= threshold) multiplier = mult
+        }
+        return multiplier
     }
 
     /**

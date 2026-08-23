@@ -64,7 +64,7 @@ class RiskConfig {
     /**
      * Минимальное количество закрытых сделок для использования критерия Келли.
      * При выборке меньше порога Kelly статистически бессмысленен (high variance),
-     * поэтому используется консервативная доля [kellyNoDataFraction].
+     * поэтому размер масштабируется по [kellySampleSizeTiers].
      */
     var kellyMinTrades: Int = 15
 
@@ -75,6 +75,27 @@ class RiskConfig {
      * (min(noDataFraction, cap)) — «жёсткий кап» не обходится без статистики.
      */
     var kellyNoDataFraction: Double = 0.25
+
+    // ===== Staged Kelly by sample size (P1#8) =====
+
+    /**
+     * Множители Kelly fraction по размеру выборки (количество закрытых сделок за 30 дней).
+     * Множитель применяется к [kellyFraction], обеспечивая плавную шкалу:
+     *
+     *   0-4 сделки:   kellyFraction × 0.20 = 5% от AUM (очень консервативно)
+     *   5-14 сделок:  kellyFraction × 0.50 = 12.5% от AUM
+     *   15-29 сделок: kellyFraction × 0.80 = 20% от AUM
+     *   30+ сделок:   kellyFraction × 1.00 = 25% от AUM (полный Kelly)
+     *
+     * Это заменяет бинарный порог kellyMinTrades: вместо cliff-перехода
+     * от noDataFraction к полному Kelly используется плавная шкала.
+     */
+    var kellySampleSizeTiers: List<Pair<Int, Double>> = listOf(
+        0 to 0.20,
+        5 to 0.50,
+        15 to 0.80,
+        30 to 1.00,
+    )
 
     /**
      * Жёсткий кап доли Kelly от AUM (0..1). 0.10 = консервативный кап: даже при

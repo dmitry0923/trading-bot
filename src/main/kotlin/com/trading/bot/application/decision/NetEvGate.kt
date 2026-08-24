@@ -37,7 +37,8 @@ class NetEvGate(
      * Проверка NET EV для допуска сделки.
      *
      * @param expectedNet чистое мат. ожидание на лот (из [AdaptiveRiskService.expectedNetProfitPerLot]),
-     *   null = недостаточно статистики → gate PASS.
+     *   null = EV UNKNOWN → BLOCK when netEvBlockOnUnknown=true (default),
+     *   PASS only when explicitly disabled.
      */
     fun check(
         ticker: String,

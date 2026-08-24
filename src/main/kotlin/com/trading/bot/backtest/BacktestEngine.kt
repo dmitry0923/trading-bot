@@ -77,6 +77,7 @@ class BacktestEngine(
     private val positionSizer: PositionSizer? = null,
     private val riskConfig: RiskConfig = RiskConfig(),
     private val futuresStopResolver: FuturesStopResolver = FuturesStopResolver(),
+    private val riskSimulator: BacktestRiskSimulator? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -210,15 +211,32 @@ class BacktestEngine(
     ): BacktestResult {
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
+        val equityTimestamps = ArrayList<LocalDateTime>()
         val tradeReturns = ArrayList<Double>()
         val tradeHoldBars = ArrayList<Int>()
         val commissionAccumulator = mutableListOf(BigDecimal.ZERO)
         val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
         var mlBlockedCount = 0
         var mtfBlockedCount = 0
+        var riskBlockedCount = 0
+
+        // Live risk gates: initialize in-memory state machine
+        val useRiskGates = backtestConfig.liveRiskGates && riskSimulator != null
+        if (useRiskGates) {
+            riskSimulator!!.initialize(initialCapital)
+            riskSimulator.cycleId = cycleId
+        }
 
         var position: PositionSim? = null
         val sorted = candles.sortedBy { it.time }
+
+        fun recordEquity(
+            price: BigDecimal,
+            time: LocalDateTime,
+        ) {
+            equityCurve.add(equityAt(ticker, cash, position, price))
+            equityTimestamps.add(time)
+        }
 
         for (i in 1 until sorted.size) {
             val current = sorted[i]
@@ -242,6 +260,7 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
+                        recordRiskSimClose(ticker, pos0, "STOP_LOSS", pos0.stopLoss, i, sorted, cash)
                         position = null
                     }
 
@@ -260,6 +279,7 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
+                        recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, i, sorted, cash)
                         position = null
                     }
 
@@ -270,7 +290,7 @@ class BacktestEngine(
             val signal = signalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
             if (signal == StrategyAction.HOLD || signal == StrategyAction.CLOSE) {
                 // Удержание: фиксируем equity по текущей цене закрытия
-                equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
+                recordEquity(current.closePrice, current.time)
                 continue
             }
 
@@ -300,9 +320,10 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
+                        recordRiskSimClose(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
                     }
-                    equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
+                    recordEquity(current.closePrice, current.time)
                     continue
                 }
             }
@@ -339,9 +360,33 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                             )
+                        recordRiskSimClose(ticker, curPos, "MTF_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
                     }
-                    equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
+                    recordEquity(current.closePrice, current.time)
+                    continue
+                }
+            }
+
+            // Live risk gates: check full chain before entry (DecisionEngine parity)
+            var riskBlocked = false
+            if (useRiskGates && entering) {
+                val gateResult =
+                    riskSimulator!!.checkEntry(
+                        ticker = ticker,
+                        signal = signal,
+                        entryPrice = current.openPrice,
+                        cash = cash,
+                        candle = current,
+                        history = sorted.subList(0, i),
+                        currentTime = current.time,
+                    )
+                if (!gateResult.allowed) {
+                    riskBlockedCount++
+                    riskBlocked = true
+                    logger.debug { "Backtest $ticker: risk gate blocked at ${current.time}: ${gateResult.reason}" }
+                    meterRegistry?.counter("bt_risk_blocked_total", "ticker", ticker, "reason", gateResult.reason ?: "UNKNOWN")?.increment()
+                    recordEquity(current.closePrice, current.time)
                     continue
                 }
             }
@@ -364,6 +409,7 @@ class BacktestEngine(
                             commissionMultiplier,
                             slippageMultiplier,
                         )
+                    recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
                     position =
                         openPosition(
                             ticker,
@@ -380,9 +426,10 @@ class BacktestEngine(
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
+                        recordRiskSimOpen(ticker, position!!, sorted)
                     }
                 }
-                equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
+                recordEquity(current.closePrice, current.time)
                 continue
             }
 
@@ -403,8 +450,9 @@ class BacktestEngine(
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
+                recordRiskSimOpen(ticker, position!!, sorted)
             }
-            equityCurve.add(equityAt(ticker, cash, position, current.closePrice))
+            recordEquity(current.closePrice, current.time)
         }
 
         // Закрыть оставшуюся позицию по последней цене
@@ -423,10 +471,12 @@ class BacktestEngine(
                     commissionMultiplier,
                     slippageMultiplier,
                 )
+            recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
         equityCurve.add(cash)
+        if (sorted.isNotEmpty()) equityTimestamps.add(sorted.last().time)
 
-        val result = BacktestMetrics.compute(ticker, equityCurve, tradeReturns, tradeHoldBars, commissionAccumulator[0])
+        val result = BacktestMetrics.compute(ticker, equityCurve, equityTimestamps, tradeReturns, tradeHoldBars, commissionAccumulator[0])
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
@@ -612,8 +662,9 @@ class BacktestEngine(
             } else {
                 0
             }
-        val effectiveSl = instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-            ?: riskConfig.defaultStopLossPercent
+        val effectiveSl =
+            instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+                ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = instrument?.commissionRub ?: BigDecimal.ZERO
         val riskAmount =
             cash
@@ -678,8 +729,9 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.add(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        val effectiveSl = instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-            ?: riskConfig.defaultStopLossPercent
+        val effectiveSl =
+            instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+                ?: riskConfig.defaultStopLossPercent
         return ExitRules.calcSL(fillPrice, direction, effectiveSl, instrument?.priceStep ?: BigDecimal("0.01"))
     }
 
@@ -701,8 +753,9 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.subtract(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        val effectiveTp = instrument?.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
-            ?: riskConfig.defaultTakeProfitPercent
+        val effectiveTp =
+            instrument?.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
+                ?: riskConfig.defaultTakeProfitPercent
         return ExitRules.calcTP(fillPrice, direction, effectiveTp, instrument?.priceStep ?: BigDecimal("0.01"))
     }
 
@@ -746,6 +799,58 @@ class BacktestEngine(
         val newCash = cash.add(gross).subtract(commissionExit)
         logger.debug { "Backtest close $ticker $reason pnl=$pnl" }
         return newCash
+    }
+
+    /**
+     * Record close event in the risk simulator for live-risk-gates mode.
+     * Called after every closePosition to feed the in-memory trade history.
+     */
+    private fun recordRiskSimClose(
+        ticker: String,
+        pos: PositionSim,
+        reason: String,
+        exitPrice: BigDecimal,
+        exitBar: Int,
+        sorted: List<Candle>,
+        cash: BigDecimal,
+    ) {
+        if (!backtestConfig.liveRiskGates || riskSimulator == null) return
+        val entryTime = if (pos.entryBars in sorted.indices) sorted[pos.entryBars].time else LocalDateTime.MIN
+        val exitTime = if (exitBar in sorted.indices) sorted[exitBar].time else LocalDateTime.MAX
+        riskSimulator.recordClose(
+            ticker = ticker,
+            direction = pos.direction,
+            entryPrice = pos.entryPrice,
+            exitPrice = exitPrice,
+            quantity = pos.quantity,
+            entryTime = entryTime,
+            exitTime = exitTime,
+            closeReason = reason,
+            commission =
+                computeCommission(ticker, pos.entryPrice, pos.quantity) +
+                    computeCommission(ticker, exitPrice, pos.quantity),
+            cash = cash,
+        )
+    }
+
+    /**
+     * Record open event in the risk simulator.
+     */
+    private fun recordRiskSimOpen(
+        ticker: String,
+        pos: PositionSim,
+        sorted: List<Candle>,
+    ) {
+        if (!backtestConfig.liveRiskGates || riskSimulator == null) return
+        val lotSize = instrumentsConfig.find(ticker)?.lotSize?.coerceAtLeast(1) ?: 1
+        riskSimulator.recordOpen(
+            ticker = ticker,
+            direction = pos.direction,
+            quantity = pos.quantity,
+            entryPrice = pos.entryPrice,
+            lotSize = lotSize,
+            entryTime = if (pos.entryBars in sorted.indices) sorted[pos.entryBars].time else LocalDateTime.MIN,
+        )
     }
 
     /**

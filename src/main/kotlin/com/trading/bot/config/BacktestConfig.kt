@@ -36,6 +36,10 @@ import java.math.BigDecimal
  *   (раздел 13.7.8), по умолчанию 1000.
  * @property monteCarloSeed seed генератора для детерминированных прогонов
  *   (воспроизводимость в тестах и CI).
+ * @property liveRiskGates включает полную цепочку risk gates из LIVE
+ *   (BacktestRiskSimulator): daily loss, drawdown, Kelly sizing, NET EV,
+ *   portfolio concentration, sector/max positions. При false — прежнее
+ *   поведение (capitalSlice + risk cap). По умолчанию false (обратная совместимость).
  */
 @Component
 @ConfigurationProperties(prefix = "bt")
@@ -51,4 +55,5 @@ class BacktestConfig {
     var mtfFilterEnabled: Boolean = false
     var monteCarloSimulations: Int = 1000
     var monteCarloSeed: Long = 42
+    var liveRiskGates: Boolean = false
 }

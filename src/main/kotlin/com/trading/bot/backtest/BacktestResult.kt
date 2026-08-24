@@ -2,6 +2,9 @@ package com.trading.bot.backtest
 
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDateTime
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -79,6 +82,7 @@ object BacktestMetrics {
     fun compute(
         ticker: String,
         equityCurve: List<BigDecimal>,
+        equityTimestamps: List<LocalDateTime> = emptyList(),
         tradeReturns: List<Double>,
         holdBars: List<Int> = emptyList(),
         totalCommission: BigDecimal = BigDecimal.ZERO,
@@ -159,6 +163,8 @@ object BacktestMetrics {
                 0.0
             }
 
+        val monthlyReturns = computeMonthlyReturns(equityCurve, equityTimestamps)
+
         return BacktestResult(
             ticker = ticker,
             totalReturn = totalReturn,
@@ -170,7 +176,7 @@ object BacktestMetrics {
             totalTrades = tradeReturns.size,
             avgHoldBars = if (holdBars.isNotEmpty()) holdBars.average() else 0.0,
             equityCurve = equityCurve,
-            monthlyReturns = emptyMap(),
+            monthlyReturns = monthlyReturns,
             expectancy = expectancy,
             winLossRatio = winLossRatio,
             avgTrade = avgTrade,
@@ -243,5 +249,48 @@ object BacktestMetrics {
             if (dd > maxDd) maxDd = dd
         }
         return maxDd
+    }
+
+    /**
+     * Monthly returns: key = "yyyy-MM", value = (last_equity_in_month - first_equity_in_month) / first_equity_in_month.
+     * Calendar months. Months with only one equity point yield 0.0.
+     */
+    fun computeMonthlyReturns(
+        equityCurve: List<BigDecimal>,
+        equityTimestamps: List<LocalDateTime>,
+    ): Map<String, Double> {
+        if (equityCurve.size < 2 || equityTimestamps.size < 2) return emptyMap()
+
+        val monthFormatter = DateTimeFormatter.ofPattern("yyyy-MM")
+
+        data class MonthEntry(
+            val equity: BigDecimal,
+            val month: YearMonth,
+        )
+        val entries =
+            equityCurve.zip(equityTimestamps) { eq, t ->
+                MonthEntry(eq, YearMonth.from(t))
+            }
+
+        val grouped = linkedMapOf<YearMonth, MutableList<BigDecimal>>()
+        for (e in entries) {
+            grouped.getOrPut(e.month) { mutableListOf() }.add(e.equity)
+        }
+
+        val result = linkedMapOf<String, Double>()
+        for ((month, equities) in grouped) {
+            if (equities.size < 2 || equities.first() <= BigDecimal.ZERO) {
+                result[month.format(monthFormatter)] = 0.0
+                continue
+            }
+            val start = equities.first()
+            val end = equities.last()
+            result[month.format(monthFormatter)] =
+                end
+                    .subtract(start)
+                    .divide(start, 6, RoundingMode.HALF_UP)
+                    .toDouble()
+        }
+        return result
     }
 }

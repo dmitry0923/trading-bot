@@ -244,8 +244,8 @@ class BacktestValidator(
             } else {
                 0.0
             }
-        return BacktestMetrics.compute(ticker, equity, tradeReturns).copy(avgHoldBars = avgHoldBars)
+        return BacktestMetrics.compute(ticker, equity, tradeReturns = tradeReturns).copy(avgHoldBars = avgHoldBars)
     }
 
-    private fun emptyResult(ticker: String): BacktestResult = BacktestMetrics.compute(ticker, emptyList(), emptyList())
+    private fun emptyResult(ticker: String): BacktestResult = BacktestMetrics.compute(ticker, emptyList(), tradeReturns = emptyList())
 }

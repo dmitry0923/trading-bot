@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
@@ -83,7 +84,7 @@ class BacktestEngineTest {
             BacktestMetrics.compute(
                 "SBER",
                 listOf(BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE),
-                listOf(0.0, 0.0, 0.0),
+                tradeReturns = listOf(0.0, 0.0, 0.0),
             )
         assertEquals(0.0, result.sharpeRatio)
     }
@@ -102,7 +103,7 @@ class BacktestEngineTest {
                     BigDecimal("100400"),
                     BigDecimal("100500"),
                 ),
-                listOf(40.0, 40.0, 40.0, 40.0),
+                tradeReturns = listOf(40.0, 40.0, 40.0, 40.0),
             )
         assertTrue(result.sharpeRatio > 0.0)
         assertTrue(result.sortinoRatio > 0.0)
@@ -173,7 +174,7 @@ class BacktestEngineTest {
                 "SBER",
                 // Кривая капитала согласована со сделками: 1000 → −500 → +2000
                 listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("100500"), BigDecimal("102500")),
-                listOf(1000.0, -500.0, 2000.0),
+                tradeReturns = listOf(1000.0, -500.0, 2000.0),
             )
         assertEquals(3, result.totalTrades)
         assertEquals(2.0 / 3.0, result.winRate, 1e-9)
@@ -878,7 +879,7 @@ class BacktestEngineTest {
             BacktestMetrics.compute(
                 "SBER",
                 listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("102000")),
-                listOf(1000.0, 1000.0),
+                tradeReturns = listOf(1000.0, 1000.0),
             )
         assertEquals(Double.POSITIVE_INFINITY, result.profitFactor)
         assertEquals(Double.POSITIVE_INFINITY, result.winLossRatio)
@@ -892,7 +893,7 @@ class BacktestEngineTest {
             BacktestMetrics.compute(
                 "SBER",
                 listOf(BigDecimal("100000"), BigDecimal("99500"), BigDecimal("99200")),
-                listOf(-500.0, -300.0),
+                tradeReturns = listOf(-500.0, -300.0),
             )
         assertEquals(0.0, result.profitFactor)
         assertEquals(0.0, result.winLossRatio)
@@ -1066,7 +1067,7 @@ class BacktestEngineTest {
             BacktestMetrics.compute(
                 "SBER",
                 listOf(BigDecimal.ZERO, BigDecimal("100")),
-                listOf(100.0),
+                tradeReturns = listOf(100.0),
             )
         assertEquals(0.0, result.totalReturn)
         assertEquals(0.0, result.sharpeRatio)
@@ -1249,128 +1250,286 @@ class BacktestEngineTest {
     }
 
     @Test
-    fun `per-instrument commissionRub is used instead of universal rate`() = runBlocking {
-        val instruments = InstrumentsConfig().apply {
-            instruments = mutableListOf(
-                InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
-                    priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
-                    go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
-                    commissionRub = BigDecimal("10.0"),
-                ),
-            )
+    fun `per-instrument commissionRub is used instead of universal rate`() =
+        runBlocking {
+            val instruments =
+                InstrumentsConfig().apply {
+                    instruments =
+                        mutableListOf(
+                            InstrumentsConfig.InstrumentSpec(
+                                ticker = "CNYRUB_TOM",
+                                type = "FX",
+                                lotSize = 1000,
+                                priceStep = BigDecimal("0.0001"),
+                                priceStepCost = BigDecimal("1.0"),
+                                go = BigDecimal.ZERO,
+                                leverage = BigDecimal("1.0"),
+                                baseAsset = "CNY",
+                                commissionRub = BigDecimal("10.0"),
+                            ),
+                        )
+                }
+            val engine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    instrumentsConfig = instruments,
+                    riskConfig = RiskConfig().apply { defaultStopLossPercent = BigDecimal("0.5") },
+                    signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
+                )
+            val candles =
+                (0 until 60).map { i ->
+                    Candle(
+                        ticker = "CNYRUB_TOM",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("12.40"),
+                        highPrice = BigDecimal("12.42"),
+                        lowPrice = BigDecimal("12.38"),
+                        closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
+                        volume = 1000L,
+                        time = LocalDateTime.now().plusMinutes(10L * i),
+                    )
+                }
+            val result =
+                engine.simulate(
+                    "CNYRUB_TOM",
+                    candles,
+                    initialCapital = BigDecimal("500000"),
+                )
+            assertTrue(result.totalCommissionPaid > BigDecimal.ZERO, "Commission should be charged, got ${result.totalCommissionPaid}")
+            assertTrue(result.costDragPercent >= 0.0, "Cost drag should be >= 0, got ${result.costDragPercent}")
         }
-        val engine = BacktestEngine(
-            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
-            instrumentsConfig = instruments,
-            riskConfig = RiskConfig().apply { defaultStopLossPercent = BigDecimal("0.5") },
-            signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
-        )
-        val candles = (0 until 60).map { i ->
-            Candle(
-                ticker = "CNYRUB_TOM",
-                timeframe = "MINUTE_10",
-                openPrice = BigDecimal("12.40"),
-                highPrice = BigDecimal("12.42"),
-                lowPrice = BigDecimal("12.38"),
-                closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
-                volume = 1000L,
-                time = LocalDateTime.now().plusMinutes(10L * i),
-            )
-        }
-        val result = engine.simulate(
-            "CNYRUB_TOM",
-            candles,
-            initialCapital = BigDecimal("500000"),
-        )
-        assertTrue(result.totalCommissionPaid > BigDecimal.ZERO, "Commission should be charged, got ${result.totalCommissionPaid}")
-        assertTrue(result.costDragPercent >= 0.0, "Cost drag should be >= 0, got ${result.costDragPercent}")
-    }
 
     @Test
-    fun `per-instrument sl and tp overrides are applied`() = runBlocking {
-        val instruments = InstrumentsConfig().apply {
-            instruments = mutableListOf(
-                InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
-                    priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
-                    go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
-                    slPercent = BigDecimal("0.5"), tpPercent = BigDecimal("1.0"),
-                ),
-            )
+    fun `per-instrument sl and tp overrides are applied`() =
+        runBlocking {
+            val instruments =
+                InstrumentsConfig().apply {
+                    instruments =
+                        mutableListOf(
+                            InstrumentsConfig.InstrumentSpec(
+                                ticker = "CNYRUB_TOM",
+                                type = "FX",
+                                lotSize = 1000,
+                                priceStep = BigDecimal("0.0001"),
+                                priceStepCost = BigDecimal("1.0"),
+                                go = BigDecimal.ZERO,
+                                leverage = BigDecimal("1.0"),
+                                baseAsset = "CNY",
+                                slPercent = BigDecimal("0.5"),
+                                tpPercent = BigDecimal("1.0"),
+                            ),
+                        )
+                }
+            val engine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    instrumentsConfig = instruments,
+                    riskConfig = RiskConfig(),
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val candles =
+                (0 until 60).map { i ->
+                    Candle(
+                        ticker = "CNYRUB_TOM",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("12.40"),
+                        highPrice = BigDecimal("12.42"),
+                        lowPrice = BigDecimal("12.38"),
+                        closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
+                        volume = 1000L,
+                        time = LocalDateTime.now().plusMinutes(10L * i),
+                    )
+                }
+            val result =
+                engine.simulate(
+                    "CNYRUB_TOM",
+                    candles,
+                    initialCapital = BigDecimal("500000"),
+                    slPercent = 2.0,
+                    tpPercent = 4.0,
+                )
+            // Even though global slPercent=2.0/tpPercent=4.0 passed to simulate,
+            // per-instrument slPercent=0.5/tpPercent=1.0 should be used because
+            // stopPrice/takePrice use InstrumentSpec.effectiveSlPercent.
+            assertTrue(result.totalTrades >= 0)
         }
-        val engine = BacktestEngine(
-            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
-            instrumentsConfig = instruments,
-            riskConfig = RiskConfig(),
-            signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
-        )
-        val candles = (0 until 60).map { i ->
-            Candle(
-                ticker = "CNYRUB_TOM",
-                timeframe = "MINUTE_10",
-                openPrice = BigDecimal("12.40"),
-                highPrice = BigDecimal("12.42"),
-                lowPrice = BigDecimal("12.38"),
-                closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
-                volume = 1000L,
-                time = LocalDateTime.now().plusMinutes(10L * i),
-            )
-        }
-        val result = engine.simulate(
-            "CNYRUB_TOM",
-            candles,
-            initialCapital = BigDecimal("500000"),
-            slPercent = 2.0,
-            tpPercent = 4.0,
-        )
-        // Even though global slPercent=2.0/tpPercent=4.0 passed to simulate,
-        // per-instrument slPercent=0.5/tpPercent=1.0 should be used because
-        // stopPrice/takePrice use InstrumentSpec.effectiveSlPercent.
-        assertTrue(result.totalTrades >= 0)
-    }
 
     @Test
-    fun `stock sizing accounts for per-instrument sl and commission`() = runBlocking {
-        val instruments = InstrumentsConfig().apply {
-            instruments = mutableListOf(
-                InstrumentsConfig.InstrumentSpec(
-                    ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
-                    priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("1.0"),
-                    go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY",
-                    slPercent = BigDecimal("0.5"), commissionRub = BigDecimal("10.0"),
-                ),
-            )
+    fun `stock sizing accounts for per-instrument sl and commission`() =
+        runBlocking {
+            val instruments =
+                InstrumentsConfig().apply {
+                    instruments =
+                        mutableListOf(
+                            InstrumentsConfig.InstrumentSpec(
+                                ticker = "CNYRUB_TOM",
+                                type = "FX",
+                                lotSize = 1000,
+                                priceStep = BigDecimal("0.0001"),
+                                priceStepCost = BigDecimal("1.0"),
+                                go = BigDecimal.ZERO,
+                                leverage = BigDecimal("1.0"),
+                                baseAsset = "CNY",
+                                slPercent = BigDecimal("0.5"),
+                                commissionRub = BigDecimal("10.0"),
+                            ),
+                        )
+                }
+            val riskConfig =
+                RiskConfig().apply {
+                    riskPerTradePercent = 1.0
+                    defaultStopLossPercent = BigDecimal("2.0")
+                }
+            val engine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    instrumentsConfig = instruments,
+                    riskConfig = riskConfig,
+                    signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
+                )
+            val candles =
+                (0 until 60).map { i ->
+                    Candle(
+                        ticker = "CNYRUB_TOM",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("12.40"),
+                        highPrice = BigDecimal("12.42"),
+                        lowPrice = BigDecimal("12.38"),
+                        closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
+                        volume = 1000L,
+                        time = LocalDateTime.now().plusMinutes(10L * i),
+                    )
+                }
+            val result =
+                engine.simulate(
+                    "CNYRUB_TOM",
+                    candles,
+                    initialCapital = BigDecimal("500000"),
+                )
+            // With per-instrument sl=0.5% and commission=10 RUB, the lossPerShare is smaller
+            // than with global sl=2.0% and no commission, allowing larger position.
+            assertTrue(result.totalCommissionPaid >= BigDecimal.ZERO)
         }
-        val riskConfig = RiskConfig().apply {
-            riskPerTradePercent = 1.0
-            defaultStopLossPercent = BigDecimal("2.0")
+
+    @Nested
+    inner class BacktestMonthlyReturns {
+        @Test
+        fun `empty inputs yield empty monthly returns`() {
+            val result =
+                BacktestMetrics.computeMonthlyReturns(
+                    emptyList(),
+                    emptyList(),
+                )
+            assertTrue(result.isEmpty())
         }
-        val engine = BacktestEngine(
-            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
-            instrumentsConfig = instruments,
-            riskConfig = riskConfig,
-            signalGenerator = SwitchSignalGenerator(15, StrategyAction.BUY, StrategyAction.SELL),
-        )
-        val candles = (0 until 60).map { i ->
-            Candle(
-                ticker = "CNYRUB_TOM",
-                timeframe = "MINUTE_10",
-                openPrice = BigDecimal("12.40"),
-                highPrice = BigDecimal("12.42"),
-                lowPrice = BigDecimal("12.38"),
-                closePrice = if (i % 2 == 0) BigDecimal("12.42") else BigDecimal("12.38"),
-                volume = 1000L,
-                time = LocalDateTime.now().plusMinutes(10L * i),
-            )
+
+        @Test
+        fun `single month yields one entry with correct return`() {
+            val result =
+                BacktestMetrics.computeMonthlyReturns(
+                    listOf(BigDecimal("100000"), BigDecimal("101000"), BigDecimal("100500")),
+                    listOf(
+                        LocalDateTime.of(2025, 3, 1, 10, 0),
+                        LocalDateTime.of(2025, 3, 15, 10, 0),
+                        LocalDateTime.of(2025, 3, 31, 10, 0),
+                    ),
+                )
+            assertEquals(1, result.size)
+            assertEquals(0.005, result.getValue("2025-03"), 1e-9)
         }
-        val result = engine.simulate(
-            "CNYRUB_TOM",
-            candles,
-            initialCapital = BigDecimal("500000"),
-        )
-        // With per-instrument sl=0.5% and commission=10 RUB, the lossPerShare is smaller
-        // than with global sl=2.0% and no commission, allowing larger position.
-        assertTrue(result.totalCommissionPaid >= BigDecimal.ZERO)
+
+        @Test
+        fun `three months yield three entries each with correct return`() {
+            val result =
+                BacktestMetrics.computeMonthlyReturns(
+                    listOf(
+                        BigDecimal("100000"),
+                        BigDecimal("110000"),
+                        BigDecimal("90000"),
+                        BigDecimal("90000"),
+                        BigDecimal("90000"),
+                        BigDecimal("99000"),
+                    ),
+                    listOf(
+                        LocalDateTime.of(2025, 3, 1, 10, 0),
+                        LocalDateTime.of(2025, 3, 31, 10, 0),
+                        LocalDateTime.of(2025, 4, 1, 10, 0),
+                        LocalDateTime.of(2025, 4, 30, 10, 0),
+                        LocalDateTime.of(2025, 5, 1, 10, 0),
+                        LocalDateTime.of(2025, 5, 31, 10, 0),
+                    ),
+                )
+            assertEquals(setOf("2025-03", "2025-04", "2025-05"), result.keys)
+            assertEquals(0.10, result.getValue("2025-03"), 1e-9)
+            assertEquals(0.0, result.getValue("2025-04"), 1e-9)
+            assertEquals(0.10, result.getValue("2025-05"), 1e-9)
+        }
+
+        @Test
+        fun `december to january boundary assigns each month its own return`() {
+            val result =
+                BacktestMetrics.computeMonthlyReturns(
+                    listOf(
+                        BigDecimal("100000"),
+                        BigDecimal("105000"),
+                        BigDecimal("104000"),
+                        BigDecimal("106000"),
+                    ),
+                    listOf(
+                        LocalDateTime.of(2024, 12, 15, 10, 0),
+                        LocalDateTime.of(2024, 12, 31, 10, 0),
+                        LocalDateTime.of(2025, 1, 2, 10, 0),
+                        LocalDateTime.of(2025, 1, 30, 10, 0),
+                    ),
+                )
+            assertEquals(2, result.size)
+            assertEquals(0.05, result.getValue("2024-12"), 1e-9)
+            assertEquals(2000.0 / 104000.0, result.getValue("2025-01"), 1e-6)
+        }
+
+        @Test
+        fun `month with a single equity point yields zero return`() {
+            val result =
+                BacktestMetrics.computeMonthlyReturns(
+                    listOf(
+                        BigDecimal("100000"),
+                        BigDecimal("105000"),
+                        BigDecimal("104000"),
+                    ),
+                    listOf(
+                        LocalDateTime.of(2025, 2, 1, 10, 0),
+                        LocalDateTime.of(2025, 2, 28, 10, 0),
+                        LocalDateTime.of(2025, 3, 1, 10, 0),
+                    ),
+                )
+            assertEquals(2, result.size)
+            assertEquals(0.05, result.getValue("2025-02"), 1e-9)
+            assertEquals(0.0, result["2025-03"])
+        }
+
+        @Test
+        fun `compute populates monthlyReturns field spanning two months`() {
+            val result =
+                BacktestMetrics.compute(
+                    "SBER",
+                    listOf(
+                        BigDecimal("100000"),
+                        BigDecimal("110000"),
+                        BigDecimal("99000"),
+                        BigDecimal("103950"),
+                    ),
+                    equityTimestamps =
+                        listOf(
+                            LocalDateTime.of(2025, 6, 2, 10, 0),
+                            LocalDateTime.of(2025, 6, 30, 10, 0),
+                            LocalDateTime.of(2025, 7, 1, 10, 0),
+                            LocalDateTime.of(2025, 7, 31, 10, 0),
+                        ),
+                    tradeReturns = listOf(100.0, -50.0, 150.0),
+                )
+            assertEquals(2, result.monthlyReturns.size)
+            assertEquals(0.10, result.monthlyReturns.getValue("2025-06"), 1e-9)
+            assertEquals(0.05, result.monthlyReturns.getValue("2025-07"), 1e-9)
+        }
     }
 }

@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.backtest.KellyMath
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.ConfidenceCalibrator
 import com.trading.bot.domain.risk.MarketRegime
@@ -243,13 +244,7 @@ class AdaptiveRiskService(
      * Wilson lower bound уже шринкает win rate, а staging дополнительно
      * режет размер на малых выборках — двойная защита от overfitting.
      */
-    fun sampleSizeMultiplier(totalTrades: Int): Double {
-        var multiplier = 0.20
-        for ((threshold, mult) in riskConfig.kellySampleSizeTiers) {
-            if (totalTrades >= threshold) multiplier = mult
-        }
-        return multiplier
-    }
+    fun sampleSizeMultiplier(totalTrades: Int): Double = KellyMath.sampleSizeMultiplier(totalTrades, riskConfig.kellySampleSizeTiers)
 
     /**
      * Ожидаемый чистый прибыль на 1 лот (RUB), рассчитанный из статистики сделок.
@@ -273,8 +268,10 @@ class AdaptiveRiskService(
 
         // avgWin и avgLoss — положительные величины (средний выигрыш/проигрыш в RUB).
         // PnlCalculator уже вычел комиссию из realized P&L.
-        val expectedNetProfit = wBd.multiply(stats.avgWin)
-            .subtract(oneMinusW.multiply(stats.avgLoss))
+        val expectedNetProfit =
+            wBd
+                .multiply(stats.avgWin)
+                .subtract(oneMinusW.multiply(stats.avgLoss))
         return expectedNetProfit
     }
 
@@ -295,14 +292,7 @@ class AdaptiveRiskService(
         p: Double,
         n: Int,
         z: Double,
-    ): Double {
-        if (n <= 0) return 0.0
-        val pNorm = p.coerceIn(0.0, 1.0)
-        val z2 = z * z
-        val center = pNorm + z2 / (2 * n)
-        val margin = z * sqrt((pNorm * (1 - pNorm) + z2 / (4 * n)) / n)
-        return (center - margin) / (1 + z2 / n)
-    }
+    ): Double = KellyMath.wilsonLowerBound(p, n, z)
 
     /**
      * Множитель volatility targeting по дневной волатильности.

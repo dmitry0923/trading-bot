@@ -36,7 +36,7 @@ class BacktestValidatorTest {
         BacktestMetrics.compute(
             "SBER",
             List(OOS_TRADES + 1) { BigDecimal("100000").add(BigDecimal.valueOf(it * 40L)) },
-            List(OOS_TRADES) { 40.0 },
+            tradeReturns = List(OOS_TRADES) { 40.0 },
         )
 
     @Test
@@ -76,7 +76,7 @@ class BacktestValidatorTest {
 
     @Test
     fun `aggregate with no out-of-sample trades is empty and not robust`() {
-        val noTrades = BacktestMetrics.compute("SBER", listOf(BigDecimal("100000")), emptyList())
+        val noTrades = BacktestMetrics.compute("SBER", listOf(BigDecimal("100000")), tradeReturns = emptyList())
         val result =
             runBlocking {
                 whenever(
@@ -107,14 +107,14 @@ class BacktestValidatorTest {
             BacktestMetrics.compute(
                 "SBER",
                 List(31) { BigDecimal("100000").add(BigDecimal.valueOf(it * 100L)) },
-                List(30) { 100.0 },
+                tradeReturns = List(30) { 100.0 },
             )
         // Остальные пары сетки: PF конечный и ниже.
         val mediocre =
             BacktestMetrics.compute(
                 "SBER",
                 List(31) { BigDecimal("100000").add(BigDecimal.valueOf(it * 10L)) },
-                List(30) { if (it % 2 == 0) 30.0 else -20.0 },
+                tradeReturns = List(30) { if (it % 2 == 0) 30.0 else -20.0 },
             )
         val result =
             runBlocking {
@@ -236,7 +236,7 @@ class BacktestValidatorTest {
             BacktestMetrics.compute(
                 "SBER",
                 listOf(BigDecimal("100000"), BigDecimal("100500")),
-                listOf(500.0),
+                tradeReturns = listOf(500.0),
             )
         val result = ValidationResult(folds = emptyList(), aggregateOutOfSample = weakAggregate)
         assertFalse(result.isRobust())
@@ -246,7 +246,7 @@ class BacktestValidatorTest {
     fun `isRobust passes strong out-of-sample aggregates`() {
         val returns = List(250) { if (it % 2 == 0) 30.0 else 50.0 }
         val equity = returns.runningFold(BigDecimal("100000")) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
-        val strongAggregate = BacktestMetrics.compute("SBER", equity, returns)
+        val strongAggregate = BacktestMetrics.compute("SBER", equity, tradeReturns = returns)
         val folds =
             (0 until 4).map { i ->
                 FoldValidation(

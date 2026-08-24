@@ -108,7 +108,7 @@ class MonteCarloAnalyzerTest {
             BacktestMetrics.compute(
                 "SBER",
                 listOf(capital, BigDecimal("101000"), BigDecimal("99000")),
-                listOf(1000.0, -500.0, 2000.0),
+                tradeReturns = listOf(1000.0, -500.0, 2000.0),
             )
         val scenario = StressScenarioResult.of("commission_x2", "Комиссия ×2", 2.0, 1.0, result)
         assertEquals("commission_x2", scenario.name)
@@ -120,8 +120,8 @@ class MonteCarloAnalyzerTest {
     @Test
     fun `analyzer runs base bootstrap and all stress scenarios`() {
         val engine = mock<BacktestEngine> {}
-        val baseResult = BacktestMetrics.compute("SBER", listOf(capital, BigDecimal("103000")), listOf(3000.0))
-        val stressResult = BacktestMetrics.compute("SBER", listOf(capital, BigDecimal("102000")), listOf(2000.0))
+        val baseResult = BacktestMetrics.compute("SBER", listOf(capital, BigDecimal("103000")), tradeReturns = listOf(3000.0))
+        val stressResult = BacktestMetrics.compute("SBER", listOf(capital, BigDecimal("102000")), tradeReturns = listOf(2000.0))
         runBlocking {
             stubSimulate(engine, 1.0, 1.0, baseResult)
             stubSimulate(engine, 2.0, 1.0, stressResult)

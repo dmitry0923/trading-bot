@@ -37,6 +37,15 @@ data class ValidationResult(
             aggregateOutOfSample.profitFactor > 1.1 &&
             consistency >= 0.6 &&
             aggregateOutOfSample.totalTrades >= 100
+
+    /**
+     * Комбинированная проходимость: стратегия принимается только если она
+     * устойчива ([isRobust] — консистентность, отсутствие переобучения)
+     * И агрегированные OOS-метрики проходят минимальные пороги приёмки
+     * [BacktestResult.isPassable] (Sharpe > 1.2, MDD < 15%, PF > 1.3,
+     * >= 200 сделок).
+     */
+    fun isPassable(): Boolean = isRobust() && aggregateOutOfSample.isPassable()
 }
 
 /** Результат одного фолда walk-forward валидации. */
@@ -66,13 +75,20 @@ private data class Candidate(
 )
 
 /**
- * Walk-forward валидация (скользящее окно, C-002).
+ * Walk-forward валидация (расширяющееся окно, C-002).
  *
  * Свечи делятся на последовательные фолды. Для каждого фолда:
  *  1. in-sample (train) окно — подбор SL/TP по сетке параметров;
  *  2. out-of-sample (test) окно — прогон с выбранными параметрами (данные,
  *     не участвовавшие в настройке);
  *  3. агрегация всех OOS-сделок -> [ValidationResult].
+ *
+ * При [BacktestValidator.validate] с expanding-окном (по умолчанию) train
+ * каждого фолда — ВСЯ история до начала test-окна, т.е. train монотонно
+ * растёт: fold 0 -> [0, seg), fold 1 -> [0, 2·seg), ... Fold 0 при этом
+ * намеренно имеет пустой train (нет истории для настройки) и использует
+ * первую пару сетки как дефолт — это корректное поведение расширяющегося
+ * окна, а не баг.
  *
  * Если стратегия устойчива, качество на train сохраняется на test;
  * переобучение выявляется расхождением train/test метрик.
@@ -113,6 +129,11 @@ class BacktestValidator(
      * @param ticker тикер
      * @param candles исторические свечи (сортировка по времени выполняется внутри)
      * @param folds количество фолдов (>= 2)
+     * @param expanding режим train-окна: `true` (по умолчанию) — расширяющееся
+     *   окно, train фолда i = candles[0 .. i·segment) (вся история до test);
+     *   fold 0 имеет пустой train и использует дефолтные параметры первой пары
+     *   сетки. `false` — скользящее окно фиксированной длины segment,
+     *   предшествующее test-окну.
      * @param initialCapital стартовый капитал для каждого окна
      * @param minBarsForSignal минимальное число баров для сигнала
      * @return [ValidationResult]; при недостатке данных — пустой (не robust)
@@ -121,6 +142,7 @@ class BacktestValidator(
         ticker: String,
         candles: List<Candle>,
         folds: Int = 4,
+        expanding: Boolean = true,
         initialCapital: BigDecimal = backtestConfig.initialCapital,
         minBarsForSignal: Int = backtestConfig.minBarsForSignal,
     ): ValidationResult {
@@ -138,7 +160,12 @@ class BacktestValidator(
             (0 until folds).map { i ->
                 val testStart = i * segment
                 val testEnd = if (i == folds - 1) sorted.size else (i + 1) * segment
-                val train = sorted.subList(0, testStart)
+                val train =
+                    if (expanding) {
+                        sorted.subList(0, testStart)
+                    } else {
+                        sorted.subList(maxOf(0, testStart - segment), testStart)
+                    }
                 val test = sorted.subList(testStart, testEnd)
 
                 val params =
@@ -220,7 +247,9 @@ class BacktestValidator(
     /**
      * Агрегация OOS-сделок всех фолдов: сводная кривая капитала строится
      * накоплением P&L от стартового капитала (без скачков на границах фолдов),
-     * метрики считаются по объединённым OOS-сделкам.
+     * метрики считаются по объединённым OOS-сделкам. Комиссии суммируются по
+     * всем фолдам и прокидываются в [BacktestMetrics.compute] (costDrag
+     * считается от суммарной комиссии).
      */
     private fun aggregateOutOfSample(
         ticker: String,
@@ -244,7 +273,10 @@ class BacktestValidator(
             } else {
                 0.0
             }
-        return BacktestMetrics.compute(ticker, equity, tradeReturns = tradeReturns).copy(avgHoldBars = avgHoldBars)
+        val totalCommission = folds.sumOf { it.outOfSample.totalCommissionPaid }
+        return BacktestMetrics
+            .compute(ticker, equity, tradeReturns = tradeReturns, totalCommission = totalCommission)
+            .copy(avgHoldBars = avgHoldBars)
     }
 
     private fun emptyResult(ticker: String): BacktestResult = BacktestMetrics.compute(ticker, emptyList(), tradeReturns = emptyList())

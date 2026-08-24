@@ -261,4 +261,60 @@ class BacktestValidatorTest {
         assertTrue(result.isRobust())
         assertEquals(1.0, result.consistency)
     }
+
+    @Test
+    fun `isPassable requires both robust and passable OOS aggregate`() {
+        val strongReturns = List(250) { if (it % 2 == 0) 30.0 else 50.0 }
+        val equity = strongReturns.runningFold(BigDecimal("100000")) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
+        val strongAggregate = BacktestMetrics.compute("SBER", equity, tradeReturns = strongReturns)
+        val folds =
+            (0 until 4).map { i ->
+                FoldValidation(
+                    foldIndex = i,
+                    inSample = strongAggregate,
+                    outOfSample = strongAggregate.copy(totalReturn = 0.02),
+                    chosenSlPercent = 0.02,
+                    chosenTpPercent = 0.04,
+                )
+            }
+        val result = ValidationResult(folds, strongAggregate)
+        assertTrue(result.isPassable())
+        assertTrue(result.isRobust())
+        assertTrue(result.aggregateOutOfSample.isPassable())
+    }
+
+    @Test
+    fun `isPassable rejects when robust but OOS metrics too weak`() {
+        // 150 сделок: достаточно для isRobust (>= 100), но меньше порога
+        // приёмки 200 -> aggregate OOS не passable, значит и isPassable false.
+        val returns = List(150) { if (it % 2 == 0) 12.0 else -4.0 }
+        val equity = returns.runningFold(BigDecimal("100000")) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
+        val borderlineAggregate = BacktestMetrics.compute("SBER", equity, tradeReturns = returns)
+        val folds =
+            (0 until 4).map { i ->
+                FoldValidation(
+                    foldIndex = i,
+                    inSample = borderlineAggregate,
+                    outOfSample = borderlineAggregate,
+                    chosenSlPercent = 0.02,
+                    chosenTpPercent = 0.04,
+                )
+            }
+        val result = ValidationResult(folds, borderlineAggregate)
+        assertTrue(result.isRobust())
+        assertFalse(result.aggregateOutOfSample.isPassable())
+        // Ключевое свойство: isPassable = isRobust() AND aggregate.isPassable().
+        assertEquals(result.isRobust() && result.aggregateOutOfSample.isPassable(), result.isPassable())
+    }
+
+    @Test
+    fun `empty validation is not passable`() {
+        val empty =
+            ValidationResult(
+                folds = emptyList(),
+                aggregateOutOfSample = BacktestMetrics.compute("SBER", emptyList(), tradeReturns = emptyList()),
+            )
+        assertFalse(empty.isPassable())
+        assertFalse(empty.isRobust())
+    }
 }

@@ -9,35 +9,38 @@ import java.math.BigDecimal
 class MicropriceCalculatorTest {
     @Test
     fun `equal sizes returns mid-price`() {
-        val mp = MicropriceCalculator.calculate(
-            bid = BigDecimal("100.00"),
-            ask = BigDecimal("100.10"),
-            bidSize = 500L,
-            askSize = 500L,
-        )!!
+        val mp =
+            MicropriceCalculator.calculate(
+                bid = BigDecimal("100.00"),
+                ask = BigDecimal("100.10"),
+                bidSize = 500L,
+                askSize = 500L,
+            )!!
         val mid = BigDecimal("100.05")
         assertEquals(0, mid.compareTo(mp))
     }
 
     @Test
     fun `more bid size shifts microprice up`() {
-        val mp = MicropriceCalculator.calculate(
-            bid = BigDecimal("100.00"),
-            ask = BigDecimal("100.10"),
-            bidSize = 900L,
-            askSize = 100L,
-        )!!
+        val mp =
+            MicropriceCalculator.calculate(
+                bid = BigDecimal("100.00"),
+                ask = BigDecimal("100.10"),
+                bidSize = 900L,
+                askSize = 100L,
+            )!!
         assertTrue(mp > BigDecimal("100.05"))
     }
 
     @Test
     fun `more ask size shifts microprice down`() {
-        val mp = MicropriceCalculator.calculate(
-            bid = BigDecimal("100.00"),
-            ask = BigDecimal("100.10"),
-            bidSize = 100L,
-            askSize = 900L,
-        )!!
+        val mp =
+            MicropriceCalculator.calculate(
+                bid = BigDecimal("100.00"),
+                ask = BigDecimal("100.10"),
+                bidSize = 100L,
+                askSize = 900L,
+            )!!
         assertTrue(mp < BigDecimal("100.05"))
     }
 
@@ -75,34 +78,37 @@ class MicropriceCalculatorTest {
 
     @Test
     fun `extreme imbalance`() {
-        val mp = MicropriceCalculator.calculate(
-            bid = BigDecimal("100.00"),
-            ask = BigDecimal("100.10"),
-            bidSize = 9999L,
-            askSize = 1L,
-        )!!
+        val mp =
+            MicropriceCalculator.calculate(
+                bid = BigDecimal("100.00"),
+                ask = BigDecimal("100.10"),
+                bidSize = 9999L,
+                askSize = 1L,
+            )!!
         assertTrue(mp > BigDecimal("100.099"))
     }
 
     @Test
     fun `deviation returns positive when more bid liquidity`() {
-        val dev = MicropriceCalculator.deviation(
-            bid = BigDecimal("100.00"),
-            ask = BigDecimal("100.10"),
-            bidSize = 900L,
-            askSize = 100L,
-        )!!
+        val dev =
+            MicropriceCalculator.deviation(
+                bid = BigDecimal("100.00"),
+                ask = BigDecimal("100.10"),
+                bidSize = 900L,
+                askSize = 100L,
+            )!!
         assertTrue(dev > BigDecimal.ZERO)
     }
 
     @Test
     fun `deviation is zero for equal sizes`() {
-        val dev = MicropriceCalculator.deviation(
-            bid = BigDecimal("100.00"),
-            ask = BigDecimal("100.10"),
-            bidSize = 500L,
-            askSize = 500L,
-        )!!
+        val dev =
+            MicropriceCalculator.deviation(
+                bid = BigDecimal("100.00"),
+                ask = BigDecimal("100.10"),
+                bidSize = 500L,
+                askSize = 500L,
+            )!!
         assertEquals(0, dev.compareTo(BigDecimal.ZERO))
     }
 }

@@ -93,10 +93,11 @@ object ExitRules {
                 PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
                 PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.add(p))
             }
-        val rounding = when (direction) {
-            PositionDirection.LONG -> RoundingMode.FLOOR
-            PositionDirection.SHORT -> RoundingMode.CEILING
-        }
+        val rounding =
+            when (direction) {
+                PositionDirection.LONG -> RoundingMode.FLOOR
+                PositionDirection.SHORT -> RoundingMode.CEILING
+            }
         return alignToGrid(raw, priceStep, rounding)
     }
 
@@ -117,10 +118,11 @@ object ExitRules {
                 PositionDirection.LONG -> entryPrice.multiply(BigDecimal.ONE.add(p))
                 PositionDirection.SHORT -> entryPrice.multiply(BigDecimal.ONE.subtract(p))
             }
-        val rounding = when (direction) {
-            PositionDirection.LONG -> RoundingMode.CEILING
-            PositionDirection.SHORT -> RoundingMode.FLOOR
-        }
+        val rounding =
+            when (direction) {
+                PositionDirection.LONG -> RoundingMode.CEILING
+                PositionDirection.SHORT -> RoundingMode.FLOOR
+            }
         return alignToGrid(raw, priceStep, rounding)
     }
 
@@ -136,14 +138,16 @@ object ExitRules {
         priceStep: BigDecimal,
     ): BigDecimal {
         val offset = atr.multiply(slMultiplier)
-        val raw = when (direction) {
-            PositionDirection.LONG -> entryPrice.subtract(offset)
-            PositionDirection.SHORT -> entryPrice.add(offset)
-        }
-        val rounding = when (direction) {
-            PositionDirection.LONG -> RoundingMode.FLOOR
-            PositionDirection.SHORT -> RoundingMode.CEILING
-        }
+        val raw =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.subtract(offset)
+                PositionDirection.SHORT -> entryPrice.add(offset)
+            }
+        val rounding =
+            when (direction) {
+                PositionDirection.LONG -> RoundingMode.FLOOR
+                PositionDirection.SHORT -> RoundingMode.CEILING
+            }
         return alignToGrid(raw, priceStep, rounding)
     }
 
@@ -159,14 +163,16 @@ object ExitRules {
         priceStep: BigDecimal,
     ): BigDecimal {
         val offset = atr.multiply(tpMultiplier)
-        val raw = when (direction) {
-            PositionDirection.LONG -> entryPrice.add(offset)
-            PositionDirection.SHORT -> entryPrice.subtract(offset)
-        }
-        val rounding = when (direction) {
-            PositionDirection.LONG -> RoundingMode.CEILING
-            PositionDirection.SHORT -> RoundingMode.FLOOR
-        }
+        val raw =
+            when (direction) {
+                PositionDirection.LONG -> entryPrice.add(offset)
+                PositionDirection.SHORT -> entryPrice.subtract(offset)
+            }
+        val rounding =
+            when (direction) {
+                PositionDirection.LONG -> RoundingMode.CEILING
+                PositionDirection.SHORT -> RoundingMode.FLOOR
+            }
         return alignToGrid(raw, priceStep, rounding)
     }
 
@@ -178,7 +184,11 @@ object ExitRules {
      *   - [RoundingMode.CEILING] — от entry для SHORT SL / к прибыли для LONG TP / tighter trailing LONG
      *   - [RoundingMode.HALF_UP] — нейтральное (entry price)
      */
-    private fun alignToGrid(price: BigDecimal, priceStep: BigDecimal, roundingMode: RoundingMode): BigDecimal {
+    private fun alignToGrid(
+        price: BigDecimal,
+        priceStep: BigDecimal,
+        roundingMode: RoundingMode,
+    ): BigDecimal {
         require(priceStep > BigDecimal.ZERO) { "priceStep must be positive: $priceStep" }
         val scale = priceStep.scale()
         return price.divide(priceStep, 0, roundingMode).multiply(priceStep).setScale(scale, roundingMode)
@@ -201,10 +211,11 @@ object ExitRules {
                 PositionDirection.LONG -> price.multiply(BigDecimal.ONE.subtract(p))
                 PositionDirection.SHORT -> price.multiply(BigDecimal.ONE.add(p))
             }
-        val rounding = when (pos.direction) {
-            PositionDirection.LONG -> RoundingMode.CEILING
-            PositionDirection.SHORT -> RoundingMode.FLOOR
-        }
+        val rounding =
+            when (pos.direction) {
+                PositionDirection.LONG -> RoundingMode.CEILING
+                PositionDirection.SHORT -> RoundingMode.FLOOR
+            }
         val candidate = alignToGrid(raw, priceStep, rounding)
         val currentStop = pos.trailingStopPrice
         val improved =

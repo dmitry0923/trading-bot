@@ -263,12 +263,21 @@ class DegenerateCaseGuardTest {
     @Test
     fun `per-instrument spread threshold overrides global`() {
         riskConfig.maxSpreadPercent = BigDecimal("5.0")
-        instrumentsConfig.instruments = mutableListOf(
-            InstrumentsConfig.InstrumentSpec(ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
-                priceStep = BigDecimal("0.0005"), priceStepCost = BigDecimal("0.5"),
-                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY", quoteAsset = "RUB",
-                maxSpreadPercent = BigDecimal("0.2")),
-        )
+        instrumentsConfig.instruments =
+            mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNYRUB_TOM",
+                    type = "FX",
+                    lotSize = 1000,
+                    priceStep = BigDecimal("0.0005"),
+                    priceStepCost = BigDecimal("0.5"),
+                    go = BigDecimal.ZERO,
+                    leverage = BigDecimal("1.0"),
+                    baseAsset = "CNY",
+                    quoteAsset = "RUB",
+                    maxSpreadPercent = BigDecimal("0.2"),
+                ),
+            )
         runBlocking {
             Mockito
                 .`when`(alorClient.getMarketSnapshot("CNYRUB_TOM"))
@@ -282,12 +291,21 @@ class DegenerateCaseGuardTest {
     @Test
     fun `per-instrument wider spread threshold allows entry`() {
         riskConfig.maxSpreadPercent = BigDecimal("0.2")
-        instrumentsConfig.instruments = mutableListOf(
-            InstrumentsConfig.InstrumentSpec(ticker = "CNYRUB_TOM", type = "FX", lotSize = 1000,
-                priceStep = BigDecimal("0.0005"), priceStepCost = BigDecimal("0.5"),
-                go = BigDecimal.ZERO, leverage = BigDecimal("1.0"), baseAsset = "CNY", quoteAsset = "RUB",
-                maxSpreadPercent = BigDecimal("5.0")),
-        )
+        instrumentsConfig.instruments =
+            mutableListOf(
+                InstrumentsConfig.InstrumentSpec(
+                    ticker = "CNYRUB_TOM",
+                    type = "FX",
+                    lotSize = 1000,
+                    priceStep = BigDecimal("0.0005"),
+                    priceStepCost = BigDecimal("0.5"),
+                    go = BigDecimal.ZERO,
+                    leverage = BigDecimal("1.0"),
+                    baseAsset = "CNY",
+                    quoteAsset = "RUB",
+                    maxSpreadPercent = BigDecimal("5.0"),
+                ),
+            )
         runBlocking {
             Mockito
                 .`when`(alorClient.getMarketSnapshot("CNYRUB_TOM"))

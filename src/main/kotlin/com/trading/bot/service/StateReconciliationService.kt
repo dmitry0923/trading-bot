@@ -378,10 +378,11 @@ class StateReconciliationService(
     ): BigDecimal? {
         val key = pos.ticker.uppercase()
         val trades = tradesByTicker[key].orEmpty()
-        val expectedSide = when (pos.direction) {
-            PositionDirection.LONG -> "sell"
-            PositionDirection.SHORT -> "buy"
-        }
+        val expectedSide =
+            when (pos.direction) {
+                PositionDirection.LONG -> "sell"
+                PositionDirection.SHORT -> "buy"
+            }
         return trades
             .filter { it.side?.lowercase() == expectedSide }
             .maxByOrNull { it.time ?: Instant.MIN }

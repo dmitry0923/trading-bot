@@ -93,14 +93,15 @@ class RiskConfig {
      * от noDataFraction к полному Kelly используется плавная шкала.
      * Для полноценного edge нужно ≈100 сделок статистики.
      */
-    var kellySampleSizeTiers: List<Pair<Int, Double>> = listOf(
-        0 to 0.10,
-        5 to 0.25,
-        15 to 0.50,
-        30 to 0.70,
-        60 to 0.85,
-        100 to 1.00,
-    )
+    var kellySampleSizeTiers: List<Pair<Int, Double>> =
+        listOf(
+            0 to 0.10,
+            5 to 0.25,
+            15 to 0.50,
+            30 to 0.70,
+            60 to 0.85,
+            100 to 1.00,
+        )
 
     /**
      * Жёсткий кап доли Kelly от AUM (0..1). 0.10 = консервативный кап: даже при

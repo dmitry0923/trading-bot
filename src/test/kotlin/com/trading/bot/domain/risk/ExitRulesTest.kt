@@ -12,41 +12,43 @@ import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
 class ExitRulesTest {
-
     // ── calcSL ──────────────────────────────────────────────
 
     @Test
     fun `calcSL LONG CNYRUB_TOM aligns to 0_0005 grid`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("0.5"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val sl =
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("0.5"),
+                priceStep = BigDecimal("0.0005"),
+            )
         // raw = 12.42 * (1 - 0.005) = 12.3579 → FLOOR to 0.0005 → 12.3575 (wider stop)
         assertEquals(0, BigDecimal("12.3575").compareTo(sl))
     }
 
     @Test
     fun `calcSL SHORT CNYRUB_TOM aligns to 0_0005 grid`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.SHORT,
-            percent = BigDecimal("0.5"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val sl =
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.SHORT,
+                percent = BigDecimal("0.5"),
+                priceStep = BigDecimal("0.0005"),
+            )
         // raw = 12.42 * (1 + 0.005) = 12.4821 → CEILING to 0.0005 → 12.4825 (wider stop)
         assertEquals(0, BigDecimal("12.4825").compareTo(sl))
     }
 
     @Test
     fun `calcSL LONG default priceStep 0_01`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("100.50"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("2.0"),
-            priceStep = BigDecimal("0.01"),
-        )
+        val sl =
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("100.50"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("2.0"),
+                priceStep = BigDecimal("0.01"),
+            )
         // raw = 100.50 * 0.98 = 98.49 → FLOOR to 0.01 → 98.49
         assertEquals(0, BigDecimal("98.49").compareTo(sl))
     }
@@ -55,36 +57,39 @@ class ExitRulesTest {
 
     @Test
     fun `calcTP LONG CNYRUB_TOM aligns to 0_0005 grid`() {
-        val tp = ExitRules.calcTP(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("1.0"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val tp =
+            ExitRules.calcTP(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("1.0"),
+                priceStep = BigDecimal("0.0005"),
+            )
         // raw = 12.42 * 1.01 = 12.5442 → CEILING to 0.0005 → 12.5445 (more profit)
         assertEquals(0, BigDecimal("12.5445").compareTo(tp))
     }
 
     @Test
     fun `calcTP SHORT CNYRUB_TOM aligns to 0_0005 grid`() {
-        val tp = ExitRules.calcTP(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.SHORT,
-            percent = BigDecimal("1.0"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val tp =
+            ExitRules.calcTP(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.SHORT,
+                percent = BigDecimal("1.0"),
+                priceStep = BigDecimal("0.0005"),
+            )
         // raw = 12.42 * 0.99 = 12.2958 → FLOOR to 0.0005 → 12.2955 (more profit)
         assertEquals(0, BigDecimal("12.2955").compareTo(tp))
     }
 
     @Test
     fun `calcTP LONG default priceStep`() {
-        val tp = ExitRules.calcTP(
-            entryPrice = BigDecimal("100.50"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("4.0"),
-            priceStep = BigDecimal("0.01"),
-        )
+        val tp =
+            ExitRules.calcTP(
+                entryPrice = BigDecimal("100.50"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("4.0"),
+                priceStep = BigDecimal("0.01"),
+            )
         // raw = 100.50 * 1.04 = 104.52 → alignToGrid → 104.52
         assertEquals(0, BigDecimal("104.52").compareTo(tp))
     }
@@ -93,38 +98,41 @@ class ExitRulesTest {
 
     @Test
     fun `alignToGrid with zero priceStep throws IllegalArgumentException`() {
-        val ex = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
-            ExitRules.calcSL(
-                entryPrice = BigDecimal("100.50"),
-                direction = PositionDirection.LONG,
-                percent = BigDecimal("1.0"),
-                priceStep = BigDecimal("0"),
-            )
-        }
+        val ex =
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+                ExitRules.calcSL(
+                    entryPrice = BigDecimal("100.50"),
+                    direction = PositionDirection.LONG,
+                    percent = BigDecimal("1.0"),
+                    priceStep = BigDecimal("0"),
+                )
+            }
         assertTrue(ex.message!!.contains("priceStep must be positive"))
     }
 
     @Test
     fun `alignToGrid with negative priceStep throws IllegalArgumentException`() {
-        val ex = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
-            ExitRules.calcTP(
-                entryPrice = BigDecimal("100.50"),
-                direction = PositionDirection.LONG,
-                percent = BigDecimal("1.0"),
-                priceStep = BigDecimal("-0.01"),
-            )
-        }
+        val ex =
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+                ExitRules.calcTP(
+                    entryPrice = BigDecimal("100.50"),
+                    direction = PositionDirection.LONG,
+                    percent = BigDecimal("1.0"),
+                    priceStep = BigDecimal("-0.01"),
+                )
+            }
         assertTrue(ex.message!!.contains("priceStep must be positive"))
     }
 
     @Test
     fun `alignToGrid exactly on grid is unchanged`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("10.0000"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("1.0"),
-            priceStep = BigDecimal("0.01"),
-        )
+        val sl =
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("10.0000"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("1.0"),
+                priceStep = BigDecimal("0.01"),
+            )
         // raw = 10.00 * 0.99 = 9.90 → already on grid
         assertEquals(0, BigDecimal("9.90").compareTo(sl))
     }
@@ -133,48 +141,52 @@ class ExitRulesTest {
 
     @Test
     fun `LONG SL raw 99_97 step 0_10 rounds to 99_90 not 100_00`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("100.00"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("0.03"),
-            priceStep = BigDecimal("0.10"),
-        )
+        val sl =
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("100.00"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("0.03"),
+                priceStep = BigDecimal("0.10"),
+            )
         // raw = 100.00 * 0.9997 = 99.97 → FLOOR → 99.90 (wider stop, protective)
         assertEquals(0, BigDecimal("99.90").compareTo(sl))
     }
 
     @Test
     fun `SHORT SL raw 100_04 step 0_10 rounds to 100_10 not 100_00`() {
-        val sl = ExitRules.calcSL(
-            entryPrice = BigDecimal("100.00"),
-            direction = PositionDirection.SHORT,
-            percent = BigDecimal("0.04"),
-            priceStep = BigDecimal("0.10"),
-        )
+        val sl =
+            ExitRules.calcSL(
+                entryPrice = BigDecimal("100.00"),
+                direction = PositionDirection.SHORT,
+                percent = BigDecimal("0.04"),
+                priceStep = BigDecimal("0.10"),
+            )
         // raw = 100.00 * 1.0004 = 100.04 → CEILING → 100.10 (wider stop, protective)
         assertEquals(0, BigDecimal("100.10").compareTo(sl))
     }
 
     @Test
     fun `LONG TP raw 100_04 step 0_10 rounds to 100_10 not 100_00`() {
-        val tp = ExitRules.calcTP(
-            entryPrice = BigDecimal("100.00"),
-            direction = PositionDirection.LONG,
-            percent = BigDecimal("0.04"),
-            priceStep = BigDecimal("0.10"),
-        )
+        val tp =
+            ExitRules.calcTP(
+                entryPrice = BigDecimal("100.00"),
+                direction = PositionDirection.LONG,
+                percent = BigDecimal("0.04"),
+                priceStep = BigDecimal("0.10"),
+            )
         // raw = 100.00 * 1.0004 = 100.04 → CEILING → 100.10 (more profit)
         assertEquals(0, BigDecimal("100.10").compareTo(tp))
     }
 
     @Test
     fun `SHORT TP raw 99_96 step 0_10 rounds to 99_90 not 100_00`() {
-        val tp = ExitRules.calcTP(
-            entryPrice = BigDecimal("100.00"),
-            direction = PositionDirection.SHORT,
-            percent = BigDecimal("0.04"),
-            priceStep = BigDecimal("0.10"),
-        )
+        val tp =
+            ExitRules.calcTP(
+                entryPrice = BigDecimal("100.00"),
+                direction = PositionDirection.SHORT,
+                percent = BigDecimal("0.04"),
+                priceStep = BigDecimal("0.10"),
+            )
         // raw = 100.00 * 0.9996 = 99.96 → FLOOR → 99.90 (more profit)
         assertEquals(0, BigDecimal("99.90").compareTo(tp))
     }
@@ -299,31 +311,34 @@ class ExitRulesTest {
 
     @Test
     fun `effectiveSl LONG returns trailing when above hard stop`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            stopLoss = BigDecimal("12.3580"),
-            trailingStop = BigDecimal("12.3800"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                stopLoss = BigDecimal("12.3580"),
+                trailingStop = BigDecimal("12.3800"),
+            )
         assertEquals(0, BigDecimal("12.3800").compareTo(ExitRules.effectiveSl(pos)))
     }
 
     @Test
     fun `effectiveSl LONG returns hard stop when trailing is below`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            stopLoss = BigDecimal("12.3580"),
-            trailingStop = BigDecimal("12.3000"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                stopLoss = BigDecimal("12.3580"),
+                trailingStop = BigDecimal("12.3000"),
+            )
         assertEquals(0, BigDecimal("12.3580").compareTo(ExitRules.effectiveSl(pos)))
     }
 
     @Test
     fun `effectiveSl SHORT returns trailing when below hard stop`() {
-        val pos = makePos(
-            direction = PositionDirection.SHORT,
-            stopLoss = BigDecimal("12.4820"),
-            trailingStop = BigDecimal("12.4500"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.SHORT,
+                stopLoss = BigDecimal("12.4820"),
+                trailingStop = BigDecimal("12.4500"),
+            )
         assertEquals(0, BigDecimal("12.4500").compareTo(ExitRules.effectiveSl(pos)))
     }
 
@@ -337,52 +352,57 @@ class ExitRulesTest {
 
     @Test
     fun `exchangeSlCovers true when order price matches effectiveSl`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            stopLoss = BigDecimal("12.3580"),
-            slOrderId = "sl-1",
-            slOrderPrice = BigDecimal("12.3580"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                stopLoss = BigDecimal("12.3580"),
+                slOrderId = "sl-1",
+                slOrderPrice = BigDecimal("12.3580"),
+            )
         assertTrue(ExitRules.exchangeSlCovers(pos))
     }
 
     @Test
     fun `exchangeSlCovers false when order price differs`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            stopLoss = BigDecimal("12.3580"),
-            slOrderId = "sl-1",
-            slOrderPrice = BigDecimal("12.3500"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                stopLoss = BigDecimal("12.3580"),
+                slOrderId = "sl-1",
+                slOrderPrice = BigDecimal("12.3500"),
+            )
         assertFalse(ExitRules.exchangeSlCovers(pos))
     }
 
     @Test
     fun `exchangeSlCovers false when no slOrderId`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            stopLoss = BigDecimal("12.3580"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                stopLoss = BigDecimal("12.3580"),
+            )
         assertFalse(ExitRules.exchangeSlCovers(pos))
     }
 
     @Test
     fun `exchangeTpCovers true when order price matches takeProfit`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            takeProfit = BigDecimal("12.5440"),
-            tpOrderId = "tp-1",
-            tpOrderPrice = BigDecimal("12.5440"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                takeProfit = BigDecimal("12.5440"),
+                tpOrderId = "tp-1",
+                tpOrderPrice = BigDecimal("12.5440"),
+            )
         assertTrue(ExitRules.exchangeTpCovers(pos))
     }
 
     @Test
     fun `exchangeTpCovers false when no tpOrderId`() {
-        val pos = makePos(
-            direction = PositionDirection.LONG,
-            takeProfit = BigDecimal("12.5440"),
-        )
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                takeProfit = BigDecimal("12.5440"),
+            )
         assertFalse(ExitRules.exchangeTpCovers(pos))
     }
 
@@ -446,13 +466,14 @@ class ExitRulesTest {
     fun `calcSLByAtr LONG CNYRUB_TOM aligns to grid`() {
         // ATR=0.10, slMultiplier=2.0 → offset=0.20
         // 12.42 - 0.20 = 12.22 → FLOOR to 0.0005 → 12.2200
-        val sl = ExitRules.calcSLByAtr(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.LONG,
-            atr = BigDecimal("0.10"),
-            slMultiplier = BigDecimal("2.0"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val sl =
+            ExitRules.calcSLByAtr(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.LONG,
+                atr = BigDecimal("0.10"),
+                slMultiplier = BigDecimal("2.0"),
+                priceStep = BigDecimal("0.0005"),
+            )
         assertEquals(0, BigDecimal("12.2200").compareTo(sl))
     }
 
@@ -460,13 +481,14 @@ class ExitRulesTest {
     fun `calcSLByAtr SHORT CNYRUB_TOM aligns to grid`() {
         // ATR=0.10, slMultiplier=2.0 → offset=0.20
         // 12.42 + 0.20 = 12.62 → CEILING to 0.0005 → 12.6200
-        val sl = ExitRules.calcSLByAtr(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.SHORT,
-            atr = BigDecimal("0.10"),
-            slMultiplier = BigDecimal("2.0"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val sl =
+            ExitRules.calcSLByAtr(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.SHORT,
+                atr = BigDecimal("0.10"),
+                slMultiplier = BigDecimal("2.0"),
+                priceStep = BigDecimal("0.0005"),
+            )
         assertEquals(0, BigDecimal("12.6200").compareTo(sl))
     }
 
@@ -474,13 +496,14 @@ class ExitRulesTest {
     fun `calcTPByAtr LONG CNYRUB_TOM aligns to grid`() {
         // ATR=0.10, tpMultiplier=3.0 → offset=0.30
         // 12.42 + 0.30 = 12.72 → CEILING to 0.0005 → 12.7200
-        val tp = ExitRules.calcTPByAtr(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.LONG,
-            atr = BigDecimal("0.10"),
-            tpMultiplier = BigDecimal("3.0"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val tp =
+            ExitRules.calcTPByAtr(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.LONG,
+                atr = BigDecimal("0.10"),
+                tpMultiplier = BigDecimal("3.0"),
+                priceStep = BigDecimal("0.0005"),
+            )
         assertEquals(0, BigDecimal("12.7200").compareTo(tp))
     }
 
@@ -488,13 +511,14 @@ class ExitRulesTest {
     fun `calcTPByAtr SHORT CNYRUB_TOM aligns to grid`() {
         // ATR=0.10, tpMultiplier=3.0 → offset=0.30
         // 12.42 - 0.30 = 12.12 → FLOOR to 0.0005 → 12.1200
-        val tp = ExitRules.calcTPByAtr(
-            entryPrice = BigDecimal("12.4200"),
-            direction = PositionDirection.SHORT,
-            atr = BigDecimal("0.10"),
-            tpMultiplier = BigDecimal("3.0"),
-            priceStep = BigDecimal("0.0005"),
-        )
+        val tp =
+            ExitRules.calcTPByAtr(
+                entryPrice = BigDecimal("12.4200"),
+                direction = PositionDirection.SHORT,
+                atr = BigDecimal("0.10"),
+                tpMultiplier = BigDecimal("3.0"),
+                priceStep = BigDecimal("0.0005"),
+            )
         assertEquals(0, BigDecimal("12.1200").compareTo(tp))
     }
 

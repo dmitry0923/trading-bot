@@ -59,8 +59,22 @@ class DegenerateCaseDetectorTest {
 
     @Test
     fun `wide spread check disabled at non positive threshold`() {
-        assertFalse(DegenerateCaseDetector.isWideSpread(BigDecimal("50"), BigDecimal("100"), BigDecimal("100"), maxSpreadPercent = BigDecimal("0.0")))
-        assertFalse(DegenerateCaseDetector.isWideSpread(BigDecimal("50"), BigDecimal("100"), BigDecimal("100"), maxSpreadPercent = BigDecimal("-1.0")))
+        assertFalse(
+            DegenerateCaseDetector.isWideSpread(
+                BigDecimal("50"),
+                BigDecimal("100"),
+                BigDecimal("100"),
+                maxSpreadPercent = BigDecimal("0.0"),
+            ),
+        )
+        assertFalse(
+            DegenerateCaseDetector.isWideSpread(
+                BigDecimal("50"),
+                BigDecimal("100"),
+                BigDecimal("100"),
+                maxSpreadPercent = BigDecimal("-1.0"),
+            ),
+        )
     }
 
     @Test

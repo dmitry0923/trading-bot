@@ -61,7 +61,10 @@ class CloseFillProcessor(
      * Used when handleExecutionReport() returned false (pendingClose=false,
      * but closeOrderId is set — e.g., after releaseCloseClaim).
      */
-    suspend fun handleCloseFill(pos: Position, report: ExecutionReport) {
+    suspend fun handleCloseFill(
+        pos: Position,
+        report: ExecutionReport,
+    ) {
         val fillPrice = report.avgPrice ?: return
         val positionId = pos.id ?: return
         val mutex = closeFillMutexes.getOrPut(positionId) { Mutex() }
@@ -280,12 +283,18 @@ class CloseFillProcessor(
                 logger.warn { "Impossible close: order $orderId for ${pos.ticker} cancelled — clearing close state" }
                 resetCloseState(pos)
             }
+
             AlorClient.CancelResult.REJECTED -> {
-                logger.warn { "Impossible close: order $orderId for ${pos.ticker} cancel rejected (already terminal) — clearing close state" }
+                logger.warn {
+                    "Impossible close: order $orderId for ${pos.ticker} cancel rejected (already terminal) — clearing close state"
+                }
                 resetCloseState(pos)
             }
+
             AlorClient.CancelResult.UNCERTAIN -> {
-                logger.warn { "Impossible close: order $orderId for ${pos.ticker} cancel uncertain — leaving pendingClose=true for reconciler" }
+                logger.warn {
+                    "Impossible close: order $orderId for ${pos.ticker} cancel uncertain — leaving pendingClose=true for reconciler"
+                }
                 meterRegistry.counter("$metricPrefix.close.impossible_uncertain", Tags.of("ticker", pos.ticker)).increment()
             }
         }
@@ -376,7 +385,10 @@ class CloseFillProcessor(
      */
     internal suspend fun closeConfirmedByPositionDelta(pos: Position): Boolean =
         when (val result = alorClient.getPositions(portfolio = portfolioResolver(pos.accountId))) {
-            is AlorClient.ReconcileResult.Failed -> false
+            is AlorClient.ReconcileResult.Failed -> {
+                false
+            }
+
             is AlorClient.ReconcileResult.Ok -> {
                 val exchangeQty =
                     result.items
@@ -394,6 +406,7 @@ class CloseFillProcessor(
             "FILLED",
             "PARTIALLY_FILLED",
             -> execution.filledQuantity > 0
+
             else -> false
         }
 
@@ -407,6 +420,7 @@ class CloseFillProcessor(
             "REJECTED",
             "EXPIRED",
             -> true
+
             else -> false
         }
 }

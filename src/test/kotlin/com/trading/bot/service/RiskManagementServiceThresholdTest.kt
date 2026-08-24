@@ -99,10 +99,11 @@ class RiskManagementServiceThresholdTest {
         // Pin gross to 150% (so gross check passes), net to 50% (so net check blocks).
         // grossAfter = 60k < 75k (150% of 50k) → gross passes.
         // netAfter = 40k + 20k = 60k > 25k (50% of 50k) → net blocks.
-        val config = RiskConfig().apply {
-            maxGrossExposurePercent = 150.0
-            maxNetExposurePercent = 50.0
-        }
+        val config =
+            RiskConfig().apply {
+                maxGrossExposurePercent = 150.0
+                maxNetExposurePercent = 50.0
+            }
         val registry = SimpleMeterRegistry()
         Mockito.`when`(aumProvider.latestAum()).thenReturn(BigDecimal("50000"))
         val s = service(config = config, registry = registry)

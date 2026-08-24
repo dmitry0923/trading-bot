@@ -8,31 +8,33 @@ import org.junit.jupiter.api.Test
 import java.math.BigDecimal
 
 class PnlCalculatorCommissionTest {
-
     private val lotBasedNoComm = PnlCalculator.lotBased(lotSize = { 1000L })
 
-    private val lotBasedWithComm = PnlCalculator.lotBased(
-        lotSize = { 1000L },
-        commissionRub = { BigDecimal("10.0") },
-    )
+    private val lotBasedWithComm =
+        PnlCalculator.lotBased(
+            lotSize = { 1000L },
+            commissionRub = { BigDecimal("10.0") },
+        )
 
-    private fun longPos(ticker: String = "CNYRUB_TOM") = Position(
-        id = 1L,
-        ticker = ticker,
-        direction = PositionDirection.LONG,
-        quantity = 1,
-        entryPrice = BigDecimal("12.50"),
-        instrumentType = InstrumentType.FX,
-    )
+    private fun longPos(ticker: String = "CNYRUB_TOM") =
+        Position(
+            id = 1L,
+            ticker = ticker,
+            direction = PositionDirection.LONG,
+            quantity = 1,
+            entryPrice = BigDecimal("12.50"),
+            instrumentType = InstrumentType.FX,
+        )
 
-    private fun shortPos(ticker: String = "CNYRUB_TOM") = Position(
-        id = 2L,
-        ticker = ticker,
-        direction = PositionDirection.SHORT,
-        quantity = 1,
-        entryPrice = BigDecimal("12.50"),
-        instrumentType = InstrumentType.FX,
-    )
+    private fun shortPos(ticker: String = "CNYRUB_TOM") =
+        Position(
+            id = 2L,
+            ticker = ticker,
+            direction = PositionDirection.SHORT,
+            quantity = 1,
+            entryPrice = BigDecimal("12.50"),
+            instrumentType = InstrumentType.FX,
+        )
 
     // ── No commission (backward compatible) ───────────────────────────────
 
@@ -98,10 +100,11 @@ class PnlCalculatorCommissionTest {
 
     @Test
     fun `instrument with null commission has no deduction`() {
-        val calc = PnlCalculator.lotBased(
-            lotSize = { 1000L },
-            commissionRub = { null },
-        )
+        val calc =
+            PnlCalculator.lotBased(
+                lotSize = { 1000L },
+                commissionRub = { null },
+            )
         val pnl = calc.pnl(longPos("SBER"), BigDecimal("12.50"), BigDecimal("12.625"), BigDecimal(1))
         // gross only: (12.625 - 12.50) * 1 * 1000 = 125
         assertEquals(0, pnl.compareTo(BigDecimal("125")))

@@ -38,8 +38,9 @@ class CnyRubStrategy : Strategy {
             return StrategyDecision.hold(context.snapshot.currentPrice, "Not CNYRUB_TOM ticker")
         }
 
-        val indicators = context.indicators
-            ?: return StrategyDecision.hold(context.snapshot.currentPrice, "Insufficient indicators")
+        val indicators =
+            context.indicators
+                ?: return StrategyDecision.hold(context.snapshot.currentPrice, "Insufficient indicators")
         val price = context.snapshot.currentPrice
         val snapshot = context.snapshot
 
@@ -55,15 +56,17 @@ class CnyRubStrategy : Strategy {
         val microstructureConfirm = evaluateMicrostructure(technicalDirection, snapshot)
         val fallbackMode = snapshot.bidSize == null && snapshot.askSize == null
 
-        val direction = if (fallbackMode || microstructureConfirm) {
-            technicalDirection
-        } else {
-            StrategyAction.HOLD
-        }
+        val direction =
+            if (fallbackMode || microstructureConfirm) {
+                technicalDirection
+            } else {
+                StrategyAction.HOLD
+            }
 
         if (direction == StrategyAction.HOLD) {
-            val reason = "Microstructure contradicts $technicalDirection " +
-                "(obi=${snapshot.obi}, microprice=${snapshot.microprice})"
+            val reason =
+                "Microstructure contradicts $technicalDirection " +
+                    "(obi=${snapshot.obi}, microprice=${snapshot.microprice})"
             return StrategyDecision.hold(price, reason)
         }
 
@@ -109,8 +112,14 @@ class CnyRubStrategy : Strategy {
         if (obi != null) {
             val obiThreshold = BigDecimal("0.1")
             when (direction) {
-                StrategyAction.BUY -> if (obi < obiThreshold.negate()) return false
-                StrategyAction.SELL -> if (obi > obiThreshold) return false
+                StrategyAction.BUY -> {
+                    if (obi < obiThreshold.negate()) return false
+                }
+
+                StrategyAction.SELL -> {
+                    if (obi > obiThreshold) return false
+                }
+
                 else -> {}
             }
         }
@@ -118,8 +127,14 @@ class CnyRubStrategy : Strategy {
         if (microprice != null && bid != null && ask != null) {
             val mid = bid.add(ask).divide(BigDecimal(2), 8, RoundingMode.HALF_UP)
             when (direction) {
-                StrategyAction.BUY -> if (microprice < mid) return false
-                StrategyAction.SELL -> if (microprice > mid) return false
+                StrategyAction.BUY -> {
+                    if (microprice < mid) return false
+                }
+
+                StrategyAction.SELL -> {
+                    if (microprice > mid) return false
+                }
+
                 else -> {}
             }
         }
@@ -133,15 +148,20 @@ class CnyRubStrategy : Strategy {
         indicators: com.trading.bot.domain.technical.IndicatorCalculator.Indicators,
         snapshot: com.trading.bot.model.dto.MarketSnapshot,
     ): Double {
-        val rsiExtremity = if (rsi < 50.0) {
-            (RSI_BUY_THRESHOLD - rsi) / RSI_BUY_THRESHOLD
-        } else {
-            (rsi - RSI_SELL_THRESHOLD) / (100.0 - RSI_SELL_THRESHOLD)
-        }
+        val rsiExtremity =
+            if (rsi < 50.0) {
+                (RSI_BUY_THRESHOLD - rsi) / RSI_BUY_THRESHOLD
+            } else {
+                (rsi - RSI_SELL_THRESHOLD) / (100.0 - RSI_SELL_THRESHOLD)
+            }
 
         val bbScore = computeBbScore(price, indicators)
 
-        val obiScore = snapshot.obi?.abs()?.coerceIn(BigDecimal("0"), BigDecimal("1"))?.toDouble() ?: 0.0
+        val obiScore =
+            snapshot.obi
+                ?.abs()
+                ?.coerceIn(BigDecimal("0"), BigDecimal("1"))
+                ?.toDouble() ?: 0.0
 
         val raw = (0.35 + rsiExtremity.coerceIn(0.0, 1.0) * 0.25 + bbScore * 0.2 + obiScore * 0.2)
         return raw.coerceIn(0.0, 0.9)
@@ -173,8 +193,7 @@ class CnyRubStrategy : Strategy {
         return parts.joinToString(", ")
     }
 
-    private fun round(v: Double): String =
-        v.toBigDecimal().setScale(3, RoundingMode.HALF_UP).toPlainString()
+    private fun round(v: Double): String = v.toBigDecimal().setScale(3, RoundingMode.HALF_UP).toPlainString()
 
     private companion object {
         const val RSI_BUY_THRESHOLD = 35.0

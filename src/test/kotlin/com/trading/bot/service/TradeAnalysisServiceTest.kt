@@ -165,11 +165,12 @@ class TradeAnalysisServiceTest {
     @Test
     fun `timePatternAnalysis with accountId calls findClosedByTickerAndAccountSince`() =
         runBlocking {
-            Mockito.`when`(
-                positionRepo.findClosedByTickerAndAccountSince(eq("SBER"), eq(42L), any()),
-            ).thenReturn(
-                listOf(closed(BigDecimal("15"))),
-            )
+            Mockito
+                .`when`(
+                    positionRepo.findClosedByTickerAndAccountSince(eq("SBER"), eq(42L), any()),
+                ).thenReturn(
+                    listOf(closed(BigDecimal("15"))),
+                )
 
             val pattern = service.timePatternAnalysis("SBER", days = 30, accountId = 42L)
 

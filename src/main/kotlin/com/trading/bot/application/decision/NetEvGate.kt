@@ -67,11 +67,12 @@ class NetEvGate(
         // halfSpread × lotSize = cost of crossing the spread once.
         // × 2 for round trip, then × adverseSelectionMultiplier for slippage.
         val halfSpread = currentHalfSpread(snapshot, spec?.priceStep)
-        val executionCostPerLot = halfSpread
-            .multiply(BigDecimal(lotSize))
-            .multiply(BigDecimal("2")) // round trip
-            .multiply(riskConfig.netEvAdverseSelectionMultiplier)
-            .setScale(6, RoundingMode.HALF_UP)
+        val executionCostPerLot =
+            halfSpread
+                .multiply(BigDecimal(lotSize))
+                .multiply(BigDecimal("2")) // round trip
+                .multiply(riskConfig.netEvAdverseSelectionMultiplier)
+                .setScale(6, RoundingMode.HALF_UP)
 
         val netEV = expectedNet.subtract(executionCostPerLot)
 

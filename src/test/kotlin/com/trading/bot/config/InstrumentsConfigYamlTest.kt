@@ -12,7 +12,6 @@ import java.math.BigDecimal
  * Uses ApplicationContextRunner — no Docker/Testcontainers needed.
  */
 class InstrumentsConfigYamlTest {
-
     private val contextRunner =
         ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(InstrumentsConfig::class.java, RiskConfig::class.java))

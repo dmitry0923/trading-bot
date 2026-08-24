@@ -226,8 +226,9 @@ class PortfolioRiskEngineImpl(
      */
     private fun signedNotional(pos: Position): Double {
         val spec = instrumentsConfig.find(pos.ticker)
-        val notional = spec?.notional(pos.quantity, pos.entryPrice)
-            ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
+        val notional =
+            spec?.notional(pos.quantity, pos.entryPrice)
+                ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
         return notional.toDouble() * directionSign(pos.direction)
     }
 

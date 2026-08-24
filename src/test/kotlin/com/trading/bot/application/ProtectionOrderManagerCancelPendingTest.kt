@@ -69,26 +69,34 @@ class ProtectionOrderManagerCancelPendingTest {
     @Test
     fun cancelRequested_preservesOrderIdAndBlocksNewSL() {
         runBlocking {
-        val pos = openPosition(slOrderId = "SL-OLD", tpOrderId = "TP-OLD")
+            val pos = openPosition(slOrderId = "SL-OLD", tpOrderId = "TP-OLD")
 
-        manager.cancelProtectionOrders(pos)
+            manager.cancelProtectionOrders(pos)
 
-        assertTrue(pos.slCancelPending, "slCancelPending should be true")
-        assertEquals("SL-OLD", pos.slOrderId, "slOrderId must NOT be cleared during cancel")
-        assertTrue(pos.tpCancelPending, "tpCancelPending should be true")
-        assertEquals("TP-OLD", pos.tpOrderId, "tpOrderId must NOT be cleared during cancel")
+            assertTrue(pos.slCancelPending, "slCancelPending should be true")
+            assertEquals("SL-OLD", pos.slOrderId, "slOrderId must NOT be cleared during cancel")
+            assertTrue(pos.tpCancelPending, "tpCancelPending should be true")
+            assertEquals("TP-OLD", pos.tpOrderId, "tpOrderId must NOT be cleared during cancel")
 
-        verify(orderOutboxService).placeCancelOrder(1L, "SL-OLD", null)
-        verify(orderOutboxService).placeCancelOrder(1L, "TP-OLD", null)
+            verify(orderOutboxService).placeCancelOrder(1L, "SL-OLD", null)
+            verify(orderOutboxService).placeCancelOrder(1L, "TP-OLD", null)
 
-        // attachProtectionOrders should skip — slCancelPending=true blocks placement
-        manager.attachProtectionOrders(pos)
+            // attachProtectionOrders should skip — slCancelPending=true blocks placement
+            manager.attachProtectionOrders(pos)
 
-        // Verify NO new SL/TP outbox was placed
-        verify(orderOutboxService, never()).placeOrder(
-            anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
-            anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
-        )
+            // Verify NO new SL/TP outbox was placed
+            verify(orderOutboxService, never()).placeOrder(
+                anyOrNull(),
+                anyOrNull(),
+                Mockito.anyInt(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+            )
         }
     }
 
@@ -96,101 +104,109 @@ class ProtectionOrderManagerCancelPendingTest {
      * B: reconcile with UNCERTAIN cancel → old SL remains, no replacement.
      */
     @Test
-    fun uncertainCancel_keepsOldSlNoReplacement() = runBlocking {
-        val pos = openPosition(slOrderId = "SL-1", slOrderPrice = BigDecimal("91500"), takeProfit = null)
+    fun uncertainCancel_keepsOldSlNoReplacement() =
+        runBlocking {
+            val pos = openPosition(slOrderId = "SL-1", slOrderPrice = BigDecimal("91500"), takeProfit = null)
 
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(null)
-        whenever(orderOutboxRepo.findLatestConfirmedCancel(anyOrNull(), anyOrNull())).thenReturn(null)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(null)
+            whenever(orderOutboxRepo.findLatestConfirmedCancel(anyOrNull(), anyOrNull())).thenReturn(null)
 
-        manager.reconcileProtectionOrders(pos)
+            manager.reconcileProtectionOrders(pos)
 
-        assertEquals("SL-1", pos.slOrderId, "SL orderId must remain on uncertain cancel")
-    }
+            assertEquals("SL-1", pos.slOrderId, "SL orderId must remain on uncertain cancel")
+        }
 
     /**
      * C: gone status (CANCELED) → clears SL orderId + cancelPending → new SL placed.
      */
     @Test
-    fun goneStatus_clearsCancelPendingAndAllowsNewSL() = runBlocking {
-        val pos = openPosition(
-            slOrderId = "SL-1",
-            slOrderPrice = BigDecimal("91500"),
-            slCancelPending = true,
-            stopLoss = BigDecimal("91500"),
-        )
+    fun goneStatus_clearsCancelPendingAndAllowsNewSL() =
+        runBlocking {
+            val pos =
+                openPosition(
+                    slOrderId = "SL-1",
+                    slOrderPrice = BigDecimal("91500"),
+                    slCancelPending = true,
+                    stopLoss = BigDecimal("91500"),
+                )
 
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null))
-        stubNewProtectionPlacement("SL-NEW")
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null))
+            stubNewProtectionPlacement("SL-NEW")
 
-        manager.reconcileProtectionOrders(pos)
+            manager.reconcileProtectionOrders(pos)
 
-        assertFalse(pos.slCancelPending, "slCancelPending should be cleared after gone status")
-        assertEquals("SL-NEW", pos.slOrderId, "New SL should be placed after old one is gone")
-    }
+            assertFalse(pos.slCancelPending, "slCancelPending should be cleared after gone status")
+            assertEquals("SL-NEW", pos.slOrderId, "New SL should be placed after old one is gone")
+        }
 
     /**
      * D: gone status (EXPIRED) on TP → clears TP orderId + cancelPending → new TP placed.
      */
     @Test
-    fun goneStatusOnTp_clearsTpCancelPendingAndAllowsNewTP() = runBlocking {
-        val pos = openPosition(
-            tpOrderId = "TP-1",
-            tpOrderPrice = BigDecimal("93000"),
-            tpCancelPending = true,
-            takeProfit = BigDecimal("93000"),
-        )
+    fun goneStatusOnTp_clearsTpCancelPendingAndAllowsNewTP() =
+        runBlocking {
+            val pos =
+                openPosition(
+                    tpOrderId = "TP-1",
+                    tpOrderPrice = BigDecimal("93000"),
+                    tpCancelPending = true,
+                    takeProfit = BigDecimal("93000"),
+                )
 
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "EXPIRED", filledQuantity = 0, avgPrice = null))
-        stubNewProtectionPlacement("TP-NEW")
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "EXPIRED", filledQuantity = 0, avgPrice = null))
+            stubNewProtectionPlacement("TP-NEW")
 
-        manager.reconcileProtectionOrders(pos)
+            manager.reconcileProtectionOrders(pos)
 
-        assertFalse(pos.tpCancelPending, "tpCancelPending should be cleared")
-        assertEquals("TP-NEW", pos.tpOrderId, "New TP should be placed after old one is gone")
-    }
+            assertFalse(pos.tpCancelPending, "tpCancelPending should be cleared")
+            assertEquals("TP-NEW", pos.tpOrderId, "New TP should be placed after old one is gone")
+        }
 
     /**
      * E: SL fill while cancelPending → atomic clear + position closed.
      */
     @Test
-    fun filledStatus_clearsCancelPendingAtomically() = runBlocking {
-        var closedPosition: Position? = null
-        val mgrWithClose = ProtectionOrderManager(
-            alorClient = alorClient,
-            orderOutboxService = orderOutboxService,
-            orderOutboxRepo = orderOutboxRepo,
-            positionRepo = positionRepo,
-            alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            meterRegistry = meterRegistry,
-            metricPrefix = "test.protect",
-            portfolioResolver = { "D12345" },
-            onSlProtectionFailed = {},
-            protectionOrdersEnabled = true,
-            applyCloseExecution = { pos, qty, price, reason ->
-                pos.quantity = qty
-                pos.closePrice = price
-                pos.status = PositionStatus.CLOSED
-                closedPosition = pos
-            },
-        )
+    fun filledStatus_clearsCancelPendingAtomically() =
+        runBlocking {
+            var closedPosition: Position? = null
+            val mgrWithClose =
+                ProtectionOrderManager(
+                    alorClient = alorClient,
+                    orderOutboxService = orderOutboxService,
+                    orderOutboxRepo = orderOutboxRepo,
+                    positionRepo = positionRepo,
+                    alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
+                    meterRegistry = meterRegistry,
+                    metricPrefix = "test.protect",
+                    portfolioResolver = { "D12345" },
+                    onSlProtectionFailed = {},
+                    protectionOrdersEnabled = true,
+                    applyCloseExecution = { pos, qty, price, reason ->
+                        pos.quantity = qty
+                        pos.closePrice = price
+                        pos.status = PositionStatus.CLOSED
+                        closedPosition = pos
+                    },
+                )
 
-        val pos = openPosition(
-            slOrderId = "SL-1",
-            slCancelPending = true,
-            stopLoss = BigDecimal("91500"),
-        )
+            val pos =
+                openPosition(
+                    slOrderId = "SL-1",
+                    slCancelPending = true,
+                    stopLoss = BigDecimal("91500"),
+                )
 
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("91490")))
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("91490")))
 
-        mgrWithClose.reconcileProtectionOrders(pos)
+            mgrWithClose.reconcileProtectionOrders(pos)
 
-        assertEquals(null, pos.slOrderId, "SL orderId must be cleared after fill")
-        assertFalse(pos.slCancelPending, "slCancelPending must be cleared after fill")
-        assertEquals(PositionStatus.CLOSED, pos.status, "Position should be closed by SL fill")
-    }
+            assertEquals(null, pos.slOrderId, "SL orderId must be cleared after fill")
+            assertFalse(pos.slCancelPending, "slCancelPending must be cleared after fill")
+            assertEquals(PositionStatus.CLOSED, pos.status, "Position should be closed by SL fill")
+        }
 
     /**
      * F: cancelProtectionOrders with skip="SL" → only TP is cancelled, SL untouched.
@@ -235,7 +251,7 @@ class ProtectionOrderManagerCancelPendingTest {
 
     private suspend fun stubCancelProtectionSafe() {
         whenever(
-            orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())
+            orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull()),
         ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = true))
     }
 
@@ -246,9 +262,17 @@ class ProtectionOrderManagerCancelPendingTest {
     private suspend fun stubNewProtectionPlacement(orderId: String) {
         whenever(
             orderOutboxService.placeOrder(
-                anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
-                anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
-            )
+                anyOrNull(),
+                anyOrNull(),
+                Mockito.anyInt(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+            ),
         ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), orderId, success = true))
     }
 

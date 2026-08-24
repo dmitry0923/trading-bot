@@ -24,9 +24,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
-
-import tools.jackson.module.kotlin.jacksonObjectMapper
 import org.mockito.Mockito.verify
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -128,23 +127,25 @@ class OrderExecutionEngineDeltaModelTest {
 
     private fun stubSaveReturnsArg() {
         runBlocking {
-            Mockito.`when`(positionRepo.save(anyPosition()))
+            Mockito
+                .`when`(positionRepo.save(anyPosition()))
                 .thenAnswer { it.getArgument<Position>(0) }
         }
     }
 
     private fun stubTransitionToClosed() {
         runBlocking {
-            Mockito.`when`(
-                positionRepo.transitionToClosed(
-                    Mockito.anyLong(),
-                    anyStatus(),
-                    anyBigDecimal(),
-                    anyCloseReason(),
-                    anyBigDecimal(),
-                    Mockito.anyInt(),
-                ),
-            ).thenReturn(true)
+            Mockito
+                .`when`(
+                    positionRepo.transitionToClosed(
+                        Mockito.anyLong(),
+                        anyStatus(),
+                        anyBigDecimal(),
+                        anyCloseReason(),
+                        anyBigDecimal(),
+                        Mockito.anyInt(),
+                    ),
+                ).thenReturn(true)
         }
     }
 
@@ -160,17 +161,19 @@ class OrderExecutionEngineDeltaModelTest {
 
     private fun stubCancelOrderConfirmed() {
         runBlocking {
-            Mockito.`when`(
-                alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
-            ).thenReturn(AlorClient.CancelResult.CONFIRMED)
+            Mockito
+                .`when`(
+                    alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
+                ).thenReturn(AlorClient.CancelResult.CONFIRMED)
         }
     }
 
     private fun stubCancelOrderUncertain() {
         runBlocking {
-            Mockito.`when`(
-                alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
-            ).thenReturn(AlorClient.CancelResult.UNCERTAIN)
+            Mockito
+                .`when`(
+                    alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
+                ).thenReturn(AlorClient.CancelResult.UNCERTAIN)
         }
     }
 
@@ -178,15 +181,14 @@ class OrderExecutionEngineDeltaModelTest {
         orderId: String = "close-1",
         cumulativeFilledQty: Int,
         avgPrice: BigDecimal = BigDecimal("110"),
-    ) =
-        ExecutionReport(
-            orderId = orderId,
-            status = OrderStatus.FILLED,
-            cumulativeFilledQty = cumulativeFilledQty,
-            avgPrice = avgPrice,
-            ticker = "SBER",
-            side = "sell",
-        )
+    ) = ExecutionReport(
+        orderId = orderId,
+        status = OrderStatus.FILLED,
+        cumulativeFilledQty = cumulativeFilledQty,
+        avgPrice = avgPrice,
+        ticker = "SBER",
+        side = "sell",
+    )
 
     // ─── Core delta model tests ──────────────────────────────────────
 
@@ -322,11 +324,12 @@ class OrderExecutionEngineDeltaModelTest {
         stubSaveReturnsArg()
         stubTransitionToClosed()
         runBlocking {
-            Mockito.`when`(
-                alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
-            ).thenReturn(
-                AlorClient.OrderExecution(status = "FILLED", filledQuantity = 5, avgPrice = BigDecimal("110")),
-            )
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
+                ).thenReturn(
+                    AlorClient.OrderExecution(status = "FILLED", filledQuantity = 5, avgPrice = BigDecimal("110")),
+                )
         }
 
         // REST: cumulative=5, prevApplied=2, delta=3, 3 < 5 → partial close
@@ -345,11 +348,12 @@ class OrderExecutionEngineDeltaModelTest {
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         runBlocking {
-            Mockito.`when`(
-                alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
-            ).thenReturn(
-                AlorClient.OrderExecution(status = "FILLED", filledQuantity = 5, avgPrice = BigDecimal("110")),
-            )
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
+                ).thenReturn(
+                    AlorClient.OrderExecution(status = "FILLED", filledQuantity = 5, avgPrice = BigDecimal("110")),
+                )
         }
 
         // REST: cumulative=5, prevApplied=5, delta=0, skip
@@ -383,26 +387,29 @@ class OrderExecutionEngineDeltaModelTest {
             Mockito.`when`(positionRepo.findBySlOrderId(Mockito.anyString())).thenReturn(null)
             Mockito.`when`(positionRepo.findByTpOrderId(Mockito.anyString())).thenReturn(null)
             Mockito.`when`(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
-            Mockito.`when`(
-                alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
-            ).thenReturn(
-                AlorClient.OrderExecution(status = "FILLED", filledQuantity = 4, avgPrice = BigDecimal("110")),
-            )
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
+                ).thenReturn(
+                    AlorClient.OrderExecution(status = "FILLED", filledQuantity = 4, avgPrice = BigDecimal("110")),
+                )
         }
 
         // Both coroutines see cumulative=4 from REST/WS
         // Mutex ensures second re-reads and sees cumulative already advanced
         val latch = CountDownLatch(1)
         runBlocking {
-            val ws = async {
-                latch.await()
-                engine.handleExecutionReport(report(cumulativeFilledQty = 4))
-            }
-            val rest = async {
-                latch.await()
-                // REST path: reconcilePosition → confirmCloseFill
-                engine.reconcilePosition(pos)
-            }
+            val ws =
+                async {
+                    latch.await()
+                    engine.handleExecutionReport(report(cumulativeFilledQty = 4))
+                }
+            val rest =
+                async {
+                    latch.await()
+                    // REST path: reconcilePosition → confirmCloseFill
+                    engine.reconcilePosition(pos)
+                }
             latch.countDown()
             awaitAll(ws, rest)
         }
@@ -427,14 +434,16 @@ class OrderExecutionEngineDeltaModelTest {
 
         val latch = CountDownLatch(1)
         runBlocking {
-            val a = async {
-                latch.await()
-                engine.handleExecutionReport(report(cumulativeFilledQty = 3))
-            }
-            val b = async {
-                latch.await()
-                engine.handleExecutionReport(report(cumulativeFilledQty = 3))
-            }
+            val a =
+                async {
+                    latch.await()
+                    engine.handleExecutionReport(report(cumulativeFilledQty = 3))
+                }
+            val b =
+                async {
+                    latch.await()
+                    engine.handleExecutionReport(report(cumulativeFilledQty = 3))
+                }
             latch.countDown()
             awaitAll(a, b)
         }
@@ -462,16 +471,18 @@ class OrderExecutionEngineDeltaModelTest {
 
         val latch = CountDownLatch(1)
         runBlocking {
-            val a = async {
-                latch.await()
-                engine.handleExecutionReport(report(cumulativeFilledQty = 3))
-            }
-            val b = async {
-                latch.await()
-                // Simulates production path: handleExecutionReport returns false (pendingClose=false),
-                // TradingBotService delegates to handleCloseFill.
-                engine.handleCloseFill(pos, report(cumulativeFilledQty = 5))
-            }
+            val a =
+                async {
+                    latch.await()
+                    engine.handleExecutionReport(report(cumulativeFilledQty = 3))
+                }
+            val b =
+                async {
+                    latch.await()
+                    // Simulates production path: handleExecutionReport returns false (pendingClose=false),
+                    // TradingBotService delegates to handleCloseFill.
+                    engine.handleCloseFill(pos, report(cumulativeFilledQty = 5))
+                }
             latch.countDown()
             awaitAll(a, b)
         }
@@ -712,31 +723,34 @@ class OrderExecutionEngineDeltaModelTest {
         }
 
         runBlocking {
-            Mockito.`when`(
-                orderOutboxService.placeCancelOrder(Mockito.anyLong(), Mockito.anyString(), Mockito.any()),
-            ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, true))
+            Mockito
+                .`when`(
+                    orderOutboxService.placeCancelOrder(Mockito.anyLong(), Mockito.anyString(), Mockito.any()),
+                ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, true))
         }
 
         val latch = CountDownLatch(1)
         runBlocking {
-            val closeFill = async {
-                latch.await()
-                // WS close fill: cumulative=4, delta=4, 4 < 10 → partial close
-                engineWithProtection.handleExecutionReport(
-                    report(orderId = "close-1", cumulativeFilledQty = 4),
-                )
-            }
-            val slFill = async {
-                latch.await()
-                // SL fills the remaining position on the exchange.
-                // The SL path goes through findBySlOrderId → applyExchangeProtectionClose
-                // (NOT verifyOrder), so no Mockito.when needed here.
-                // cumulativeFilledQty=20 (oversized) so it always covers remaining qty
-                // regardless of whether closeFill ran first (qty=6) or not (qty=10).
-                engineWithProtection.handleExecutionReport(
-                    report(orderId = "sl-1", cumulativeFilledQty = 20, avgPrice = BigDecimal("89")),
-                )
-            }
+            val closeFill =
+                async {
+                    latch.await()
+                    // WS close fill: cumulative=4, delta=4, 4 < 10 → partial close
+                    engineWithProtection.handleExecutionReport(
+                        report(orderId = "close-1", cumulativeFilledQty = 4),
+                    )
+                }
+            val slFill =
+                async {
+                    latch.await()
+                    // SL fills the remaining position on the exchange.
+                    // The SL path goes through findBySlOrderId → applyExchangeProtectionClose
+                    // (NOT verifyOrder), so no Mockito.when needed here.
+                    // cumulativeFilledQty=20 (oversized) so it always covers remaining qty
+                    // regardless of whether closeFill ran first (qty=6) or not (qty=10).
+                    engineWithProtection.handleExecutionReport(
+                        report(orderId = "sl-1", cumulativeFilledQty = 20, avgPrice = BigDecimal("89")),
+                    )
+                }
             latch.countDown()
             awaitAll(closeFill, slFill)
         }
@@ -939,12 +953,13 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `closePosition cancels stale close order before creating replacement`() {
-        val pos = openPos(
-            quantity = 6,
-            pendingClose = false,
-            closeOrderId = "stale-order-A",
-            cumulativeCloseFillQty = 40,
-        )
+        val pos =
+            openPos(
+                quantity = 6,
+                pendingClose = false,
+                closeOrderId = "stale-order-A",
+                cumulativeCloseFillQty = 40,
+            )
 
         runBlocking {
             Mockito.`when`(positionRepo.claimForClose(pos.id!!)).thenReturn(true)
@@ -953,25 +968,27 @@ class OrderExecutionEngineDeltaModelTest {
             stubTransitionToClosed()
 
             // New order placement succeeds
-            Mockito.`when`(
-                orderOutboxService.placeOrder(
-                    ticker = Mockito.anyString(),
-                    side = Mockito.anyString(),
-                    qty = Mockito.anyInt(),
-                    price = Mockito.nullable(BigDecimal::class.java),
-                    type = Mockito.anyString(),
-                    positionId = Mockito.nullable(Long::class.java),
-                    closeReason = Mockito.nullable(String::class.java),
-                    stopPrice = Mockito.nullable(BigDecimal::class.java),
-                    purpose = Mockito.nullable(String::class.java),
-                    accountId = Mockito.nullable(Long::class.java),
-                ),
-            ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "stale-order-B", success = true))
+            Mockito
+                .`when`(
+                    orderOutboxService.placeOrder(
+                        ticker = Mockito.anyString(),
+                        side = Mockito.anyString(),
+                        qty = Mockito.anyInt(),
+                        price = Mockito.nullable(BigDecimal::class.java),
+                        type = Mockito.anyString(),
+                        positionId = Mockito.nullable(Long::class.java),
+                        closeReason = Mockito.nullable(String::class.java),
+                        stopPrice = Mockito.nullable(BigDecimal::class.java),
+                        purpose = Mockito.nullable(String::class.java),
+                        accountId = Mockito.nullable(Long::class.java),
+                    ),
+                ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "stale-order-B", success = true))
 
             // verifyOrder returns FILLED for the new order B
-            Mockito.`when`(
-                alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
-            ).thenReturn(AlorClient.OrderExecution("FILLED", 6, BigDecimal("110")))
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
+                ).thenReturn(AlorClient.OrderExecution("FILLED", 6, BigDecimal("110")))
 
             engine.closePosition(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
         }
@@ -1011,31 +1028,33 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `late WS fill for stale close order is silently dropped after replacement`() {
-        val pos = openPos(
-            quantity = 6,
-            pendingClose = true,
-            closeOrderId = "new-order-B",
-            cumulativeCloseFillQty = 0,
-        )
-
-        val handled = runBlocking {
-            // Late fill for old order A — position lookup fails because closeOrderId is now B
-            Mockito.`when`(positionRepo.findByCloseOrderId("stale-order-A")).thenReturn(null)
-            Mockito.`when`(positionRepo.findByAlorOrderId("stale-order-A")).thenReturn(null)
-            Mockito.`when`(positionRepo.findBySlOrderId("stale-order-A")).thenReturn(null)
-            Mockito.`when`(positionRepo.findByTpOrderId("stale-order-A")).thenReturn(null)
-
-            engine.handleExecutionReport(
-                ExecutionReport(
-                    orderId = "stale-order-A",
-                    status = OrderStatus.FILLED,
-                    cumulativeFilledQty = 100,
-                    avgPrice = BigDecimal("110"),
-                    ticker = "SBER",
-                    side = "sell",
-                ),
+        val pos =
+            openPos(
+                quantity = 6,
+                pendingClose = true,
+                closeOrderId = "new-order-B",
+                cumulativeCloseFillQty = 0,
             )
-        }
+
+        val handled =
+            runBlocking {
+                // Late fill for old order A — position lookup fails because closeOrderId is now B
+                Mockito.`when`(positionRepo.findByCloseOrderId("stale-order-A")).thenReturn(null)
+                Mockito.`when`(positionRepo.findByAlorOrderId("stale-order-A")).thenReturn(null)
+                Mockito.`when`(positionRepo.findBySlOrderId("stale-order-A")).thenReturn(null)
+                Mockito.`when`(positionRepo.findByTpOrderId("stale-order-A")).thenReturn(null)
+
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "stale-order-A",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 100,
+                        avgPrice = BigDecimal("110"),
+                        ticker = "SBER",
+                        side = "sell",
+                    ),
+                )
+            }
 
         assertFalse(handled) { "late fill for stale order returns false" }
         assertEquals(6, pos.quantity) { "position unchanged — stale fill dropped" }
@@ -1049,22 +1068,24 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `handleCloseFill ignores late fill from wrong order id`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = false,
-            closeOrderId = "order-B",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = false,
+                closeOrderId = "order-B",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
 
-        val lateReport = ExecutionReport(
-            orderId = "order-A",
-            status = OrderStatus.PARTIALLY_FILLED,
-            cumulativeFilledQty = 40,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val lateReport =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 40,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         runBlocking { engine.handleCloseFill(pos, lateReport) }
 
@@ -1079,23 +1100,25 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `handleCloseFill accepts correct order id with valid delta`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = false,
-            closeOrderId = "order-B",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = false,
+                closeOrderId = "order-B",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
 
-        val report = ExecutionReport(
-            orderId = "order-B",
-            status = OrderStatus.PARTIALLY_FILLED,
-            cumulativeFilledQty = 20,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val report =
+            ExecutionReport(
+                orderId = "order-B",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 20,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         runBlocking { engine.handleCloseFill(pos, report) }
 
@@ -1111,22 +1134,24 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `handlePendingCloseReport ignores late fill from wrong order id`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = true,
-            closeOrderId = "order-B",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = true,
+                closeOrderId = "order-B",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
 
-        val lateReport = ExecutionReport(
-            orderId = "order-A",
-            status = OrderStatus.PARTIALLY_FILLED,
-            cumulativeFilledQty = 40,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val lateReport =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 40,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         val handled = runBlocking { engine.handleExecutionReport(lateReport) }
 
@@ -1140,24 +1165,26 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `handlePendingCloseReport cancels order then resets close state on impossible delta`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = true,
-            closeOrderId = "order-A",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = true,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         stubCancelOrderConfirmed()
 
-        val report = ExecutionReport(
-            orderId = "order-A",
-            status = OrderStatus.PARTIALLY_FILLED,
-            cumulativeFilledQty = 80,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val report =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 80,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         val handled = runBlocking { engine.handleExecutionReport(report) }
 
@@ -1176,24 +1203,26 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `applyCloseExecution cancels order on filled greater than position quantity`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = false,
-            closeOrderId = "order-A",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = false,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         stubCancelOrderConfirmed()
 
-        val report = ExecutionReport(
-            orderId = "order-A",
-            status = OrderStatus.FILLED,
-            cumulativeFilledQty = 80,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val report =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.FILLED,
+                cumulativeFilledQty = 80,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         runBlocking { engine.handleCloseFill(pos, report) }
 
@@ -1209,20 +1238,22 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `confirmCloseFill cancels order on cumulative delta greater than position quantity`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = false,
-            closeOrderId = "order-A",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = false,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         stubCancelOrderConfirmed()
 
         runBlocking {
-            Mockito.`when`(
-                alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
-            ).thenReturn(AlorClient.OrderExecution("FILLED", 80, BigDecimal("110")))
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
+                ).thenReturn(AlorClient.OrderExecution("FILLED", 80, BigDecimal("110")))
         }
 
         runBlocking { engine.closeFill.confirmCloseFill(pos, BigDecimal("110"), CloseReason.RECONCILIATION) }
@@ -1239,24 +1270,26 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `impossible delta with uncertain cancel leaves state for reconciler`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = true,
-            closeOrderId = "order-A",
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = true,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         stubCancelOrderUncertain()
 
-        val report = ExecutionReport(
-            orderId = "order-A",
-            status = OrderStatus.PARTIALLY_FILLED,
-            cumulativeFilledQty = 80,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val report =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 80,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         val handled = runBlocking { engine.handleExecutionReport(report) }
 
@@ -1273,23 +1306,25 @@ class OrderExecutionEngineDeltaModelTest {
      */
     @Test
     fun `impossible delta with no closeOrderId resets immediately`() {
-        val pos = openPos(
-            quantity = 60,
-            pendingClose = true,
-            closeOrderId = null,
-            cumulativeCloseFillQty = 0,
-        )
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = true,
+                closeOrderId = null,
+                cumulativeCloseFillQty = 0,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
 
-        val report = ExecutionReport(
-            orderId = "order-A",
-            status = OrderStatus.PARTIALLY_FILLED,
-            cumulativeFilledQty = 80,
-            avgPrice = BigDecimal("110"),
-            ticker = "SBER",
-            side = "sell",
-        )
+        val report =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 80,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
 
         val handled = runBlocking { engine.handleExecutionReport(report) }
 

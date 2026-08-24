@@ -29,7 +29,6 @@ class TradingHealthIndicator(
     private val riskConfig: RiskConfig,
     private val redisCache: ReactiveRedisCacheService,
 ) : HealthIndicator {
-
     override fun health(): Health {
         val builder = Health.Builder()
 
@@ -42,14 +41,16 @@ class TradingHealthIndicator(
         builder.withDetail("ws.orders", if (ordersConnected) "CONNECTED" else "DISCONNECTED")
 
         // Redis — критичен для state (best-effort, не suspend)
-        val redisUp = try {
-            val result = kotlinx.coroutines.runBlocking {
-                redisCache.isAvailable()
+        val redisUp =
+            try {
+                val result =
+                    kotlinx.coroutines.runBlocking {
+                        redisCache.isAvailable()
+                    }
+                result
+            } catch (_: Exception) {
+                false
             }
-            result
-        } catch (_: Exception) {
-            false
-        }
         builder.withDetail("redis", if (redisUp) "UP" else "DOWN")
 
         // Trading hours

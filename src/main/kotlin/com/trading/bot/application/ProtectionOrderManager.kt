@@ -68,7 +68,9 @@ class ProtectionOrderManager(
         var dirty = false
 
         val effSl = ExitRules.effectiveSl(pos)
-        if (effSl != null && pos.slOrderId == null && !pos.slPendingReplace && !pos.slCancelPending && !protectionOutboxActive(positionId, "sl")) {
+        if (effSl != null && pos.slOrderId == null && !pos.slPendingReplace && !pos.slCancelPending &&
+            !protectionOutboxActive(positionId, "sl")
+        ) {
             val placed =
                 orderOutboxService.placeOrder(
                     pos.ticker,
@@ -91,7 +93,9 @@ class ProtectionOrderManager(
         }
 
         val tp = pos.takeProfit
-        if (tp != null && pos.tpOrderId == null && !pos.tpPendingReplace && !pos.tpCancelPending && !protectionOutboxActive(positionId, "tp")) {
+        if (tp != null && pos.tpOrderId == null && !pos.tpPendingReplace && !pos.tpCancelPending &&
+            !protectionOutboxActive(positionId, "tp")
+        ) {
             val placed =
                 orderOutboxService.placeOrder(
                     pos.ticker,
@@ -214,7 +218,9 @@ class ProtectionOrderManager(
                         logger.info { "Exchange SL ${row.alorOrderId} for ${pos.ticker} was cancelled — not re-arming" }
                     }
                 } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
-                    logger.warn { "Exchange SL for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure" }
+                    logger.warn {
+                        "Exchange SL for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure"
+                    }
                     onSlProtectionFailed(pos)
                 }
             }
@@ -232,7 +238,9 @@ class ProtectionOrderManager(
                         logger.info { "Exchange TP ${row.alorOrderId} for ${pos.ticker} was cancelled — not re-arming" }
                     }
                 } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
-                    logger.warn { "Exchange TP for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure" }
+                    logger.warn {
+                        "Exchange TP for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure"
+                    }
                     onSlProtectionFailed(pos)
                 }
             }
@@ -302,12 +310,14 @@ class ProtectionOrderManager(
                 pos.slPendingReplace = false
                 pos.slCancelPending = false
             }
+
             CloseReason.TAKE_PROFIT -> {
                 pos.tpOrderId = null
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
                 pos.tpCancelPending = false
             }
+
             else -> {}
         }
 
@@ -357,12 +367,16 @@ class ProtectionOrderManager(
                             applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
                             return
                         }
+
                         ex != null && isGoneStatus(ex) -> {
                             logger.info { "SL replaced: old order $oldId confirmed gone (${ex.status}) for ${pos.ticker}" }
                         }
+
                         else -> {
                             val status = ex?.status ?: "null"
-                            logger.warn { "SL cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle" }
+                            logger.warn {
+                                "SL cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle"
+                            }
                             return
                         }
                     }
@@ -402,12 +416,16 @@ class ProtectionOrderManager(
                             applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
                             return
                         }
+
                         ex != null && isGoneStatus(ex) -> {
                             logger.info { "TP replaced: old order $oldId confirmed gone (${ex.status}) for ${pos.ticker}" }
                         }
+
                         else -> {
                             val status = ex?.status ?: "null"
-                            logger.warn { "TP cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle" }
+                            logger.warn {
+                                "TP cancel rejected but order state UNKNOWN ($status) for ${pos.ticker}, order=$oldId — retry next cycle"
+                            }
                             return
                         }
                     }
@@ -445,6 +463,7 @@ class ProtectionOrderManager(
             "FILLED",
             "PARTIALLY_FILLED",
             -> execution.filledQuantity > 0
+
             else -> false
         }
 
@@ -455,6 +474,7 @@ class ProtectionOrderManager(
             "REJECTED",
             "EXPIRED",
             -> true
+
             else -> false
         }
 }

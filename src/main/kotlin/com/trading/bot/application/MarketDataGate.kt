@@ -70,24 +70,35 @@ class MarketDataGate(
      * @param ticker тикер (регистр не важен)
      * @param obi значение OBI в диапазоне [-1.0, +1.0]
      */
-    fun updateObi(ticker: String, obi: BigDecimal) {
+    fun updateObi(
+        ticker: String,
+        obi: BigDecimal,
+    ) {
         val scaled = obi.multiply(BigDecimal("10000")).toLong()
-        lastObi.computeIfAbsent(ticker.uppercase()) { t ->
-            val ref = AtomicLong(0)
-            meterRegistry.gauge("market.data.obi", Tags.of("ticker", t), ref) { it.get().toDouble() / 10000.0 }
-            ref
-        }.set(scaled)
+        lastObi
+            .computeIfAbsent(ticker.uppercase()) { t ->
+                val ref = AtomicLong(0)
+                meterRegistry.gauge("market.data.obi", Tags.of("ticker", t), ref) { it.get().toDouble() / 10000.0 }
+                ref
+            }.set(scaled)
     }
 
     /**
      * Обновляет spread-метрику для тикера (вызывается из TradingBotService при получении снэпшота).
      * Spread считается как (ask - bid) / mid * 100 в процентах.
      */
-    fun recordSpread(ticker: String, bid: BigDecimal, ask: BigDecimal) {
+    fun recordSpread(
+        ticker: String,
+        bid: BigDecimal,
+        ask: BigDecimal,
+    ) {
         if (bid <= BigDecimal.ZERO || ask <= BigDecimal.ZERO || bid >= ask) return
         val mid = bid.add(ask).divide(BigDecimal("2"), 8, java.math.RoundingMode.HALF_UP)
-        val spreadPercent = ask.subtract(bid).divide(mid, 8, java.math.RoundingMode.HALF_UP)
-            .multiply(BigDecimal("100"))
+        val spreadPercent =
+            ask
+                .subtract(bid)
+                .divide(mid, 8, java.math.RoundingMode.HALF_UP)
+                .multiply(BigDecimal("100"))
         val scaled = spreadPercent.multiply(BigDecimal("1000")).toLong()
         spreadGauges
             .computeIfAbsent(ticker.uppercase()) { t ->

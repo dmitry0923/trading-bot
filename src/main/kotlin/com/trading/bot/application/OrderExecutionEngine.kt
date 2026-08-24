@@ -108,62 +108,68 @@ class OrderExecutionEngine(
     internal lateinit var reconciler: ExecutionReconciler
 
     init {
-        closeFill = CloseFillProcessor(
-            positionRepo = positionRepo,
-            alorClient = alorClient,
-            pnlCalculator = pnlCalculator,
-            tradeEventService = tradeEventService,
-            meterRegistry = meterRegistry,
-            metricPrefix = metricPrefix,
-            portfolioResolver = portfolioResolver,
-            onPositionClosed = onPositionClosed,
-            cancelProtectionOrders = { pos ->
-                protection.cancelProtectionOrders(pos)
-            },
-            attachProtectionOrders = { pos ->
-                protection.attachProtectionOrders(pos)
-            },
-        )
-        protection = ProtectionOrderManager(
-            alorClient = alorClient,
-            orderOutboxService = orderOutboxService,
-            orderOutboxRepo = orderOutboxRepo,
-            positionRepo = positionRepo,
-            alorConfig = alorConfig,
-            meterRegistry = meterRegistry,
-            metricPrefix = metricPrefix,
-            portfolioResolver = portfolioResolver,
-            onSlProtectionFailed = onSlProtectionFailed,
-            protectionOrdersEnabled = protectionOrdersEnabled,
-            applyCloseExecution = { pos, filled, avg, reason ->
-                closeFill.applyCloseExecution(pos, filled, avg, reason)
-            },
-        )
-        reconciler = ExecutionReconciler(
-            alorClient = alorClient,
-            orderOutboxRepo = orderOutboxRepo,
-            positionRepo = positionRepo,
-            alorConfig = alorConfig,
-            objectMapper = objectMapper,
-            tradeEventService = tradeEventService,
-            meterRegistry = meterRegistry,
-            metricPrefix = metricPrefix,
-            portfolioResolver = portfolioResolver,
-            onEntryOpened = onEntryOpened,
-            isGoneStatus = { closeFill.isGoneStatus(it) },
-            isFilledStatus = { closeFill.isFilledStatus(it) },
-            attachProtectionOrders = { pos -> protection.attachProtectionOrders(pos) },
-            confirmCloseFill = { pos, price, reason -> closeFill.confirmCloseFill(pos, price, reason) },
-            reconcileProtectionOrders = { pos -> protection.reconcileProtectionOrders(pos) },
-            onAbandonCleanup = { posId -> posId?.let { closeFill.closeFillMutexes.remove(it) } },
-        )
+        closeFill =
+            CloseFillProcessor(
+                positionRepo = positionRepo,
+                alorClient = alorClient,
+                pnlCalculator = pnlCalculator,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                metricPrefix = metricPrefix,
+                portfolioResolver = portfolioResolver,
+                onPositionClosed = onPositionClosed,
+                cancelProtectionOrders = { pos ->
+                    protection.cancelProtectionOrders(pos)
+                },
+                attachProtectionOrders = { pos ->
+                    protection.attachProtectionOrders(pos)
+                },
+            )
+        protection =
+            ProtectionOrderManager(
+                alorClient = alorClient,
+                orderOutboxService = orderOutboxService,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                meterRegistry = meterRegistry,
+                metricPrefix = metricPrefix,
+                portfolioResolver = portfolioResolver,
+                onSlProtectionFailed = onSlProtectionFailed,
+                protectionOrdersEnabled = protectionOrdersEnabled,
+                applyCloseExecution = { pos, filled, avg, reason ->
+                    closeFill.applyCloseExecution(pos, filled, avg, reason)
+                },
+            )
+        reconciler =
+            ExecutionReconciler(
+                alorClient = alorClient,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                objectMapper = objectMapper,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                metricPrefix = metricPrefix,
+                portfolioResolver = portfolioResolver,
+                onEntryOpened = onEntryOpened,
+                isGoneStatus = { closeFill.isGoneStatus(it) },
+                isFilledStatus = { closeFill.isFilledStatus(it) },
+                attachProtectionOrders = { pos -> protection.attachProtectionOrders(pos) },
+                confirmCloseFill = { pos, price, reason -> closeFill.confirmCloseFill(pos, price, reason) },
+                reconcileProtectionOrders = { pos -> protection.reconcileProtectionOrders(pos) },
+                onAbandonCleanup = { posId -> posId?.let { closeFill.closeFillMutexes.remove(it) } },
+            )
     }
 
     // ═══════════════════════════ DELEGATIONS ═══════════════════════════════
 
     suspend fun onProtectionLevelsChanged(pos: Position) = protection.onProtectionLevelsChanged(pos)
 
-    suspend fun handleCloseFill(pos: Position, report: ExecutionReport) = closeFill.handleCloseFill(pos, report)
+    suspend fun handleCloseFill(
+        pos: Position,
+        report: ExecutionReport,
+    ) = closeFill.handleCloseFill(pos, report)
 
     suspend fun reconcilePosition(pos: Position) = reconciler.reconcilePosition(pos)
 
@@ -407,5 +413,8 @@ class OrderExecutionEngine(
 
     // ═══════════════════════════ ABANDON ═════════════════════════════════
 
-    internal suspend fun abandonEntry(pos: Position, reason: CloseReason) = reconciler.abandonEntry(pos, reason)
+    internal suspend fun abandonEntry(
+        pos: Position,
+        reason: CloseReason,
+    ) = reconciler.abandonEntry(pos, reason)
 }

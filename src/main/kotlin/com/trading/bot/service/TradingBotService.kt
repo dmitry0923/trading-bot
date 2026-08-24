@@ -202,7 +202,9 @@ class TradingBotService(
                             .record(Duration.between(tick.receivedAt, Instant.now()).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
                         eventPublisher.publishPriceChanged(tick.ticker, tick.price)
                         if (tick.bidSize != null && tick.askSize != null) {
-                            val obi = com.trading.bot.domain.microstructure.ObiCalculator.calculate(tick.bidSize, tick.askSize)
+                            val obi =
+                                com.trading.bot.domain.microstructure.ObiCalculator
+                                    .calculate(tick.bidSize, tick.askSize)
                             if (obi != null) marketDataGate.updateObi(tick.ticker, obi)
                         }
                         if (tick.bid != null && tick.ask != null) {
@@ -352,7 +354,10 @@ class TradingBotService(
      * Аварийное закрытие конкретной позиции (при SL_PROTECTION_FAILED).
      * Вызывается из [engine] callback, поэтому [engine] уже инициализирован.
      */
-    private suspend fun emergencyClose(ticker: String, price: BigDecimal) {
+    private suspend fun emergencyClose(
+        ticker: String,
+        price: BigDecimal,
+    ) {
         val pos = positionRepo.findByStatusAndTicker(PositionStatus.OPEN, ticker).firstOrNull() ?: return
         engine.closePosition(pos, price, CloseReason.EMERGENCY_STOP)
     }
@@ -394,8 +399,10 @@ class TradingBotService(
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
                     try {
-                        val open = positionRepo.findByStatus(PositionStatus.OPEN)
-                            .filter { it.instrumentType != InstrumentType.FUTURES }
+                        val open =
+                            positionRepo
+                                .findByStatus(PositionStatus.OPEN)
+                                .filter { it.instrumentType != InstrumentType.FUTURES }
                         for (pos in open) {
                             try {
                                 engine.reconcilePosition(pos)

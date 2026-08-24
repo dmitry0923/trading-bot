@@ -36,7 +36,6 @@ import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
-
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**

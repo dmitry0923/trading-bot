@@ -89,23 +89,27 @@ class OrderBuilder(
         entryPrice: BigDecimal,
         atr: BigDecimal? = null,
     ): OrderParams {
-        val spec = instrumentsConfig.find(ticker)
-            ?: return OrderParams(direction = direction, quantity = 0)
+        val spec =
+            instrumentsConfig.find(ticker)
+                ?: return OrderParams(direction = direction, quantity = 0)
         val priceStep = spec.priceStep
-        val useAtr = atr != null && atr > BigDecimal.ZERO
-            && riskConfig.atrSlMultiplier > BigDecimal.ZERO && riskConfig.atrTpMultiplier > BigDecimal.ZERO
-        val stopLoss = if (useAtr) {
-            ExitRules.calcSLByAtr(entryPrice, direction, atr!!, riskConfig.atrSlMultiplier, priceStep)
-        } else {
-            val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-            ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
-        }
-        val takeProfit = if (useAtr) {
-            ExitRules.calcTPByAtr(entryPrice, direction, atr!!, riskConfig.atrTpMultiplier, priceStep)
-        } else {
-            val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
-            ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
-        }
+        val useAtr =
+            atr != null && atr > BigDecimal.ZERO &&
+                riskConfig.atrSlMultiplier > BigDecimal.ZERO && riskConfig.atrTpMultiplier > BigDecimal.ZERO
+        val stopLoss =
+            if (useAtr) {
+                ExitRules.calcSLByAtr(entryPrice, direction, atr!!, riskConfig.atrSlMultiplier, priceStep)
+            } else {
+                val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+                ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
+            }
+        val takeProfit =
+            if (useAtr) {
+                ExitRules.calcTPByAtr(entryPrice, direction, atr!!, riskConfig.atrTpMultiplier, priceStep)
+            } else {
+                val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
+                ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
+            }
         return OrderParams(
             direction = direction,
             quantity = quantity,

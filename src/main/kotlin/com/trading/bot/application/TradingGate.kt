@@ -175,12 +175,30 @@ class TradingGate(
     private fun TradingHaltRecord.toBlock(): TradingBlock? {
         val reason =
             when (reason) {
-                "DAILY_LOSS_LIMIT" -> TradingBlockReason.DAILY_LOSS_LIMIT
-                "LEVERAGE_DISABLED" -> TradingBlockReason.LEVERAGE_DISABLED
-                "STATE_DESYNC" -> TradingBlockReason.STATE_DESYNC
-                "EMERGENCY_STOP" -> TradingBlockReason.EMERGENCY_STOP
-                "SL_PROTECTION_FAILED" -> TradingBlockReason.SL_PROTECTION_FAILED
-                "MANUAL", "MANUAL_DISABLE" -> TradingBlockReason.MANUAL_DISABLE
+                "DAILY_LOSS_LIMIT" -> {
+                    TradingBlockReason.DAILY_LOSS_LIMIT
+                }
+
+                "LEVERAGE_DISABLED" -> {
+                    TradingBlockReason.LEVERAGE_DISABLED
+                }
+
+                "STATE_DESYNC" -> {
+                    TradingBlockReason.STATE_DESYNC
+                }
+
+                "EMERGENCY_STOP" -> {
+                    TradingBlockReason.EMERGENCY_STOP
+                }
+
+                "SL_PROTECTION_FAILED" -> {
+                    TradingBlockReason.SL_PROTECTION_FAILED
+                }
+
+                "MANUAL", "MANUAL_DISABLE" -> {
+                    TradingBlockReason.MANUAL_DISABLE
+                }
+
                 else -> {
                     logger.error { "Unknown persistent halt reason '$reason' — trading remains blocked (fail-closed)" }
                     return TradingBlock(

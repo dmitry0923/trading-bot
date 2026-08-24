@@ -135,7 +135,10 @@ class DecisionEngine(
         // Вырожденные случаи (13.3.5): широкий спред, гэп, депозитарная пауза → отказ
         // входа. Fail-closed при недостатке данных (UNKNOWN ≠ SAFE).
         when (val result = degenerateCaseGuard.check(ticker, signal.timeframe)) {
-            is DegenerateCaseGuard.GuardResult.Allowed -> Unit
+            is DegenerateCaseGuard.GuardResult.Allowed -> {
+                Unit
+            }
+
             is DegenerateCaseGuard.GuardResult.Blocked -> {
                 logger.warn { "Degenerate case rejected $ticker: ${result.reason}" }
                 meterRegistry
@@ -257,6 +260,7 @@ class DecisionEngine(
                     .increment()
                 return
             }
+
             is NetEvGate.GateResult.Pass -> {}
         }
 
@@ -294,7 +298,9 @@ class DecisionEngine(
                             .setScale(0, RoundingMode.DOWN)
                             .toInt()
                     if (scaledQty < 1) {
-                        logger.warn { "Portfolio risk block $ticker: scale ${portfolioReport.scaleDownFactor} reduces qty ${params.quantity} below 1 lot" }
+                        logger.warn {
+                            "Portfolio risk block $ticker: scale ${portfolioReport.scaleDownFactor} reduces qty ${params.quantity} below 1 lot"
+                        }
                         meterRegistry.counter("${profile.metricPrefix}.risk.scaleBlock", Tags.of("ticker", ticker)).increment()
                         return
                     }
@@ -302,15 +308,16 @@ class DecisionEngine(
                         finalSize = size.copy(quantity = scaledQty)
                         params = profile.buildOrderParams(ticker, direction, entryPrice, finalSize, request)
                         val scaledNotional = spec.notional(scaledQty, entryPrice)
-                        val recheck = portfolioRiskEngine.evaluate(
-                            PortfolioRiskRequest(
-                                candidateTicker = ticker,
-                                candidateDirection = direction,
-                                candidateNotionalRub = scaledNotional,
-                                openPositions = openPositions,
-                                aum = request.portfolioMoney,
-                            ),
-                        )
+                        val recheck =
+                            portfolioRiskEngine.evaluate(
+                                PortfolioRiskRequest(
+                                    candidateTicker = ticker,
+                                    candidateDirection = direction,
+                                    candidateNotionalRub = scaledNotional,
+                                    openPositions = openPositions,
+                                    aum = request.portfolioMoney,
+                                ),
+                            )
                         if (!recheck.allowed) {
                             logger.warn { "Portfolio risk re-check rejected $ticker after SCALE: ${recheck.reasons.joinToString("|")}" }
                             meterRegistry.counter("${profile.metricPrefix}.risk.scaleReject", Tags.of("ticker", ticker)).increment()
@@ -372,7 +379,10 @@ class DecisionEngine(
      * Округление цены до сетки цен инструмента (priceStep).
      * Гарантирует, что лимитный ордер будет выставлен на валидном уровне MOEX.
      */
-    private fun alignPriceToGrid(price: BigDecimal, priceStep: BigDecimal): BigDecimal {
+    private fun alignPriceToGrid(
+        price: BigDecimal,
+        priceStep: BigDecimal,
+    ): BigDecimal {
         if (priceStep <= BigDecimal.ZERO) return price
         val scale = priceStep.scale()
         return price.divide(priceStep, 0, RoundingMode.HALF_UP).multiply(priceStep).setScale(scale, RoundingMode.HALF_UP)

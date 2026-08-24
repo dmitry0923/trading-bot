@@ -503,8 +503,16 @@ class DrawdownProtectionServiceTest {
             // (updateDailyPnl и computeStatus) сохраняют -1000, а не 0 (без dirty-гварда
             // второй был бы 0 — потеря инкремента в daily_risk_snapshot при рестарте).
             // computeStatus updates peakEquity to max(0, equity=50000) = 50000
-            Mockito.verify(snapshotRepo, Mockito.times(1)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal.ZERO)
-            Mockito.verify(snapshotRepo, Mockito.times(1)).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
+            Mockito
+                .verify(
+                    snapshotRepo,
+                    Mockito.times(1),
+                ).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal.ZERO)
+            Mockito
+                .verify(
+                    snapshotRepo,
+                    Mockito.times(1),
+                ).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
         }
 
     // ===================== Equity-based drawdown HWM regression =====================

@@ -208,8 +208,9 @@ class MlDatasetService(
     ): MlDatasetRow {
         val pnlRub = position.pnl ?: BigDecimal.ZERO
         val spec = instrumentsConfig.find(position.ticker)
-        val invested = spec?.notional(position.quantity, position.entryPrice)?.toDouble()
-            ?: (position.entryPrice.toDouble() * position.quantity)
+        val invested =
+            spec?.notional(position.quantity, position.entryPrice)?.toDouble()
+                ?: (position.entryPrice.toDouble() * position.quantity)
         val pnlPercent = if (invested > 0.0) pnlRub.toDouble() / invested * 100.0 else 0.0
         return MlDatasetRow(
             positionId = position.id!!,

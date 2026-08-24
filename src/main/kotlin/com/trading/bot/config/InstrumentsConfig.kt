@@ -154,10 +154,11 @@ class InstrumentsConfig {
     @PostConstruct
     fun validateSpecs() {
         require(instruments.isNotEmpty()) { "No trading instruments configured" }
-        val duplicates = instruments
-            .groupBy { it.ticker.uppercase() }
-            .filterValues { it.size > 1 }
-            .keys
+        val duplicates =
+            instruments
+                .groupBy { it.ticker.uppercase() }
+                .filterValues { it.size > 1 }
+                .keys
         require(duplicates.isEmpty()) { "Duplicate instrument tickers: $duplicates" }
         instruments.forEach { spec ->
             require(spec.ticker.isNotBlank()) { "Instrument ticker must not be blank" }
@@ -166,7 +167,9 @@ class InstrumentsConfig {
             }
             require(spec.lotSize > 0) { "Instrument ${spec.ticker}: lotSize must be > 0, got ${spec.lotSize}" }
             require(spec.priceStep > BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStep must be > 0, got ${spec.priceStep}" }
-            require(spec.priceStepCost > BigDecimal.ZERO) { "Instrument ${spec.ticker}: priceStepCost must be > 0, got ${spec.priceStepCost}" }
+            require(
+                spec.priceStepCost > BigDecimal.ZERO,
+            ) { "Instrument ${spec.ticker}: priceStepCost must be > 0, got ${spec.priceStepCost}" }
             require(spec.go >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: go must be >= 0, got ${spec.go}" }
             require(spec.leverage > BigDecimal.ZERO) { "Instrument ${spec.ticker}: leverage must be > 0, got ${spec.leverage}" }
             spec.slPercent?.let {
@@ -226,10 +229,13 @@ class InstrumentsConfig {
     ) {
         /** Effective SL%: per-instrument override or global default. */
         fun effectiveSlPercent(globalDefault: BigDecimal): BigDecimal = slPercent ?: globalDefault
+
         /** Effective TP%: per-instrument override or global default. */
         fun effectiveTpPercent(globalDefault: BigDecimal): BigDecimal = tpPercent ?: globalDefault
+
         /** Effective max spread %: per-instrument override or global default. */
         fun effectiveMaxSpreadPercent(globalDefault: BigDecimal): BigDecimal = maxSpreadPercent ?: globalDefault
+
         /** Effective max gap %: per-instrument override or global default. */
         fun effectiveMaxGapPercent(globalDefault: BigDecimal): BigDecimal = maxGapPercent ?: globalDefault
 
@@ -244,8 +250,10 @@ class InstrumentsConfig {
          *
          * Формула одинакова для STOCK и FX — qty всегда число лотов.
          */
-        fun notional(qty: Int, price: BigDecimal): BigDecimal =
-            price.multiply(BigDecimal(qty)).multiply(BigDecimal(lotSize))
+        fun notional(
+            qty: Int,
+            price: BigDecimal,
+        ): BigDecimal = price.multiply(BigDecimal(qty)).multiply(BigDecimal(lotSize))
 
         /** Alor-тикер для API-вызовов (alorTicker или ticker). */
         fun effectiveTicker(): String = alorTicker ?: ticker
@@ -260,8 +268,9 @@ class InstrumentsConfig {
      * Для Si: 10 / 0.01 = 1000 ₽ — это размер контракта (1000 USD).
      */
     fun pointValue(ticker: String): BigDecimal {
-        val spec = find(ticker)
-            ?: throw IllegalArgumentException("Unknown instrument for pointValue: $ticker")
+        val spec =
+            find(ticker)
+                ?: throw IllegalArgumentException("Unknown instrument for pointValue: $ticker")
         return spec.priceStepCost.divide(spec.priceStep, 6, RoundingMode.HALF_UP)
     }
 }

@@ -44,13 +44,17 @@ class TradeAnalysisService(
      *   non-null = только указанный аккаунт.
      * @return карта тикер -> TradeStats (пустая, если закрытых позиций нет)
      */
-    suspend fun analyzeLastNDays(days: Int = 14, accountId: Long? = null): Map<String, TradeStats> {
+    suspend fun analyzeLastNDays(
+        days: Int = 14,
+        accountId: Long? = null,
+    ): Map<String, TradeStats> {
         val since = LocalDateTime.now(clock).minusDays(days.toLong())
-        val closed = if (accountId != null) {
-            positionRepo.findClosedByAccountSince(accountId, since)
-        } else {
-            positionRepo.findClosedSince(since)
-        }
+        val closed =
+            if (accountId != null) {
+                positionRepo.findClosedByAccountSince(accountId, since)
+            } else {
+                positionRepo.findClosedSince(since)
+            }
 
         if (closed.isEmpty()) {
             logger.info { "No closed positions in last $days days" }
@@ -235,11 +239,12 @@ class TradeAnalysisService(
         accountId: Long? = null,
     ): TimePattern {
         val since = LocalDateTime.now(clock).minusDays(days.toLong())
-        val trades = if (accountId != null) {
-            positionRepo.findClosedByTickerAndAccountSince(ticker, accountId, since)
-        } else {
-            positionRepo.findClosedByTickerSince(ticker, since)
-        }
+        val trades =
+            if (accountId != null) {
+                positionRepo.findClosedByTickerAndAccountSince(ticker, accountId, since)
+            } else {
+                positionRepo.findClosedByTickerSince(ticker, since)
+            }
         val hourly = hourlyWinRate(trades)
         return TimePattern(ticker, hourly)
     }

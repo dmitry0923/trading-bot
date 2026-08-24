@@ -181,9 +181,10 @@ class TradingBotServiceExecutionReportTest {
                 .thenAnswer { inv -> inv.getArgument<Position>(0) }
         }
         runBlocking {
-            Mockito.`when`(
-                positionRepo.transitionToClosed(any(), any(), any(), any(), any(), any()),
-            ).thenReturn(true)
+            Mockito
+                .`when`(
+                    positionRepo.transitionToClosed(any(), any(), any(), any(), any(), any()),
+                ).thenReturn(true)
         }
         val report =
             ExecutionReport(

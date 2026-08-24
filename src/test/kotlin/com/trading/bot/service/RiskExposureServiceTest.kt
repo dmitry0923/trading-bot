@@ -28,10 +28,36 @@ class RiskExposureServiceTest {
         InstrumentsConfig().apply {
             instruments =
                 mutableListOf(
-                    InstrumentsConfig.InstrumentSpec(ticker = "SBER", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.01"), priceStepCost = BigDecimal("0.1")),
-                    InstrumentsConfig.InstrumentSpec(ticker = "VTBR", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.0001"), priceStepCost = BigDecimal("0.1")),
-                    InstrumentsConfig.InstrumentSpec(ticker = "GAZP", type = "STOCK", lotSize = 1, priceStep = BigDecimal("0.05"), priceStepCost = BigDecimal("0.5")),
-                    InstrumentsConfig.InstrumentSpec(ticker = "Si", type = "FUTURES", lotSize = 1, priceStep = BigDecimal("0.01"), priceStepCost = BigDecimal("10.0"), go = BigDecimal("15000"), leverage = BigDecimal("2.0")),
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "SBER",
+                        type = "STOCK",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.01"),
+                        priceStepCost = BigDecimal("0.1"),
+                    ),
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "VTBR",
+                        type = "STOCK",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.0001"),
+                        priceStepCost = BigDecimal("0.1"),
+                    ),
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "GAZP",
+                        type = "STOCK",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.05"),
+                        priceStepCost = BigDecimal("0.5"),
+                    ),
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "Si",
+                        type = "FUTURES",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.01"),
+                        priceStepCost = BigDecimal("10.0"),
+                        go = BigDecimal("15000"),
+                        leverage = BigDecimal("2.0"),
+                    ),
                 )
         }
     private val positionRepo = Mockito.mock(PositionRepository::class.java)

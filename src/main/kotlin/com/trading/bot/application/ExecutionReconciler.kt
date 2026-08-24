@@ -58,7 +58,10 @@ class ExecutionReconciler(
      */
     suspend fun reconcilePosition(pos: Position) {
         when {
-            pos.pendingEntry -> resolveEntryViaOutbox(pos)
+            pos.pendingEntry -> {
+                resolveEntryViaOutbox(pos)
+            }
+
             pos.pendingClose -> {
                 if (pos.closeOrderId != null) {
                     confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
@@ -66,7 +69,10 @@ class ExecutionReconciler(
                     resolveCloseViaOutbox(pos)
                 }
             }
-            else -> reconcileProtectionOrders(pos)
+
+            else -> {
+                reconcileProtectionOrders(pos)
+            }
         }
     }
 

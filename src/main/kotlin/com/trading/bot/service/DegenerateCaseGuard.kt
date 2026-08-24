@@ -43,7 +43,9 @@ class DegenerateCaseGuard(
     sealed interface GuardResult {
         data object Allowed : GuardResult
 
-        data class Blocked(val reason: String) : GuardResult
+        data class Blocked(
+            val reason: String,
+        ) : GuardResult
     }
 
     /**
@@ -75,20 +77,20 @@ class DegenerateCaseGuard(
                 spreadThreshold,
             )
         ) {
-            logger.warn { "Wide spread for $ticker (> ${spreadThreshold}%) — entry blocked" }
+            logger.warn { "Wide spread for $ticker (> $spreadThreshold%) — entry blocked" }
             return GuardResult.Blocked("WIDE_SPREAD")
         }
 
         val candles = candleCache.getRecentCandles(ticker, timeframe, lookbackBars)
         if (candles.size < lookbackBars) {
             logger.warn {
-                "Insufficient candle data for $ticker: ${candles.size}/${lookbackBars} bars " +
+                "Insufficient candle data for $ticker: ${candles.size}/$lookbackBars bars " +
                     "— entry blocked (fail-closed)"
             }
             return GuardResult.Blocked("INSUFFICIENT_CANDLE_DATA")
         }
         if (DegenerateCaseDetector.isGap(candles, gapThreshold)) {
-            logger.warn { "Price gap for $ticker (> ${gapThreshold}%) — entry blocked" }
+            logger.warn { "Price gap for $ticker (> $gapThreshold%) — entry blocked" }
             return GuardResult.Blocked("PRICE_GAP")
         }
         if (DegenerateCaseDetector.isDepositaryPause(candles, config.consecutiveZeroVolumeBars)) {

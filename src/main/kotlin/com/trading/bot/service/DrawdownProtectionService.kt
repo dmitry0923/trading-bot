@@ -672,7 +672,13 @@ class DrawdownProtectionService(
 
     private fun persistDailyState() {
         try {
-            dailyRiskSnapshotRepo.upsert(lastTradingDate, todayPnl, todayDailyLossReached, todayPnl.coerceAtMost(BigDecimal.ZERO), peakEquity = todayPeakEquity)
+            dailyRiskSnapshotRepo.upsert(
+                lastTradingDate,
+                todayPnl,
+                todayDailyLossReached,
+                todayPnl.coerceAtMost(BigDecimal.ZERO),
+                peakEquity = todayPeakEquity,
+            )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to persist daily risk snapshot" }
         }

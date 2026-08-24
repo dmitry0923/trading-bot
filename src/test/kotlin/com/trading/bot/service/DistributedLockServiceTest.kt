@@ -22,6 +22,7 @@ import java.time.Duration
 class DistributedLockServiceTest {
     private val config = DistributedLockConfig()
     private val redis = Mockito.mock(ReactiveStringRedisTemplate::class.java)
+
     @Suppress("UNCHECKED_CAST")
     private val valueOps = Mockito.mock(ReactiveValueOperations::class.java) as ReactiveValueOperations<String, String>
     private val meterRegistry = SimpleMeterRegistry()

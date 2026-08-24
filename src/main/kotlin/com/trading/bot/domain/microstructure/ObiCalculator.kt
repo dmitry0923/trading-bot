@@ -68,6 +68,8 @@ object ObiCalculator {
      * OBI → сигнал давления (нормализованный к [-1, +1]).
      * Обёртка для использования в scoring/weighting.
      */
-    fun pressure(bidSize: Long?, askSize: Long?): Double? =
-        calculate(bidSize, askSize)?.toDouble()
+    fun pressure(
+        bidSize: Long?,
+        askSize: Long?,
+    ): Double? = calculate(bidSize, askSize)?.toDouble()
 }

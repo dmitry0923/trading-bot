@@ -488,11 +488,15 @@ class AlorWebSocketClient(
             var exchangeTime: Instant? = null
             for (q in quotes) {
                 when (q.path("o").asString()) {
-                    "Last" -> last = q.path("price").asString().toBigDecimalOrNull()
+                    "Last" -> {
+                        last = q.path("price").asString().toBigDecimalOrNull()
+                    }
+
                     "Bid" -> {
                         bid = q.path("price").asString().toBigDecimalOrNull()
                         bidVol = q.path("volume").asLong(0).takeIf { it > 0 }
                     }
+
                     "Offer" -> {
                         offer = q.path("price").asString().toBigDecimalOrNull()
                         offerVol = q.path("volume").asLong(0).takeIf { it > 0 }

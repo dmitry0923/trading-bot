@@ -108,16 +108,19 @@ class StockEntryProfile(
         // Риск-кап на сделку: убыток при срабатывании стопа не может превысить
         // riskPerTradePercent% от AUM. lossPerLot = slDistance × lotSize + 2×commission.
         // ATR-based SL: slDistance = ATR × slMultiplier; fallback — effectiveSlPercent.
-        val effectiveSlPercent = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-            ?: riskConfig.defaultStopLossPercent
+        val effectiveSlPercent =
+            spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+                ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
-        val useAtr = request.atr != null && request.atr > BigDecimal.ZERO
-            && riskConfig.atrSlMultiplier > BigDecimal.ZERO
-        val slDistance = if (useAtr) {
-            request.atr!!.multiply(riskConfig.atrSlMultiplier)
-        } else {
-            entryPrice.multiply(effectiveSlPercent).divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
-        }
+        val useAtr =
+            request.atr != null && request.atr > BigDecimal.ZERO &&
+                riskConfig.atrSlMultiplier > BigDecimal.ZERO
+        val slDistance =
+            if (useAtr) {
+                request.atr!!.multiply(riskConfig.atrSlMultiplier)
+            } else {
+                entryPrice.multiply(effectiveSlPercent).divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
+            }
         val riskAmount =
             request.portfolioMoney
                 .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
@@ -138,16 +141,17 @@ class StockEntryProfile(
             // Minimum Lot Override: отдельная политика, не обход Kelly.
             // Разрешает ровно 1 лот когда Kelly budget < notionalPerLot,
             // но Kelly имеет достаточный edge и риск-кап позволяет.
-            if (riskConfig.minimumLotPolicyEnabled
-                && kellySizeRub > BigDecimal.ZERO
-                && kellySizeRub < notionalPerLot
-                && kellySizeRub >= notionalPerLot.multiply(riskConfig.minimumLotPolicyMinKellyFraction)
-                && maxLotsByRisk >= 1
+            if (riskConfig.minimumLotPolicyEnabled &&
+                kellySizeRub > BigDecimal.ZERO &&
+                kellySizeRub < notionalPerLot &&
+                kellySizeRub >= notionalPerLot.multiply(riskConfig.minimumLotPolicyMinKellyFraction) &&
+                maxLotsByRisk >= 1
             ) {
-                val expectedNet = adaptiveRisk.expectedNetProfitPerLot(
-                    signal.ticker,
-                    accountId = request.accountId,
-                )
+                val expectedNet =
+                    adaptiveRisk.expectedNetProfitPerLot(
+                        signal.ticker,
+                        accountId = request.accountId,
+                    )
                 if (expectedNet == null || expectedNet < riskConfig.minimumLotPolicyMinNetProfitRub) {
                     return PositionSizeResult(
                         quantity = 0,
@@ -159,17 +163,19 @@ class StockEntryProfile(
                 }
                 return PositionSizeResult(
                     quantity = 1,
-                    marginRequired = spec?.notional(1, entryPrice)
-                        ?: entryPrice.multiply(BigDecimal.ONE),
+                    marginRequired =
+                        spec?.notional(1, entryPrice)
+                            ?: entryPrice.multiply(BigDecimal.ONE),
                     riskAmount = riskAmount,
                     liquidationPrice = null,
                     reason = "MINIMUM_LOT_OVERRIDE",
                 )
             }
-            val reason = when {
-                kellySizeRub > BigDecimal.ZERO && kellySizeRub < notionalPerLot -> "KELLY_BELOW_MIN_LOT"
-                else -> "ZERO_RISK_SIZE"
-            }
+            val reason =
+                when {
+                    kellySizeRub > BigDecimal.ZERO && kellySizeRub < notionalPerLot -> "KELLY_BELOW_MIN_LOT"
+                    else -> "ZERO_RISK_SIZE"
+                }
             return PositionSizeResult(
                 quantity = 0,
                 marginRequired = BigDecimal.ZERO,
@@ -180,8 +186,9 @@ class StockEntryProfile(
         }
         return PositionSizeResult(
             quantity = finalQty,
-            marginRequired = spec?.notional(finalQty, entryPrice)
-                ?: entryPrice.multiply(BigDecimal(finalQty)),
+            marginRequired =
+                spec?.notional(finalQty, entryPrice)
+                    ?: entryPrice.multiply(BigDecimal(finalQty)),
             riskAmount = riskAmount,
             liquidationPrice = null,
             reason = null,
@@ -197,8 +204,9 @@ class StockEntryProfile(
     ): String? {
         if (size.quantity < 1) return "ZERO_RISK_SIZE"
         val spec = instrumentsConfig.find(ticker)
-        val candidateNotional = spec?.notional(size.quantity, entryPrice)
-            ?: entryPrice.multiply(BigDecimal(size.quantity))
+        val candidateNotional =
+            spec?.notional(size.quantity, entryPrice)
+                ?: entryPrice.multiply(BigDecimal(size.quantity))
         return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions)) "PORTFOLIO_LIMIT" else null
     }
 
@@ -220,13 +228,14 @@ class StockEntryProfile(
         qty: Int,
     ): Position {
         val spec = instrumentsConfig.find(decision.ticker)
-        val instrumentType = spec?.let {
-            when (it.type.uppercase()) {
-                "FUTURES" -> InstrumentType.FUTURES
-                "FX" -> InstrumentType.STOCK
-                else -> InstrumentType.STOCK
-            }
-        } ?: InstrumentType.STOCK
+        val instrumentType =
+            spec?.let {
+                when (it.type.uppercase()) {
+                    "FUTURES" -> InstrumentType.FUTURES
+                    "FX" -> InstrumentType.STOCK
+                    else -> InstrumentType.STOCK
+                }
+            } ?: InstrumentType.STOCK
         return Position(
             ticker = decision.ticker,
             direction = decision.direction,

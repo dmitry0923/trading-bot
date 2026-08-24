@@ -19,6 +19,7 @@ import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DegenerateCaseGuard
@@ -37,12 +38,11 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
-import com.trading.bot.model.dto.MarketSnapshot
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate
 import org.springframework.data.redis.core.ReactiveValueOperations
+import reactor.core.publisher.Mono
 import java.math.BigDecimal
 import java.time.Duration
-import reactor.core.publisher.Mono
 
 /**
  * Unit-тесты единого оркестратора входа [DecisionEngine].
@@ -99,7 +99,7 @@ class DecisionEngineTest {
             Mockito.`when`(degenerateCaseGuard.check(any(), any())).thenReturn(DegenerateCaseGuard.GuardResult.Allowed)
             Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
             Mockito.`when`(alorClient.getMarketSnapshot("Si")).thenReturn(
-                MarketSnapshot(ticker = "Si", currentPrice = BigDecimal("100"))
+                MarketSnapshot(ticker = "Si", currentPrice = BigDecimal("100")),
             )
             Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
             Mockito
@@ -653,10 +653,13 @@ class DecisionEngineTest {
     /**
      * NetEvGate that always passes — avoids Mockito suspend-function issues.
      */
-    private class PassThroughNetEvGate : NetEvGate(
-        instrumentsConfig = InstrumentsConfig(),
-        riskConfig = com.trading.bot.config.RiskConfig(),
-    ) {
+    private class PassThroughNetEvGate :
+        NetEvGate(
+            instrumentsConfig = InstrumentsConfig(),
+            riskConfig =
+                com.trading.bot.config
+                    .RiskConfig(),
+        ) {
         override fun check(
             ticker: String,
             expectedNet: java.math.BigDecimal?,

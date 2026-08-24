@@ -323,6 +323,11 @@ bt:
   # Включаются профилем `backtest` (application-backtest.yml) или переменной BT_AGENT_ENABLED=true.
   agent:
     enabled: ${BT_AGENT_ENABLED:false}
+    # Live-strategy parity в бэктесте: вместо RSI+MACD-эвристики сигналы генерирует
+    # тот же ансамбль детерминированных стратегий, что и в live (StrategyRunner):
+    # TrendFollowing/Breakout/Scalping/MeanReversion/Grid/CnyRub, победитель — по
+    # максимальной силе сигнала. Приоритетнее bt.agent.enabled (@Primary).
+    live-strategies: ${BT_AGENT_LIVE_STRATEGIES:false}
     sample-every: ${BT_AGENT_SAMPLE_EVERY:20}
     temperature: ${BT_AGENT_TEMPERATURE:0.0}
     cache-namespace: ${BT_AGENT_CACHE_NAMESPACE:backtest}

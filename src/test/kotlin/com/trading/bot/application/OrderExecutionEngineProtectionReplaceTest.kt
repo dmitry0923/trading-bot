@@ -25,8 +25,8 @@ import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.UUID
-import kotlin.reflect.full.declaredFunctions
 import kotlin.reflect.full.callSuspend
+import kotlin.reflect.full.declaredFunctions
 
 class OrderExecutionEngineProtectionReplaceTest {
     private val alorClient = Mockito.mock(AlorClient::class.java)
@@ -101,16 +101,24 @@ class OrderExecutionEngineProtectionReplaceTest {
 
     private suspend fun stubCancelProtectionSafe() {
         whenever(
-            orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())
+            orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull()),
         ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = true))
     }
 
     private suspend fun stubNewProtectionPlacementSafe() {
         whenever(
             orderOutboxService.placeOrder(
-                anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
-                anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
-            )
+                anyOrNull(),
+                anyOrNull(),
+                Mockito.anyInt(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+            ),
         ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = false))
     }
 
@@ -128,29 +136,32 @@ class OrderExecutionEngineProtectionReplaceTest {
     // ── UNCERTAIN ─────────────────────────────────────────────────────────
 
     @Test
-    fun `uncertain cancel keeps replace pending and retry reuses same idempotency key`() = runBlocking {
-        stubVerifyOrderById()
-        stubNewProtectionPlacementSafe()
-        stubSave()
+    fun `uncertain cancel keeps replace pending and retry reuses same idempotency key`() =
+        runBlocking {
+            stubVerifyOrderById()
+            stubNewProtectionPlacementSafe()
+            stubSave()
 
-        whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.CancelResult.UNCERTAIN)
-            .thenReturn(AlorClient.CancelResult.CONFIRMED)
+            whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.CancelResult.UNCERTAIN)
+                .thenReturn(AlorClient.CancelResult.CONFIRMED)
 
-        val pos = pendingReplacePos()
-        engine.reconcilePosition(pos)
-        assertTrue(pos.slPendingReplace)
-        assertEquals("old-sl", pos.slOrderId)
+            val pos = pendingReplacePos()
+            engine.reconcilePosition(pos)
+            assertTrue(pos.slPendingReplace)
+            assertEquals("old-sl", pos.slOrderId)
 
-        engine.reconcilePosition(pos)
-        assertFalse(pos.slPendingReplace)
+            engine.reconcilePosition(pos)
+            assertFalse(pos.slPendingReplace)
 
-        val cancelKeys =
-            Mockito.mockingDetails(alorClient).invocations
-                .filter { it.method.name == "cancelOrder" }
-                .map { it.arguments[1] as String }
-        assertEquals(listOf("prot-cancel-old-sl", "prot-cancel-old-sl"), cancelKeys)
-    }
+            val cancelKeys =
+                Mockito
+                    .mockingDetails(alorClient)
+                    .invocations
+                    .filter { it.method.name == "cancelOrder" }
+                    .map { it.arguments[1] as String }
+            assertEquals(listOf("prot-cancel-old-sl", "prot-cancel-old-sl"), cancelKeys)
+        }
 
     // ── REJECTED state machine: SL ────────────────────────────────────────
     //
@@ -163,155 +174,172 @@ class OrderExecutionEngineProtectionReplaceTest {
     // - UNKNOWN tests: checkProtectionFills gets null → skip; finishProtectionReplacement gets REJECTED → verify → null → return
 
     @Test
-    fun `SL rejected + verify FILLED closes position atomically`() = runBlocking {
-        stubVerifyOrderById(
-            slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
-        )
-        stubCancelProtectionSafe()
-        stubNewProtectionPlacementSafe()
-        stubSave()
-        stubFullClose()
+    fun `SL rejected + verify FILLED closes position atomically`() =
+        runBlocking {
+            stubVerifyOrderById(
+                slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
+            )
+            stubCancelProtectionSafe()
+            stubNewProtectionPlacementSafe()
+            stubSave()
+            stubFullClose()
 
-        val pos = pendingReplacePos()
-        engine.reconcilePosition(pos)
+            val pos = pendingReplacePos()
+            engine.reconcilePosition(pos)
 
-        assertEquals(PositionStatus.CLOSED, pos.status)
-    }
-
-    @Test
-    fun `SL FILLED close is atomic - transitionToClosed before any premature save`() = runBlocking {
-        stubVerifyOrderById(
-            slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
-        )
-        stubCancelProtectionSafe()
-        stubNewProtectionPlacementSafe()
-        stubSave()
-        stubFullClose()
-
-        val pos = pendingReplacePos()
-        engine.reconcilePosition(pos)
-
-        val invocations = Mockito.mockingDetails(positionRepo).invocations
-        val transitionCalls = invocations.filter { it.method.name == "transitionToClosed" }
-        assertEquals(1, transitionCalls.size, "transitionToClosed must be called exactly once")
-
-        val saveCalls = invocations.filter { it.method.name == "save" }
-        assertEquals(0, saveCalls.size, "save() must NOT be called - checkProtectionFills returns early at line 548, skipping save() at line 571")
-
-        val releaseCalls = invocations.filter { it.method.name == "releaseEntry" }
-        assertEquals(1, releaseCalls.size, "releaseEntry must be called exactly once after transitionToClosed")
-
-        val tradeEventCalls = Mockito.mockingDetails(tradeEventService).invocations
-            .filter { it.method.name == "recordPositionClosed" }
-        assertEquals(1, tradeEventCalls.size, "recordPositionClosed must be called exactly once")
-
-        assertEquals(PositionStatus.CLOSED, pos.status)
-    }
+            assertEquals(PositionStatus.CLOSED, pos.status)
+        }
 
     @Test
-    fun `SL rejected + verify CANCELED clears SL ID via checkProtectionFills`() = runBlocking {
-        stubVerifyOrderById(
-            slResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
-        )
-        stubSave()
-        stubNewProtectionPlacementSafe()
+    fun `SL FILLED close is atomic - transitionToClosed before any premature save`() =
+        runBlocking {
+            stubVerifyOrderById(
+                slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
+            )
+            stubCancelProtectionSafe()
+            stubNewProtectionPlacementSafe()
+            stubSave()
+            stubFullClose()
 
-        val pos = pendingReplacePos()
-        engine.reconcilePosition(pos)
+            val pos = pendingReplacePos()
+            engine.reconcilePosition(pos)
 
-        assertEquals(null, pos.slOrderId)
-        assertEquals(null, pos.slOrderPrice)
-        assertFalse(pos.slPendingReplace)
-        assertEquals("old-tp", pos.tpOrderId)
-    }
+            val invocations = Mockito.mockingDetails(positionRepo).invocations
+            val transitionCalls = invocations.filter { it.method.name == "transitionToClosed" }
+            assertEquals(1, transitionCalls.size, "transitionToClosed must be called exactly once")
+
+            val saveCalls = invocations.filter { it.method.name == "save" }
+            assertEquals(
+                0,
+                saveCalls.size,
+                "save() must NOT be called - checkProtectionFills returns early at line 548, skipping save() at line 571",
+            )
+
+            val releaseCalls = invocations.filter { it.method.name == "releaseEntry" }
+            assertEquals(1, releaseCalls.size, "releaseEntry must be called exactly once after transitionToClosed")
+
+            val tradeEventCalls =
+                Mockito
+                    .mockingDetails(tradeEventService)
+                    .invocations
+                    .filter { it.method.name == "recordPositionClosed" }
+            assertEquals(1, tradeEventCalls.size, "recordPositionClosed must be called exactly once")
+
+            assertEquals(PositionStatus.CLOSED, pos.status)
+        }
 
     @Test
-    fun `SL rejected + verify null preserves SL ID (UNKNOWN)`() = runBlocking {
-        stubVerifyOrderById()
-        stubCancelOrderSafe()
-        stubNewProtectionPlacementSafe()
+    fun `SL rejected + verify CANCELED clears SL ID via checkProtectionFills`() =
+        runBlocking {
+            stubVerifyOrderById(
+                slResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
+            )
+            stubSave()
+            stubNewProtectionPlacementSafe()
 
-        val pos = pendingReplacePos()
-        engine.reconcilePosition(pos)
+            val pos = pendingReplacePos()
+            engine.reconcilePosition(pos)
 
-        assertEquals("old-sl", pos.slOrderId)
-        assertTrue(pos.slPendingReplace)
-        assertEquals("old-tp", pos.tpOrderId)
-    }
+            assertEquals(null, pos.slOrderId)
+            assertEquals(null, pos.slOrderPrice)
+            assertFalse(pos.slPendingReplace)
+            assertEquals("old-tp", pos.tpOrderId)
+        }
 
     @Test
-    fun `SL rejected + verify unknown status preserves SL ID`() = runBlocking {
-        stubVerifyOrderById(
-            slResult = AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 0, avgPrice = null),
-        )
-        stubCancelOrderSafe()
-        stubNewProtectionPlacementSafe()
+    fun `SL rejected + verify null preserves SL ID (UNKNOWN)`() =
+        runBlocking {
+            stubVerifyOrderById()
+            stubCancelOrderSafe()
+            stubNewProtectionPlacementSafe()
 
-        val pos = pendingReplacePos()
-        engine.reconcilePosition(pos)
+            val pos = pendingReplacePos()
+            engine.reconcilePosition(pos)
 
-        assertEquals("old-sl", pos.slOrderId)
-        assertTrue(pos.slPendingReplace)
-        assertEquals("old-tp", pos.tpOrderId)
-    }
+            assertEquals("old-sl", pos.slOrderId)
+            assertTrue(pos.slPendingReplace)
+            assertEquals("old-tp", pos.tpOrderId)
+        }
+
+    @Test
+    fun `SL rejected + verify unknown status preserves SL ID`() =
+        runBlocking {
+            stubVerifyOrderById(
+                slResult = AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 0, avgPrice = null),
+            )
+            stubCancelOrderSafe()
+            stubNewProtectionPlacementSafe()
+
+            val pos = pendingReplacePos()
+            engine.reconcilePosition(pos)
+
+            assertEquals("old-sl", pos.slOrderId)
+            assertTrue(pos.slPendingReplace)
+            assertEquals("old-tp", pos.tpOrderId)
+        }
 
     // ── REJECTED state machine: TP ────────────────────────────────────────
 
     @Test
-    fun `TP rejected + verify CANCELED clears TP ID`() = runBlocking {
-        val pos = pendingReplacePos().copy(
-            slOrderId = null,
-            slOrderPrice = null,
-            slPendingReplace = false,
-            tpPendingReplace = true,
-        )
-        stubVerifyOrderById(
-            tpResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
-        )
-        stubSave()
-        stubNewProtectionPlacementSafe()
+    fun `TP rejected + verify CANCELED clears TP ID`() =
+        runBlocking {
+            val pos =
+                pendingReplacePos().copy(
+                    slOrderId = null,
+                    slOrderPrice = null,
+                    slPendingReplace = false,
+                    tpPendingReplace = true,
+                )
+            stubVerifyOrderById(
+                tpResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
+            )
+            stubSave()
+            stubNewProtectionPlacementSafe()
 
-        engine.reconcilePosition(pos)
+            engine.reconcilePosition(pos)
 
-        assertFalse(pos.tpPendingReplace)
-        assertEquals(null, pos.tpOrderId)
-        assertEquals(null, pos.tpOrderPrice)
-    }
+            assertFalse(pos.tpPendingReplace)
+            assertEquals(null, pos.tpOrderId)
+            assertEquals(null, pos.tpOrderPrice)
+        }
 
     @Test
-    fun `TP rejected + verify null preserves TP ID (UNKNOWN)`() = runBlocking {
-        val pos = pendingReplacePos().copy(
-            slOrderId = null,
-            slOrderPrice = null,
-            slPendingReplace = false,
-            tpPendingReplace = true,
-        )
-        stubVerifyOrderById()
-        stubCancelOrderSafe()
-        stubNewProtectionPlacementSafe()
+    fun `TP rejected + verify null preserves TP ID (UNKNOWN)`() =
+        runBlocking {
+            val pos =
+                pendingReplacePos().copy(
+                    slOrderId = null,
+                    slOrderPrice = null,
+                    slPendingReplace = false,
+                    tpPendingReplace = true,
+                )
+            stubVerifyOrderById()
+            stubCancelOrderSafe()
+            stubNewProtectionPlacementSafe()
 
-        engine.reconcilePosition(pos)
+            engine.reconcilePosition(pos)
 
-        assertEquals("old-tp", pos.tpOrderId)
-        assertTrue(pos.tpPendingReplace)
-    }
+            assertEquals("old-tp", pos.tpOrderId)
+            assertTrue(pos.tpPendingReplace)
+        }
 
     // ── isGoneStatus strict whitelist ─────────────────────────────────────
 
     @Test
     fun `isGoneStatus rejects CANCEL_REJECTED and matches terminal statuses`() {
-        val processor = CloseFillProcessor(
-            positionRepo = positionRepo,
-            alorClient = alorClient,
-            pnlCalculator = PnlCalculator.plain(),
-            tradeEventService = tradeEventService,
-            meterRegistry = meterRegistry,
-            metricPrefix = "test",
-            portfolioResolver = { "D12345" },
-            onPositionClosed = {},
-            cancelProtectionOrders = {},
-            attachProtectionOrders = {},
-        )
+        val processor =
+            CloseFillProcessor(
+                positionRepo = positionRepo,
+                alorClient = alorClient,
+                pnlCalculator = PnlCalculator.plain(),
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                metricPrefix = "test",
+                portfolioResolver = { "D12345" },
+                onPositionClosed = {},
+                cancelProtectionOrders = {},
+                attachProtectionOrders = {},
+            )
 
         assertFalse(processor.isGoneStatus(AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 0, avgPrice = null)))
         assertFalse(processor.isGoneStatus(AlorClient.OrderExecution(status = "NEW", filledQuantity = 0, avgPrice = null)))
@@ -327,30 +355,58 @@ class OrderExecutionEngineProtectionReplaceTest {
 
     @Test
     fun `isFilledStatus rejects false positives and matches only filled statuses`() {
-        val processor = CloseFillProcessor(
-            positionRepo = positionRepo,
-            alorClient = alorClient,
-            pnlCalculator = PnlCalculator.plain(),
-            tradeEventService = tradeEventService,
-            meterRegistry = meterRegistry,
-            metricPrefix = "test",
-            portfolioResolver = { "D12345" },
-            onPositionClosed = {},
-            cancelProtectionOrders = {},
-            attachProtectionOrders = {},
-        )
+        val processor =
+            CloseFillProcessor(
+                positionRepo = positionRepo,
+                alorClient = alorClient,
+                pnlCalculator = PnlCalculator.plain(),
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                metricPrefix = "test",
+                portfolioResolver = { "D12345" },
+                onPositionClosed = {},
+                cancelProtectionOrders = {},
+                attachProtectionOrders = {},
+            )
 
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "UNFILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "UNFILLED must NOT be treated as filled")
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "NOT_FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "NOT_FILLED must NOT be treated as filled")
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 0, avgPrice = BigDecimal("150"))), "FILLED with qty=0 must NOT be treated as filled")
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 100, avgPrice = BigDecimal("150"))))
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 100, avgPrice = BigDecimal("150"))))
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "REJECTED", filledQuantity = 100, avgPrice = BigDecimal("150"))))
-        assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "UNKNOWN", filledQuantity = 100, avgPrice = BigDecimal("150"))))
+        assertFalse(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "UNFILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))),
+            "UNFILLED must NOT be treated as filled",
+        )
+        assertFalse(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "NOT_FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))),
+            "NOT_FILLED must NOT be treated as filled",
+        )
+        assertFalse(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 0, avgPrice = BigDecimal("150"))),
+            "FILLED with qty=0 must NOT be treated as filled",
+        )
+        assertFalse(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 100, avgPrice = BigDecimal("150"))),
+        )
+        assertFalse(
+            processor.isFilledStatus(
+                AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 100, avgPrice = BigDecimal("150")),
+            ),
+        )
+        assertFalse(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "REJECTED", filledQuantity = 100, avgPrice = BigDecimal("150"))),
+        )
+        assertFalse(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "UNKNOWN", filledQuantity = 100, avgPrice = BigDecimal("150"))),
+        )
         assertFalse(processor.isFilledStatus(AlorClient.OrderExecution(status = "NEW", filledQuantity = 100, avgPrice = BigDecimal("150"))))
 
-        assertTrue(processor.isFilledStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "FILLED with qty>0 must be treated as filled")
-        assertTrue(processor.isFilledStatus(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))), "PARTIALLY_FILLED with qty>0 must be treated as filled")
+        assertTrue(
+            processor.isFilledStatus(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 100, avgPrice = BigDecimal("150"))),
+            "FILLED with qty>0 must be treated as filled",
+        )
+        assertTrue(
+            processor.isFilledStatus(
+                AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 100, avgPrice = BigDecimal("150")),
+            ),
+            "PARTIALLY_FILLED with qty>0 must be treated as filled",
+        )
     }
 
     // ── Entry status whitelist (resolveEntryViaOutbox) ──────────────────────
@@ -383,202 +439,217 @@ class OrderExecutionEngineProtectionReplaceTest {
         )
 
     @Test
-    fun `CANCEL_REJECTED entry keeps position pending`() = runBlocking {
-        val pos = pendingEntryPos()
-        whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 0, avgPrice = null))
-        stubSave()
+    fun `CANCEL_REJECTED entry keeps position pending`() =
+        runBlocking {
+            val pos = pendingEntryPos()
+            whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "CANCEL_REJECTED", filledQuantity = 0, avgPrice = null))
+            stubSave()
 
-        engine.resolveEntryViaOutbox(pos)
+            engine.resolveEntryViaOutbox(pos)
 
-        assertTrue(pos.pendingEntry, "CANCEL_REJECTED must NOT abandon entry")
-        assertEquals(PositionStatus.OPEN, pos.status)
-    }
-
-    @Test
-    fun `CANCELED entry is abandoned`() = runBlocking {
-        val pos = pendingEntryPos()
-        whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null))
-        stubSave()
-        whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
-
-        engine.resolveEntryViaOutbox(pos)
-
-        assertFalse(pos.pendingEntry)
-        assertEquals(PositionStatus.CLOSED, pos.status)
-    }
+            assertTrue(pos.pendingEntry, "CANCEL_REJECTED must NOT abandon entry")
+            assertEquals(PositionStatus.OPEN, pos.status)
+        }
 
     @Test
-    fun `REJECTED entry is abandoned`() = runBlocking {
-        val pos = pendingEntryPos()
-        whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "REJECTED", filledQuantity = 0, avgPrice = null))
-        stubSave()
-        whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
+    fun `CANCELED entry is abandoned`() =
+        runBlocking {
+            val pos = pendingEntryPos()
+            whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null))
+            stubSave()
+            whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
 
-        engine.resolveEntryViaOutbox(pos)
+            engine.resolveEntryViaOutbox(pos)
 
-        assertFalse(pos.pendingEntry)
-        assertEquals(PositionStatus.CLOSED, pos.status)
-    }
-
-    @Test
-    fun `EXPIRED entry is abandoned`() = runBlocking {
-        val pos = pendingEntryPos()
-        whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "EXPIRED", filledQuantity = 0, avgPrice = null))
-        stubSave()
-        whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
-
-        engine.resolveEntryViaOutbox(pos)
-
-        assertFalse(pos.pendingEntry)
-        assertEquals(PositionStatus.CLOSED, pos.status)
-    }
+            assertFalse(pos.pendingEntry)
+            assertEquals(PositionStatus.CLOSED, pos.status)
+        }
 
     @Test
-    fun `UNKNOWN entry status keeps position pending`() = runBlocking {
-        val pos = pendingEntryPos()
-        whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution(status = "UNKNOWN", filledQuantity = 0, avgPrice = null))
-        stubSave()
+    fun `REJECTED entry is abandoned`() =
+        runBlocking {
+            val pos = pendingEntryPos()
+            whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "REJECTED", filledQuantity = 0, avgPrice = null))
+            stubSave()
+            whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
 
-        engine.resolveEntryViaOutbox(pos)
+            engine.resolveEntryViaOutbox(pos)
 
-        assertTrue(pos.pendingEntry, "UNKNOWN status must NOT abandon entry")
-        assertEquals(PositionStatus.OPEN, pos.status)
-    }
+            assertFalse(pos.pendingEntry)
+            assertEquals(PositionStatus.CLOSED, pos.status)
+        }
+
+    @Test
+    fun `EXPIRED entry is abandoned`() =
+        runBlocking {
+            val pos = pendingEntryPos()
+            whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "EXPIRED", filledQuantity = 0, avgPrice = null))
+            stubSave()
+            whenever(positionRepo.releaseEntry(anyOrNull(), anyOrNull())).thenAnswer { }
+
+            engine.resolveEntryViaOutbox(pos)
+
+            assertFalse(pos.pendingEntry)
+            assertEquals(PositionStatus.CLOSED, pos.status)
+        }
+
+    @Test
+    fun `UNKNOWN entry status keeps position pending`() =
+        runBlocking {
+            val pos = pendingEntryPos()
+            whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution(status = "UNKNOWN", filledQuantity = 0, avgPrice = null))
+            stubSave()
+
+            engine.resolveEntryViaOutbox(pos)
+
+            assertTrue(pos.pendingEntry, "UNKNOWN status must NOT abandon entry")
+            assertEquals(PositionStatus.OPEN, pos.status)
+        }
 
     // ── Orphan SL/TP cleanup for CLOSED positions ──────────────────────────
 
     @Test
-    fun `closed position with orphan SL gets cancel scheduled via outbox`() = runBlocking {
-        val pos = Position(
-            id = 20L,
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("150000"),
-            instrumentType = InstrumentType.FUTURES,
-            status = PositionStatus.CLOSED,
-            slOrderId = "orphan-sl",
-            slOrderPrice = BigDecimal("149000"),
-            accountId = 1L,
-        )
-        stubCancelProtectionSafe()
-        stubSave()
+    fun `closed position with orphan SL gets cancel scheduled via outbox`() =
+        runBlocking {
+            val pos =
+                Position(
+                    id = 20L,
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("150000"),
+                    instrumentType = InstrumentType.FUTURES,
+                    status = PositionStatus.CLOSED,
+                    slOrderId = "orphan-sl",
+                    slOrderPrice = BigDecimal("149000"),
+                    accountId = 1L,
+                )
+            stubCancelProtectionSafe()
+            stubSave()
 
-        engine.reconcilePosition(pos)
+            engine.reconcilePosition(pos)
 
-        assertEquals(null, pos.slOrderId, "orphan SL ID must be cleared")
-        assertEquals(null, pos.slOrderPrice, "orphan SL price must be cleared")
-        Mockito.verify(orderOutboxService).placeCancelOrder(20L, "orphan-sl", accountId = 1L)
-        Mockito.verify(positionRepo).save(pos)
-    }
-
-    @Test
-    fun `closed position with orphan TP gets cancel scheduled via outbox`() = runBlocking {
-        val pos = Position(
-            id = 21L,
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("150000"),
-            instrumentType = InstrumentType.FUTURES,
-            status = PositionStatus.CLOSED,
-            tpOrderId = "orphan-tp",
-            tpOrderPrice = BigDecimal("151000"),
-            accountId = 1L,
-        )
-        stubCancelProtectionSafe()
-        stubSave()
-
-        engine.reconcilePosition(pos)
-
-        assertEquals(null, pos.tpOrderId, "orphan TP ID must be cleared")
-        assertEquals(null, pos.tpOrderPrice, "orphan TP price must be cleared")
-        Mockito.verify(orderOutboxService).placeCancelOrder(21L, "orphan-tp", accountId = 1L)
-    }
+            assertEquals(null, pos.slOrderId, "orphan SL ID must be cleared")
+            assertEquals(null, pos.slOrderPrice, "orphan SL price must be cleared")
+            Mockito.verify(orderOutboxService).placeCancelOrder(20L, "orphan-sl", accountId = 1L)
+            Mockito.verify(positionRepo).save(pos)
+        }
 
     @Test
-    fun `closed position without orphan SL and TP does not trigger cancel`() = runBlocking {
-        val pos = Position(
-            id = 22L,
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 1,
-            entryPrice = BigDecimal("150000"),
-            instrumentType = InstrumentType.FUTURES,
-            status = PositionStatus.CLOSED,
-        )
+    fun `closed position with orphan TP gets cancel scheduled via outbox`() =
+        runBlocking {
+            val pos =
+                Position(
+                    id = 21L,
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("150000"),
+                    instrumentType = InstrumentType.FUTURES,
+                    status = PositionStatus.CLOSED,
+                    tpOrderId = "orphan-tp",
+                    tpOrderPrice = BigDecimal("151000"),
+                    accountId = 1L,
+                )
+            stubCancelProtectionSafe()
+            stubSave()
 
-        engine.reconcilePosition(pos)
+            engine.reconcilePosition(pos)
 
-        Mockito.verify(positionRepo, Mockito.never()).save(anyOrNull())
-        Mockito.verify(orderOutboxService, Mockito.never()).placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())
-    }
+            assertEquals(null, pos.tpOrderId, "orphan TP ID must be cleared")
+            assertEquals(null, pos.tpOrderPrice, "orphan TP price must be cleared")
+            Mockito.verify(orderOutboxService).placeCancelOrder(21L, "orphan-tp", accountId = 1L)
+        }
+
+    @Test
+    fun `closed position without orphan SL and TP does not trigger cancel`() =
+        runBlocking {
+            val pos =
+                Position(
+                    id = 22L,
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("150000"),
+                    instrumentType = InstrumentType.FUTURES,
+                    status = PositionStatus.CLOSED,
+                )
+
+            engine.reconcilePosition(pos)
+
+            Mockito.verify(positionRepo, Mockito.never()).save(anyOrNull())
+            Mockito.verify(orderOutboxService, Mockito.never()).placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())
+        }
 
     // ── closeConfirmedByPositionDelta conservative ──────────────────────────
 
     @Test
-    fun `verifyOrder null + partial position reduction does NOT close`() = runBlocking {
-        val pos = Position(
-            id = 30L,
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 100,
-            entryPrice = BigDecimal("150000"),
-            instrumentType = InstrumentType.FUTURES,
-            status = PositionStatus.OPEN,
-            pendingClose = true,
-            closeOrderId = "close-1",
-            closeReason = com.trading.bot.model.CloseReason.STRATEGY_CLOSE,
-        )
-        whenever(positionRepo.findById(30L)).thenReturn(pos)
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(null)
-        whenever(alorClient.getPositions(anyOrNull())).thenReturn(
-            AlorClient.ReconcileResult.Ok(
-                listOf(AlorClient.ExchangePosition(ticker = "Si", qty = 60L, avgPrice = BigDecimal("150100")))
+    fun `verifyOrder null + partial position reduction does NOT close`() =
+        runBlocking {
+            val pos =
+                Position(
+                    id = 30L,
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 100,
+                    entryPrice = BigDecimal("150000"),
+                    instrumentType = InstrumentType.FUTURES,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "close-1",
+                    closeReason = com.trading.bot.model.CloseReason.STRATEGY_CLOSE,
+                )
+            whenever(positionRepo.findById(30L)).thenReturn(pos)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(null)
+            whenever(alorClient.getPositions(anyOrNull())).thenReturn(
+                AlorClient.ReconcileResult.Ok(
+                    listOf(AlorClient.ExchangePosition(ticker = "Si", qty = 60L, avgPrice = BigDecimal("150100"))),
+                ),
             )
-        )
-        stubSave()
+            stubSave()
 
-        engine.reconcilePosition(pos)
+            engine.reconcilePosition(pos)
 
-        assertEquals(PositionStatus.OPEN, pos.status, "Partial reduction must NOT close position")
-        assertTrue(pos.pendingClose, "pendingClose must remain true")
-    }
+            assertEquals(PositionStatus.OPEN, pos.status, "Partial reduction must NOT close position")
+            assertTrue(pos.pendingClose, "pendingClose must remain true")
+        }
 
     @Test
-    fun `verifyOrder null + position gone confirms close`() = runBlocking {
-        val pos = Position(
-            id = 31L,
-            ticker = "Si",
-            direction = PositionDirection.LONG,
-            quantity = 100,
-            entryPrice = BigDecimal("150000"),
-            instrumentType = InstrumentType.FUTURES,
-            status = PositionStatus.OPEN,
-            pendingClose = true,
-            closeOrderId = "close-2",
-            closeReason = com.trading.bot.model.CloseReason.STRATEGY_CLOSE,
-        )
-        whenever(positionRepo.findById(31L)).thenReturn(pos)
-        whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(null)
-        whenever(alorClient.getPositions(anyOrNull())).thenReturn(
-            AlorClient.ReconcileResult.Ok(emptyList())
-        )
-        stubSave()
-        stubFullClose()
+    fun `verifyOrder null + position gone confirms close`() =
+        runBlocking {
+            val pos =
+                Position(
+                    id = 31L,
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 100,
+                    entryPrice = BigDecimal("150000"),
+                    instrumentType = InstrumentType.FUTURES,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "close-2",
+                    closeReason = com.trading.bot.model.CloseReason.STRATEGY_CLOSE,
+                )
+            whenever(positionRepo.findById(31L)).thenReturn(pos)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(null)
+            whenever(alorClient.getPositions(anyOrNull())).thenReturn(
+                AlorClient.ReconcileResult.Ok(emptyList()),
+            )
+            stubSave()
+            stubFullClose()
 
-        engine.reconcilePosition(pos)
+            engine.reconcilePosition(pos)
 
-        assertEquals(PositionStatus.CLOSED, pos.status, "Position qty=0 must be confirmed as closed")
-    }
+            assertEquals(PositionStatus.CLOSED, pos.status, "Position qty=0 must be confirmed as closed")
+        }
 }

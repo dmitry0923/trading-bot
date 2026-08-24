@@ -102,9 +102,10 @@ class ReactiveRedisCacheService(
      */
     suspend fun isAvailable(): Boolean =
         try {
-            reactiveRedisTemplate.execute { connection ->
-                connection.ping().map { it == "PONG" }
-            }.awaitFirstOrNull() ?: false
+            reactiveRedisTemplate
+                .execute { connection ->
+                    connection.ping().map { it == "PONG" }
+                }.awaitFirstOrNull() ?: false
         } catch (e: Exception) {
             logger.warn(e) { "Redis health check failed" }
             false

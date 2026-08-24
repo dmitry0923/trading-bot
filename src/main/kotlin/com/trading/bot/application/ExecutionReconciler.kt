@@ -196,7 +196,7 @@ class ExecutionReconciler(
                 logger.error { "Pending close ${pos.ticker} has no id — cannot reconcile via outbox" }
                 return
             }
-        val outbox = orderOutboxRepo.findLatestByPositionId(positionId)
+        val outbox = orderOutboxRepo.findLatestByPositionId(positionId, purpose = "close")
         if (outbox == null) {
             logger.warn { "No outbox row for pending close ${pos.id}/${pos.ticker}; resetting pendingClose" }
             pos.pendingClose = false

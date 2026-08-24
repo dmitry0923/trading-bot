@@ -22,6 +22,10 @@ import java.time.LocalDateTime
  * - [cumulativeCloseFillQty] — накопительное исполнение close-ордера в лотах
  *   (Alor: filledQtyBatch). Используется для расчёта дельты: только инкремент
  *   применяется к позиции, что предотвращает повторное закрытие при дубликатах WS events.
+ * - [cumulativeSlFillQty] / [cumulativeTpFillQty] — накопительное исполнение SL/TP-заявки
+ *   (биржа присылает кумулятивный filledQuantity). Дельта-модель для защитных заявок:
+ *   без неё второй частичный fill отчёта повторно закрыл бы остаток позиции.
+ *   Сбрасывается при отмене/замене ордера (новый ордер — новый счётчик с нуля).
  * - [slOrderId] / [tpOrderId] — биржевые защитные заявки (stop/take-profit), выставленные
  *   при открытии позиции (roadmap v2.2 «Точный контроль SL/TP»); [slOrderPrice] /
  *   [tpOrderPrice] — уровень заявки для детекции перевыставления, [slPendingReplace] /
@@ -66,6 +70,8 @@ data class Position(
     var realizedPnl: BigDecimal = BigDecimal.ZERO,
     var closeReason: CloseReason? = null,
     var cumulativeCloseFillQty: Int = 0,
+    var cumulativeSlFillQty: Int = 0,
+    var cumulativeTpFillQty: Int = 0,
     var openedAt: LocalDateTime = LocalDateTime.now(),
     var closedAt: LocalDateTime? = null,
     var cycleId: String? = null,

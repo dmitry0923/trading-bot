@@ -57,3 +57,5 @@ databaseChangeLog:
       file: db/changelog/changes/028-equity-peak-tracking.sql
   - include:
       file: db/changelog/changes/029-protection-cancel-pending.sql
+  - include:
+      file: db/changelog/changes/030-protection-cumulative-fill-qty.sql

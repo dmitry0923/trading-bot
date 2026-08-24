@@ -227,7 +227,7 @@ class OrderExecutionEngineCloseClaimTest {
             Mockito.`when`(positionRepo.claimForClose(1L)).thenAnswer { claimCounter.getAndIncrement() == 0 }
             Mockito
                 .`when`(positionRepo.findById(1L))
-                .thenAnswer { latestSaved.get() ?: pos.copy(pendingClose = true, closeOrderId = null) }
+                .thenAnswer { latestSaved.get() ?: pos.copy() }
             Mockito
                 .`when`(
                     positionRepo.transitionToClosed(

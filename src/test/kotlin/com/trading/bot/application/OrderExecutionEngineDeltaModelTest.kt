@@ -24,6 +24,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
@@ -38,10 +39,12 @@ import java.util.concurrent.CountDownLatch
  * Ключевые инварианты:
  * - delta = cumulativeFilledQty - cumulativeCloseFillQty;
  * - delta <= 0 → skip (дубликат или out-of-order event);
- * - delta > 0 && delta < quantity → partial close (quantity -= delta, pendingClose=false, closeOrderId kept);
+ * - delta > 0 && delta < quantity → partial close (quantity -= delta, pendingClose=TRUE, closeOrderId kept);
  * - delta >= quantity → full finalize (status=CLOSED);
  * - после partial close: closeOrderId и pendingClose СОХРАНЯЮТСЯ —
- *   последующие fill'ы для того же close-ордера находят позицию через findByCloseOrderId.
+ *   последующие fill'ы для того же close-ордера находят позицию через findByCloseOrderId;
+ *   pendingClose=true удерживает close claim: новый close-ордер НЕ создаётся,
+ *   пока старый жив на бирже.
  */
 class OrderExecutionEngineDeltaModelTest {
     private val alorClient = Mockito.mock(AlorClient::class.java)
@@ -224,7 +227,7 @@ class OrderExecutionEngineDeltaModelTest {
     }
 
     @Test
-    fun `partial fill reduces quantity and keeps closeOrderId while clearing pendingClose`() {
+    fun `partial fill reduces quantity and keeps closeOrderId while keeping pendingClose`() {
         val pos = openPos(quantity = 10)
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
@@ -236,8 +239,9 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(0, BigDecimal("40").compareTo(pos.realizedPnl))
         // closeOrderId сохраняется — последующие fill'ы для того же close-ордера
         // должны находить позицию через findByCloseOrderId.
-        // pendingClose=false — позиция готова к перезакрытию.
-        assertFalse(pos.pendingClose)
+        // pendingClose=TRUE — close-ордер всё ещё жив на бирже; новый close НЕ создаётся,
+        // а последующие fills маршрутизируются через handlePendingCloseReport.
+        assertTrue(pos.pendingClose)
         assertEquals("close-1", pos.closeOrderId)
     }
 
@@ -337,8 +341,8 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(5, pos.cumulativeCloseFillQty)
         assertEquals(2, pos.quantity) // 5 - 3 = 2
         assertEquals(0, BigDecimal("30").compareTo(pos.realizedPnl))
-        // pendingClose cleared, closeOrderId preserved after partial fill
-        assertFalse(pos.pendingClose)
+        // pendingClose=TRUE (close order still live), closeOrderId preserved after partial fill
+        assertTrue(pos.pendingClose)
         assertEquals("close-1", pos.closeOrderId)
     }
 
@@ -417,8 +421,8 @@ class OrderExecutionEngineDeltaModelTest {
         // Cumulative should be 4 (applied once), quantity should be 10-4=6
         assertEquals(4, pos.cumulativeCloseFillQty)
         assertEquals(6, pos.quantity)
-        // Partial close applied only once — closeOrderId preserved, pendingClose cleared
-        assertFalse(pos.pendingClose)
+        // Partial close applied only once — closeOrderId preserved, pendingClose stays TRUE
+        assertTrue(pos.pendingClose)
         assertEquals("close-1", pos.closeOrderId)
     }
 
@@ -456,11 +460,12 @@ class OrderExecutionEngineDeltaModelTest {
     /**
      * Concurrent WS events with DIFFERENT cumulative values (partial then full fill).
      * First event via handleExecutionReport (pendingClose=true) applies delta=3.
-     * Second event via handleCloseFill (fallback path, since pendingClose=false after partial)
-     * applies remaining delta=2 → finalize → CLOSED.
+     * Second event goes through handleCloseFill (delta-model path used by
+     * TradingBotService.handleRegularStockFill) and applies remaining delta=2 → finalize → CLOSED.
      *
-     * In production: TradingBotService.onExecutionReport calls handleExecutionReport first;
-     * if it returns false (pendingClose=false), handleRegularStockFill delegates to handleCloseFill.
+     * In production: after partial close pendingClose stays TRUE, so subsequent fills
+     * route through handlePendingCloseReport; handleCloseFill remains a valid
+     * delta-model entry point (e.g. REST/regular-fill paths).
      */
     @Test
     fun `concurrent WS events with different cumulative values finalize correctly`() {
@@ -541,6 +546,8 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(3, pos.cumulativeCloseFillQty)
         assertTrue(pos.slPendingReplace) { "slPendingReplace should be set for durable replacement" }
         assertTrue(pos.tpPendingReplace) { "tpPendingReplace should be set for durable replacement" }
+        // close order still live on the exchange — claim is NOT released
+        assertTrue(pos.pendingClose) { "pendingClose must stay TRUE after partial close" }
         // Old IDs preserved — reconciliation will cancel them
         assertEquals("sl-1", pos.slOrderId)
         assertEquals("tp-1", pos.tpOrderId)
@@ -655,8 +662,9 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(4, saved.cumulativeCloseFillQty)
         assertTrue(saved.slPendingReplace) { "flags must be saved atomically with quantity" }
         assertTrue(saved.tpPendingReplace)
-        // closeOrderId сохраняется дляsequent WS fills, pendingClose=false для перезакрытия
-        assertFalse(saved.pendingClose)
+        // closeOrderId сохраняется для последующих WS fills; pendingClose=TRUE —
+        // close-ордер жив, claim не снимается (атомарно с quantity и P&L)
+        assertTrue(saved.pendingClose) { "pendingClose=TRUE must be saved atomically with quantity" }
         assertEquals("close-1", saved.closeOrderId)
     }
 
@@ -771,8 +779,8 @@ class OrderExecutionEngineDeltaModelTest {
     /**
      * CRITICAL: multi-step partial close scenario from production audit.
      *
-     * 100 лотов → 37 исполнено → позиция уменьшается до 63,
-     * затем handleCloseFill (fallback path) → delta=63 → финализация → CLOSED,
+     * 100 лотов → 37 исполнено → позиция уменьшается до 63 (pendingClose=TRUE —
+     * close-ордер жив), затем handleCloseFill → delta=63 → финализация → CLOSED,
      * затем дубликат → delta=0 → skip.
      *
      * P&L: 37 @ (110-100)=370, 63 @ (110-100)=630, total = 1000 (plain calculator).
@@ -781,8 +789,8 @@ class OrderExecutionEngineDeltaModelTest {
      *
      * Flow:
      * 1. First WS fill → handleExecutionReport (pendingClose=true) → delta model
-     * 2. Second fill → handleExecutionReport returns false (pendingClose=false),
-     *    then TradingBotService calls engine.handleCloseFill (fallback path)
+     * 2. Second fill → handleCloseFill (fallback path) — same delta model,
+     *    works while pendingClose=TRUE with matching closeOrderId
      * 3. Duplicate → handleCloseFill → delta=0 → skip
      */
     @Test
@@ -797,7 +805,7 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(63, pos.quantity)
         assertEquals(37, pos.cumulativeCloseFillQty)
         assertEquals(0, BigDecimal("370").compareTo(pos.realizedPnl))
-        assertFalse(pos.pendingClose) { "pendingClose cleared after partial" }
+        assertTrue(pos.pendingClose) { "pendingClose stays TRUE after partial — order still live" }
         assertEquals("close-1", pos.closeOrderId) { "closeOrderId preserved for subsequent fills" }
 
         // Step 2: fallback path via handleCloseFill — cumulative=100, delta=63, finalize
@@ -946,13 +954,17 @@ class OrderExecutionEngineDeltaModelTest {
      *
      * Scenario:
      * 1. Order A partially fills 40/100 → applyPartialClose → qty=60, cumulativeFillQty=40
-     * 2. SL tick → closePosition() → prevCumulativeFill=40 → must cancel A before creating B
+     * 2. Legacy state: pendingClose=false (old bug), closeOrderId="stale-order-A"
+     * 3. closePosition() → must confirm existing order A (not cancel+create new)
      *
-     * Without the cancel, order A remains LIVE on the exchange and could fill
-     * simultaneously with B → over-sell (40 + 60 + 60 = 160 lots sold for 60 remaining).
+     * In the new model, pendingClose=false + closeOrderId!=null is a legacy state where the
+     * close order may still be live on the exchange. The safe behavior is to confirm the
+     * existing order via REST (verifyOrder), not cancel it and create a replacement. Cancelling
+     * a live order while trying to replace it creates a race window where fills from both
+     * orders could overlap.
      */
     @Test
-    fun `closePosition cancels stale close order before creating replacement`() {
+    fun `closePosition confirms existing close order when pendingClose is false but closeOrderId exists`() {
         val pos =
             openPos(
                 quantity = 6,
@@ -967,40 +979,18 @@ class OrderExecutionEngineDeltaModelTest {
             stubSaveReturnsArg()
             stubTransitionToClosed()
 
-            // New order placement succeeds
-            Mockito
-                .`when`(
-                    orderOutboxService.placeOrder(
-                        ticker = Mockito.anyString(),
-                        side = Mockito.anyString(),
-                        qty = Mockito.anyInt(),
-                        price = Mockito.nullable(BigDecimal::class.java),
-                        type = Mockito.anyString(),
-                        positionId = Mockito.nullable(Long::class.java),
-                        closeReason = Mockito.nullable(String::class.java),
-                        stopPrice = Mockito.nullable(BigDecimal::class.java),
-                        purpose = Mockito.nullable(String::class.java),
-                        accountId = Mockito.nullable(Long::class.java),
-                    ),
-                ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "stale-order-B", success = true))
-
-            // verifyOrder returns FILLED for the new order B
+            // verifyOrder returns FILLED for the existing order A (cumulative=46: 40 already applied + 6 remaining)
             Mockito
                 .`when`(
                     alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
-                ).thenReturn(AlorClient.OrderExecution("FILLED", 6, BigDecimal("110")))
+                ).thenReturn(AlorClient.OrderExecution("FILLED", 46, BigDecimal("110")))
 
             engine.closePosition(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
         }
 
-        // CRITICAL: stale order A must be cancelled via outbox
+        // CRITICAL: no new close order placed — existing order A is confirmed
         runBlocking {
-            verify(orderOutboxService).placeCancelOrder(pos.id!!, "stale-order-A", accountId = pos.accountId)
-        }
-
-        // New order B must be placed
-        runBlocking {
-            verify(orderOutboxService).placeOrder(
+            verify(orderOutboxService, never()).placeOrder(
                 ticker = Mockito.anyString(),
                 side = Mockito.anyString(),
                 qty = Mockito.anyInt(),
@@ -1331,5 +1321,131 @@ class OrderExecutionEngineDeltaModelTest {
         assertTrue(handled) { "report matched by pendingClose=true path" }
         assertFalse(pos.pendingClose) { "pendingClose=false — immediate reset" }
         assertNull(pos.closeOrderId) { "closeOrderId null — no order to cancel" }
+    }
+
+    // ─── Partial close state machine regression (pendingClose=TRUE invariant) ──
+
+    /**
+     * CRITICAL regression: two consecutive partial fills of the SAME close order.
+     *
+     * After fix #1 (applyPartialClose keeps pendingClose=TRUE) the second cumulative
+     * report must still find the position via handlePendingCloseReport and apply
+     * only the remaining delta — without double-closing or losing fills.
+     *
+     * Scenario:
+     *   position = 10, closeOrderId = "close-1", pendingClose = true, cumulative = 0
+     *   Report #1: cumulative=3 @ 110 → partial: qty=7, cumulative=3, pendingClose=TRUE
+     *   Report #2: cumulative=10 @ 108 → delta=7 >= 7 → finalize → CLOSED
+     */
+    @Test
+    fun `partial close then second partial fill of same order is applied`() {
+        val pos = openPos(quantity = 10, pendingClose = true, closeOrderId = "close-1")
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        // Report #1: cumulative=3, delta=3, 3 < 10 → partial close
+        runBlocking { engine.handleExecutionReport(report(cumulativeFilledQty = 3, avgPrice = BigDecimal("110"))) }
+        assertEquals(7, pos.quantity)
+        assertEquals(3, pos.cumulativeCloseFillQty)
+        assertTrue(pos.pendingClose) { "pendingClose must stay TRUE — order still live on exchange" }
+        assertEquals("close-1", pos.closeOrderId) { "closeOrderId preserved for subsequent fills" }
+
+        // Report #2: cumulative=10, delta=10-3=7 >= quantity=7 → finalize
+        runBlocking { engine.handleExecutionReport(report(cumulativeFilledQty = 10, avgPrice = BigDecimal("108"))) }
+        assertEquals(10, pos.cumulativeCloseFillQty)
+        assertEquals(PositionStatus.CLOSED, pos.status) { "second fill finalizes the remainder" }
+        assertEquals(1, closedPositions.size)
+        // P&L per fill: 3×(110-100) + 7×(108-100) = 30 + 56 = 86
+        assertEquals(0, BigDecimal("86").compareTo(closedPositions.first().pnl))
+    }
+
+    /**
+     * Regression: fallback path TradingBotService.handleRegularStockFill → handleCloseFill
+     * works while pendingClose=TRUE with matching closeOrderId (post-partial state).
+     *
+     * Scenario:
+     *   position = 10, partial fill 3 → qty=7, pendingClose=TRUE, closeOrderId="close-1"
+     *   handleCloseFill(cumulative=10) → delta=7 → finalize → CLOSED
+     */
+    @Test
+    fun `partialClose handleCloseFill fallback is applied while pendingClose is true`() {
+        val pos = openPos(quantity = 10, pendingClose = true, closeOrderId = "close-1")
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubTransitionToClosed()
+
+        // Step 1: WS partial fill → pendingClose stays TRUE
+        runBlocking { engine.handleExecutionReport(report(cumulativeFilledQty = 3)) }
+        assertTrue(pos.pendingClose)
+        assertEquals(7, pos.quantity)
+
+        // Step 2: fallback path applies remaining delta even with pendingClose=TRUE
+        runBlocking {
+            engine.handleCloseFill(pos, report(cumulativeFilledQty = 10, avgPrice = BigDecimal("108")))
+        }
+        assertEquals(10, pos.cumulativeCloseFillQty)
+        assertEquals(PositionStatus.CLOSED, pos.status)
+        assertEquals(1, closedPositions.size)
+    }
+
+    /**
+     * Regression (fix #2): closePosition() while a close order is already live
+     * (claim held, pendingClose=TRUE after partial) must NOT create a second
+     * close order — it confirms the existing one instead. The cumulative
+     * counter must NOT be reset (delta model continuity).
+     *
+     * Scenario:
+     *   position = 7, closeOrderId = "close-1", pendingClose = true, cumulative = 3
+     *   closePosition() → claim rejected → confirmCloseFill → verifyOrder(cumulative=5)
+     *   → delta=2 applied → NO new placeOrder, cumulative=5 (not reset)
+     */
+    @Test
+    fun `closePosition while pendingClose confirms existing order instead of creating new`() {
+        val pos =
+            openPos(
+                quantity = 7,
+                pendingClose = true,
+                closeOrderId = "close-1",
+                cumulativeCloseFillQty = 3,
+            )
+
+        runBlocking {
+            Mockito.`when`(positionRepo.claimForClose(pos.id!!)).thenReturn(false)
+            Mockito.`when`(positionRepo.findById(pos.id!!)).thenReturn(pos)
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(anyString(), anyBigDecimal(), anyString()),
+                ).thenReturn(AlorClient.OrderExecution("FILLED", 5, BigDecimal("108")))
+            stubSaveReturnsArg()
+            stubTransitionToClosed()
+        }
+
+        runBlocking { engine.closePosition(pos, BigDecimal("105"), CloseReason.STOP_LOSS) }
+
+        // No new close order placed — existing one confirmed instead
+        runBlocking {
+            Mockito.verify(orderOutboxService, Mockito.never()).placeOrder(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.anyInt(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.anyString(),
+                Mockito.anyLong(),
+                Mockito.anyString(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(String::class.java),
+                Mockito.nullable(Long::class.java),
+            )
+        }
+        // Existing close order verified via REST (plain args: id + expected price + portfolio)
+        runBlocking {
+            Mockito.verify(alorClient).verifyOrder("close-1", BigDecimal("105"), "D12345")
+        }
+        // Cumulative NOT reset — delta model continuity across close attempts
+        assertEquals(5, pos.cumulativeCloseFillQty) { "cumulative must advance, not reset" }
+        assertEquals(5, pos.quantity) { "remaining delta=2 applied as partial close" }
+        assertTrue(pos.pendingClose) { "still pending — close order still live" }
+        assertEquals("close-1", pos.closeOrderId) { "same close order kept" }
     }
 }

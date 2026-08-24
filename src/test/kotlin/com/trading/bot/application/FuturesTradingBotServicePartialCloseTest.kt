@@ -37,10 +37,10 @@ import java.util.UUID
  * Unit-тест partial fills при закрытии фьючерсной позиции (дозакрытие остатка):
  *
  * - SL-тик → market close на qty=3 → Alor исполнил только 2 → [Position.realizedPnl]
- *   фиксирует P&L закрытой части, quantity уменьшается до 1, pendingClose=false,
+ *   фиксирует P&L закрытой части, quantity уменьшается до 1, pendingClose=TRUE,
  *   closeOrderId сохраняется (для delta-model WS fills) → остаток дозакрывается
  *   новой итерацией через [OrderExecutionEngine.closePosition], которая обнаружит
- *   prevCumulativeCloseFillQty > 0 и очистит stale closeOrderId;
+ *   cumulativeCloseFillQty > 0 и очистит stale closeOrderId перед созданием нового;
  * - повторный SL-тик → новый close-ордер на остаток (qty=1) → полное исполнение →
  *   итоговый pnl = realizedPnl (partial) + P&L остатка.
  *
@@ -201,9 +201,10 @@ class FuturesTradingBotServicePartialCloseTest {
         assertEquals(1, pos.quantity)
         assertEquals(0, BigDecimal("200000").compareTo(pos.realizedPnl))
         assertEquals(0, BigDecimal("90100").compareTo(pos.currentPrice!!))
-        assertTrue(!pos.pendingClose)
+        assertTrue(pos.pendingClose)
         // closeOrderId preserved — subsequent fills (WS/handleCloseFill) find position by it;
-        // closePosition() detects prevCumulativeCloseFillQty > 0 and clears it before new order.
+        // pendingClose stays TRUE to prevent StockPositionMonitor from creating a new close order
+        // while the existing close order is still live on the exchange.
         assertEquals("ord-close-1", pos.closeOrderId)
         runBlocking {
             Mockito.verify(positionRepo, Mockito.timeout(3000)).findByStatus(PositionStatus.OPEN)
@@ -224,11 +225,14 @@ class FuturesTradingBotServicePartialCloseTest {
                 )
         }
 
-        // Фаза 2: следующий SL-тик дозакрывает остаток (qty=1) полностью.
+        // Фаза 2: следующий SL-тик — reconcilePosition → confirmCloseFill.
+        // Ордер "ord-close-1" теперь полностью исполнен (cumulativeFilledQty=3,
+        // т.к. Alor REST возвращает накопленное количество для ордера).
+        // delta = 3 - cumulativeCloseFillQty(2) = 1 → finalize.
         runBlocking {
             Mockito
                 .`when`(alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()))
-                .thenReturn(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("89800")))
+                .thenReturn(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 3, avgPrice = BigDecimal("89800")))
         }
         service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("89400")))
         awaitUntil { pos.status == PositionStatus.CLOSED }
@@ -260,7 +264,7 @@ class FuturesTradingBotServicePartialCloseTest {
         }
 
         service.onPriceChanged(PriceChangedEvent("Si", BigDecimal("89400")))
-        awaitUntil { !pos.pendingClose }
+        awaitUntil { pos.quantity == 2 }
 
         runBlocking {
             Mockito

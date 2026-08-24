@@ -314,6 +314,19 @@ class CloseFillProcessor(
     /**
      * Partial fill: P&L for closed part, quantity reduced, remainder re-close.
      *
+     * CRITICAL INVARIANT: pendingClose stays TRUE after partial fill.
+     * The close order is still LIVE on the exchange — subsequent cumulative fills
+     * of the same order must route through handlePendingCloseReport (which requires
+     * pendingClose=true). Setting pendingClose=false would cause:
+     *   1. StockPositionMonitor to call closePosition() → cancel live order → create new
+     *   2. Late fills of the cancelled order lost (findByCloseOrderId returns null)
+     *   3. Local position quantity diverges from exchange
+     *
+     * pendingClose is only cleared when the close order becomes terminal:
+     * - Full close: finalizeClosePosition() sets pendingClose=false
+     * - Order cancelled/rejected/expired: resetCloseState() sets pendingClose=false
+     * - Impossible delta: handleImpossibleClose() waits for terminal before reset
+     *
      * Protection orders deferred to reconciliation via PendingReplace flags.
      */
     private suspend fun applyPartialClose(
@@ -324,7 +337,6 @@ class CloseFillProcessor(
         val partialPnl = pnlCalculator.pnl(pos, pos.entryPrice, avg, BigDecimal(filled))
         pos.realizedPnl = pos.realizedPnl.add(partialPnl)
         pos.quantity -= filled
-        pos.pendingClose = false
         pos.currentPrice = avg
         if (pos.slOrderId != null) pos.slPendingReplace = true
         if (pos.tpOrderId != null) pos.tpPendingReplace = true
@@ -333,7 +345,7 @@ class CloseFillProcessor(
         logger.warn {
             "PARTIAL close ${pos.ticker}: closed=$filled remainder=${pos.quantity} @ $avg " +
                 "realized=$partialPnl ₽ (cumulative=${pos.realizedPnl}); " +
-                "closeOrderId kept, pendingClose=false, protection replacement deferred to reconciliation"
+                "pendingClose=TRUE (close order still live), protection replacement deferred to reconciliation"
         }
     }
 

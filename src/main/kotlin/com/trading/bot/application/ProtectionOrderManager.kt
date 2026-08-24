@@ -85,6 +85,8 @@ class ProtectionOrderManager(
             if (placed.alorOrderId != null) {
                 pos.slOrderId = placed.alorOrderId
                 pos.slOrderPrice = effSl
+                // New protection order — fill counter starts from zero
+                pos.cumulativeSlFillQty = 0
                 dirty = true
                 logger.info { "Exchange SL placed ${pos.ticker} @ $effSl qty=${pos.quantity} -> ${placed.alorOrderId}" }
             } else {
@@ -110,6 +112,8 @@ class ProtectionOrderManager(
             if (placed.alorOrderId != null) {
                 pos.tpOrderId = placed.alorOrderId
                 pos.tpOrderPrice = tp
+                // New protection order — fill counter starts from zero
+                pos.cumulativeTpFillQty = 0
                 dirty = true
                 logger.info { "Exchange TP placed ${pos.ticker} @ $tp qty=${pos.quantity} -> ${placed.alorOrderId}" }
             } else {
@@ -190,6 +194,8 @@ class ProtectionOrderManager(
             logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=$slId)" }
             pos.slCancelPending = true
             pos.slPendingReplace = false
+            // Cancelled order is going away — reset its fill counter for the replacement
+            pos.cumulativeSlFillQty = 0
         }
         val tpId = pos.tpOrderId
         if (tpId != null && skip != "TP" && !pos.tpCancelPending) {
@@ -197,6 +203,8 @@ class ProtectionOrderManager(
             logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=$tpId)" }
             pos.tpCancelPending = true
             pos.tpPendingReplace = false
+            // Cancelled order is going away — reset its fill counter for the replacement
+            pos.cumulativeTpFillQty = 0
         }
     }
 
@@ -260,6 +268,8 @@ class ProtectionOrderManager(
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
                 pos.slCancelPending = false
+                // Old order replaced — reset its fill counter
+                pos.cumulativeSlFillQty = 0
                 logger.warn { "Exchange SL order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
             }
         }
@@ -275,6 +285,8 @@ class ProtectionOrderManager(
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
                 pos.tpCancelPending = false
+                // Old order replaced — reset its fill counter
+                pos.cumulativeTpFillQty = 0
                 logger.warn { "Exchange TP order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
             }
         }
@@ -300,8 +312,27 @@ class ProtectionOrderManager(
         execution: AlorClient.OrderExecution,
         reason: CloseReason,
     ) {
-        val filled = execution.filledQuantity.coerceIn(0, pos.quantity)
-        if (filled <= 0) return
+        // Delta model: only apply the increment since last protection fill for this order.
+        // filledQuantity is cumulative from the exchange — without delta, a second partial
+        // fill report would re-close the position.
+        val prevFill = when (reason) {
+            CloseReason.STOP_LOSS -> pos.cumulativeSlFillQty
+            CloseReason.TAKE_PROFIT -> pos.cumulativeTpFillQty
+            else -> 0
+        }
+        val delta = execution.filledQuantity - prevFill
+        if (delta <= 0) {
+            // Duplicate or out-of-order event — skip
+            return
+        }
+        val filled = delta.coerceAtMost(pos.quantity)
+
+        // Track cumulative fill for delta model
+        when (reason) {
+            CloseReason.STOP_LOSS -> pos.cumulativeSlFillQty = execution.filledQuantity
+            CloseReason.TAKE_PROFIT -> pos.cumulativeTpFillQty = execution.filledQuantity
+            else -> {}
+        }
 
         when (reason) {
             CloseReason.STOP_LOSS -> {
@@ -386,6 +417,8 @@ class ProtectionOrderManager(
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
                 pos.slCancelPending = false
+                // Old SL replaced — reset its fill counter for the new order
+                pos.cumulativeSlFillQty = 0
                 dirty = true
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "SL replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
@@ -435,6 +468,8 @@ class ProtectionOrderManager(
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
                 pos.tpCancelPending = false
+                // Old TP replaced — reset its fill counter for the new order
+                pos.cumulativeTpFillQty = 0
                 dirty = true
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }

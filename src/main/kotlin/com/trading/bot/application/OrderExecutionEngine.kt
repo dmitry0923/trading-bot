@@ -304,25 +304,34 @@ class OrderExecutionEngine(
         }
 
         val current = positionRepo.findById(positionId)
-        val prevCumulativeFill = current.cumulativeCloseFillQty
-        current.cumulativeCloseFillQty = 0
 
-        if (current.closeOrderId != null) {
-            if (prevCumulativeFill > 0) {
-                val staleCloseId = current.closeOrderId!!
+        if (current.pendingClose && current.closeOrderId != null) {
+            if (current.cumulativeCloseFillQty > 0) {
+                // Partial fill already applied — old order was for original qty and is stale.
+                // Cancel it and create a fresh close order for the remaining quantity.
+                // This path handles active SL/TP monitoring where the position MUST close now.
                 logger.info {
                     "Partial close already applied for ${current.ticker} " +
-                        "(cumulativeFill=$prevCumulativeFill) — cancelling stale close " +
-                        "order $staleCloseId and creating fresh close order"
+                        "(cumulativeFill=${current.cumulativeCloseFillQty}) — cancelling stale close " +
+                        "order ${current.closeOrderId} and creating fresh close for remaining qty=${current.quantity}"
                 }
-                orderOutboxService.placeCancelOrder(positionId, staleCloseId, accountId = current.accountId)
+                orderOutboxService.placeCancelOrder(positionId, current.closeOrderId!!, accountId = current.accountId)
                 current.closeOrderId = null
+                current.cumulativeCloseFillQty = 0
                 current.closeReason = null
                 positionRepo.save(current)
+                // Fall through to create new close order below
             } else {
+                // No partial fill yet — confirm the existing order via REST
                 closeFill.confirmCloseFill(current, price, reason)
                 return
             }
+        } else if (current.pendingClose && current.closeOrderId == null) {
+            reconciler.reconcilePosition(current)
+            return
+        } else if (current.closeOrderId != null) {
+            closeFill.confirmCloseFill(current, price, reason)
+            return
         }
 
         val side =

@@ -128,23 +128,25 @@ class PartialCloseStateMachineRegressionTest {
 
     private fun stubSaveReturnsArg() {
         runBlocking {
-            Mockito.`when`(positionRepo.save(anyPosition()))
+            Mockito
+                .`when`(positionRepo.save(anyPosition()))
                 .thenAnswer { it.getArgument<Position>(0) }
         }
     }
 
     private fun stubTransitionToClosed() {
         runBlocking {
-            Mockito.`when`(
-                positionRepo.transitionToClosed(
-                    Mockito.anyLong(),
-                    anyStatus(),
-                    anyBigDecimal(),
-                    anyCloseReason(),
-                    anyBigDecimal(),
-                    Mockito.anyInt(),
-                )
-            ).thenReturn(true)
+            Mockito
+                .`when`(
+                    positionRepo.transitionToClosed(
+                        Mockito.anyLong(),
+                        anyStatus(),
+                        anyBigDecimal(),
+                        anyCloseReason(),
+                        anyBigDecimal(),
+                        Mockito.anyInt(),
+                    ),
+                ).thenReturn(true)
         }
     }
 
@@ -175,12 +177,13 @@ class PartialCloseStateMachineRegressionTest {
      */
     @Test
     fun partialClose_reportAfterPendingFlagCleared_isNotLost() {
-        val pos = openPos(
-            quantity = 5,
-            pendingClose = false,
-            closeOrderId = "close-1",
-            cumulativeCloseFillQty = 3,
-        )
+        val pos =
+            openPos(
+                quantity = 5,
+                pendingClose = false,
+                closeOrderId = "close-1",
+                cumulativeCloseFillQty = 3,
+            )
         stubFindCloseOrderId(pos)
         stubSaveReturnsArg()
         stubTransitionToClosed()
@@ -205,12 +208,13 @@ class PartialCloseStateMachineRegressionTest {
      */
     @Test
     fun closePosition_cancelsStaleOrderSetsCloseCancelPendingAndReturns() {
-        val pos = openPos(
-            quantity = 7,
-            pendingClose = true,
-            closeOrderId = "order-A",
-            cumulativeCloseFillQty = 3,
-        )
+        val pos =
+            openPos(
+                quantity = 7,
+                pendingClose = true,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 3,
+            )
 
         runBlocking {
             Mockito.`when`(positionRepo.claimForClose(pos.id!!)).thenReturn(true)
@@ -218,9 +222,10 @@ class PartialCloseStateMachineRegressionTest {
             stubSaveReturnsArg()
             stubTransitionToClosed()
 
-            Mockito.`when`(
-                orderOutboxService.placeCancelOrder(Mockito.anyLong(), Mockito.anyString(), Mockito.nullable(Long::class.java)),
-            ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, true))
+            Mockito
+                .`when`(
+                    orderOutboxService.placeCancelOrder(Mockito.anyLong(), Mockito.anyString(), Mockito.nullable(Long::class.java)),
+                ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, true))
 
             engine.closePosition(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
         }

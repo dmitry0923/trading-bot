@@ -111,7 +111,10 @@ class LiveStrategyBacktestSignalGeneratorTest {
         }
 
     /** Пилa без моментума: шаг +3/-1 (RSI~75 вне окон трендовой), фитиль 20 (сетка в середине диапазона, пробоя нет). */
-    private fun chopCandles(count: Int = 60, start: Double = 100.0): List<Candle> {
+    private fun chopCandles(
+        count: Int = 60,
+        start: Double = 100.0,
+    ): List<Candle> {
         val closes = ArrayList<Double>(count)
         var close = start
         for (i in 0 until count) {

@@ -59,7 +59,9 @@ class CloseCancelPendingReplacementTest {
             orderOutboxRepo = orderOutboxRepo,
             positionRepo = positionRepo,
             alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            objectMapper = tools.jackson.module.kotlin.jacksonObjectMapper(),
+            objectMapper =
+                tools.jackson.module.kotlin
+                    .jacksonObjectMapper(),
             tradeEventService = tradeEventService,
             meterRegistry = meterRegistry,
             metricPrefix = "test.reconciler",
@@ -101,21 +103,22 @@ class CloseCancelPendingReplacementTest {
     fun cancelConfirmed_thenStateCleared() {
         runBlocking {
             val reconciler = buildReconciler()
-            val pos = Position(
-                id = 1L,
-                ticker = "SBER",
-                direction = PositionDirection.LONG,
-                quantity = 7,
-                entryPrice = BigDecimal("100"),
-                currentPrice = BigDecimal("100"),
-                instrumentType = InstrumentType.STOCK,
-                status = PositionStatus.OPEN,
-                pendingClose = true,
-                closeOrderId = "order-A",
-                closeCancelPending = true,
-                cumulativeCloseFillQty = 3,
-                closeReason = CloseReason.STOP_LOSS,
-            )
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 7,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "order-A",
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 3,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
             whenever(positionRepo.findById(1L)).thenReturn(pos)
             whenever(positionRepo.save(anyOrNull<Position>())).thenAnswer { it.getArgument<Position>(0) }
             whenever(alorClient.verifyOrder(eq("order-A"), anyOrNull(), anyOrNull()))
@@ -139,21 +142,22 @@ class CloseCancelPendingReplacementTest {
     fun cancelUnknown_preservesState() {
         runBlocking {
             val reconciler = buildReconciler()
-            val pos = Position(
-                id = 1L,
-                ticker = "SBER",
-                direction = PositionDirection.LONG,
-                quantity = 7,
-                entryPrice = BigDecimal("100"),
-                currentPrice = BigDecimal("100"),
-                instrumentType = InstrumentType.STOCK,
-                status = PositionStatus.OPEN,
-                pendingClose = true,
-                closeOrderId = "order-A",
-                closeCancelPending = true,
-                cumulativeCloseFillQty = 3,
-                closeReason = CloseReason.STOP_LOSS,
-            )
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 7,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "order-A",
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 3,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
             whenever(positionRepo.findById(1L)).thenReturn(pos)
             whenever(alorClient.verifyOrder(eq("order-A"), anyOrNull(), anyOrNull())).thenReturn(null)
 
@@ -174,20 +178,21 @@ class CloseCancelPendingReplacementTest {
     fun cancelNullOrderId_clearsState() {
         runBlocking {
             val reconciler = buildReconciler()
-            val pos = Position(
-                id = 1L,
-                ticker = "SBER",
-                direction = PositionDirection.LONG,
-                quantity = 7,
-                entryPrice = BigDecimal("100"),
-                currentPrice = BigDecimal("100"),
-                instrumentType = InstrumentType.STOCK,
-                status = PositionStatus.OPEN,
-                pendingClose = true,
-                closeOrderId = null,
-                closeCancelPending = true,
-                cumulativeCloseFillQty = 3,
-            )
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 7,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = null,
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 3,
+                )
             whenever(positionRepo.save(anyOrNull<Position>())).thenAnswer { it.getArgument<Position>(0) }
 
             reconciler.reconcilePosition(pos)
@@ -206,40 +211,44 @@ class CloseCancelPendingReplacementTest {
     @Test
     fun oldCloseFillDuringCancelIsAppliedViaDelta() {
         runBlocking {
-            val pos = Position(
-                id = 1L,
-                ticker = "SBER",
-                direction = PositionDirection.LONG,
-                quantity = 7,
-                entryPrice = BigDecimal("100"),
-                currentPrice = BigDecimal("100"),
-                instrumentType = InstrumentType.STOCK,
-                status = PositionStatus.OPEN,
-                pendingClose = true,
-                closeOrderId = "order-A",
-                closeCancelPending = true,
-                cumulativeCloseFillQty = 3,
-                closeReason = CloseReason.STOP_LOSS,
-            )
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 7,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "order-A",
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 3,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
 
             // Create engine to test WS dispatch path
-            val engine = OrderExecutionEngine(
-                alorClient = alorClient,
-                orderOutboxService = Mockito.mock(OrderOutboxService::class.java),
-                orderOutboxRepo = orderOutboxRepo,
-                positionRepo = positionRepo,
-                alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-                objectMapper = tools.jackson.module.kotlin.jacksonObjectMapper(),
-                tradeEventService = tradeEventService,
-                meterRegistry = meterRegistry,
-                pnlCalculator = PnlCalculator.plain(),
-                instrumentFilter = { true },
-                metricPrefix = "test",
-                onEntryOpened = {},
-                onPositionClosed = {},
-                protectionOrdersEnabled = false,
-                portfolioResolver = { "D12345" },
-            )
+            val engine =
+                OrderExecutionEngine(
+                    alorClient = alorClient,
+                    orderOutboxService = Mockito.mock(OrderOutboxService::class.java),
+                    orderOutboxRepo = orderOutboxRepo,
+                    positionRepo = positionRepo,
+                    alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
+                    objectMapper =
+                        tools.jackson.module.kotlin
+                            .jacksonObjectMapper(),
+                    tradeEventService = tradeEventService,
+                    meterRegistry = meterRegistry,
+                    pnlCalculator = PnlCalculator.plain(),
+                    instrumentFilter = { true },
+                    metricPrefix = "test",
+                    onEntryOpened = {},
+                    onPositionClosed = {},
+                    protectionOrdersEnabled = false,
+                    portfolioResolver = { "D12345" },
+                )
 
             whenever(positionRepo.findByCloseOrderId("order-A")).thenReturn(pos)
             whenever(positionRepo.findByAlorOrderId("order-A")).thenReturn(null)
@@ -249,14 +258,15 @@ class CloseCancelPendingReplacementTest {
             whenever(positionRepo.save(anyOrNull<Position>())).thenAnswer { it.getArgument<Position>(0) }
 
             // Simulate WS fill: cumulativeFilledQty=5 (delta=5-3=2)
-            val report = ExecutionReport(
-                orderId = "order-A",
-                status = OrderStatus.PARTIALLY_FILLED,
-                cumulativeFilledQty = 5,
-                avgPrice = BigDecimal("105"),
-                ticker = "SBER",
-                side = "sell",
-            )
+            val report =
+                ExecutionReport(
+                    orderId = "order-A",
+                    status = OrderStatus.PARTIALLY_FILLED,
+                    cumulativeFilledQty = 5,
+                    avgPrice = BigDecimal("105"),
+                    ticker = "SBER",
+                    side = "sell",
+                )
 
             val handled = engine.handleExecutionReport(report)
 
@@ -274,42 +284,46 @@ class CloseCancelPendingReplacementTest {
     @Test
     fun closePositionWhenCloseCancelPending_doesNothing() {
         runBlocking {
-            val pos = Position(
-                id = 1L,
-                ticker = "SBER",
-                direction = PositionDirection.LONG,
-                quantity = 7,
-                entryPrice = BigDecimal("100"),
-                currentPrice = BigDecimal("100"),
-                instrumentType = InstrumentType.STOCK,
-                status = PositionStatus.OPEN,
-                pendingClose = true,
-                closeOrderId = "order-A",
-                closeCancelPending = true,
-                cumulativeCloseFillQty = 3,
-                closeReason = CloseReason.STOP_LOSS,
-            )
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 7,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "order-A",
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 3,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
             // claimForClose fails because pendingClose=true
             whenever(positionRepo.claimForClose(1L)).thenReturn(false)
             whenever(positionRepo.findById(1L)).thenReturn(pos)
 
-            val engine = OrderExecutionEngine(
-                alorClient = alorClient,
-                orderOutboxService = Mockito.mock(OrderOutboxService::class.java),
-                orderOutboxRepo = orderOutboxRepo,
-                positionRepo = positionRepo,
-                alorConfig = Mockito.mock(AlorConfig::class.java),
-                objectMapper = tools.jackson.module.kotlin.jacksonObjectMapper(),
-                tradeEventService = tradeEventService,
-                meterRegistry = meterRegistry,
-                pnlCalculator = PnlCalculator.plain(),
-                instrumentFilter = { true },
-                metricPrefix = "test",
-                onEntryOpened = {},
-                onPositionClosed = {},
-                protectionOrdersEnabled = false,
-                portfolioResolver = { "D12345" },
-            )
+            val engine =
+                OrderExecutionEngine(
+                    alorClient = alorClient,
+                    orderOutboxService = Mockito.mock(OrderOutboxService::class.java),
+                    orderOutboxRepo = orderOutboxRepo,
+                    positionRepo = positionRepo,
+                    alorConfig = Mockito.mock(AlorConfig::class.java),
+                    objectMapper =
+                        tools.jackson.module.kotlin
+                            .jacksonObjectMapper(),
+                    tradeEventService = tradeEventService,
+                    meterRegistry = meterRegistry,
+                    pnlCalculator = PnlCalculator.plain(),
+                    instrumentFilter = { true },
+                    metricPrefix = "test",
+                    onEntryOpened = {},
+                    onPositionClosed = {},
+                    protectionOrdersEnabled = false,
+                    portfolioResolver = { "D12345" },
+                )
 
             engine.closePosition(pos, BigDecimal("100"), CloseReason.STOP_LOSS)
 
@@ -320,5 +334,4 @@ class CloseCancelPendingReplacementTest {
             assertTrue(pos.pendingClose) { "pendingClose unchanged" }
         }
     }
-
 }

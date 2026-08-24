@@ -65,7 +65,10 @@ object SimulatedExecution {
      * Used when realisticExecution=true to replace fixed slippage rate.
      * Falls back to reference * 0.1% for flat candles.
      */
-    fun estimateHalfSpread(candle: Candle, reference: BigDecimal): BigDecimal {
+    fun estimateHalfSpread(
+        candle: Candle,
+        reference: BigDecimal,
+    ): BigDecimal {
         val range = candle.highPrice.subtract(candle.lowPrice)
         if (range > BigDecimal.ZERO) {
             return range.divide(BigDecimal("4"), 8, RoundingMode.HALF_UP)

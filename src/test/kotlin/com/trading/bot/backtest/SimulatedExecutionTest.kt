@@ -45,7 +45,10 @@ class SimulatedExecutionTest {
         val fallback = SimulatedExecution.estimateHalfSpread(candle("100", "100"), BigDecimal("100"))
         assertEquals(0, BigDecimal("0.05000000").compareTo(fallback))
         // Fallback пропорционален reference.
-        assertEquals(0, BigDecimal("0.50000000").compareTo(SimulatedExecution.estimateHalfSpread(candle("92000", "92000"), BigDecimal("1000"))))
+        assertEquals(
+            0,
+            BigDecimal("0.50000000").compareTo(SimulatedExecution.estimateHalfSpread(candle("92000", "92000"), BigDecimal("1000"))),
+        )
     }
 
     @Test

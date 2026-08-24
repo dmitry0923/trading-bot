@@ -31,7 +31,6 @@ import java.time.ZoneId
  * Детерминирован по `candles[0..index]`: никаких LLM, часов или внешних данных.
  */
 class LiveStrategyBacktestSignalGenerator : BacktestSignalGenerator {
-
     private val strategies: List<Strategy> =
         listOf(
             TrendFollowingStrategy(),

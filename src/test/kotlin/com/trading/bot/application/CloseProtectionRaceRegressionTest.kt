@@ -66,46 +66,48 @@ class CloseProtectionRaceRegressionTest {
      * - resolveCloseCancel re-reads → sees CLOSED → does NOT save stale OPEN
      */
     @Test
-    fun resolveCloseCancel_terminalWithFinalFill_doesNotReopenPosition() = runBlocking {
-        var savedPosition: Position? = null
+    fun resolveCloseCancel_terminalWithFinalFill_doesNotReopenPosition() =
+        runBlocking {
+            var savedPosition: Position? = null
 
-        // Simulate confirmCloseFill transitioning to CLOSED in DB
-        val confirmCloseFillLambda: suspend (Position, BigDecimal, CloseReason) -> Unit = { pos, _, _ ->
-            pos.status = PositionStatus.CLOSED
-            pos.quantity = 0
-            pos.closedAt = java.time.LocalDateTime.now()
-            pos.closePrice = BigDecimal("105")
-            savedPosition = pos
+            // Simulate confirmCloseFill transitioning to CLOSED in DB
+            val confirmCloseFillLambda: suspend (Position, BigDecimal, CloseReason) -> Unit = { pos, _, _ ->
+                pos.status = PositionStatus.CLOSED
+                pos.quantity = 0
+                pos.closedAt = java.time.LocalDateTime.now()
+                pos.closePrice = BigDecimal("105")
+                savedPosition = pos
+            }
+
+            val reconciler = buildReconcilerWithConfirmCloseFill(confirmCloseFillLambda)
+
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 7,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("105"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "order-A",
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 3,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
+
+            whenever(positionRepo.findById(1L)).thenReturn(pos)
+            whenever(alorClient.verifyOrder(eq("order-A"), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("CANCELED", 7, BigDecimal("105")))
+
+            reconciler.reconcilePosition(pos)
+
+            // Position MUST remain CLOSED — not reopened by stale entity save
+            assertEquals(PositionStatus.CLOSED, pos.status) { "status must stay CLOSED" }
+            assertEquals(0, pos.quantity) { "quantity must stay 0" }
         }
-
-        val reconciler = buildReconcilerWithConfirmCloseFill(confirmCloseFillLambda)
-
-        val pos = Position(
-            id = 1L,
-            ticker = "SBER",
-            direction = PositionDirection.LONG,
-            quantity = 7,
-            entryPrice = BigDecimal("100"),
-            currentPrice = BigDecimal("105"),
-            instrumentType = InstrumentType.STOCK,
-            status = PositionStatus.OPEN,
-            pendingClose = true,
-            closeOrderId = "order-A",
-            closeCancelPending = true,
-            cumulativeCloseFillQty = 3,
-            closeReason = CloseReason.STOP_LOSS,
-        )
-
-        whenever(positionRepo.findById(1L)).thenReturn(pos)
-        whenever(alorClient.verifyOrder(eq("order-A"), anyOrNull(), anyOrNull()))
-            .thenReturn(AlorClient.OrderExecution("CANCELED", 7, BigDecimal("105")))
-
-        reconciler.reconcilePosition(pos)
-
-        // Position MUST remain CLOSED — not reopened by stale entity save
-        assertEquals(PositionStatus.CLOSED, pos.status) { "status must stay CLOSED" }
-        assertEquals(0, pos.quantity) { "quantity must stay 0" }
-    }
 
     // ═══════════════════════════════════════════════════════════════════
     // Test 2: protectionFill_cancelPendingClose_oldCloseCannotRemainActive
@@ -131,68 +133,81 @@ class CloseProtectionRaceRegressionTest {
      * - NO new close order placed (cancel was placed, not a new order)
      */
     @Test
-    fun protectionFill_cancelPendingClose_oldCloseCannotRemainActive() = runBlocking {
-        var cancelPlacedFor: String? = null
-        var newOrderPlaced = false
+    fun protectionFill_cancelPendingClose_oldCloseCannotRemainActive() =
+        runBlocking {
+            var cancelPlacedFor: String? = null
+            var newOrderPlaced = false
 
-        whenever(orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())).thenAnswer {
-            cancelPlacedFor = it.getArgument<String>(1)
-            OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = true)
+            whenever(orderOutboxService.placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())).thenAnswer {
+                cancelPlacedFor = it.getArgument<String>(1)
+                OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = true)
+            }
+            whenever(
+                orderOutboxService.placeOrder(
+                    anyOrNull(),
+                    anyOrNull(),
+                    Mockito.anyInt(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenAnswer {
+                newOrderPlaced = true
+                OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "NEW-ORDER", success = true)
+            }
+
+            val manager =
+                ProtectionOrderManager(
+                    alorClient = alorClient,
+                    orderOutboxService = orderOutboxService,
+                    orderOutboxRepo = orderOutboxRepo,
+                    positionRepo = positionRepo,
+                    alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
+                    portfolioResolver = { "D12345" },
+                    onSlProtectionFailed = {},
+                    protectionOrdersEnabled = true,
+                    applyCloseExecution = { pos, qty, price, _ ->
+                        pos.quantity -= qty
+                        pos.currentPrice = price
+                    },
+                )
+
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    slOrderId = "SL-B",
+                    slOrderPrice = BigDecimal("95"),
+                    closeOrderId = "close-A",
+                    pendingClose = true,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
+
+            val execution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
+            manager.applyExchangeProtectionClosePublic(pos, execution, CloseReason.STOP_LOSS)
+
+            // CRITICAL: close order A preserved, not cleared
+            assertEquals("close-A", pos.closeOrderId) { "closeOrderId MUST be preserved — old order still live" }
+            assertTrue(pos.closeCancelPending) { "closeCancelPending must be set" }
+            assertTrue(pos.pendingClose) { "pendingClose must remain true" }
+            assertEquals(CloseReason.STOP_LOSS, pos.closeReason) { "closeReason preserved" }
+
+            // Cancel was placed for old close order
+            assertEquals("close-A", cancelPlacedFor) { "cancel must be sent for old close order" }
+
+            // Quantity reduced by SL fill
+            assertEquals(6, pos.quantity) { "quantity reduced by SL fill (10-4=6)" }
         }
-        whenever(orderOutboxService.placeOrder(
-            anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
-            anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
-        )).thenAnswer {
-            newOrderPlaced = true
-            OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "NEW-ORDER", success = true)
-        }
-
-        val manager = ProtectionOrderManager(
-            alorClient = alorClient,
-            orderOutboxService = orderOutboxService,
-            orderOutboxRepo = orderOutboxRepo,
-            positionRepo = positionRepo,
-            alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            portfolioResolver = { "D12345" },
-            onSlProtectionFailed = {},
-            protectionOrdersEnabled = true,
-            applyCloseExecution = { pos, qty, price, _ ->
-                pos.quantity -= qty
-                pos.currentPrice = price
-            },
-        )
-
-        val pos = Position(
-            id = 1L,
-            ticker = "SBER",
-            direction = PositionDirection.LONG,
-            quantity = 10,
-            entryPrice = BigDecimal("100"),
-            currentPrice = BigDecimal("100"),
-            instrumentType = InstrumentType.STOCK,
-            status = PositionStatus.OPEN,
-            slOrderId = "SL-B",
-            slOrderPrice = BigDecimal("95"),
-            closeOrderId = "close-A",
-            pendingClose = true,
-            closeReason = CloseReason.STOP_LOSS,
-        )
-
-        val execution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
-        manager.applyExchangeProtectionClosePublic(pos, execution, CloseReason.STOP_LOSS)
-
-        // CRITICAL: close order A preserved, not cleared
-        assertEquals("close-A", pos.closeOrderId) { "closeOrderId MUST be preserved — old order still live" }
-        assertTrue(pos.closeCancelPending) { "closeCancelPending must be set" }
-        assertTrue(pos.pendingClose) { "pendingClose must remain true" }
-        assertEquals(CloseReason.STOP_LOSS, pos.closeReason) { "closeReason preserved" }
-
-        // Cancel was placed for old close order
-        assertEquals("close-A", cancelPlacedFor) { "cancel must be sent for old close order" }
-
-        // Quantity reduced by SL fill
-        assertEquals(6, pos.quantity) { "quantity reduced by SL fill (10-4=6)" }
-    }
 
     // ═══════════════════════════════════════════════════════════════════
     // Test 3: lateCloseFillAfterProtectionFill
@@ -214,105 +229,118 @@ class CloseProtectionRaceRegressionTest {
      * - no opposite order
      */
     @Test
-    fun lateCloseFillAfterProtectionFill() = runBlocking {
-        var closedPosition: Position? = null
+    fun lateCloseFillAfterProtectionFill() =
+        runBlocking {
+            var closedPosition: Position? = null
 
-        val manager = ProtectionOrderManager(
-            alorClient = alorClient,
-            orderOutboxService = orderOutboxService,
-            orderOutboxRepo = orderOutboxRepo,
-            positionRepo = positionRepo,
-            alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            portfolioResolver = { "D12345" },
-            onSlProtectionFailed = {},
-            protectionOrdersEnabled = true,
-            applyCloseExecution = { pos, qty, price, _ ->
-                pos.quantity -= qty
-                pos.currentPrice = price
-                if (pos.quantity <= 0) {
-                    pos.status = PositionStatus.CLOSED
-                    pos.closePrice = price
-                    closedPosition = pos
-                }
-            },
-        )
+            val manager =
+                ProtectionOrderManager(
+                    alorClient = alorClient,
+                    orderOutboxService = orderOutboxService,
+                    orderOutboxRepo = orderOutboxRepo,
+                    positionRepo = positionRepo,
+                    alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
+                    portfolioResolver = { "D12345" },
+                    onSlProtectionFailed = {},
+                    protectionOrdersEnabled = true,
+                    applyCloseExecution = { pos, qty, price, _ ->
+                        pos.quantity -= qty
+                        pos.currentPrice = price
+                        if (pos.quantity <= 0) {
+                            pos.status = PositionStatus.CLOSED
+                            pos.closePrice = price
+                            closedPosition = pos
+                        }
+                    },
+                )
 
-        val pos = Position(
-            id = 1L,
-            ticker = "SBER",
-            direction = PositionDirection.LONG,
-            quantity = 10,
-            entryPrice = BigDecimal("100"),
-            currentPrice = BigDecimal("100"),
-            instrumentType = InstrumentType.STOCK,
-            status = PositionStatus.OPEN,
-            slOrderId = "SL-B",
-            slOrderPrice = BigDecimal("95"),
-            closeOrderId = "close-A",
-            pendingClose = true,
-            closeReason = CloseReason.STOP_LOSS,
-        )
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    slOrderId = "SL-B",
+                    slOrderPrice = BigDecimal("95"),
+                    closeOrderId = "close-A",
+                    pendingClose = true,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
 
-        // Step 1: SL B fills 4
-        val slExecution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
-        manager.applyExchangeProtectionClosePublic(pos, slExecution, CloseReason.STOP_LOSS)
+            // Step 1: SL B fills 4
+            val slExecution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
+            manager.applyExchangeProtectionClosePublic(pos, slExecution, CloseReason.STOP_LOSS)
 
-        assertEquals(6, pos.quantity) { "after SL: qty = 10-4 = 6" }
-        assertTrue(pos.closeCancelPending) { "after SL: closeCancelPending = true" }
-        assertEquals("close-A", pos.closeOrderId) { "after SL: closeOrderId preserved" }
-        assertTrue(pos.pendingClose) { "after SL: pendingClose preserved" }
+            assertEquals(6, pos.quantity) { "after SL: qty = 10-4 = 6" }
+            assertTrue(pos.closeCancelPending) { "after SL: closeCancelPending = true" }
+            assertEquals("close-A", pos.closeOrderId) { "after SL: closeOrderId preserved" }
+            assertTrue(pos.pendingClose) { "after SL: pendingClose preserved" }
 
-        // Step 2: Late WS fill for close-A arrives (cumulativeFilledQty=6)
-        // In handlePendingCloseReport, delta = 6 - 0 = 6, position has qty=6 → full close
-        val closePos = Position(
-            id = 1L,
-            ticker = "SBER",
-            direction = PositionDirection.LONG,
-            quantity = 6,
-            entryPrice = BigDecimal("100"),
-            currentPrice = BigDecimal("95"),
-            instrumentType = InstrumentType.STOCK,
-            status = PositionStatus.OPEN,
-            pendingClose = true,
-            closeOrderId = "close-A",
-            closeCancelPending = true,
-            cumulativeCloseFillQty = 0,
-            closeReason = CloseReason.STOP_LOSS,
-        )
+            // Step 2: Late WS fill for close-A arrives (cumulativeFilledQty=6)
+            // In handlePendingCloseReport, delta = 6 - 0 = 6, position has qty=6 → full close
+            val closePos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 6,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("95"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    pendingClose = true,
+                    closeOrderId = "close-A",
+                    closeCancelPending = true,
+                    cumulativeCloseFillQty = 0,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
 
-        val closeFillProcessor = CloseFillProcessor(
-            positionRepo = positionRepo,
-            alorClient = alorClient,
-            pnlCalculator = PnlCalculator.plain(),
-            tradeEventService = tradeEventService,
-            meterRegistry = meterRegistry,
-            metricPrefix = "test",
-            portfolioResolver = { "D12345" },
-            onPositionClosed = {},
-            cancelProtectionOrders = { },
-            attachProtectionOrders = { },
-        )
+            val closeFillProcessor =
+                CloseFillProcessor(
+                    positionRepo = positionRepo,
+                    alorClient = alorClient,
+                    pnlCalculator = PnlCalculator.plain(),
+                    tradeEventService = tradeEventService,
+                    meterRegistry = meterRegistry,
+                    metricPrefix = "test",
+                    portfolioResolver = { "D12345" },
+                    onPositionClosed = {},
+                    cancelProtectionOrders = { },
+                    attachProtectionOrders = { },
+                )
 
-        whenever(positionRepo.findById(1L)).thenReturn(closePos)
-        whenever(positionRepo.transitionToClosed(
-            anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), Mockito.anyInt(),
-        )).thenReturn(true)
+            whenever(positionRepo.findById(1L)).thenReturn(closePos)
+            whenever(
+                positionRepo.transitionToClosed(
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    Mockito.anyInt(),
+                ),
+            ).thenReturn(true)
 
-        val closeReport = com.trading.bot.model.dto.ExecutionReport(
-            orderId = "close-A",
-            status = com.trading.bot.model.dto.OrderStatus.FILLED,
-            cumulativeFilledQty = 6,
-            avgPrice = BigDecimal("103"),
-            ticker = "SBER",
-            side = "sell",
-        )
+            val closeReport =
+                com.trading.bot.model.dto.ExecutionReport(
+                    orderId = "close-A",
+                    status = com.trading.bot.model.dto.OrderStatus.FILLED,
+                    cumulativeFilledQty = 6,
+                    avgPrice = BigDecimal("103"),
+                    ticker = "SBER",
+                    side = "sell",
+                )
 
-        closeFillProcessor.handlePendingCloseReport(closePos, closeReport)
+            closeFillProcessor.handlePendingCloseReport(closePos, closeReport)
 
-        assertEquals(PositionStatus.CLOSED, closePos.status) { "position must be CLOSED after late fill" }
-        assertTrue(closePos.quantity >= 0) { "quantity must never be negative" }
-        assertFalse(closePos.pendingClose) { "pendingClose cleared after finalize" }
-    }
+            assertEquals(PositionStatus.CLOSED, closePos.status) { "position must be CLOSED after late fill" }
+            assertTrue(closePos.quantity >= 0) { "quantity must never be negative" }
+            assertFalse(closePos.pendingClose) { "pendingClose cleared after finalize" }
+        }
 
     // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -324,7 +352,9 @@ class CloseProtectionRaceRegressionTest {
             orderOutboxRepo = orderOutboxRepo,
             positionRepo = positionRepo,
             alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            objectMapper = tools.jackson.module.kotlin.jacksonObjectMapper(),
+            objectMapper =
+                tools.jackson.module.kotlin
+                    .jacksonObjectMapper(),
             tradeEventService = tradeEventService,
             meterRegistry = meterRegistry,
             metricPrefix = "test.reconciler",
@@ -372,74 +402,87 @@ class CloseProtectionRaceRegressionTest {
      * - Then reconcileProtectionOrders creates fresh SL/TP
      */
     @Test
-    fun protectionPartialFill_doesNotRearmWhileCloseCancelPending() = runBlocking {
-        var orderPlaced = false
+    fun protectionPartialFill_doesNotRearmWhileCloseCancelPending() =
+        runBlocking {
+            var orderPlaced = false
 
-        whenever(orderOutboxService.placeOrder(
-            anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
-            anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
-        )).thenAnswer {
-            orderPlaced = true
-            OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "NEW-SL", success = true)
+            whenever(
+                orderOutboxService.placeOrder(
+                    anyOrNull(),
+                    anyOrNull(),
+                    Mockito.anyInt(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenAnswer {
+                orderPlaced = true
+                OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "NEW-SL", success = true)
+            }
+
+            val manager =
+                ProtectionOrderManager(
+                    alorClient = alorClient,
+                    orderOutboxService = orderOutboxService,
+                    orderOutboxRepo = orderOutboxRepo,
+                    positionRepo = positionRepo,
+                    alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
+                    portfolioResolver = { "D12345" },
+                    onSlProtectionFailed = {},
+                    protectionOrdersEnabled = true,
+                    applyCloseExecution = { pos, qty, price, _ ->
+                        pos.quantity -= qty
+                        pos.currentPrice = price
+                    },
+                )
+
+            val pos =
+                Position(
+                    id = 1L,
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("100"),
+                    currentPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                    slOrderId = "SL-B",
+                    slOrderPrice = BigDecimal("95"),
+                    takeProfit = BigDecimal("110"),
+                    closeOrderId = "close-A",
+                    pendingClose = true,
+                    closeReason = CloseReason.STOP_LOSS,
+                )
+
+            val execution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
+            manager.applyExchangeProtectionClosePublic(pos, execution, CloseReason.STOP_LOSS)
+
+            // State checks
+            assertEquals(6, pos.quantity) { "qty reduced by SL fill" }
+            assertTrue(pos.closeCancelPending) { "closeCancelPending set" }
+            assertEquals("close-A", pos.closeOrderId) { "closeOrderId preserved" }
+
+            // CRITICAL: no new SL/TP order placed
+            assertFalse(orderPlaced) { "attachProtectionOrders must NOT create new SL/TP while closeCancelPending=true" }
+
+            // After old close confirmed terminal, reconcile will clear and re-arm
+            // Simulate: clear closeCancelPending manually (as reconciler would)
+            pos.closeCancelPending = false
+            pos.closeOrderId = null
+            pos.pendingClose = false
+            pos.slOrderId = null
+            pos.tpOrderId = null
+            orderPlaced = false
+
+            // Now reconcile should place new protection
+            manager.attachProtectionOrders(pos)
+
+            assertTrue(orderPlaced) { "after closeCancelPending cleared, new SL/TP must be created" }
         }
-
-        val manager = ProtectionOrderManager(
-            alorClient = alorClient,
-            orderOutboxService = orderOutboxService,
-            orderOutboxRepo = orderOutboxRepo,
-            positionRepo = positionRepo,
-            alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            portfolioResolver = { "D12345" },
-            onSlProtectionFailed = {},
-            protectionOrdersEnabled = true,
-            applyCloseExecution = { pos, qty, price, _ ->
-                pos.quantity -= qty
-                pos.currentPrice = price
-            },
-        )
-
-        val pos = Position(
-            id = 1L,
-            ticker = "SBER",
-            direction = PositionDirection.LONG,
-            quantity = 10,
-            entryPrice = BigDecimal("100"),
-            currentPrice = BigDecimal("100"),
-            instrumentType = InstrumentType.STOCK,
-            status = PositionStatus.OPEN,
-            slOrderId = "SL-B",
-            slOrderPrice = BigDecimal("95"),
-            takeProfit = BigDecimal("110"),
-            closeOrderId = "close-A",
-            pendingClose = true,
-            closeReason = CloseReason.STOP_LOSS,
-        )
-
-        val execution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
-        manager.applyExchangeProtectionClosePublic(pos, execution, CloseReason.STOP_LOSS)
-
-        // State checks
-        assertEquals(6, pos.quantity) { "qty reduced by SL fill" }
-        assertTrue(pos.closeCancelPending) { "closeCancelPending set" }
-        assertEquals("close-A", pos.closeOrderId) { "closeOrderId preserved" }
-
-        // CRITICAL: no new SL/TP order placed
-        assertFalse(orderPlaced) { "attachProtectionOrders must NOT create new SL/TP while closeCancelPending=true" }
-
-        // After old close confirmed terminal, reconcile will clear and re-arm
-        // Simulate: clear closeCancelPending manually (as reconciler would)
-        pos.closeCancelPending = false
-        pos.closeOrderId = null
-        pos.pendingClose = false
-        pos.slOrderId = null
-        pos.tpOrderId = null
-        orderPlaced = false
-
-        // Now reconcile should place new protection
-        manager.attachProtectionOrders(pos)
-
-        assertTrue(orderPlaced) { "after closeCancelPending cleared, new SL/TP must be created" }
-    }
 
     private fun stubSave() {
         runBlocking {

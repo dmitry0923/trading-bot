@@ -348,18 +348,21 @@ class ProtectionOrderManager(
             else -> {}
         }
 
-        if (pos.pendingClose) {
+        if (pos.pendingClose && !pos.closeCancelPending) {
             val closeId = pos.closeOrderId
             val positionId = pos.id
             if (closeId != null && positionId != null) {
                 orderOutboxService.placeCancelOrder(positionId, closeId, accountId = pos.accountId)
+                pos.closeCancelPending = true
                 logger.info {
-                    "Protection $reason closed ${pos.ticker} first — cancelling pending close order $closeId"
+                    "Protection $reason fired for ${pos.ticker} — cancelling pending close order $closeId, " +
+                        "waiting for cancel confirmation before allowing fresh close"
                 }
             }
-            pos.closeOrderId = null
-            pos.pendingClose = false
-            pos.closeReason = null
+            // DO NOT clear closeOrderId / pendingClose / closeReason here.
+            // They are preserved so the delta model (handlePendingCloseReport) can still
+            // apply late WS fills for the old close order. State is cleared by the reconciler
+            // (resolveCloseCancel) after the old order is confirmed terminal.
         }
         cancelProtectionOrders(pos)
         applyCloseExecution(pos, filled, execution.avgPrice ?: pos.currentPrice ?: pos.entryPrice, reason)

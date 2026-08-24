@@ -204,7 +204,8 @@ class ExecutionReconciler(
      */
     suspend fun resolveCloseCancel(pos: Position) {
         val orderId = pos.closeOrderId
-        if (orderId == null) {
+        val positionId = pos.id
+        if (orderId == null || positionId == null) {
             pos.closeCancelPending = false
             pos.pendingClose = false
             positionRepo.save(pos)
@@ -225,16 +226,28 @@ class ExecutionReconciler(
                 confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
             }
 
-            // Clear old close state — monitor will re-trigger if position still needs closing
-            pos.closeOrderId = null
-            pos.cumulativeCloseFillQty = 0
-            pos.closeReason = null
-            pos.closeCancelPending = false
-            pos.pendingClose = false
-            positionRepo.save(pos)
-            meterRegistry.counter("$metricPrefix.close.cancel_confirmed", Tags.of("ticker", pos.ticker)).increment()
+            // Re-read: confirmCloseFill may have transitioned to CLOSED via finalizeClosePosition.
+            // Saving a stale OPEN entity would reopen the position.
+            val fresh = positionRepo.findById(positionId)
+            if (fresh.status != PositionStatus.OPEN) {
+                meterRegistry.counter("$metricPrefix.close.cancel_confirmed", Tags.of("ticker", fresh.ticker)).increment()
+                logger.info {
+                    "Close cancel confirmed for ${fresh.ticker} (order=$orderId, status=${execution.status}) — " +
+                        "position already ${fresh.status}, skipping stale state clear"
+                }
+                return
+            }
+
+            // Position still OPEN — safe to clear old close state
+            fresh.closeOrderId = null
+            fresh.cumulativeCloseFillQty = 0
+            fresh.closeReason = null
+            fresh.closeCancelPending = false
+            fresh.pendingClose = false
+            positionRepo.save(fresh)
+            meterRegistry.counter("$metricPrefix.close.cancel_confirmed", Tags.of("ticker", fresh.ticker)).increment()
             logger.info {
-                "Close cancel confirmed for ${pos.ticker} (order=$orderId, status=${execution.status}) — " +
+                "Close cancel confirmed for ${fresh.ticker} (order=$orderId, status=${execution.status}) — " +
                     "old state cleared, monitor will re-arm if position still needs closing"
             }
             return

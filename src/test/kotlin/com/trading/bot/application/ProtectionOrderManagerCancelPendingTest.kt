@@ -210,6 +210,27 @@ class ProtectionOrderManagerCancelPendingTest {
         }
     }
 
+    /**
+     * G: duplicate cancel — second call with slCancelPending already true does NOT send a second outbox.
+     */
+    @Test
+    fun duplicateCancel_doesNotSendSecondOutbox() {
+        runBlocking {
+            val pos = openPosition(slOrderId = "SL-1", tpOrderId = "TP-1")
+
+            // First cancel
+            manager.cancelProtectionOrders(pos)
+            assertTrue(pos.slCancelPending)
+            assertTrue(pos.tpCancelPending)
+
+            // Second cancel — should be no-op
+            manager.cancelProtectionOrders(pos)
+
+            // placeCancelOrder called exactly twice (SL + TP in first call), not 4 times
+            verify(orderOutboxService, Mockito.times(2)).placeCancelOrder(anyOrNull<Long>(), anyOrNull(), anyOrNull())
+        }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private suspend fun stubCancelProtectionSafe() {

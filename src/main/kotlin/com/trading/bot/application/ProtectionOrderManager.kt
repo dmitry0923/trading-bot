@@ -181,14 +181,14 @@ class ProtectionOrderManager(
         if (!protectionOrdersEnabled) return
         val positionId = pos.id ?: return
         val slId = pos.slOrderId
-        if (slId != null && skip != "SL") {
+        if (slId != null && skip != "SL" && !pos.slCancelPending) {
             orderOutboxService.placeCancelOrder(positionId, slId, accountId = pos.accountId)
             logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=$slId)" }
             pos.slCancelPending = true
             pos.slPendingReplace = false
         }
         val tpId = pos.tpOrderId
-        if (tpId != null && skip != "TP") {
+        if (tpId != null && skip != "TP" && !pos.tpCancelPending) {
             orderOutboxService.placeCancelOrder(positionId, tpId, accountId = pos.accountId)
             logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=$tpId)" }
             pos.tpCancelPending = true

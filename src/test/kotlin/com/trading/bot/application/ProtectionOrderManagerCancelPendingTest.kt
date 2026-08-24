@@ -9,7 +9,6 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -40,7 +39,6 @@ class ProtectionOrderManagerCancelPendingTest {
     private val orderOutboxService = Mockito.mock(OrderOutboxService::class.java)
     private val orderOutboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
     private val positionRepo = Mockito.mock(PositionRepository::class.java)
-    private val meterRegistry = SimpleMeterRegistry()
 
     private val manager =
         ProtectionOrderManager(
@@ -49,8 +47,6 @@ class ProtectionOrderManagerCancelPendingTest {
             orderOutboxRepo = orderOutboxRepo,
             positionRepo = positionRepo,
             alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-            meterRegistry = meterRegistry,
-            metricPrefix = "test.protect",
             portfolioResolver = { "D12345" },
             onSlProtectionFailed = {},
             protectionOrdersEnabled = true,
@@ -178,8 +174,6 @@ class ProtectionOrderManagerCancelPendingTest {
                     orderOutboxRepo = orderOutboxRepo,
                     positionRepo = positionRepo,
                     alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
-                    meterRegistry = meterRegistry,
-                    metricPrefix = "test.protect",
                     portfolioResolver = { "D12345" },
                     onSlProtectionFailed = {},
                     protectionOrdersEnabled = true,

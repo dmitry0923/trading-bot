@@ -34,6 +34,11 @@ import java.time.LocalDateTime
  *   но подтверждение отмены ещё не получено. Пока флаг установлен, orderId НЕ
  *   очищается и новый protection order НЕ создаётся (защита от duplicate SL/TP).
  *   Очистка только после подтверждённой отмены или обнаружения что order gone.
+ * - [closeCancelPending] — close order cancel request отправлен на биржу,
+ *   но подтверждение отмены ещё не получено. Пока флаг установлен, НОВЫЙ
+ *   close order НЕ создаётся (защита от over-close: старый ордер ещё live,
+ *   может дозаполниться). Очистка только после подтверждённой отмены старого
+ *   ордера или обнаружения что order gone (reconciler → resetPendingClose).
  */
 data class Position(
     val id: Long? = null,
@@ -65,6 +70,7 @@ data class Position(
     var tpPendingReplace: Boolean = false,
     var slCancelPending: Boolean = false,
     var tpCancelPending: Boolean = false,
+    var closeCancelPending: Boolean = false,
     var pendingClose: Boolean = false,
     var pendingEntry: Boolean = false,
     var realizedPnl: BigDecimal = BigDecimal.ZERO,

@@ -53,7 +53,9 @@ class ExecutionReconciler(
      *
      * Dispatches to the appropriate handler based on position state:
      * - pendingEntry → resolveEntryViaOutbox
-     * - pendingClose → confirmCloseFill or resolveCloseViaOutbox
+     * - pendingClose + closeCancelPending → resolveCloseCancel (verify cancel, then re-arm)
+     * - pendingClose + closeOrderId → confirmCloseFill
+     * - pendingClose + no closeOrderId → resolveCloseViaOutbox
      * - otherwise → reconcileProtectionOrders
      */
     suspend fun reconcilePosition(pos: Position) {
@@ -63,10 +65,12 @@ class ExecutionReconciler(
             }
 
             pos.pendingClose -> {
-                if (pos.closeOrderId != null) {
-                    confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
-                } else {
-                    resolveCloseViaOutbox(pos)
+                when {
+                    pos.closeCancelPending -> resolveCloseCancel(pos)
+                    pos.closeOrderId != null -> {
+                        confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
+                    }
+                    else -> resolveCloseViaOutbox(pos)
                 }
             }
 
@@ -184,6 +188,64 @@ class ExecutionReconciler(
             }
 
             else -> {}
+        }
+    }
+
+    /**
+     * Resolve pending close with closeCancelPending=true.
+     *
+     * Verifies the old close order via REST. If confirmed terminal (cancelled/rejected/expired),
+     * applies any remaining fills via delta model, then clears close state. The monitor will
+     * re-trigger a fresh close on the next tick if the position still needs closing.
+     *
+     * This prevents the over-close race: old order A is still live on the exchange and could
+     * fill after we cancel it. Only after A is confirmed gone do we clear state and allow a
+     * new close order to be created.
+     */
+    suspend fun resolveCloseCancel(pos: Position) {
+        val orderId = pos.closeOrderId
+        if (orderId == null) {
+            pos.closeCancelPending = false
+            pos.pendingClose = false
+            positionRepo.save(pos)
+            return
+        }
+
+        val execution = alorClient.verifyOrder(
+            orderId,
+            expectedPrice = pos.currentPrice ?: pos.entryPrice,
+            portfolio = portfolioResolver(pos.accountId),
+        ) ?: return
+
+        if (isGoneStatus(execution)) {
+            // Old order confirmed terminal — apply any remaining fills via delta model
+            val prevApplied = pos.cumulativeCloseFillQty
+            val delta = execution.filledQuantity - prevApplied
+            if (delta > 0) {
+                confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
+            }
+
+            // Clear old close state — monitor will re-trigger if position still needs closing
+            pos.closeOrderId = null
+            pos.cumulativeCloseFillQty = 0
+            pos.closeReason = null
+            pos.closeCancelPending = false
+            pos.pendingClose = false
+            positionRepo.save(pos)
+            meterRegistry.counter("$metricPrefix.close.cancel_confirmed", Tags.of("ticker", pos.ticker)).increment()
+            logger.info {
+                "Close cancel confirmed for ${pos.ticker} (order=$orderId, status=${execution.status}) — " +
+                    "old state cleared, monitor will re-arm if position still needs closing"
+            }
+            return
+        }
+
+        // Order is still live or filled — wait for cancel to complete
+        if (isFilledStatus(execution)) {
+            logger.warn {
+                "Close order $orderId for ${pos.ticker} still FILLED/PARTIALLY_FILLED " +
+                    "(status=${execution.status}, filled=${execution.filledQuantity}) — waiting for cancel"
+            }
         }
     }
 

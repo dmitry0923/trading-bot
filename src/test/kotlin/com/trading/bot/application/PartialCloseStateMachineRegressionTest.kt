@@ -16,11 +16,11 @@ import com.trading.bot.service.TradeEventService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.mockito.Mockito.never
 import org.mockito.kotlin.eq
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
@@ -174,7 +174,7 @@ class PartialCloseStateMachineRegressionTest {
      * This test ensures the fallback path works correctly for legacy states.
      */
     @Test
-    fun `partialClose_reportAfterPendingFlagCleared_isNotLost`() {
+    fun partialClose_reportAfterPendingFlagCleared_isNotLost() {
         val pos = openPos(
             quantity = 5,
             pendingClose = false,
@@ -196,16 +196,15 @@ class PartialCloseStateMachineRegressionTest {
     }
 
     /**
-     * After partial fill (cumulativeCloseFillQty > 0), closePosition() must cancel
-     * the stale old order and create a fresh close order for the remaining quantity.
+     * CRITICAL (P0#2): After partial fill (cumulativeCloseFillQty > 0), closePosition()
+     * cancels the stale old order and SETS closeCancelPending=TRUE. No new close order
+     * is created immediately — that would risk over-close if the old order still fills.
      *
-     * Scenario:
-     * 1. Order A partially filled 3/10 → cumulativeCloseFillQty=3, quantity=7
-     * 2. closePosition() → pendingClose=true, closeOrderId="order-A", cumulative>0
-     *    → cancel order-A → reset cumulative → create new order B for qty=7
+     * The reconciler will verify the old order is terminal before clearing state.
+     * After confirmation, the monitor re-triggers a fresh close on the next tick.
      */
     @Test
-    fun `closePosition_cancelsStaleOrderAndCreatesNewWhenCumulativePartialExists`() {
+    fun closePosition_cancelsStaleOrderSetsCloseCancelPendingAndReturns() {
         val pos = openPos(
             quantity = 7,
             pendingClose = true,
@@ -220,36 +219,13 @@ class PartialCloseStateMachineRegressionTest {
             stubTransitionToClosed()
 
             Mockito.`when`(
-                alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
-            ).thenReturn(AlorClient.CancelResult.CONFIRMED)
-
-            Mockito.`when`(
                 orderOutboxService.placeCancelOrder(Mockito.anyLong(), Mockito.anyString(), Mockito.nullable(Long::class.java)),
             ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, true))
-
-            Mockito.`when`(
-                orderOutboxService.placeOrder(
-                    Mockito.anyString(),
-                    Mockito.anyString(),
-                    Mockito.anyInt(),
-                    Mockito.nullable(BigDecimal::class.java),
-                    Mockito.anyString(),
-                    Mockito.anyLong(),
-                    Mockito.anyString(),
-                    Mockito.nullable(BigDecimal::class.java),
-                    Mockito.nullable(String::class.java),
-                    Mockito.nullable(Long::class.java),
-                ),
-            ).thenReturn(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "order-B", true))
-
-            Mockito.`when`(
-                alorClient.verifyOrder(Mockito.anyString(), anyBigDecimal(), Mockito.anyString()),
-            ).thenReturn(AlorClient.OrderExecution("FILLED", 7, BigDecimal("110")))
 
             engine.closePosition(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
         }
 
-        // Old order A cancelled via outbox (placeCancelOrder, not direct cancelOrder)
+        // Old order A cancelled via outbox
         runBlocking {
             Mockito.verify(orderOutboxService).placeCancelOrder(
                 eq(pos.id!!),
@@ -257,12 +233,12 @@ class PartialCloseStateMachineRegressionTest {
                 Mockito.nullable(Long::class.java),
             )
         }
-        // New order B created
+        // No new close order created — closeCancelPending prevents it
         runBlocking {
-            Mockito.verify(orderOutboxService).placeOrder(
+            Mockito.verify(orderOutboxService, never()).placeOrder(
                 Mockito.anyString(),
                 Mockito.anyString(),
-                eq(7),
+                Mockito.anyInt(),
                 Mockito.nullable(BigDecimal::class.java),
                 Mockito.anyString(),
                 Mockito.anyLong(),
@@ -272,7 +248,9 @@ class PartialCloseStateMachineRegressionTest {
                 Mockito.nullable(Long::class.java),
             )
         }
-        // After cancel-stale + fresh close + confirmCloseFill: cumulative is set by confirmCloseFill (delta=7)
-        assertEquals(7, pos.cumulativeCloseFillQty) { "cumulative updated by confirmCloseFill after fresh close" }
+        assertTrue(pos.closeCancelPending) { "closeCancelPending must be true — waiting for cancel confirmation" }
+        assertEquals("order-A", pos.closeOrderId) { "closeOrderId preserved — old order still tracked" }
+        assertEquals(3, pos.cumulativeCloseFillQty) { "cumulativeCloseFillQty preserved — delta model continuity" }
+        assertTrue(pos.pendingClose) { "pendingClose still true" }
     }
 }

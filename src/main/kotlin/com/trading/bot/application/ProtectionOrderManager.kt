@@ -12,8 +12,6 @@ import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import io.github.oshai.kotlinlogging.KotlinLogging
-import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.Tags
 
 /**
  * Exchange protection order lifecycle (SL/TP): place, reconcile, replace, cancel.
@@ -34,8 +32,6 @@ class ProtectionOrderManager(
     private val orderOutboxRepo: OrderOutboxRepository,
     private val positionRepo: PositionRepository,
     private val alorConfig: AlorConfig,
-    private val meterRegistry: MeterRegistry,
-    private val metricPrefix: String,
     private val portfolioResolver: suspend (Long?) -> String,
     private val onSlProtectionFailed: (Position) -> Unit,
     private val protectionOrdersEnabled: Boolean = false,
@@ -194,8 +190,9 @@ class ProtectionOrderManager(
             logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=$slId)" }
             pos.slCancelPending = true
             pos.slPendingReplace = false
-            // Cancelled order is going away — reset its fill counter for the replacement
-            pos.cumulativeSlFillQty = 0
+            // NOTE: cumulativeSlFillQty is NOT reset here — the old order is still live on
+            // the exchange and could produce late WS fills. Reset only after the order is
+            // confirmed terminal (checkProtectionFills → isGoneStatus → cumulativeSlFillQty=0).
         }
         val tpId = pos.tpOrderId
         if (tpId != null && skip != "TP" && !pos.tpCancelPending) {
@@ -203,8 +200,7 @@ class ProtectionOrderManager(
             logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=$tpId)" }
             pos.tpCancelPending = true
             pos.tpPendingReplace = false
-            // Cancelled order is going away — reset its fill counter for the replacement
-            pos.cumulativeTpFillQty = 0
+            // NOTE: cumulativeTpFillQty is NOT reset here — same rationale as SL above.
         }
     }
 

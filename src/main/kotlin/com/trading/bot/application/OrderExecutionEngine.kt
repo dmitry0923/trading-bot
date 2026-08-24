@@ -103,8 +103,11 @@ class OrderExecutionEngine(
     private val logger = KotlinLogging.logger {}
 
     /** Delegates set after construction to break circular dependency. */
+    @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
     internal lateinit var closeFill: CloseFillProcessor
+    @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
     internal lateinit var protection: ProtectionOrderManager
+    @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
     internal lateinit var reconciler: ExecutionReconciler
 
     init {
@@ -132,8 +135,6 @@ class OrderExecutionEngine(
                 orderOutboxRepo = orderOutboxRepo,
                 positionRepo = positionRepo,
                 alorConfig = alorConfig,
-                meterRegistry = meterRegistry,
-                metricPrefix = metricPrefix,
                 portfolioResolver = portfolioResolver,
                 onSlProtectionFailed = onSlProtectionFailed,
                 protectionOrdersEnabled = protectionOrdersEnabled,
@@ -294,6 +295,9 @@ class OrderExecutionEngine(
         if (!positionRepo.claimForClose(positionId)) {
             val current = positionRepo.findById(positionId)
             if (current.pendingClose) {
+                if (current.closeCancelPending) {
+                    return
+                }
                 if (current.closeOrderId != null) {
                     closeFill.confirmCloseFill(current, price, reason)
                 } else {
@@ -306,27 +310,28 @@ class OrderExecutionEngine(
         val current = positionRepo.findById(positionId)
 
         if (current.pendingClose && current.closeOrderId != null) {
+            if (current.closeCancelPending) {
+                return
+            }
             if (current.cumulativeCloseFillQty > 0) {
                 // Partial fill already applied — old order was for original qty and is stale.
-                // Cancel it and create a fresh close order for the remaining quantity.
-                // This path handles active SL/TP monitoring where the position MUST close now.
+                // Cancel it and WAIT for confirmation before creating a fresh close order.
+                // Without waiting, the old order could still fill → over-close.
                 logger.info {
                     "Partial close already applied for ${current.ticker} " +
                         "(cumulativeFill=${current.cumulativeCloseFillQty}) — cancelling stale close " +
-                        "order ${current.closeOrderId} and creating fresh close for remaining qty=${current.quantity}"
+                        "order ${current.closeOrderId}, waiting for cancel confirmation before creating fresh close"
                 }
                 orderOutboxService.placeCancelOrder(positionId, current.closeOrderId!!, accountId = current.accountId)
-                current.closeOrderId = null
-                current.cumulativeCloseFillQty = 0
-                current.closeReason = null
+                current.closeCancelPending = true
                 positionRepo.save(current)
-                // Fall through to create new close order below
+                return
             } else {
                 // No partial fill yet — confirm the existing order via REST
                 closeFill.confirmCloseFill(current, price, reason)
                 return
             }
-        } else if (current.pendingClose && current.closeOrderId == null) {
+        } else if (current.pendingClose) {
             reconciler.reconcilePosition(current)
             return
         } else if (current.closeOrderId != null) {
@@ -420,10 +425,4 @@ class OrderExecutionEngine(
         return closeFill.handlePendingCloseReport(pos, report)
     }
 
-    // ═══════════════════════════ ABANDON ═════════════════════════════════
-
-    internal suspend fun abandonEntry(
-        pos: Position,
-        reason: CloseReason,
-    ) = reconciler.abandonEntry(pos, reason)
 }

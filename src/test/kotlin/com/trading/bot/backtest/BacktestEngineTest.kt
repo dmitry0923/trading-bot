@@ -239,14 +239,25 @@ class BacktestEngineTest {
 
     @Test
     fun `stress multipliers degrade backtest equity`() {
-        val base = runBlocking { engine.simulate("SBER", trendingCandles()) }
+        // Множитель проскальзывания действует на процентную ставку исполнения;
+        // при realisticExecution=true спред акций берётся из свечи и множитель на
+        // него не влияет — сценарий прогоняется в legacy-режиме фиксированной ставки.
+        val legacyEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        realisticExecution = false
+                    },
+            )
+        val base = runBlocking { legacyEngine.simulate("SBER", trendingCandles()) }
         assertTrue(base.totalTrades > 0, "fixture must produce trades")
         val commissionStress =
-            runBlocking { engine.simulate("SBER", trendingCandles(), commissionMultiplier = 5.0) }
+            runBlocking { legacyEngine.simulate("SBER", trendingCandles(), commissionMultiplier = 5.0) }
         val slippageStress =
-            runBlocking { engine.simulate("SBER", trendingCandles(), slippageMultiplier = 5.0) }
+            runBlocking { legacyEngine.simulate("SBER", trendingCandles(), slippageMultiplier = 5.0) }
         val combined =
-            runBlocking { engine.simulate("SBER", trendingCandles(), commissionMultiplier = 5.0, slippageMultiplier = 5.0) }
+            runBlocking { legacyEngine.simulate("SBER", trendingCandles(), commissionMultiplier = 5.0, slippageMultiplier = 5.0) }
 
         assertTrue(
             commissionStress.equityCurve.last() < base.equityCurve.last(),
@@ -355,10 +366,11 @@ class BacktestEngineTest {
     fun `pnl charges commission on the full position size`() {
         // flat 100 ₽, constant BUY: notionalPerLot = 100*10 = 1000,
         // qty = 100000 * 0.2 / 1000 = 20 лотов SBER (lotSize=10).
-        // entry fill = 100.1 (slippage 0.1%), exit fill = 99.9.
-        // gross = (99.9 - 100.1) * 20 * lotSize(10) = -40 ₽
-        // комиссии = (100.1*200 + 99.9*200) * 0.0005 = 20 ₽
-        // итог equity = 100000 - 10.01 (entry comm) - 40 - 9.99 (exit comm) = 99940 ₽
+        // Реалистичное исполнение: halfSpread = (101-99)/4 = 0.5,
+        // entry fill = 100.5, exit fill = 99.5.
+        // gross = (99.5 - 100.5) * 20 * lotSize(10) = -200 ₽
+        // комиссии = (100.5*200 + 99.5*200) * 0.0005 = 20 ₽
+        // итог equity = 100000 - 10.05 (entry comm) - 200 - 9.95 (exit comm) = 99780 ₽
         val engine =
             BacktestEngine(
                 CandleRepository(Mockito.mock(DatabaseClient::class.java)),
@@ -368,17 +380,17 @@ class BacktestEngineTest {
         val result = runBlocking { engine.simulate("SBER", flatCandles()) }
 
         assertEquals(1, result.totalTrades)
-        assertEquals(-60.0, result.tradeReturns.single(), 1e-9)
-        assertEquals(0, BigDecimal("99940").compareTo(result.equityCurve.last()))
+        assertEquals(-220.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("99780.00").compareTo(result.equityCurve.last()))
     }
 
     @Test
     fun `stock fallback size is capped by risk per trade`() {
         // capitalSlice = 1.0 → slice дал бы 100 лотов; риск-кап (1% портфеля против
         // 2% стопа, как StockEntryProfile) ограничивает qty = (100000*0.01)/(100*0.02*10) = 50.
-        // entry fill = 100.1, exit fill = 99.9, qty = 50 лотов, lotSize = 10:
-        // gross = (99.9-100.1)*50*10 = -100; комиссии = (100.1*500 + 99.9*500)*0.0005 = 50
-        // equity = 100000 - 25.025 (entry comm) - 100 - 24.975 (exit comm) = 99850
+        // Реалистичное исполнение: entry fill = 100.5, exit fill = 99.5, qty = 50, lotSize = 10:
+        // gross = (99.5-100.5)*50*10 = -500; комиссии = (100.5*500 + 99.5*500)*0.0005 = 50
+        // equity = 100000 - 25.125 (entry comm) - 500 - 24.875 (exit comm) = 99450
         val engine =
             BacktestEngine(
                 CandleRepository(Mockito.mock(DatabaseClient::class.java)),
@@ -392,8 +404,8 @@ class BacktestEngineTest {
         val result = runBlocking { engine.simulate("SBER", flatCandles()) }
 
         assertEquals(1, result.totalTrades)
-        assertEquals(-150.0, result.tradeReturns.single(), 1e-9)
-        assertEquals(0, BigDecimal("99850").compareTo(result.equityCurve.last()))
+        assertEquals(-550.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("99450.00").compareTo(result.equityCurve.last()))
     }
 
     @Test
@@ -1036,7 +1048,9 @@ class BacktestEngineTest {
 
         val result = runBlocking { buyEngine.simulate("SBER", candles) }
 
-        assertEquals(2, result.totalTrades, "стоп по SL и закрытие конца периода")
+        // Реалистичные спреды шире фиксированных 0.1%: повторный вход на баре 2
+        // (fill 102.125) тоже стоп-аутится на баре 3 → STOP ×2 + END_OF_PERIOD.
+        assertEquals(3, result.totalTrades, "два стопа по SL и закрытие конца периода")
         assertEquals(candles.size, result.equityCurve.size, "по одной точке на свечу без дубликатов на закрытии")
     }
 
@@ -1184,7 +1198,7 @@ class BacktestEngineTest {
             )
         }
 
-    /** Вход на баре 1 (fill 100.1), стоп на баре 2 (low 97.5 < SL 98.1), повторный вход — закрытия: STOP + END_OF_PERIOD. */
+    /** Вход на баре 1 (fill 100.5 при halfSpread 0.5), стоп на баре 2 (low 97.5 < SL ~98.49); повторный вход (fill 102.125) стопится на баре 3 — закрытия: STOP ×2 + END_OF_PERIOD. */
     private fun stopOutCandles(): List<Candle> {
         val ohlc =
             listOf(

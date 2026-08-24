@@ -61,6 +61,32 @@ object SimulatedExecution {
     }
 
     /**
+     * Estimate half-spread from candle data: (high - low) / 4.
+     * Used when realisticExecution=true to replace fixed slippage rate.
+     * Falls back to reference * 0.1% for flat candles.
+     */
+    fun estimateHalfSpread(candle: Candle, reference: BigDecimal): BigDecimal {
+        val range = candle.highPrice.subtract(candle.lowPrice)
+        if (range > BigDecimal.ZERO) {
+            return range.divide(BigDecimal("4"), 8, RoundingMode.HALF_UP)
+        }
+        return reference.multiply(MARKET_SLIPPAGE_RATE).divide(BigDecimal("2"), 8, RoundingMode.HALF_UP)
+    }
+
+    /**
+     * Realistic fill: buy at mid + halfSpread, sell at mid - halfSpread.
+     * The halfSpread is estimated from candle data (high-low range).
+     */
+    fun realisticFill(
+        reference: BigDecimal,
+        isBuy: Boolean,
+        halfSpread: BigDecimal,
+    ): Fill {
+        val price = if (isBuy) reference.add(halfSpread) else reference.subtract(halfSpread)
+        return Fill(price)
+    }
+
+    /**
      * Комиссия за полный оборот (0.05% от price × quantity).
      *
      * @param quantity количество контрактов/акций (оборот = price × quantity)

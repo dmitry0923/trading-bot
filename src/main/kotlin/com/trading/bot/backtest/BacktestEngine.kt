@@ -259,6 +259,7 @@ class BacktestEngine(
                                 commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
+                                current,
                             )
                         recordRiskSimClose(ticker, pos0, "STOP_LOSS", pos0.stopLoss, i, sorted, cash)
                         position = null
@@ -278,6 +279,7 @@ class BacktestEngine(
                                 commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
+                                current,
                             )
                         recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, i, sorted, cash)
                         position = null
@@ -319,6 +321,7 @@ class BacktestEngine(
                                 commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
+                                current,
                             )
                         recordRiskSimClose(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -359,6 +362,7 @@ class BacktestEngine(
                                 commissionAccumulator,
                                 commissionMultiplier,
                                 slippageMultiplier,
+                                current,
                             )
                         recordRiskSimClose(ticker, curPos, "MTF_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -408,6 +412,7 @@ class BacktestEngine(
                             commissionAccumulator,
                             commissionMultiplier,
                             slippageMultiplier,
+                            current,
                         )
                     recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
                     position =
@@ -423,6 +428,7 @@ class BacktestEngine(
                             sorted.subList(0, i),
                             slPoints,
                             tpPoints,
+                            current,
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -447,6 +453,7 @@ class BacktestEngine(
                     sorted.subList(0, i),
                     slPoints,
                     tpPoints,
+                    current,
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -470,6 +477,7 @@ class BacktestEngine(
                     commissionAccumulator,
                     commissionMultiplier,
                     slippageMultiplier,
+                    sorted.last(),
                 )
             recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
@@ -536,7 +544,10 @@ class BacktestEngine(
      * - фьючерсы — в ТИКАХ (пунктах), как при исполнении на бирже; процентная
      *   ставка от цены фьючерса непропорционально велика (0.1% Si ≈ 92 пункта >
      *   стоп в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] пунктов);
-     * - акции — процентная ставка (0.1%), как исторически в бэктесте.
+     * - акции при `bt.realistic-execution=true` — спред из диапазона свечи
+     *   ([SimulatedExecution.estimateHalfSpread]): покупка по mid + halfSpread,
+     *   продажа по mid − halfSpread;
+     * - иначе (флаг выключен или свеча недоступна) — фиксированная ставка 0.1%.
      */
     private fun executionFill(
         instrument: InstrumentsConfig.InstrumentSpec?,
@@ -544,9 +555,13 @@ class BacktestEngine(
         reference: BigDecimal,
         isBuy: Boolean,
         slippageMultiplier: Double,
+        candle: Candle? = null,
     ): SimulatedExecution.Fill =
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
             SimulatedExecution.tickFill(reference, isBuy, slippageTicks(slippageMultiplier), instrument.priceStep)
+        } else if (backtestConfig.realisticExecution && candle != null) {
+            val halfSpread = SimulatedExecution.estimateHalfSpread(candle, reference)
+            SimulatedExecution.realisticFill(reference, isBuy, halfSpread)
         } else {
             SimulatedExecution.marketFill(reference, isBuy, slippageRate(slippageMultiplier))
         }
@@ -597,6 +612,7 @@ class BacktestEngine(
         history: List<Candle>,
         slPoints: Int? = null,
         tpPoints: Int? = null,
+        candle: Candle? = null,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
@@ -605,7 +621,15 @@ class BacktestEngine(
         val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints)
         if (qty <= 0) return null
 
-        val fill = executionFill(instrument, ticker, price, direction == PositionDirection.LONG, slippageMultiplier)
+        val fill =
+            executionFill(
+                instrument,
+                ticker,
+                price,
+                direction == PositionDirection.LONG,
+                slippageMultiplier,
+                candle,
+            )
         return PositionSim(
             direction = direction,
             quantity = qty,
@@ -779,9 +803,18 @@ class BacktestEngine(
         commissionAccumulator: MutableList<BigDecimal>,
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
+        candle: Candle? = null,
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
-        val fill = executionFill(instrument, ticker, price, pos.direction == PositionDirection.SHORT, slippageMultiplier)
+        val fill =
+            executionFill(
+                instrument,
+                ticker,
+                price,
+                pos.direction == PositionDirection.SHORT,
+                slippageMultiplier,
+                candle,
+            )
         val commissionEntry = computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier)
         val commissionExit = computeCommission(ticker, fill.price, pos.quantity, commissionMultiplier)
         commissionAccumulator[0] = commissionAccumulator[0].add(commissionEntry).add(commissionExit)

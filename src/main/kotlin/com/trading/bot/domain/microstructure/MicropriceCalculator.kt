@@ -38,14 +38,14 @@ object MicropriceCalculator {
         if (bid <= BigDecimal.ZERO || ask <= BigDecimal.ZERO) return null
         if (bid >= ask) return null
         val bs = bidSize?.takeIf { it > 0 } ?: return null
-        val as_ = askSize?.takeIf { it > 0 } ?: return null
+        val askSz = askSize?.takeIf { it > 0 } ?: return null
 
-        val totalSize = bs + as_
+        val totalSize = bs + askSz
         // ask × bidSize + bid × askSize
         val numerator =
             ask
                 .multiply(BigDecimal(bs))
-                .add(bid.multiply(BigDecimal(as_)))
+                .add(bid.multiply(BigDecimal(askSz)))
         return numerator.divide(BigDecimal(totalSize), SCALE, HALF_UP)
     }
 

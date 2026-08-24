@@ -32,10 +32,10 @@ object ObiCalculator {
         askSize: Long?,
     ): BigDecimal? {
         val bs = bidSize?.takeIf { it >= 0 } ?: return null
-        val as_ = askSize?.takeIf { it >= 0 } ?: return null
-        val total = bs + as_
+        val askSz = askSize?.takeIf { it >= 0 } ?: return null
+        val total = bs + askSz
         if (total == 0L) return null
-        val imbalance = BigDecimal(bs - as_).divide(BigDecimal(total), SCALE, HALF_UP)
+        val imbalance = BigDecimal(bs - askSz).divide(BigDecimal(total), SCALE, HALF_UP)
         return imbalance.coerceIn(BigDecimal("-1.0"), BigDecimal("1.0"))
     }
 

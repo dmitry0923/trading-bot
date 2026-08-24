@@ -366,7 +366,7 @@ class ProtectionOrderManager(
         }
         cancelProtectionOrders(pos)
         applyCloseExecution(pos, filled, execution.avgPrice ?: pos.currentPrice ?: pos.entryPrice, reason)
-        if (pos.status == PositionStatus.OPEN) {
+        if (pos.status == PositionStatus.OPEN && !pos.closeCancelPending) {
             attachProtectionOrders(pos)
         }
     }

@@ -355,6 +355,92 @@ class CloseProtectionRaceRegressionTest {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // Test 4: protectionPartialFill_doesNotRearmWhileCloseCancelPending
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * When SL fills partially while close is pending, old close order is cancelled
+     * (closeCancelPending=true). New SL/TP must NOT be created while old close is
+     * still potentially live on the exchange. Otherwise both old close and new
+     * protection could fire → over-close.
+     *
+     * Flow:
+     * - SL B fills 4 (qty 10→6), closeCancelPending set
+     * - attachProtectionOrders must be SKIPPED
+     * - After reconcile confirms old close terminal → clear closeCancelPending
+     * - Then reconcileProtectionOrders creates fresh SL/TP
+     */
+    @Test
+    fun protectionPartialFill_doesNotRearmWhileCloseCancelPending() = runBlocking {
+        var orderPlaced = false
+
+        whenever(orderOutboxService.placeOrder(
+            anyOrNull(), anyOrNull(), Mockito.anyInt(), anyOrNull(), anyOrNull(),
+            anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(),
+        )).thenAnswer {
+            orderPlaced = true
+            OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), "NEW-SL", success = true)
+        }
+
+        val manager = ProtectionOrderManager(
+            alorClient = alorClient,
+            orderOutboxService = orderOutboxService,
+            orderOutboxRepo = orderOutboxRepo,
+            positionRepo = positionRepo,
+            alorConfig = AlorConfig().apply { maxOrderRetries = 3 },
+            portfolioResolver = { "D12345" },
+            onSlProtectionFailed = {},
+            protectionOrdersEnabled = true,
+            applyCloseExecution = { pos, qty, price, _ ->
+                pos.quantity -= qty
+                pos.currentPrice = price
+            },
+        )
+
+        val pos = Position(
+            id = 1L,
+            ticker = "SBER",
+            direction = PositionDirection.LONG,
+            quantity = 10,
+            entryPrice = BigDecimal("100"),
+            currentPrice = BigDecimal("100"),
+            instrumentType = InstrumentType.STOCK,
+            status = PositionStatus.OPEN,
+            slOrderId = "SL-B",
+            slOrderPrice = BigDecimal("95"),
+            takeProfit = BigDecimal("110"),
+            closeOrderId = "close-A",
+            pendingClose = true,
+            closeReason = CloseReason.STOP_LOSS,
+        )
+
+        val execution = AlorClient.OrderExecution("FILLED", 4, BigDecimal("95"))
+        manager.applyExchangeProtectionClosePublic(pos, execution, CloseReason.STOP_LOSS)
+
+        // State checks
+        assertEquals(6, pos.quantity) { "qty reduced by SL fill" }
+        assertTrue(pos.closeCancelPending) { "closeCancelPending set" }
+        assertEquals("close-A", pos.closeOrderId) { "closeOrderId preserved" }
+
+        // CRITICAL: no new SL/TP order placed
+        assertFalse(orderPlaced) { "attachProtectionOrders must NOT create new SL/TP while closeCancelPending=true" }
+
+        // After old close confirmed terminal, reconcile will clear and re-arm
+        // Simulate: clear closeCancelPending manually (as reconciler would)
+        pos.closeCancelPending = false
+        pos.closeOrderId = null
+        pos.pendingClose = false
+        pos.slOrderId = null
+        pos.tpOrderId = null
+        orderPlaced = false
+
+        // Now reconcile should place new protection
+        manager.attachProtectionOrders(pos)
+
+        assertTrue(orderPlaced) { "after closeCancelPending cleared, new SL/TP must be created" }
+    }
+
     private fun stubSave() {
         runBlocking {
             whenever(positionRepo.save(anyOrNull<Position>())).thenAnswer { it.getArgument<Position>(0) }

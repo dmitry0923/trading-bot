@@ -66,11 +66,17 @@ class ExecutionReconciler(
 
             pos.pendingClose -> {
                 when {
-                    pos.closeCancelPending -> resolveCloseCancel(pos)
+                    pos.closeCancelPending -> {
+                        resolveCloseCancel(pos)
+                    }
+
                     pos.closeOrderId != null -> {
                         confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
                     }
-                    else -> resolveCloseViaOutbox(pos)
+
+                    else -> {
+                        resolveCloseViaOutbox(pos)
+                    }
                 }
             }
 
@@ -212,11 +218,12 @@ class ExecutionReconciler(
             return
         }
 
-        val execution = alorClient.verifyOrder(
-            orderId,
-            expectedPrice = pos.currentPrice ?: pos.entryPrice,
-            portfolio = portfolioResolver(pos.accountId),
-        ) ?: return
+        val execution =
+            alorClient.verifyOrder(
+                orderId,
+                expectedPrice = pos.currentPrice ?: pos.entryPrice,
+                portfolio = portfolioResolver(pos.accountId),
+            ) ?: return
 
         if (isGoneStatus(execution)) {
             // Old order confirmed terminal — apply any remaining fills via delta model

@@ -311,11 +311,12 @@ class ProtectionOrderManager(
         // Delta model: only apply the increment since last protection fill for this order.
         // filledQuantity is cumulative from the exchange — without delta, a second partial
         // fill report would re-close the position.
-        val prevFill = when (reason) {
-            CloseReason.STOP_LOSS -> pos.cumulativeSlFillQty
-            CloseReason.TAKE_PROFIT -> pos.cumulativeTpFillQty
-            else -> 0
-        }
+        val prevFill =
+            when (reason) {
+                CloseReason.STOP_LOSS -> pos.cumulativeSlFillQty
+                CloseReason.TAKE_PROFIT -> pos.cumulativeTpFillQty
+                else -> 0
+            }
         val delta = execution.filledQuantity - prevFill
         if (delta <= 0) {
             // Duplicate or out-of-order event — skip
@@ -325,8 +326,14 @@ class ProtectionOrderManager(
 
         // Track cumulative fill for delta model
         when (reason) {
-            CloseReason.STOP_LOSS -> pos.cumulativeSlFillQty = execution.filledQuantity
-            CloseReason.TAKE_PROFIT -> pos.cumulativeTpFillQty = execution.filledQuantity
+            CloseReason.STOP_LOSS -> {
+                pos.cumulativeSlFillQty = execution.filledQuantity
+            }
+
+            CloseReason.TAKE_PROFIT -> {
+                pos.cumulativeTpFillQty = execution.filledQuantity
+            }
+
             else -> {}
         }
 

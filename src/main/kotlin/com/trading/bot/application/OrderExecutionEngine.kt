@@ -105,8 +105,10 @@ class OrderExecutionEngine(
     /** Delegates set after construction to break circular dependency. */
     @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
     internal lateinit var closeFill: CloseFillProcessor
+
     @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
     internal lateinit var protection: ProtectionOrderManager
+
     @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
     internal lateinit var reconciler: ExecutionReconciler
 
@@ -424,5 +426,4 @@ class OrderExecutionEngine(
         // Close confirmation (pendingClose) — delta model
         return closeFill.handlePendingCloseReport(pos, report)
     }
-
 }

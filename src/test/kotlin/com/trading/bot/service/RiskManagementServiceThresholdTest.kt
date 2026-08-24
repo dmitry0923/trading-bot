@@ -84,8 +84,11 @@ class RiskManagementServiceThresholdTest {
 
     @Test
     fun `gross exposure at boundary is allowed`() {
+        // Pin gross limit to 150% so boundary test is independent of config defaults.
+        // grossBefore = 55k (SHORT), candidate = 20k (LONG) → grossAfter = 75k = 50k × 150%.
+        val config = RiskConfig().apply { maxGrossExposurePercent = 150.0 }
         Mockito.`when`(aumProvider.latestAum()).thenReturn(BigDecimal("50000"))
-        val s = service()
+        val s = service(config = config)
         val open = listOf(Position(ticker = "A", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("55000")))
 
         assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open))
@@ -93,9 +96,16 @@ class RiskManagementServiceThresholdTest {
 
     @Test
     fun `net long exposure exceeded blocks`() {
+        // Pin gross to 150% (so gross check passes), net to 50% (so net check blocks).
+        // grossAfter = 60k < 75k (150% of 50k) → gross passes.
+        // netAfter = 40k + 20k = 60k > 25k (50% of 50k) → net blocks.
+        val config = RiskConfig().apply {
+            maxGrossExposurePercent = 150.0
+            maxNetExposurePercent = 50.0
+        }
         val registry = SimpleMeterRegistry()
         Mockito.`when`(aumProvider.latestAum()).thenReturn(BigDecimal("50000"))
-        val s = service(registry = registry)
+        val s = service(config = config, registry = registry)
         val open = listOf(Position(ticker = "A", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal("40000")))
 
         val blocked = s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open)

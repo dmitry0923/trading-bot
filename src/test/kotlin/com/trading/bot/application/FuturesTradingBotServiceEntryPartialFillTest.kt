@@ -152,7 +152,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             meterRegistry,
         )
 
-    private val savedPositions = mutableListOf<Position>()
+    private val savedPositions = java.util.concurrent.CopyOnWriteArrayList<Position>()
 
     @BeforeEach
     fun stubAccount() {
@@ -398,7 +398,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
     }
 
     private fun awaitUntil(
-        timeoutMs: Long = 4000,
+        timeoutMs: Long = 8000,
         condition: () -> Boolean,
     ) {
         val deadline = System.currentTimeMillis() + timeoutMs

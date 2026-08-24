@@ -251,7 +251,7 @@ class DecisionEngine(
         val expectedNetPerLot = adaptiveRisk.expectedNetProfitPerLot(ticker, accountId)
         when (val evResult = netEvGate.check(ticker, expectedNetPerLot, snapshot)) {
             is NetEvGate.GateResult.Blocked -> {
-                logger.warn { "NET EV rejected $ticker: netEV=${evResult.netEV}" }
+                logger.warn { "NET EV rejected $ticker: netEV=${evResult.netEV ?: "UNKNOWN (insufficient data)"}" }
                 meterRegistry
                     .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "NET_EV_TOO_LOW"))
                     .increment()

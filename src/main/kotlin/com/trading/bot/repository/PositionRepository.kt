@@ -50,6 +50,8 @@ class PositionRepository(
             tpOrderPrice = row.get("tp_order_price", BigDecimal::class.java),
             slPendingReplace = row.get("sl_pending_replace", Boolean::class.javaObjectType) ?: false,
             tpPendingReplace = row.get("tp_pending_replace", Boolean::class.javaObjectType) ?: false,
+            slCancelPending = row.get("sl_cancel_pending", Boolean::class.javaObjectType) ?: false,
+            tpCancelPending = row.get("tp_cancel_pending", Boolean::class.javaObjectType) ?: false,
             pendingClose = row.get("pending_close", Boolean::class.javaObjectType) ?: false,
             pendingEntry = row.get("pending_entry", Boolean::class.javaObjectType) ?: false,
             realizedPnl = row.get("realized_pnl", BigDecimal::class.java) ?: BigDecimal.ZERO,
@@ -523,6 +525,8 @@ class PositionRepository(
             .bindOrNull("tpOrderPrice", position.tpOrderPrice)
             .bind("slPendingReplace", position.slPendingReplace)
             .bind("tpPendingReplace", position.tpPendingReplace)
+            .bind("slCancelPending", position.slCancelPending)
+            .bind("tpCancelPending", position.tpCancelPending)
             .bind("pendingClose", position.pendingClose)
             .bind("pendingEntry", position.pendingEntry)
             .bind("realizedPnl", position.realizedPnl)
@@ -540,13 +544,15 @@ class PositionRepository(
                 stop_loss, take_profit, instrument_type, leverage, go_per_contract, margin_used,
                 liquidation_price, variation_margin, stop_loss_points, trailing_stop_price, pnl, status,
                 alor_order_id, close_order_id, sl_order_id, tp_order_id, sl_order_price, tp_order_price,
-                sl_pending_replace, tp_pending_replace, pending_close, pending_entry, realized_pnl, close_reason,
+                sl_pending_replace, tp_pending_replace, sl_cancel_pending, tp_cancel_pending,
+                pending_close, pending_entry, realized_pnl, close_reason,
                 cumulative_close_fill_qty, opened_at, closed_at, cycle_id, account_id)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
                 :alorOrderId, :closeOrderId, :slOrderId, :tpOrderId, :slOrderPrice, :tpOrderPrice,
-                :slPendingReplace, :tpPendingReplace, :pendingClose, :pendingEntry, :realizedPnl, :closeReason,
+                :slPendingReplace, :tpPendingReplace, :slCancelPending, :tpCancelPending,
+                :pendingClose, :pendingEntry, :realizedPnl, :closeReason,
                 :cumulativeCloseFillQty, :openedAt, :closedAt, :cycleId, :accountId)
             RETURNING id
             """.trimIndent()
@@ -574,6 +580,7 @@ class PositionRepository(
                 sl_order_id = :slOrderId, tp_order_id = :tpOrderId,
                 sl_order_price = :slOrderPrice, tp_order_price = :tpOrderPrice,
                 sl_pending_replace = :slPendingReplace, tp_pending_replace = :tpPendingReplace,
+                sl_cancel_pending = :slCancelPending, tp_cancel_pending = :tpCancelPending,
                 pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
                 close_reason = :closeReason, cumulative_close_fill_qty = :cumulativeCloseFillQty,
                 opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId,

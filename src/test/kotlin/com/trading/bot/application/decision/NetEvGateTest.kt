@@ -27,19 +27,34 @@ class NetEvGateTest {
     private val instrumentsConfig = InstrumentsConfig()
     private val riskConfig = RiskConfig()
 
-    private fun gate(config: RiskConfig = riskConfig): NetEvGate =
-        NetEvGate(instrumentsConfig, config)
+    private fun gate(
+        netEvBlockOnUnknown: Boolean = riskConfig.netEvBlockOnUnknown,
+    ): NetEvGate {
+        val config = RiskConfig().apply {
+            netEvGateEnabled = riskConfig.netEvGateEnabled
+            minNetEvThresholdRub = riskConfig.minNetEvThresholdRub
+            netEvAdverseSelectionMultiplier = riskConfig.netEvAdverseSelectionMultiplier
+            this.netEvBlockOnUnknown = netEvBlockOnUnknown
+        }
+        return NetEvGate(instrumentsConfig, config)
+    }
 
     @Test
     fun `gate passes when disabled`() {
-        val result = gate(RiskConfig().apply { netEvGateEnabled = false })
-            .check("SBER", BigDecimal("5"), null)
+        val config = RiskConfig().apply { netEvGateEnabled = false }
+        val result = NetEvGate(instrumentsConfig, config).check("SBER", BigDecimal("5"), null)
         assertTrue(result is NetEvGate.GateResult.Pass)
     }
 
     @Test
-    fun `gate passes when insufficient historical data`() {
+    fun `gate blocks when insufficient historical data and blockOnUnknown is true`() {
         val result = gate().check("SBER", null, null)
+        assertTrue(result is NetEvGate.GateResult.Blocked)
+    }
+
+    @Test
+    fun `gate passes when insufficient historical data and blockOnUnknown is false`() {
+        val result = gate(netEvBlockOnUnknown = false).check("SBER", null, null)
         assertTrue(result is NetEvGate.GateResult.Pass)
     }
 
@@ -59,7 +74,7 @@ class NetEvGateTest {
         val result = gate().check("SBER", BigDecimal("5"), snapshot)
         assertTrue(result is NetEvGate.GateResult.Blocked)
         val blocked = result as NetEvGate.GateResult.Blocked
-        assertEquals(0, BigDecimal("2").compareTo(blocked.netEV.setScale(0, java.math.RoundingMode.HALF_UP)))
+        assertEquals(0, BigDecimal("2").compareTo(blocked.netEV!!.setScale(0, java.math.RoundingMode.HALF_UP)))
     }
 
     @Test
@@ -132,8 +147,8 @@ class NetEvGateTest {
         val result = gate().check("SBER", BigDecimal("5"), snapshot)
         assertTrue(result is NetEvGate.GateResult.Blocked)
         val blocked = result as NetEvGate.GateResult.Blocked
-        assertEquals(0, BigDecimal("5").compareTo(blocked.expectedNet))
-        assertTrue(blocked.executionCost > BigDecimal.ZERO)
+        assertEquals(0, BigDecimal("5").compareTo(blocked.expectedNet!!))
+        assertTrue(blocked.executionCost!! > BigDecimal.ZERO)
     }
 
     @Test
@@ -149,7 +164,11 @@ class NetEvGateTest {
         assertTrue(blocked is NetEvGate.GateResult.Blocked)
 
         // With lower threshold (1): netEV = 2 >= 1 → PASS
-        val pass = gate(RiskConfig().apply { minNetEvThresholdRub = BigDecimal("1") })
+        val lowThresholdConfig = RiskConfig().apply {
+            minNetEvThresholdRub = BigDecimal("1")
+            netEvBlockOnUnknown = riskConfig.netEvBlockOnUnknown
+        }
+        val pass = NetEvGate(instrumentsConfig, lowThresholdConfig)
             .check("SBER", BigDecimal("5"), snapshot)
         assertTrue(pass is NetEvGate.GateResult.Pass)
     }

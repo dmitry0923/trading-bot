@@ -68,7 +68,7 @@ class ProtectionOrderManager(
         var dirty = false
 
         val effSl = ExitRules.effectiveSl(pos)
-        if (effSl != null && pos.slOrderId == null && !pos.slPendingReplace && !protectionOutboxActive(positionId, "sl")) {
+        if (effSl != null && pos.slOrderId == null && !pos.slPendingReplace && !pos.slCancelPending && !protectionOutboxActive(positionId, "sl")) {
             val placed =
                 orderOutboxService.placeOrder(
                     pos.ticker,
@@ -91,7 +91,7 @@ class ProtectionOrderManager(
         }
 
         val tp = pos.takeProfit
-        if (tp != null && pos.tpOrderId == null && !pos.tpPendingReplace && !protectionOutboxActive(positionId, "tp")) {
+        if (tp != null && pos.tpOrderId == null && !pos.tpPendingReplace && !pos.tpCancelPending && !protectionOutboxActive(positionId, "tp")) {
             val placed =
                 orderOutboxService.placeOrder(
                     pos.ticker,
@@ -125,7 +125,7 @@ class ProtectionOrderManager(
 
         val effSl = ExitRules.effectiveSl(pos)
         if (effSl != null && pos.slOrderId != null && pos.slOrderPrice != null &&
-            effSl.compareTo(pos.slOrderPrice) != 0 && !pos.slPendingReplace
+            effSl.compareTo(pos.slOrderPrice) != 0 && !pos.slPendingReplace && !pos.slCancelPending
         ) {
             pos.slPendingReplace = true
             dirty = true
@@ -134,7 +134,7 @@ class ProtectionOrderManager(
 
         val tp = pos.takeProfit
         if (tp != null && pos.tpOrderId != null && pos.tpOrderPrice != null &&
-            tp.compareTo(pos.tpOrderPrice) != 0 && !pos.tpPendingReplace
+            tp.compareTo(pos.tpOrderPrice) != 0 && !pos.tpPendingReplace && !pos.tpCancelPending
         ) {
             pos.tpPendingReplace = true
             dirty = true
@@ -168,6 +168,10 @@ class ProtectionOrderManager(
 
     /**
      * Cancel exchange protection orders via outbox (guaranteed delivery).
+     * Sets [Position.slCancelPending] / [Position.tpCancelPending] instead of
+     * clearing orderId — the ID is only cleared after confirmed cancellation or
+     * detected "gone" status, preventing duplicate protection orders.
+     *
      * [skip] — type to skip (e.g., the fired order).
      */
     suspend fun cancelProtectionOrders(
@@ -180,16 +184,14 @@ class ProtectionOrderManager(
         if (slId != null && skip != "SL") {
             orderOutboxService.placeCancelOrder(positionId, slId, accountId = pos.accountId)
             logger.info { "Exchange SL cancel scheduled for ${pos.ticker} (order=$slId)" }
-            pos.slOrderId = null
-            pos.slOrderPrice = null
+            pos.slCancelPending = true
             pos.slPendingReplace = false
         }
         val tpId = pos.tpOrderId
         if (tpId != null && skip != "TP") {
             orderOutboxService.placeCancelOrder(positionId, tpId, accountId = pos.accountId)
             logger.info { "Exchange TP cancel scheduled for ${pos.ticker} (order=$tpId)" }
-            pos.tpOrderId = null
-            pos.tpOrderPrice = null
+            pos.tpCancelPending = true
             pos.tpPendingReplace = false
         }
     }
@@ -249,6 +251,7 @@ class ProtectionOrderManager(
                 pos.slOrderId = null
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
+                pos.slCancelPending = false
                 logger.warn { "Exchange SL order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
             }
         }
@@ -263,6 +266,7 @@ class ProtectionOrderManager(
                 pos.tpOrderId = null
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
+                pos.tpCancelPending = false
                 logger.warn { "Exchange TP order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
             }
         }
@@ -296,11 +300,13 @@ class ProtectionOrderManager(
                 pos.slOrderId = null
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
+                pos.slCancelPending = false
             }
             CloseReason.TAKE_PROFIT -> {
                 pos.tpOrderId = null
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
+                pos.tpCancelPending = false
             }
             else -> {}
         }
@@ -365,6 +371,7 @@ class ProtectionOrderManager(
                 pos.slOrderId = null
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
+                pos.slCancelPending = false
                 dirty = true
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "SL replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
@@ -409,6 +416,7 @@ class ProtectionOrderManager(
                 pos.tpOrderId = null
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false
+                pos.tpCancelPending = false
                 dirty = true
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }

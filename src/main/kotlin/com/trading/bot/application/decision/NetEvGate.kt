@@ -22,7 +22,9 @@ import java.math.RoundingMode
  *     (текущий спред из market snapshot × 2 для ROUND TRIP × множитель adverse selection)
  *
  * Если netEV < minNetEvThresholdRub — вход блокируется.
- * При недостатке статистики (менее kellyMinTrades сделок) — gate PASS (не блокирует).
+ * При недостатке статистики (менее kellyMinTrades сделок) —
+ *   если [RiskConfig.netEvBlockOnUnknown] = true → BLOCK (EV UNKNOWN ≠ EV > 0),
+ *   иначе → PASS.
  */
 @Component
 class NetEvGate(
@@ -45,7 +47,15 @@ class NetEvGate(
         if (!riskConfig.netEvGateEnabled) return GateResult.Pass
 
         if (expectedNet == null) {
-            logger.debug { "NET EV gate PASS (insufficient data) for $ticker" }
+            if (riskConfig.netEvBlockOnUnknown) {
+                logger.warn { "NET EV gate BLOCKED $ticker: insufficient historical data (EV UNKNOWN)" }
+                return GateResult.Blocked(
+                    netEV = null,
+                    expectedNet = null,
+                    executionCost = null,
+                )
+            }
+            logger.debug { "NET EV gate PASS (insufficient data, netEvBlockOnUnknown=false) for $ticker" }
             return GateResult.Pass
         }
 
@@ -101,9 +111,9 @@ class NetEvGate(
         data object Pass : GateResult()
 
         data class Blocked(
-            val netEV: BigDecimal,
-            val expectedNet: BigDecimal,
-            val executionCost: BigDecimal,
+            val netEV: BigDecimal?,
+            val expectedNet: BigDecimal?,
+            val executionCost: BigDecimal?,
         ) : GateResult()
     }
 }

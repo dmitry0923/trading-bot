@@ -26,6 +26,10 @@ import java.time.LocalDateTime
  *   при открытии позиции (roadmap v2.2 «Точный контроль SL/TP»); [slOrderPrice] /
  *   [tpOrderPrice] — уровень заявки для детекции перевыставления, [slPendingReplace] /
  *   [tpPendingReplace] — перевыставление в полёте (отмена старой ещё не подтверждена).
+ * - [slCancelPending] / [tpCancelPending] — cancel request отправлен на биржу,
+ *   но подтверждение отмены ещё не получено. Пока флаг установлен, orderId НЕ
+ *   очищается и новый protection order НЕ создаётся (защита от duplicate SL/TP).
+ *   Очистка только после подтверждённой отмены или обнаружения что order gone.
  */
 data class Position(
     val id: Long? = null,
@@ -55,6 +59,8 @@ data class Position(
     var tpOrderPrice: BigDecimal? = null,
     var slPendingReplace: Boolean = false,
     var tpPendingReplace: Boolean = false,
+    var slCancelPending: Boolean = false,
+    var tpCancelPending: Boolean = false,
     var pendingClose: Boolean = false,
     var pendingEntry: Boolean = false,
     var realizedPnl: BigDecimal = BigDecimal.ZERO,

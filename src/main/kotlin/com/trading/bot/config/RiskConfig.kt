@@ -82,19 +82,24 @@ class RiskConfig {
      * Множители Kelly fraction по размеру выборки (количество закрытых сделок за 30 дней).
      * Множитель применяется к [kellyFraction], обеспечивая плавную шкалу:
      *
-     *   0-4 сделки:   kellyFraction × 0.20 = 5% от AUM (очень консервативно)
-     *   5-14 сделок:  kellyFraction × 0.50 = 12.5% от AUM
-     *   15-29 сделок: kellyFraction × 0.80 = 20% от AUM
-     *   30+ сделок:   kellyFraction × 1.00 = 25% от AUM (полный Kelly)
+     *   0-4 сделки:    kellyFraction × 0.10 = 2.5% от AUM (минимальный exploration)
+     *   5-14 сделок:   kellyFraction × 0.25 = 6.25% от AUM
+     *   15-29 сделок:  kellyFraction × 0.50 = 12.5% от AUM
+     *   30-59 сделок:  kellyFraction × 0.70 = 17.5% от AUM
+     *   60-99 сделок:  kellyFraction × 0.85 = 21.25% от AUM
+     *   100+ сделок:   kellyFraction × 1.00 = 25% от AUM (полный Kelly)
      *
      * Это заменяет бинарный порог kellyMinTrades: вместо cliff-перехода
      * от noDataFraction к полному Kelly используется плавная шкала.
+     * Для полноценного edge нужно ≈100 сделок статистики.
      */
     var kellySampleSizeTiers: List<Pair<Int, Double>> = listOf(
-        0 to 0.20,
-        5 to 0.50,
-        15 to 0.80,
-        30 to 1.00,
+        0 to 0.10,
+        5 to 0.25,
+        15 to 0.50,
+        30 to 0.70,
+        60 to 0.85,
+        100 to 1.00,
     )
 
     /**
@@ -287,6 +292,13 @@ class RiskConfig {
      * математическим ожиданием после учёта комиссии, спреда и проскальзывания.
      */
     var netEvGateEnabled: Boolean = true
+
+    /**
+     * Блокировать сделку при отсутствии достаточной статистики для расчёта NET EV.
+     * true = EV UNKNOWN → NO TRADE (консервативно, рекомендуется для LIVE).
+     * false = EV UNKNOWN → PASS (позволяет торговать без доказанного edge).
+     */
+    var netEvBlockOnUnknown: Boolean = true
 
     /**
      * Минимальный NET EV (RUB) для допуска сделки.

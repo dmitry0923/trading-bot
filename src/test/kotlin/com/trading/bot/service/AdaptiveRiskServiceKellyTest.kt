@@ -132,9 +132,9 @@ class AdaptiveRiskServiceKellyTest {
 
     @BeforeEach
     fun stubDefaults() {
-        // Tiers: 20 trades → 1.0 multiplier so existing Kelly tests are unaffected by staging.
-        // The staging test explicitly overrides tiers for its purpose.
-        riskConfig.kellySampleSizeTiers = listOf(0 to 0.20, 5 to 0.50, 15 to 0.80, 20 to 1.00)
+        // Override tiers so 20 trades → 1.0 multiplier: existing tests set kellyFraction=1.0
+        // and expect full Kelly results. Staging test overrides its own tiers.
+        riskConfig.kellySampleSizeTiers = listOf(0 to 0.10, 15 to 0.50, 20 to 1.00)
         runBlocking {
             stubClosedPositions(emptyList())
             stubAum()
@@ -204,7 +204,7 @@ class AdaptiveRiskServiceKellyTest {
         runBlocking {
             // Remove cap so staging effect is visible.
             riskConfig.kellyMaxPositionFraction = 1.0
-            riskConfig.kellySampleSizeTiers = listOf(0 to 0.20, 5 to 0.50, 30 to 1.00)
+            riskConfig.kellySampleSizeTiers = listOf(0 to 0.25, 5 to 0.50, 30 to 1.00)
             val s5 = stats(winRate = 0.7, avgWin = BigDecimal("200"), avgLoss = BigDecimal("100"), totalTrades = 5)
             stubStats(mapOf("SBER" to s5))
             riskConfig.kellyFraction = 1.0
@@ -389,7 +389,11 @@ class AdaptiveRiskServiceKellyTest {
     @Test
     fun `kelly base scales with per-account aum (F-12)`() =
         runBlocking {
-            stubStats(mapOf("SBER" to stats(winRate = 0.6, avgWin = BigDecimal("125"), avgLoss = BigDecimal("100"))))
+            val s = stats(winRate = 0.6, avgWin = BigDecimal("125"), avgLoss = BigDecimal("100"))
+            // Stub both overloads: default (null accountId) and accountId=7L.
+            // The service calls analyzeLastNDays(30, accountId) — both must return the same stats.
+            Mockito.`when`(tradeAnalysis.analyzeLastNDays(30)).thenReturn(mapOf("SBER" to s))
+            Mockito.`when`(tradeAnalysis.analyzeLastNDays(30, 7L)).thenReturn(mapOf("SBER" to s))
             Mockito.`when`(aumProvider.currentAum(7L)).thenReturn(BigDecimal("100000"))
             Mockito.`when`(aumProvider.currentAum()).thenReturn(BigDecimal("50000"))
 
@@ -416,15 +420,19 @@ class AdaptiveRiskServiceKellyTest {
 
     @Test
     fun `sampleSizeMultiplier returns correct tier values`() {
-        riskConfig.kellySampleSizeTiers = listOf(0 to 0.20, 5 to 0.50, 15 to 0.80, 30 to 1.00)
-        assertEquals(0.20, service.sampleSizeMultiplier(0))
-        assertEquals(0.20, service.sampleSizeMultiplier(4))
-        assertEquals(0.50, service.sampleSizeMultiplier(5))
-        assertEquals(0.50, service.sampleSizeMultiplier(14))
-        assertEquals(0.80, service.sampleSizeMultiplier(15))
-        assertEquals(0.80, service.sampleSizeMultiplier(29))
-        assertEquals(1.00, service.sampleSizeMultiplier(30))
+        riskConfig.kellySampleSizeTiers = listOf(0 to 0.10, 5 to 0.25, 15 to 0.50, 30 to 0.70, 60 to 0.85, 100 to 1.00)
+        assertEquals(0.10, service.sampleSizeMultiplier(0))
+        assertEquals(0.10, service.sampleSizeMultiplier(4))
+        assertEquals(0.25, service.sampleSizeMultiplier(5))
+        assertEquals(0.25, service.sampleSizeMultiplier(14))
+        assertEquals(0.50, service.sampleSizeMultiplier(15))
+        assertEquals(0.50, service.sampleSizeMultiplier(29))
+        assertEquals(0.70, service.sampleSizeMultiplier(30))
+        assertEquals(0.70, service.sampleSizeMultiplier(59))
+        assertEquals(0.85, service.sampleSizeMultiplier(60))
+        assertEquals(0.85, service.sampleSizeMultiplier(99))
         assertEquals(1.00, service.sampleSizeMultiplier(100))
+        assertEquals(1.00, service.sampleSizeMultiplier(200))
     }
 
     @Test

@@ -102,15 +102,10 @@ class OrderExecutionEngine(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    /** Delegates set after construction to break circular dependency. */
-    @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
-    internal lateinit var closeFill: CloseFillProcessor
-
-    @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
-    internal lateinit var protection: ProtectionOrderManager
-
-    @Suppress("LATEINIT_VAR_NEVER_INITIALIZED")
-    internal lateinit var reconciler: ExecutionReconciler
+    /** Delegates set in init to break circular dependency. */
+    internal val closeFill: CloseFillProcessor
+    internal val protection: ProtectionOrderManager
+    internal val reconciler: ExecutionReconciler
 
     init {
         closeFill =

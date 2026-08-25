@@ -56,6 +56,12 @@ class ProtectionOrderManager(
     suspend fun attachProtectionOrders(pos: Position) {
         if (!protectionOrdersEnabled) return
         if (pos.status != PositionStatus.OPEN) return
+        if (pos.closeCancelPending) {
+            logger.info {
+                "Protection re-arm skipped for ${pos.ticker}: close cancellation pending"
+            }
+            return
+        }
         val positionId =
             pos.id ?: run {
                 logger.error { "Cannot attach protection orders for ${pos.ticker}: position has no id" }

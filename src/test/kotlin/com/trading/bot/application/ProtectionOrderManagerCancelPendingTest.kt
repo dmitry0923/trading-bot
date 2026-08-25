@@ -33,6 +33,7 @@ import java.util.UUID
  * D. gone status on TP → same flow for TP
  * E. SL fill while cancelPending → atomic clear + position close
  * F. cancelProtectionOrders with skip="SL" → only TP cancelled
+ * G. closeCancelPending=true → attachProtectionOrders() → NO new SL/TP (P0 race guard)
  */
 class ProtectionOrderManagerCancelPendingTest {
     private val alorClient = Mockito.mock(AlorClient::class.java)
@@ -241,6 +242,37 @@ class ProtectionOrderManagerCancelPendingTest {
         }
     }
 
+    /**
+     * G: closeCancelPending=true → attach skips — no new SL or TP orders created.
+     * Regression: CLOSE A → partial fill → CANCEL A → closeCancelPending=true →
+     * concurrent attachProtectionOrders() from StockPositionMonitor must NOT create new SL/TP.
+     */
+    @Test
+    fun closeCancelPending_blocksNewProtectionOrders() {
+        runBlocking {
+            val pos = openPosition(
+                stopLoss = BigDecimal("91500"),
+                takeProfit = BigDecimal("93000"),
+                closeCancelPending = true,
+            )
+
+            manager.attachProtectionOrders(pos)
+
+            verify(orderOutboxService, never()).placeOrder(
+                anyOrNull(),
+                anyOrNull(),
+                Mockito.anyInt(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+            )
+        }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────
 
     private suspend fun stubCancelProtectionSafe() {
@@ -277,6 +309,7 @@ class ProtectionOrderManagerCancelPendingTest {
         tpOrderId: String? = null,
         tpOrderPrice: BigDecimal? = null,
         tpCancelPending: Boolean = false,
+        closeCancelPending: Boolean = false,
         stopLoss: BigDecimal? = BigDecimal("91500"),
         takeProfit: BigDecimal? = BigDecimal("93000"),
     ): Position =
@@ -294,6 +327,7 @@ class ProtectionOrderManagerCancelPendingTest {
             tpOrderId = tpOrderId,
             tpOrderPrice = tpOrderPrice,
             tpCancelPending = tpCancelPending,
+            closeCancelPending = closeCancelPending,
             stopLoss = stopLoss,
             takeProfit = takeProfit,
         )

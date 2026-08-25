@@ -6,6 +6,8 @@ import com.trading.bot.model.entity.TradingAccount
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.slf4j.LoggerFactory
+import org.springframework.r2dbc.BadSqlGrammarException
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
@@ -19,6 +21,8 @@ import java.time.LocalDateTime
 class TradingAccountRepository(
     private val databaseClient: DatabaseClient,
 ) {
+    private val log = LoggerFactory.getLogger(TradingAccountRepository::class.java)
+
     private fun toAccount(row: Row): TradingAccount =
         TradingAccount(
             id = row.get("id", Long::class.javaObjectType),
@@ -35,31 +39,45 @@ class TradingAccountRepository(
         )
 
     suspend fun findAll(): List<TradingAccount> =
-        databaseClient
-            .sql("SELECT * FROM trading_accounts ORDER BY id ASC")
-            .map { row, _ -> toAccount(row) }
-            .all()
-            .collectList()
-            .awaitSingle()
+        try {
+            databaseClient
+                .sql("SELECT * FROM trading_accounts ORDER BY id ASC")
+                .map { row, _ -> toAccount(row) }
+                .all()
+                .collectList()
+                .awaitSingle()
+        } catch (e: BadSqlGrammarException) {
+            log.warn("trading_accounts table not found, returning empty list (legacy mode)")
+            emptyList()
+        }
 
     suspend fun findEnabled(): List<TradingAccount> {
         val sql = "SELECT * FROM trading_accounts WHERE enabled = TRUE ORDER BY id ASC"
-        return databaseClient
-            .sql(sql)
-            .map { row, _ -> toAccount(row) }
-            .all()
-            .collectList()
-            .awaitSingle()
+        return try {
+            databaseClient
+                .sql(sql)
+                .map { row, _ -> toAccount(row) }
+                .all()
+                .collectList()
+                .awaitSingle()
+        } catch (e: BadSqlGrammarException) {
+            log.warn("trading_accounts table not found, returning empty list (legacy mode)")
+            emptyList()
+        }
     }
 
     suspend fun findById(id: Long): TradingAccount? {
         val sql = "SELECT * FROM trading_accounts WHERE id = :id"
-        return databaseClient
-            .sql(sql)
-            .bind("id", id)
-            .map { row, _ -> toAccount(row) }
-            .one()
-            .awaitSingleOrNull()
+        return try {
+            databaseClient
+                .sql(sql)
+                .bind("id", id)
+                .map { row, _ -> toAccount(row) }
+                .one()
+                .awaitSingleOrNull()
+        } catch (e: BadSqlGrammarException) {
+            null
+        }
     }
 
     suspend fun save(account: TradingAccount): TradingAccount =

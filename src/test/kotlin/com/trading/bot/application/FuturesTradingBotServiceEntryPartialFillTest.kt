@@ -45,6 +45,7 @@ import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -373,6 +374,9 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                     savedPositions += p
                     p
                 }
+            Mockito
+                .`when`(netEvGate.check(any(), any(), any()))
+                .thenReturn(NetEvGate.GateResult.Pass)
         }
     }
 
@@ -415,12 +419,64 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         stubEntryAllowed()
         runBlocking {
             Mockito
-                .`when`(alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java), Mockito.anyString()))
-                .thenReturn(AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 2, avgPrice = BigDecimal("92000")))
+                .`when`(
+                    alorClient.verifyOrder(
+                        Mockito.anyString(),
+                        Mockito.nullable(BigDecimal::class.java),
+                        Mockito.anyString(),
+                    ),
+                ).thenReturn(
+                    AlorClient.OrderExecution(
+                        status = "PARTIALLY_FILLED",
+                        filledQuantity = 2,
+                        avgPrice = BigDecimal("92000"),
+                    ),
+                )
         }
 
-        service.onStrategyGenerated(StrategyGeneratedEvent(signal()))
-        awaitUntil { savedPositions.any { it.pendingEntry } }
+        val testEngine =
+            OrderExecutionEngine(
+                alorClient = alorClient,
+                orderOutboxService = orderOutboxService,
+                orderOutboxRepo = orderOutboxRepo,
+                positionRepo = positionRepo,
+                alorConfig = alorConfig,
+                objectMapper = objectMapper,
+                tradeEventService = tradeEventService,
+                meterRegistry = meterRegistry,
+                pnlCalculator = PnlCalculator.futures { _ -> instrumentsConfig.pointValue("Si") },
+                instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
+                metricPrefix = "futures",
+                onEntryOpened = { eventPublisher.publishPositionOpened(it) },
+                onPositionClosed = { eventPublisher.publishPositionClosed(it) },
+                protectionOrdersEnabled = false,
+                portfolioResolver = { tradingAccountService.portfolioOf(it) },
+            )
+
+        val result =
+            runBlocking {
+                testEngine.placeEntryOrder(
+                    "Si",
+                    PositionDirection.LONG,
+                    3,
+                    BigDecimal("92000"),
+                ) { orderId, pending, fillPrice, qty ->
+                    Position(
+                        ticker = "Si",
+                        direction = PositionDirection.LONG,
+                        quantity = qty,
+                        entryPrice = fillPrice,
+                        currentPrice = fillPrice,
+                        stopLoss = BigDecimal("91500"),
+                        takeProfit = BigDecimal("93000"),
+                        instrumentType = InstrumentType.FUTURES,
+                        pendingEntry = pending,
+                        alorOrderId = orderId,
+                    )
+                }
+            }
+
+        assertNull(result)
 
         val partial = savedPositions.first { it.pendingEntry }
         assertEquals(2, partial.quantity)

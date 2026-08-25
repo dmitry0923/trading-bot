@@ -17,13 +17,14 @@ import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import org.springframework.boot.context.event.ApplicationReadyEvent
+import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.Instant
@@ -88,7 +89,7 @@ class StateReconciliationService(
 
     private val lastReconcileAtMs = AtomicLong(0)
 
-    @PostConstruct
+    @EventListener(ApplicationReadyEvent::class)
     fun start() {
         scope.launch {
             webSocketManager.events.collect { event ->

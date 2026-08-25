@@ -642,6 +642,26 @@ class DrawdownProtectionService(
     }
 
     /**
+     * Полный сброс дневного аккумулятора и dirty-флагов.
+     * Используется в интеграционных тестах для гарантированного изоляции состояния
+     * между тестами (см. FuturesTradingBotServiceIntegrationTest).
+     */
+    fun resetDailyAccumulator() {
+        synchronized(this) {
+            todayPnl = BigDecimal.ZERO
+            todayDailyLossReached = false
+            accumulatorDirty = false
+            accountDirty.clear()
+            accountPnl.clear()
+            accountLossReached.clear()
+            accountLoadedDate.clear()
+            todayPeakEquity = BigDecimal.ZERO
+            accountPeakEquity.clear()
+            cachedStatusByAccount.clear()
+        }
+    }
+
+    /**
      * Сброс/восстановление дневного состояния аккумулятора при смене календарного дня (МСК).
      * При рестарте в течение дня восстанавливает значения из daily_risk_snapshot.
      */

@@ -105,7 +105,15 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.any(BigDecimal::class.java),
                         Mockito.anyString(),
                     ),
-                ).thenAnswer { inv -> AlorClient.OrderExecution("FILLED", 1000, inv.getArgument<BigDecimal>(1)) }
+                ).thenAnswer { inv ->
+                    val orderId = inv.getArgument<String>(0)
+                    val price = inv.getArgument<BigDecimal>(1)
+                    val pos =
+                        runBlocking {
+                            positionRepository.findByCloseOrderId(orderId)
+                        }
+                    AlorClient.OrderExecution("FILLED", pos?.quantity ?: 1, price)
+                }
         }
     }
 

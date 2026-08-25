@@ -144,7 +144,7 @@ class StrategyAgentTest {
         assertEquals("GUARDRAIL: INSUFFICIENT_TECH_DATA", logRepo.saved.single().overrideReason)
         assertEquals("{}", logRepo.saved.single().rawOutput)
         assertEquals("Agent-3-Strategist", logRepo.saved.single().agentName)
-        assertEquals(1.0, meter.counter("agent.strategy.decision", "action", "HOLD").count())
+        assertEquals(1.0, meter.counter("agent.strategy.decision", "action", "HOLD", "ticker", "SBER").count())
     }
 
     @Test
@@ -177,7 +177,7 @@ class StrategyAgentTest {
         assertEquals(BigDecimal("101.5"), draft.targetPrice)
         assertEquals(0.85, draft.signalStrength)
         assertEquals("momentum", draft.reasoning)
-        assertEquals(1.0, meter.counter("agent.strategy.decision", "action", "BUY").count())
+        assertEquals(1.0, meter.counter("agent.strategy.decision", "action", "BUY", "ticker", "SBER").count())
         val log = logRepo.saved.single()
         assertEquals("BUY", log.action)
         assertTrue(log.rawOutput!!.contains("\"action\":\"BUY\""))
@@ -253,7 +253,7 @@ class StrategyAgentTest {
         assertEquals(StrategyAction.HOLD, draft.action)
         assertTrue(draft.reasoning.contains("GUARDRAIL: LOW_CONFIDENCE"), "reasoning='${draft.reasoning}'")
         assertEquals("GUARDRAIL: LOW_CONFIDENCE", logRepo.saved.single().overrideReason)
-        assertEquals(1.0, meter.counter("agent.strategy.decision", "action", "HOLD").count())
+        assertEquals(1.0, meter.counter("agent.strategy.decision", "action", "HOLD", "ticker", "SBER").count())
     }
 
     @Test

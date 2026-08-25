@@ -6,8 +6,11 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.WebSocketManager
+import com.trading.bot.client.WsStream
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.event.TradingEventPublisher
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -21,6 +24,7 @@ import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.TradingHaltService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -29,6 +33,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.context.annotation.Import
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -45,7 +50,12 @@ import java.time.LocalDateTime
  *
  * AlorClient и TradingHoursGuard замоканы (детерминированные цены/часы),
  * всё остальное — реальные бины (Postgres, outbox, риск-движок).
+ *
+ * WebSocketManager мокается через WebSocketMockConfig (@Configuration в
+ * отдельном файле), потому что TradingBotService и StateReconciliationService
+ * коллектят webSocketManager.events при старте контекста, до @BeforeEach.
  */
+@Import(WebSocketMockConfig::class)
 class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var eventPublisher: TradingEventPublisher
@@ -87,19 +97,41 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     fun setup() {
         runBlocking { positionRepo.deleteAll() }
         snapshotRepo.deleteAll()
+        // Дать асинхронным эффектам от предыдущего теста (PositionClosedEvent →
+        // DailyLossCircuitBreaker → updateDailyPnl, TradingHaltedEvent → halt record)
+        // отработать. Без этого, поздние updateDailyPnl перезапишут сброшенное состояние.
+        Thread.sleep(300)
         // Сбрасываем персистентную остановку (critical liquidation выше может оставить halt).
         runBlocking { tradingHaltService.clear() }
-        // пересчёт кэша drawdown от пустой БД (сбрасывает stale статус из предыдущего теста)
+        // Полный сброс аккумулятора drawdown (accumulatorDirty из предыдущего теста
+        // блокирует computeStatus() —强制 сброс через resetDailyAccumulator).
+        drawdownProtection.resetDailyAccumulator()
         runBlocking { drawdownProtection.computeStatus() }
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         // Данные всегда «свежие»: эти тесты проверяют риск-движок, а не MarketDataGate.
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
+        // Очищаем кэш свечей в Redis: addCandles() — additive (ZADD), и свечи с
+        // разными timestamp'ами (LocalDateTime.now()) накапливаются между @BeforeEach.
+        // Это завышало ATR → stopLossPoints > 50 → ZERO_RISK_SIZE для Si.
+        candleCache.clear()
         // Портфельный риск-движок fail-closed без данных о волатильности
         // (PORTFOLIO_DATA_INSUFFICIENT) — сеем дневные свечи Si, чтобы realized vol
         // был KNOWN. MINUTE_10 не сеем: ATR null -> stopLossPoints остаётся 50.
         seedDayCandles()
+        // NET EV gate блокирует при отсутствии исторических данных (EV UNKNOWN).
+        // Seed'им закрытые прибыльные позиции, чтобы expectedNetProfitPerLot != null.
+        seedClosedPositions()
+        // Пересчитываем drawdown от seed'ных данных (сбрасывает stale accumulator).
+        runBlocking { drawdownProtection.computeStatus() }
         runBlocking {
             Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(BigDecimal("92000"))
+            Mockito.`when`(alorClient.getMarketSnapshot("Si")).thenReturn(
+                com.trading.bot.model.dto.MarketSnapshot(
+                    currentPrice = BigDecimal("92000"),
+                    bid = BigDecimal("91999"),
+                    ask = BigDecimal("92001"),
+                ),
+            )
             Mockito
                 .`when`(
                     alorClient.placeLimitOrder(
@@ -191,7 +223,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         val closed = runBlocking { positionRepo.findById(opened.id!!) }
 
         assertEquals(PositionStatus.CLOSED, closed.status)
-        assertEquals("LIQUIDATION_CRITICAL", closed.closeReason)
+        assertEquals(CloseReason.LIQUIDATION_CRITICAL, closed.closeReason)
         assertEquals(0, BigDecimal("91986").compareTo(closed.closePrice!!))
         // P&L = (91986 - 92000) * 1000 * 1 = -14 000 ₽
         assertEquals(0, BigDecimal("-14000").compareTo(closed.pnl!!))
@@ -273,6 +305,45 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                 )
             }
         candleCache.addCandles(candles)
+        val m10Candles =
+            (0 until 10).map { i ->
+                Candle(
+                    ticker = "Si",
+                    timeframe = "MINUTE_10",
+                    openPrice = base.add(BigDecimal(i)),
+                    highPrice = base.add(BigDecimal(i)).add(BigDecimal.ONE),
+                    lowPrice = base.add(BigDecimal(i)).subtract(BigDecimal.ONE),
+                    closePrice = base.add(BigDecimal(i).multiply(BigDecimal("0.5"))),
+                    volume = 1000L,
+                    time = LocalDateTime.now().minusMinutes((10 - i).toLong() * 10),
+                )
+            }
+        candleCache.addCandles(m10Candles)
+    }
+
+    private fun seedClosedPositions() {
+        val base = BigDecimal("92000")
+        (1..16).forEach { i ->
+            runBlocking {
+                positionRepo.save(
+                    Position(
+                        ticker = "Si",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = base,
+                        closePrice = base.add(BigDecimal(50 * i)),
+                        currentPrice = base.add(BigDecimal(50 * i)),
+                        instrumentType = InstrumentType.FUTURES,
+                        status = PositionStatus.CLOSED,
+                        pnl = BigDecimal(50 * i),
+                        realizedPnl = BigDecimal(50 * i),
+                        closeReason = CloseReason.STRATEGY_CLOSE,
+                        openedAt = LocalDateTime.now().minusDays(i.toLong()),
+                        closedAt = LocalDateTime.now().minusDays(i.toLong()).plusHours(1),
+                    ),
+                )
+            }
+        }
     }
 
     private fun anyBigDecimal(): BigDecimal {

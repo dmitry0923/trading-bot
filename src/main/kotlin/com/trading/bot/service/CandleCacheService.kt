@@ -60,6 +60,21 @@ class CandleCacheService(
     }
 
     /**
+     * Удаляет все свечи из кэша (для тестов: гарантирует изоляцию между тестами,
+     * т.к. [addCandles] — additive и свечи с разными timestamp'ами накапливаются).
+     */
+    fun clear() {
+        try {
+            val keys = redisTemplate.keys("$prefix*") ?: return
+            if (keys.isNotEmpty()) {
+                redisTemplate.delete(keys)
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Candle cache clear error" }
+        }
+    }
+
+    /**
      * Последние [limit] свечей в порядке возрастания времени.
      *
      * @return пустой список, если свечей нет или Redis недоступен

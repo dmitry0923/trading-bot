@@ -309,6 +309,17 @@ class OrderExecutionEngine(
             return
         }
 
+        // After successful claimForClose, we are the exclusive owner of the close.
+        // If claimForClose returned true, pendingClose was JUST set by us (JDBC), so
+        // a re-read from DB (R2DBC) will always see pendingClose=true. We must NOT
+        // delegate to the reconciler here — that would skip creating the close outbox.
+        // The pendingClose=true + closeOrderId=null case after claim is OUR claim,
+        // not a concurrent one (claimForClose guards exclusivity).
+        //
+        // However, if a concurrent close request beat us via WS (handleExecutionReport)
+        // and set closeOrderId before we re-read, we should confirm the existing order
+        // rather than create a duplicate.
+
         val current = positionRepo.findById(positionId)
 
         if (current.pendingClose && current.closeOrderId != null) {
@@ -316,9 +327,6 @@ class OrderExecutionEngine(
                 return
             }
             if (current.cumulativeCloseFillQty > 0) {
-                // Partial fill already applied — old order was for original qty and is stale.
-                // Cancel it and WAIT for confirmation before creating a fresh close order.
-                // Without waiting, the old order could still fill → over-close.
                 logger.info {
                     "Partial close already applied for ${current.ticker} " +
                         "(cumulativeFill=${current.cumulativeCloseFillQty}) — cancelling stale close " +
@@ -329,13 +337,9 @@ class OrderExecutionEngine(
                 positionRepo.save(current)
                 return
             } else {
-                // No partial fill yet — confirm the existing order via REST
                 closeFill.confirmCloseFill(current, price, reason)
                 return
             }
-        } else if (current.pendingClose) {
-            reconciler.reconcilePosition(current)
-            return
         } else if (current.closeOrderId != null) {
             closeFill.confirmCloseFill(current, price, reason)
             return
@@ -355,6 +359,7 @@ class OrderExecutionEngine(
                 "market",
                 positionId = positionId,
                 closeReason = reason.code,
+                purpose = "close",
             )
         if (!placed.success || placed.alorOrderId == null) {
             if (placed.uncertain) {

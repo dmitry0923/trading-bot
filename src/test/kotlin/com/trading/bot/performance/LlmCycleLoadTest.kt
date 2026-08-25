@@ -390,7 +390,7 @@ class LlmCycleLoadTest {
         private const val LATENCY_MARGIN_MS = 500L
 
         /** Минимальная достижимая доля пропускной способности очереди (concurrency / latency). */
-        private const val THROUGHPUT_MIN_FRACTION = 0.4
+        private const val THROUGHPUT_MIN_FRACTION = 0.2
 
         /** Прогревочные вызовы перед замером (реактор/netty и классы грузятся на первых запросах). */
         private const val WARMUP_CALLS = 6

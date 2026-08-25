@@ -180,6 +180,15 @@ class OrderExecutionEngineDeltaModelTest {
         }
     }
 
+    private fun stubCancelOrderRejected() {
+        runBlocking {
+            Mockito
+                .`when`(
+                    alorClient.cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()),
+                ).thenReturn(AlorClient.CancelResult.REJECTED)
+        }
+    }
+
     private fun report(
         orderId: String = "close-1",
         cumulativeFilledQty: Int,
@@ -1447,5 +1456,149 @@ class OrderExecutionEngineDeltaModelTest {
         assertEquals(5, pos.quantity) { "remaining delta=2 applied as partial close" }
         assertTrue(pos.pendingClose) { "still pending — close order still live" }
         assertEquals("close-1", pos.closeOrderId) { "same close order kept" }
+    }
+
+    // ─── P0: impossible delta resets cumulativeCloseFillQty ────────────
+
+    /**
+     * CRITICAL regression: impossible delta must reset cumulativeCloseFillQty
+     * so that a subsequent new close order can receive fills via delta model.
+     *
+     * Scenario:
+     *   Position qty=6, cumulativeCloseFillQty=4 (from partial close A)
+     *   Impossible report: A cumulative=11 → delta=7 > 6 → reset
+     *   New close B: cumulative=1 → delta=1-0=1 → partial close (qty=5)
+     */
+    @Test
+    fun `impossible delta resets cumulative so new close order receives fills`() {
+        val pos =
+            openPos(
+                quantity = 6,
+                pendingClose = true,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 4,
+            )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubCancelOrderConfirmed()
+
+        val impossibleReport =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 11,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        runBlocking { engine.handleExecutionReport(impossibleReport) }
+
+        assertEquals(6, pos.quantity) { "quantity unchanged — impossible delta rejected" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative RESET to 0 after impossible delta" }
+        assertFalse(pos.pendingClose) { "pendingClose=false after reset" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared" }
+
+        // New close B starts — cumulative must be 0 so delta works
+        pos.pendingClose = true
+        pos.closeOrderId = "order-B"
+
+        val reportB =
+            ExecutionReport(
+                orderId = "order-B",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 1,
+                avgPrice = BigDecimal("105"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        runBlocking { engine.handleExecutionReport(reportB) }
+
+        assertEquals(5, pos.quantity) { "partial close B applied: 6-1=5" }
+        assertEquals(1, pos.cumulativeCloseFillQty) { "cumulative advanced to 1 for order-B" }
+    }
+
+    // ─── P1: REJECTED → verifyOrder before reset ──────────────────────
+
+    /**
+     * REJECTED cancel + terminal verify → reset close state.
+     */
+    @Test
+    fun `impossible delta with rejected cancel and terminal verify resets state`() {
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = true,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 0,
+            )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubCancelOrderRejected()
+
+        runBlocking {
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java), Mockito.anyString()),
+                ).thenReturn(AlorClient.OrderExecution("CANCELED", 0, null))
+        }
+
+        val report =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 80,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        val handled = runBlocking { engine.handleExecutionReport(report) }
+
+        assertTrue(handled) { "report matched" }
+        assertFalse(pos.pendingClose) { "pendingClose=false — terminal verified" }
+        assertNull(pos.closeOrderId) { "closeOrderId cleared" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative reset" }
+    }
+
+    /**
+     * REJECTED cancel + UNKNOWN verify → state preserved for reconciler.
+     */
+    @Test
+    fun `impossible delta with rejected cancel and unknown verify preserves state`() {
+        val pos =
+            openPos(
+                quantity = 60,
+                pendingClose = true,
+                closeOrderId = "order-A",
+                cumulativeCloseFillQty = 0,
+            )
+        stubFindCloseOrderId(pos)
+        stubSaveReturnsArg()
+        stubCancelOrderRejected()
+
+        runBlocking {
+            Mockito
+                .`when`(
+                    alorClient.verifyOrder(Mockito.anyString(), Mockito.nullable(BigDecimal::class.java), Mockito.anyString()),
+                ).thenReturn(null)
+        }
+
+        val report =
+            ExecutionReport(
+                orderId = "order-A",
+                status = OrderStatus.PARTIALLY_FILLED,
+                cumulativeFilledQty = 80,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        val handled = runBlocking { engine.handleExecutionReport(report) }
+
+        assertTrue(handled) { "report matched" }
+        assertTrue(pos.pendingClose) { "pendingClose=true — unknown state, reconciler must handle" }
+        assertEquals("order-A", pos.closeOrderId) { "closeOrderId preserved — not terminal confirmed" }
     }
 }

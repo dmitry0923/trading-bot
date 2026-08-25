@@ -285,10 +285,25 @@ class CloseFillProcessor(
             }
 
             AlorClient.CancelResult.REJECTED -> {
-                logger.warn {
-                    "Impossible close: order $orderId for ${pos.ticker} cancel rejected (already terminal) — clearing close state"
+                val execution =
+                    try {
+                        alorClient.verifyOrder(orderId, portfolio = portfolioResolver(pos.accountId))
+                    } catch (e: Exception) {
+                        logger.warn(e) { "Impossible close: verifyOrder failed for ${pos.ticker} order=$orderId — leaving pending" }
+                        null
+                    }
+                if (execution != null && isGoneStatus(execution)) {
+                    logger.warn {
+                        "Impossible close: order $orderId for ${pos.ticker} cancel rejected but " +
+                            "verified terminal (${execution.status}) — clearing close state"
+                    }
+                    resetCloseState(pos)
+                } else {
+                    logger.warn {
+                        "Impossible close: order $orderId for ${pos.ticker} cancel rejected, " +
+                            "state=${execution?.status ?: "UNKNOWN"} — leaving for reconciler"
+                    }
                 }
-                resetCloseState(pos)
             }
 
             AlorClient.CancelResult.UNCERTAIN -> {
@@ -307,6 +322,8 @@ class CloseFillProcessor(
         pos.pendingClose = false
         pos.closeOrderId = null
         pos.closeReason = null
+        pos.closeCancelPending = false
+        pos.cumulativeCloseFillQty = 0
         positionRepo.save(pos)
         logger.info { "Close state reset for ${pos.ticker} (${pos.id}) — position back to clean OPEN" }
     }

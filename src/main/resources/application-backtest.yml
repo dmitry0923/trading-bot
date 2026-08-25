@@ -5,6 +5,11 @@
 # для генерации сигналов в прогоне. Детерминизм обеспечивается temperature=0.0,
 # semantic cache изолирован namespace'ом bt.agent.cache-namespace (защита от
 # look-ahead bias и загрязнения live-кэша), сэмплирование — каждые 20 баров.
+spring:
+  mvc:
+    async:
+      request-timeout: 600000
+
 bt:
   agent:
     enabled: true

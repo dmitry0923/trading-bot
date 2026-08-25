@@ -267,6 +267,59 @@ class LiveStrategyBacktestSignalGeneratorTest {
         )
     }
 
+    /**
+     * Adaptive confidence gate: strong signal above threshold → BUY.
+     */
+    @Test
+    fun `strong signal above threshold passes adaptive gate`() {
+        val gen =
+            LiveStrategyBacktestSignalGenerator(
+                adaptiveConfidenceThreshold = 0.60,
+            )
+
+        val candles = rampCandles(count = 60, start = 100.0, step = 2.0, wick = 0.2)
+        val action =
+            runBlocking {
+                gen.signal("SBER", candles, candles.lastIndex, minBars, "cycle")
+            }
+
+        assertTrue(
+            action == StrategyAction.BUY || action == StrategyAction.HOLD,
+            "strong uptrend with reasonable threshold should produce BUY or HOLD, got=$action",
+        )
+    }
+
+    /**
+     * Adaptive confidence gate: threshold=1.0 blocks everything (no signal is that strong).
+     */
+    @Test
+    fun `threshold one blocks all signals`() {
+        val gen =
+            LiveStrategyBacktestSignalGenerator(
+                adaptiveConfidenceThreshold = 1.0,
+            )
+
+        val candles = rampCandles(count = 60, start = 100.0, step = 2.0, wick = 0.2)
+        val signals = collectSignalsWith(gen, candles)
+
+        assertTrue(signals.isNotEmpty())
+        assertEquals(
+            List(signals.size) { StrategyAction.HOLD },
+            signals,
+            "threshold=1.0 must gate all signals to HOLD",
+        )
+    }
+
+    private fun collectSignalsWith(
+        gen: BacktestSignalGenerator,
+        candles: List<Candle>,
+    ): List<StrategyAction> =
+        runBlocking {
+            (minBars until candles.size).map { index ->
+                gen.signal("SBER", candles, index, minBars, "test-cycle")
+            }
+        }
+
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)
     }

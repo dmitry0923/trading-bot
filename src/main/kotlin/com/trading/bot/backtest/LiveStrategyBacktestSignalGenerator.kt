@@ -33,6 +33,10 @@ import java.time.ZoneId
  *   3. Filter strategies by [StrategySelector.eligibleStrategyIds];
  *   4. Weight signalStrength by [StrategySelector.fitScore].
  *
+ * Adaptive confidence gate (P0#2): mirrors [com.trading.bot.service.StrategyService]
+ * adaptive threshold. Signals with strength below [adaptiveConfidenceThreshold]
+ * (or non-finite, e.g. NaN) are gated to HOLD.
+ *
  * This ensures signal parity: backtest tests the same strategy decisions
  * that would fire in LIVE trading, not a simplified heuristic.
  *
@@ -43,6 +47,7 @@ import java.time.ZoneId
  */
 class LiveStrategyBacktestSignalGenerator(
     private val regimeConfig: RegimeDetectionConfig? = null,
+    private val adaptiveConfidenceThreshold: Double = 0.60,
 ) : BacktestSignalGenerator {
     private val strategies: List<Strategy> =
         listOf(
@@ -125,6 +130,12 @@ class LiveStrategyBacktestSignalGenerator(
                     bestStrength = strength
                 }
             }
+        }
+
+        if (bestAction == StrategyAction.HOLD) return StrategyAction.HOLD
+
+        if (!bestStrength.isFinite() || bestStrength < adaptiveConfidenceThreshold) {
+            return StrategyAction.HOLD
         }
 
         return bestAction

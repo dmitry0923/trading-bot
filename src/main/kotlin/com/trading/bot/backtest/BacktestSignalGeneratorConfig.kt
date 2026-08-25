@@ -36,5 +36,6 @@ class BacktestSignalGeneratorConfig(
                 } else {
                     null
                 },
+            adaptiveConfidenceThreshold = backtestConfig.adaptiveConfidenceThreshold,
         )
 }

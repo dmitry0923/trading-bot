@@ -61,4 +61,5 @@ class BacktestConfig {
     var liveRiskGates: Boolean = false
     var realisticExecution: Boolean = true
     var regimeDetectionEnabled: Boolean = true
+    var adaptiveConfidenceThreshold: Double = 0.60
 }

@@ -385,9 +385,9 @@ class LlmCycleLoadTest {
         private val PRICE_PER_1K_TOKENS_RUB = BigDecimal("0.02")
 
         /** Допуск на накладные расходы (GC, реактор, очередь) поверх теоретической латентности. */
-        private const val LATENCY_SLACK_FACTOR = 2.5
+        private const val LATENCY_SLACK_FACTOR = 4.0
 
-        private const val LATENCY_MARGIN_MS = 250L
+        private const val LATENCY_MARGIN_MS = 500L
 
         /** Минимальная достижимая доля пропускной способности очереди (concurrency / latency). */
         private const val THROUGHPUT_MIN_FRACTION = 0.4

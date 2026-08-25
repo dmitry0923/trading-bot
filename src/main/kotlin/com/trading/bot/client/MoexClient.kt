@@ -246,7 +246,7 @@ class MoexClient(
      */
     private fun parseLastPrice(raw: String): BigDecimal? {
         val marketdata = objectMapper.readTree(raw).path("marketdata")
-        val columns = marketdata.path("columns").map { it.asString() }
+        val columns = marketdata.path("columns").toList().map { it.asString() }
         val lastIdx = columns.indexOf("LAST")
         if (lastIdx < 0) return null
         val firstRow = marketdata.path("data").path(0) ?: return null
@@ -268,7 +268,7 @@ class MoexClient(
         val marketdata = root.path("marketdata")
         if (!securities.path("data").isArray || !marketdata.path("data").isArray) return emptyList()
 
-        val sColumns = securities.path("columns").map { it.asString() }
+        val sColumns = securities.path("columns").toList().map { it.asString() }
         val secidIdx = sColumns.indexOf("SECID")
         val assetCodeIdx = sColumns.indexOf("ASSETCODE")
         val optionTypeIdx = sColumns.indexOf("OPTIONTYPE")
@@ -280,7 +280,7 @@ class MoexClient(
             return emptyList()
         }
 
-        val mColumns = marketdata.path("columns").map { it.asString() }
+        val mColumns = marketdata.path("columns").toList().map { it.asString() }
         val lastIdx = mColumns.indexOf("LAST")
         val bidIdx = mColumns.indexOf("BID")
         val openPositionIdx = mColumns.indexOf("OPENPOSITION")
@@ -330,7 +330,7 @@ class MoexClient(
     private fun parseCloses(raw: String): List<Double> {
         val candles = objectMapper.readTree(raw).path("candles")
         if (!candles.path("data").isArray) return emptyList()
-        val columns = candles.path("columns").map { it.asString() }
+        val columns = candles.path("columns").toList().map { it.asString() }
         val closeIdx = columns.indexOf("close")
         if (closeIdx < 0) return emptyList()
         return candles
@@ -358,7 +358,7 @@ class MoexClient(
         val candles = objectMapper.readTree(raw).path("candles")
         if (!candles.path("data").isArray) return emptyList()
 
-        val columns = candles.path("columns").map { it.asString() }
+        val columns = candles.path("columns").toList().map { it.asString() }
         val indexOf = { name: String -> columns.indexOf(name) }
         val beginIdx = indexOf("begin")
         val openIdx = indexOf("open")

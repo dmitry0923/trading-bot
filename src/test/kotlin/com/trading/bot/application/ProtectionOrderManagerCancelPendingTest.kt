@@ -250,11 +250,12 @@ class ProtectionOrderManagerCancelPendingTest {
     @Test
     fun closeCancelPending_blocksNewProtectionOrders() {
         runBlocking {
-            val pos = openPosition(
-                stopLoss = BigDecimal("91500"),
-                takeProfit = BigDecimal("93000"),
-                closeCancelPending = true,
-            )
+            val pos =
+                openPosition(
+                    stopLoss = BigDecimal("91500"),
+                    takeProfit = BigDecimal("93000"),
+                    closeCancelPending = true,
+                )
 
             manager.attachProtectionOrders(pos)
 

@@ -1,11 +1,15 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.StrategySelector
 import com.trading.bot.application.strategy.BreakoutStrategy
 import com.trading.bot.application.strategy.CnyRubStrategy
 import com.trading.bot.application.strategy.GridStrategy
 import com.trading.bot.application.strategy.MeanReversionStrategy
 import com.trading.bot.application.strategy.ScalpingStrategy
 import com.trading.bot.application.strategy.TrendFollowingStrategy
+import com.trading.bot.domain.risk.PerTickerRegime
+import com.trading.bot.domain.risk.RegimeDetectionConfig
+import com.trading.bot.domain.risk.RegimeDetector
 import com.trading.bot.domain.strategy.Strategy
 import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.technical.IndicatorCalculator
@@ -19,8 +23,15 @@ import java.time.ZoneId
  *
  * Uses the same deterministic strategies as LIVE (StrategyRunner):
  * TrendFollowing, Breakout, Scalping, MeanReversion, Grid, CnyRubStrategy.
- * The winner is selected by maximum signal strength, same as LIVE
+ * The winner is selected by maximum weighted signal strength, same as LIVE
  * (ties broken by registration order — deterministic).
+ *
+ * Regime parity (P0#1): when [regimeConfig] is non-null, the generator
+ * mirrors [com.trading.bot.application.StrategyRunner.runAll] behaviour:
+ *   1. Detect per-ticker regime via [RegimeDetector];
+ *   2. If regime blocks entry → HOLD;
+ *   3. Filter strategies by [StrategySelector.eligibleStrategyIds];
+ *   4. Weight signalStrength by [StrategySelector.fitScore].
  *
  * This ensures signal parity: backtest tests the same strategy decisions
  * that would fire in LIVE trading, not a simplified heuristic.
@@ -30,7 +41,9 @@ import java.time.ZoneId
  * вызов сигнала не нужны — они stateless, поэтому список создаётся один раз.
  * Детерминирован по `candles[0..index]`: никаких LLM, часов или внешних данных.
  */
-class LiveStrategyBacktestSignalGenerator : BacktestSignalGenerator {
+class LiveStrategyBacktestSignalGenerator(
+    private val regimeConfig: RegimeDetectionConfig? = null,
+) : BacktestSignalGenerator {
     private val strategies: List<Strategy> =
         listOf(
             TrendFollowingStrategy(),
@@ -42,6 +55,8 @@ class LiveStrategyBacktestSignalGenerator : BacktestSignalGenerator {
             // детерминированно падает в fallback-режим чистого mean-reversion.
             CnyRubStrategy(),
         )
+
+    private val strategySelector = StrategySelector()
 
     override suspend fun signal(
         ticker: String,
@@ -64,6 +79,18 @@ class LiveStrategyBacktestSignalGenerator : BacktestSignalGenerator {
                 timestamp = bar.time.atZone(ZoneId.systemDefault()).toInstant(),
             )
 
+        val regimeEnabled = regimeConfig != null
+        val regime: PerTickerRegime =
+            if (regimeEnabled) {
+                RegimeDetector.detect(window, regimeConfig!!)
+            } else {
+                PerTickerRegime.UNKNOWN
+            }
+
+        if (regimeEnabled && regime.blocksEntry) return StrategyAction.HOLD
+
+        val eligibleIds = if (regimeEnabled) strategySelector.eligibleStrategyIds(regime) else null
+
         val context =
             StrategyContext(
                 ticker = ticker,
@@ -71,22 +98,32 @@ class LiveStrategyBacktestSignalGenerator : BacktestSignalGenerator {
                 candles = window,
                 indicators = indicators,
                 cycleId = cycleId,
+                regime = regime,
             )
 
         var bestAction = StrategyAction.HOLD
         var bestStrength = 0.0
 
         for (strategy in strategies) {
+            if (eligibleIds != null && strategy.id !in eligibleIds) continue
             val decision =
                 try {
                     strategy.evaluate(context)
                 } catch (_: Exception) {
-                    // Стратегия упала — пропускаем (как в StrategyRunner: цикл не прерывается).
                     continue
                 }
-            if (decision.action != StrategyAction.HOLD && decision.signalStrength > bestStrength) {
-                bestAction = decision.action
-                bestStrength = decision.signalStrength
+            if (decision.action != StrategyAction.HOLD) {
+                val strength =
+                    if (regimeEnabled) {
+                        val fit = strategySelector.fitScore(strategy.id, regime)
+                        (decision.signalStrength * fit).coerceIn(0.0, 1.0)
+                    } else {
+                        decision.signalStrength
+                    }
+                if (strength > bestStrength) {
+                    bestAction = decision.action
+                    bestStrength = strength
+                }
             }
         }
 

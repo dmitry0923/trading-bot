@@ -60,4 +60,5 @@ class BacktestConfig {
     var monteCarloSeed: Long = 42
     var liveRiskGates: Boolean = false
     var realisticExecution: Boolean = true
+    var regimeDetectionEnabled: Boolean = true
 }

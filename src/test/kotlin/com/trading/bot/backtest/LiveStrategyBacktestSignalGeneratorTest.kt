@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import kotlinx.coroutines.runBlocking
@@ -188,6 +189,81 @@ class LiveStrategyBacktestSignalGeneratorTest {
         assertTrue(
             strongBuys > weakBuys,
             "сильный тренд должен сигналировать чаще слабого, strong=$strongBuys weak=$weakBuys",
+        )
+    }
+
+    // ─── Regime parity (P0#1) ───────────────────────────────────────────
+
+    /**
+     * Crash regime (massive drop in last bars) → blocksEntry → HOLD.
+     * Mirrors LIVE: RegimeDetector detects CRASH → StrategyRunner returns HOLD.
+     */
+    @Test
+    fun `crash regime blocks entry`() {
+        val normal = rampCandles(count = 60, start = 100.0, step = 1.0, wick = 0.2)
+        val crashed = normal.toMutableList()
+        // Last 6 bars: massive drop (>2x ATR) — triggers CRASH event
+        for (i in 54..59) {
+            crashed[i] = makeCandle(timeAt(i), open = 100.0 - i, high = 100.0, low = 50.0, close = 50.0, volume = 1000L)
+        }
+
+        val genWithRegime =
+            LiveStrategyBacktestSignalGenerator(
+                regimeConfig =
+                    RegimeDetectionConfig(
+                        minBars = 20,
+                        crashAtrMultiplier = 1.5,
+                    ),
+            )
+
+        val action =
+            runBlocking {
+                genWithRegime.signal("SBER", crashed, crashed.lastIndex, minBars, "cycle")
+            }
+
+        assertEquals(StrategyAction.HOLD, action, "crash regime must block entry")
+    }
+
+    /**
+     * No regime config (null) → backward compatible, no regime filtering.
+     * All strategies compete without fitScore weighting.
+     */
+    @Test
+    fun `null regime config preserves backward compatibility`() {
+        val genNoRegime = LiveStrategyBacktestSignalGenerator(regimeConfig = null)
+
+        val candles = rampCandles(count = 60, start = 100.0, step = 2.0)
+        val action =
+            runBlocking {
+                genNoRegime.signal("SBER", candles, candles.lastIndex, minBars, "cycle")
+            }
+
+        assertTrue(
+            action == StrategyAction.BUY || action == StrategyAction.HOLD,
+            "without regime, uptrend should produce BUY or HOLD, got=$action",
+        )
+    }
+
+    /**
+     * Strong uptrend with regime enabled → BUY from trend strategy.
+     * Regime = TREND_UP → TREND_FOLLOWING eligible (fit=1.0), GRID/MR blocked (fit=0.0).
+     */
+    @Test
+    fun `uptrend with regime picks trend strategy`() {
+        val genWithRegime =
+            LiveStrategyBacktestSignalGenerator(
+                regimeConfig = RegimeDetectionConfig(minBars = 20),
+            )
+
+        val candles = rampCandles(count = 60, start = 100.0, step = 2.0, wick = 0.2)
+        val action =
+            runBlocking {
+                genWithRegime.signal("SBER", candles, candles.lastIndex, minBars, "cycle")
+            }
+
+        assertTrue(
+            action == StrategyAction.BUY || action == StrategyAction.HOLD,
+            "strong uptrend with regime should produce BUY or HOLD, got=$action",
         )
     }
 

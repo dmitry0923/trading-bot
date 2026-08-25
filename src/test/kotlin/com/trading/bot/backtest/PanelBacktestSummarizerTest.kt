@@ -69,3 +69,34 @@ class PanelBacktestSummarizerTest {
         assertEquals(0.75, summary.passShare, 1e-9)
     }
 }
+
+class PanelBacktestTimeframeNormalizationTest {
+    @Test
+    fun `numeric aliases map to canonical names`() {
+        assertEquals("MINUTE_10", PanelBacktestService.normalizeTimeframe("10"))
+        assertEquals("MINUTE_1", PanelBacktestService.normalizeTimeframe("1"))
+        assertEquals("MINUTE_5", PanelBacktestService.normalizeTimeframe("5"))
+        assertEquals("MINUTE_15", PanelBacktestService.normalizeTimeframe("15"))
+        assertEquals("MINUTE_30", PanelBacktestService.normalizeTimeframe("30"))
+        assertEquals("HOUR_1", PanelBacktestService.normalizeTimeframe("60"))
+    }
+
+    @Test
+    fun `string aliases map to canonical names`() {
+        assertEquals("HOUR_1", PanelBacktestService.normalizeTimeframe("1h"))
+        assertEquals("DAY_1", PanelBacktestService.normalizeTimeframe("1d"))
+    }
+
+    @Test
+    fun `canonical names pass through unchanged`() {
+        assertEquals("MINUTE_10", PanelBacktestService.normalizeTimeframe("MINUTE_10"))
+        assertEquals("HOUR_1", PanelBacktestService.normalizeTimeframe("HOUR_1"))
+        assertEquals("DAY_1", PanelBacktestService.normalizeTimeframe("DAY_1"))
+    }
+
+    @Test
+    fun `case insensitive`() {
+        assertEquals("HOUR_1", PanelBacktestService.normalizeTimeframe("1H"))
+        assertEquals("DAY_1", PanelBacktestService.normalizeTimeframe("1D"))
+    }
+}

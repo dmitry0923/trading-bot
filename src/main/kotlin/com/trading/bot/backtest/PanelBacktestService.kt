@@ -126,7 +126,7 @@ class PanelBacktestService(
         coroutineScope {
             val tickers = request.tickers.distinct()
             val days = request.days ?: backtestConfig.days
-            val timeframe = request.timeframe ?: backtestConfig.timeframe
+            val timeframe = normalizeTimeframe(request.timeframe ?: backtestConfig.timeframe)
             val initialCapital = request.initialCapital ?: backtestConfig.initialCapital
             val slPercent = request.slPercent ?: (backtestConfig.slPercent / 100.0)
             val tpPercent = request.tpPercent ?: (backtestConfig.tpPercent / 100.0)
@@ -177,4 +177,26 @@ class PanelBacktestService(
                 summary = PanelBacktestSummarizer.summarize(results),
             )
         }
+
+    companion object {
+        private val TIMEFRAME_ALIASES =
+            mapOf(
+                "1" to "MINUTE_1",
+                "5" to "MINUTE_5",
+                "10" to "MINUTE_10",
+                "15" to "MINUTE_15",
+                "30" to "MINUTE_30",
+                "60" to "HOUR_1",
+                "1h" to "HOUR_1",
+                "1d" to "DAY_1",
+            )
+
+        /**
+         * Нормализация timeframe: пользовательские алиасы ("10", "60", "1h")
+         * маппятся на канонические значения enums ("MINUTE_10", "HOUR_1"),
+         * совпадающие с тем, что записывает [HistoricalDataLoader] в БД.
+         * Уже каноничные значения проходят без изменений.
+         */
+        fun normalizeTimeframe(tf: String): String = TIMEFRAME_ALIASES[tf.lowercase()] ?: tf
+    }
 }

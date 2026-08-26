@@ -734,8 +734,8 @@ class BacktestEngine(
      * для акций — процент от цены входа через [ExitRules.calcSL] (тот же код,
      * что в live [com.trading.bot.application.OrderBuilder.buildSpotOrderParams]).
      * Per-instrument SL% (InstrumentsConfig.InstrumentSpec.slPercent) имеет приоритет над глобальным.
+     * Параметр [slPercent] (из API/конфига) используется как fallback перед RiskConfig.
      */
-    @Suppress("UNUSED_PARAMETER")
     private fun stopPrice(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
@@ -753,15 +753,13 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.add(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        val effectiveSl =
-            instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-                ?: riskConfig.defaultStopLossPercent
+        val effectiveSl = instrument?.slPercent ?: BigDecimal(slPercent * 100.0)
         return ExitRules.calcSL(fillPrice, direction, effectiveSl, instrument?.priceStep ?: BigDecimal("0.01"))
     }
 
     /** Тейк-профит: для фьючерсов — пункты, для акций — процент (см. [stopPrice]).
-     * Per-instrument TP% (InstrumentsConfig.InstrumentSpec.tpPercent) имеет приоритет над глобальным. */
-    @Suppress("UNUSED_PARAMETER")
+     * Per-instrument TP% (InstrumentsConfig.InstrumentSpec.tpPercent) имеет приоритет над глобальным.
+     * Параметр [tpPercent] (из API/конфига) используется как fallback перед RiskConfig. */
     private fun takePrice(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
@@ -777,9 +775,7 @@ class BacktestEngine(
                 PositionDirection.SHORT -> fillPrice.subtract(offset)
             }.setScale(2, RoundingMode.HALF_UP)
         }
-        val effectiveTp =
-            instrument?.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
-                ?: riskConfig.defaultTakeProfitPercent
+        val effectiveTp = instrument?.tpPercent ?: BigDecimal(tpPercent * 100.0)
         return ExitRules.calcTP(fillPrice, direction, effectiveTp, instrument?.priceStep ?: BigDecimal("0.01"))
     }
 

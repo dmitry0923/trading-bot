@@ -117,6 +117,9 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
         slPoints: Int? = null,
         tpPoints: Int? = null,
+        leverage: Double = 1.0,
+        capitalSlice: Double = backtestConfig.capitalSlice,
+        riskPerTradePercent: Double? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -137,6 +140,9 @@ class BacktestEngine(
                 slippageMultiplier,
                 slPoints,
                 tpPoints,
+                leverage,
+                capitalSlice,
+                riskPerTradePercent,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -208,6 +214,9 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
         slPoints: Int? = null,
         tpPoints: Int? = null,
+        leverage: Double = 1.0,
+        capitalSlice: Double = backtestConfig.capitalSlice,
+        riskPerTradePercent: Double? = null,
     ): BacktestResult {
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
@@ -429,6 +438,9 @@ class BacktestEngine(
                             slPoints,
                             tpPoints,
                             current,
+                            leverage,
+                            capitalSlice,
+                            riskPerTradePercent,
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -454,6 +466,9 @@ class BacktestEngine(
                     slPoints,
                     tpPoints,
                     current,
+                    leverage,
+                    capitalSlice,
+                    riskPerTradePercent,
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -613,12 +628,15 @@ class BacktestEngine(
         slPoints: Int? = null,
         tpPoints: Int? = null,
         candle: Candle? = null,
+        leverage: Double = 1.0,
+        capitalSlice: Double = backtestConfig.capitalSlice,
+        riskPerTradePercent: Double? = null,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
-        val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints)
+        val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints, leverage, capitalSlice, riskPerTradePercent)
         if (qty <= 0) return null
 
         val fill =
@@ -658,6 +676,9 @@ class BacktestEngine(
         price: BigDecimal,
         cash: BigDecimal,
         stopPoints: Int?,
+        leverage: Double = 1.0,
+        capitalSlice: Double = backtestConfig.capitalSlice,
+        riskPerTradePercentOverride: Double? = null,
     ): Int {
         val futuresSizer = positionSizer
         if (instrument != null && instrumentsConfig.isFutures(ticker) && futuresSizer != null) {
@@ -677,10 +698,11 @@ class BacktestEngine(
         }
         val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1
         val notionalPerLot = price.multiply(BigDecimal(lotSize))
+        val leveragedCash = cash.multiply(BigDecimal.valueOf(leverage))
         val sliceLots =
             if (notionalPerLot > BigDecimal.ZERO) {
-                cash
-                    .multiply(BigDecimal.valueOf(backtestConfig.capitalSlice))
+                leveragedCash
+                    .multiply(BigDecimal.valueOf(capitalSlice))
                     .divide(notionalPerLot, 0, RoundingMode.DOWN)
                     .toInt()
             } else {
@@ -690,9 +712,10 @@ class BacktestEngine(
             instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
                 ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = instrument?.commissionRub ?: BigDecimal.ZERO
+        val effectiveRiskPercent = riskPerTradePercentOverride ?: riskConfig.riskPerTradePercent.toDouble()
         val riskAmount =
-            cash
-                .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
+            leveragedCash
+                .multiply(BigDecimal(effectiveRiskPercent))
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerLot =
             price

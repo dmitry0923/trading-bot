@@ -29,6 +29,9 @@ data class PanelBacktestRequest(
     val slPercent: Double? = null,
     val tpPercent: Double? = null,
     val minBarsForSignal: Int? = null,
+    val leverage: Double? = null,
+    val capitalSlice: Double? = null,
+    val riskPerTradePercent: Double? = null,
 )
 
 /** Компактный результат прогона одного тикера (без equityCurve — тяжёлых серий). */
@@ -137,6 +140,10 @@ class PanelBacktestService(
             }
 
             logger.info { "Panel backtest: tickers=$tickers days=$days timeframe=$timeframe" }
+            val leverage = request.leverage ?: 1.0
+            val capitalSlice = request.capitalSlice ?: backtestConfig.capitalSlice
+            val riskPerTradePercent = request.riskPerTradePercent
+
             val results =
                 tickers
                     .map { ticker ->
@@ -150,6 +157,9 @@ class PanelBacktestService(
                                     minBarsForSignal = minBarsForSignal,
                                     slPercent = slPercent,
                                     tpPercent = tpPercent,
+                                    leverage = leverage,
+                                    capitalSlice = capitalSlice,
+                                    riskPerTradePercent = riskPerTradePercent,
                                 )
                             PanelTickerSummary(
                                 ticker = ticker,

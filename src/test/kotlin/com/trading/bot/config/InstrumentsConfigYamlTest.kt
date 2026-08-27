@@ -89,7 +89,7 @@ class InstrumentsConfigYamlTest {
         contextRunner.run { context ->
             val riskConfig = context.getBean(RiskConfig::class.java)
             assertThat(riskConfig.defaultStopLossPercent).isEqualByComparingTo(BigDecimal("2.0"))
-            assertThat(riskConfig.defaultTakeProfitPercent).isEqualByComparingTo(BigDecimal("4.0"))
+            assertThat(riskConfig.defaultTakeProfitPercent).isEqualByComparingTo(BigDecimal("15.0"))
             assertThat(riskConfig.maxSpreadPercent).isEqualByComparingTo(BigDecimal("1.0"))
             assertThat(riskConfig.maxGapPercent).isEqualByComparingTo(BigDecimal("3.0"))
         }

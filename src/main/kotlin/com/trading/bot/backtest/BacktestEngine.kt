@@ -120,6 +120,7 @@ class BacktestEngine(
         leverage: Double = 1.0,
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercent: Double? = null,
+        signalGeneratorOverride: BacktestSignalGenerator? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -143,6 +144,7 @@ class BacktestEngine(
                 leverage,
                 capitalSlice,
                 riskPerTradePercent,
+                signalGeneratorOverride,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -217,7 +219,9 @@ class BacktestEngine(
         leverage: Double = 1.0,
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercent: Double? = null,
+        signalGeneratorOverride: BacktestSignalGenerator? = null,
     ): BacktestResult {
+        val effectiveSignalGenerator = signalGeneratorOverride ?: signalGenerator
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
         val equityTimestamps = ArrayList<LocalDateTime>()
@@ -298,7 +302,7 @@ class BacktestEngine(
                 }
             }
 
-            val signal = signalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
+            val signal = effectiveSignalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
             if (signal == StrategyAction.HOLD || signal == StrategyAction.CLOSE) {
                 // Удержание: фиксируем equity по текущей цене закрытия
                 recordEquity(current.closePrice, current.time)

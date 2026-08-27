@@ -117,7 +117,7 @@ class OrderBuilderTest {
     // ── SBER (default stock params) ────────────────────────
 
     @Test
-    fun `SBER uses default 2_0 SL and 4_0 TP with priceStep 0_01`() {
+    fun `SBER uses default 2_0 SL and 15_0 TP with priceStep 0_01`() {
         val params =
             builder().buildSpotOrderParams(
                 ticker = "SBER",
@@ -127,8 +127,8 @@ class OrderBuilderTest {
             )
         // SL: 270.50 * 0.98 = 265.09 → align to 0.01 → 265.09
         assertEquals(0, BigDecimal("265.09").compareTo(params.stopLossPrice))
-        // TP: 270.50 * 1.04 = 281.32 → align to 0.01 → 281.32
-        assertEquals(0, BigDecimal("281.32").compareTo(params.takeProfitPrice))
+        // TP: 270.50 * 1.15 = 311.08 → align to 0.01 → 311.08
+        assertEquals(0, BigDecimal("311.08").compareTo(params.takeProfitPrice))
     }
 
     @Test

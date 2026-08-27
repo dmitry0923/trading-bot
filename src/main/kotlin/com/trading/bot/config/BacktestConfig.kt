@@ -52,8 +52,8 @@ class BacktestConfig {
     var timeframe: String = "MINUTE_10"
     var minBarsForSignal: Int = 30
     var slPercent: Double = 2.0
-    var tpPercent: Double = 4.0
-    var capitalSlice: Double = 0.20
+    var tpPercent: Double = 15.0
+    var capitalSlice: Double = 0.50
     var mlFilterEnabled: Boolean = false
     var mtfFilterEnabled: Boolean = false
     var monteCarloSimulations: Int = 1000

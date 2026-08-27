@@ -230,8 +230,8 @@ class BacktestEngineTest {
         assertEquals("MINUTE_10", config.timeframe)
         assertEquals(30, config.minBarsForSignal)
         assertEquals(2.0, config.slPercent)
-        assertEquals(4.0, config.tpPercent)
-        assertEquals(0.20, config.capitalSlice)
+        assertEquals(15.0, config.tpPercent)
+        assertEquals(0.50, config.capitalSlice)
         assertFalse(config.mlFilterEnabled)
         assertEquals(1000, config.monteCarloSimulations)
         assertEquals(42L, config.monteCarloSeed)
@@ -309,8 +309,9 @@ class BacktestEngineTest {
                     CandleRepository(Mockito.mock(DatabaseClient::class.java)),
                     backtestConfig =
                         BacktestConfig().apply {
-                            capitalSlice = 0.40
+                            capitalSlice = 0.90
                         },
+                    riskConfig = RiskConfig().apply { riskPerTradePercent = 50.0 },
                 ).simulate("SBER", trendingCandles())
             }
         assertTrue(base.totalTrades > 0, "fixture must produce trades")
@@ -365,12 +366,12 @@ class BacktestEngineTest {
     @Test
     fun `pnl charges commission on the full position size`() {
         // flat 100 ₽, constant BUY: notionalPerLot = 100*10 = 1000,
-        // qty = 100000 * 0.2 / 1000 = 20 лотов SBER (lotSize=10).
+        // qty = 100000 * 0.5 / 1000 = 50 лотов SBER (lotSize=10).
         // Реалистичное исполнение: halfSpread = (101-99)/4 = 0.5,
         // entry fill = 100.5, exit fill = 99.5.
-        // gross = (99.5 - 100.5) * 20 * lotSize(10) = -200 ₽
-        // комиссии = (100.5*200 + 99.5*200) * 0.0005 = 20 ₽
-        // итог equity = 100000 - 10.05 (entry comm) - 200 - 9.95 (exit comm) = 99780 ₽
+        // gross = (99.5 - 100.5) * 50 * lotSize(10) = -500 ₽
+        // комиссии = (100.5*500 + 99.5*500) * 0.0005 = 50 ₽
+        // итог equity = 100000 - 25.125 (entry comm) - 500 - 24.875 (exit comm) = 99450 ₽
         val engine =
             BacktestEngine(
                 CandleRepository(Mockito.mock(DatabaseClient::class.java)),
@@ -380,8 +381,8 @@ class BacktestEngineTest {
         val result = runBlocking { engine.simulate("SBER", flatCandles()) }
 
         assertEquals(1, result.totalTrades)
-        assertEquals(-220.0, result.tradeReturns.single(), 1e-9)
-        assertEquals(0, BigDecimal("99780.00").compareTo(result.equityCurve.last()))
+        assertEquals(-550.0, result.tradeReturns.single(), 1e-9)
+        assertEquals(0, BigDecimal("99450.00").compareTo(result.equityCurve.last()))
     }
 
     @Test

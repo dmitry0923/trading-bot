@@ -10,7 +10,15 @@ spring:
     async:
       request-timeout: 600000
 
+risk:
+  default-stop-loss-percent: 2.0
+  default-take-profit-percent: 15.0
+
 bt:
+  sl-percent: 2.0
+  tp-percent: 15.0
+  capital-slice: 0.50
+  adaptive-confidence-threshold: 0.60
   agent:
     enabled: true
     # Порог уверенности стратега и арбитра (live-fallback без статистики).

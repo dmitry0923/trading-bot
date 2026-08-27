@@ -21,7 +21,7 @@ class RiskConfig {
     var maxSectorExposure: Int = 2
     var maxVolatilityPercent: Double = 5.0
     var defaultStopLossPercent: BigDecimal = BigDecimal("2.0")
-    var defaultTakeProfitPercent: BigDecimal = BigDecimal("4.0")
+    var defaultTakeProfitPercent: BigDecimal = BigDecimal("15.0")
 
     // ===== ATR-based SL/TP (P1#5) =====
 

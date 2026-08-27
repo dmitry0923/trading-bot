@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.config.RiskConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -32,6 +33,7 @@ data class PanelBacktestRequest(
     val leverage: Double? = null,
     val capitalSlice: Double? = null,
     val riskPerTradePercent: Double? = null,
+    val adaptiveConfidenceThreshold: Double? = null,
 )
 
 /** Компактный результат прогона одного тикера (без equityCurve — тяжёлых серий). */
@@ -122,6 +124,7 @@ class PanelBacktestService(
     private val backtestEngine: BacktestEngine,
     private val backtestConfig: BacktestConfig,
     private val historicalDataLoader: HistoricalDataLoader,
+    private val riskConfig: RiskConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -143,11 +146,20 @@ class PanelBacktestService(
             val leverage = request.leverage ?: 1.0
             val capitalSlice = request.capitalSlice ?: backtestConfig.capitalSlice
             val riskPerTradePercent = request.riskPerTradePercent
+            val confidenceThreshold = request.adaptiveConfidenceThreshold
 
             val results =
                 tickers
                     .map { ticker ->
                         async {
+                            val signalGen = if (confidenceThreshold != null) {
+                                LiveStrategyBacktestSignalGenerator(
+                                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+                                    adaptiveConfidenceThreshold = confidenceThreshold,
+                                )
+                            } else {
+                                null
+                            }
                             val result =
                                 backtestEngine.run(
                                     ticker,
@@ -160,6 +172,7 @@ class PanelBacktestService(
                                     leverage = leverage,
                                     capitalSlice = capitalSlice,
                                     riskPerTradePercent = riskPerTradePercent,
+                                    signalGeneratorOverride = signalGen,
                                 )
                             PanelTickerSummary(
                                 ticker = ticker,

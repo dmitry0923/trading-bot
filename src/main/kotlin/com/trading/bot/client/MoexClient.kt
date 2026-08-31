@@ -466,13 +466,11 @@ class MoexClient(
                     val ticker = row[tickerIdx].asString()
                     // срочный контракт <БАЗА><месяц><цифра> ИЛИ бессрочный (совпадение 1-в-1)
                     ticker == baseTicker || (ticker.startsWith(baseTicker) && ticker.length == prefixLen + 2)
-                }
-                .map { row ->
+                }.map { row ->
                     val ticker = row[tickerIdx].asString()
                     val expiry = if (expiresIdx >= 0 && row.size() > expiresIdx) row.get(expiresIdx)?.asString() ?: "" else ""
                     ticker to expiry
-                }
-                .sortedBy { it.second }
+                }.sortedBy { it.second }
                 .map { it.first }
         } catch (e: Exception) {
             logger.warn(e) { "Failed to resolve futures contracts for $baseTicker" }

@@ -662,9 +662,23 @@ class BacktestEngine(
         val instrument = instrumentsConfig.find(ticker)
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
-        val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints, leverage, capitalSlice, riskPerTradePercent, futuresMaxContractsPerPosition)
+        val qty =
+            sizeQuantity(
+                ticker,
+                instrument,
+                direction,
+                price,
+                cash,
+                slPoints ?: stopPoints,
+                leverage,
+                capitalSlice,
+                riskPerTradePercent,
+                futuresMaxContractsPerPosition,
+            )
         if (qty <= 0) return null
-        logger.debug { "Backtest $ticker OPEN qty=$qty stopPoints=${slPoints ?: stopPoints} riskPct=${riskPerTradePercent ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} price=$price cash=$cash" }
+        logger.debug {
+            "Backtest $ticker OPEN qty=$qty stopPoints=${slPoints ?: stopPoints} riskPct=${riskPerTradePercent ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} price=$price cash=$cash"
+        }
 
         val fill =
             executionFill(
@@ -736,7 +750,9 @@ class BacktestEngine(
             if (size.quantity <= 0) {
                 logger.debug { "Backtest $ticker: sizer rejected entry (${size.reason})" }
             }
-            logger.debug { "Backtest $ticker SIZING qty=${size.quantity} stopPoints=$stopPointsResolved riskPct=${riskPerTradePercentOverride ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} money=$cash" }
+            logger.debug {
+                "Backtest $ticker SIZING qty=${size.quantity} stopPoints=$stopPointsResolved riskPct=${riskPerTradePercentOverride ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} money=$cash"
+            }
             return size.quantity
         }
         val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1

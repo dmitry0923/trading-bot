@@ -67,8 +67,7 @@ class FuturesPositionSizer(
         currentGo: BigDecimal,
         entryPrice: BigDecimal?,
         direction: PositionDirection?,
-    ): PositionSizeResult =
-        calculateContracts(ticker, portfolioMoney, stopLossPoints, currentGo, entryPrice, direction, null, null)
+    ): PositionSizeResult = calculateContracts(ticker, portfolioMoney, stopLossPoints, currentGo, entryPrice, direction, null, null)
 
     override fun calculateContracts(
         ticker: String,

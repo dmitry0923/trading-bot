@@ -108,9 +108,9 @@ class ApiController(
     private val backtestResultRepository: BacktestResultRepository,
     private val panelBacktestService: PanelBacktestService,
     private val portfolioBacktestGuard: PortfolioBacktestGuard,
-private val backtestConfig: BacktestConfig,
-private val riskConfig: RiskConfig,
-private val objectMapper: ObjectMapper,
+    private val backtestConfig: BacktestConfig,
+    private val riskConfig: RiskConfig,
+    private val objectMapper: ObjectMapper,
     private val historicalDataLoader: HistoricalDataLoader,
     private val candleRepository: CandleRepository,
     private val dailyRiskSnapshotRepository: DailyRiskSnapshotRepository,
@@ -570,7 +570,16 @@ private val objectMapper: ObjectMapper,
             } else {
                 null
             }
-        val result = backtestValidator.validate(ticker, candles, folds = folds, leverage = leverage ?: 1.0, riskPerTradePercent = riskPerTradePercent, futuresMaxContractsPerPosition = futuresMaxContractsPerPosition, signalGeneratorOverride = signalGeneratorOverride)
+        val result =
+            backtestValidator.validate(
+                ticker,
+                candles,
+                folds = folds,
+                leverage = leverage ?: 1.0,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                signalGeneratorOverride = signalGeneratorOverride,
+            )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
         return mapOf(
             "ticker" to ticker,

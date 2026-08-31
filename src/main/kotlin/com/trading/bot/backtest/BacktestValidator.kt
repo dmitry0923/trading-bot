@@ -176,12 +176,43 @@ class BacktestValidator(
 
                 val params =
                     if (train.size >= minBarsForSignal * 2) {
-                        tuneParams(ticker, train, initialCapital, minBarsForSignal, leverage, riskPerTradePercent, futuresMaxContractsPerPosition, signalGeneratorOverride)
+                        tuneParams(
+                            ticker,
+                            train,
+                            initialCapital,
+                            minBarsForSignal,
+                            leverage,
+                            riskPerTradePercent,
+                            futuresMaxContractsPerPosition,
+                            signalGeneratorOverride,
+                        )
                     } else {
                         gridFor(ticker).first()
                     }
-                val inSample = simulateWith(params, ticker, train, initialCapital, minBarsForSignal, leverage, riskPerTradePercent, futuresMaxContractsPerPosition, signalGeneratorOverride)
-                val outOfSample = simulateWith(params, ticker, test, initialCapital, minBarsForSignal, leverage, riskPerTradePercent, futuresMaxContractsPerPosition, signalGeneratorOverride)
+                val inSample =
+                    simulateWith(
+                        params,
+                        ticker,
+                        train,
+                        initialCapital,
+                        minBarsForSignal,
+                        leverage,
+                        riskPerTradePercent,
+                        futuresMaxContractsPerPosition,
+                        signalGeneratorOverride,
+                    )
+                val outOfSample =
+                    simulateWith(
+                        params,
+                        ticker,
+                        test,
+                        initialCapital,
+                        minBarsForSignal,
+                        leverage,
+                        riskPerTradePercent,
+                        futuresMaxContractsPerPosition,
+                        signalGeneratorOverride,
+                    )
                 FoldValidation(
                     foldIndex = i,
                     inSample = inSample,
@@ -248,7 +279,20 @@ class BacktestValidator(
     ): GridParams {
         val candidates =
             gridFor(ticker).map { params ->
-                Candidate(params, simulateWith(params, ticker, train, initialCapital, minBarsForSignal, leverage, riskPerTradePercent, futuresMaxContractsPerPosition, signalGeneratorOverride))
+                Candidate(
+                    params,
+                    simulateWith(
+                        params,
+                        ticker,
+                        train,
+                        initialCapital,
+                        minBarsForSignal,
+                        leverage,
+                        riskPerTradePercent,
+                        futuresMaxContractsPerPosition,
+                        signalGeneratorOverride,
+                    ),
+                )
             }
         val best =
             candidates.maxWithOrNull(

@@ -146,7 +146,9 @@ class PanelBacktestService(
             }
 
             logger.info { "Panel backtest: tickers=$tickers days=$days timeframe=$timeframe" }
-            logger.debug { "Panel params: riskPct=${request.riskPerTradePercent} maxC=${request.futuresMaxContractsPerPosition} slPoints=${request.slPoints} tpPoints=${request.tpPoints} conf=${request.adaptiveConfidenceThreshold}" }
+            logger.debug {
+                "Panel params: riskPct=${request.riskPerTradePercent} maxC=${request.futuresMaxContractsPerPosition} slPoints=${request.slPoints} tpPoints=${request.tpPoints} conf=${request.adaptiveConfidenceThreshold}"
+            }
             val leverage = request.leverage ?: 1.0
             val capitalSlice = request.capitalSlice ?: backtestConfig.capitalSlice
             val riskPerTradePercent = request.riskPerTradePercent
@@ -156,14 +158,20 @@ class PanelBacktestService(
                 tickers
                     .map { ticker ->
                         async {
-                            val signalGen = if (confidenceThreshold != null) {
-                                LiveStrategyBacktestSignalGenerator(
-                                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
-                                    adaptiveConfidenceThreshold = confidenceThreshold,
-                                )
-                            } else {
-                                null
-                            }
+                            val signalGen =
+                                if (confidenceThreshold != null) {
+                                    LiveStrategyBacktestSignalGenerator(
+                                        regimeConfig =
+                                            if (backtestConfig.regimeDetectionEnabled) {
+                                                riskConfig.toRegimeDetectionConfig()
+                                            } else {
+                                                null
+                                            },
+                                        adaptiveConfidenceThreshold = confidenceThreshold,
+                                    )
+                                } else {
+                                    null
+                                }
                             val result =
                                 backtestEngine.run(
                                     ticker,

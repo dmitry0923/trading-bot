@@ -15,7 +15,8 @@ import java.math.BigDecimal
 /**
  * Пороговые сценарии [RiskManagementService] (roadmap 13.17, P0):
  * - [RiskManagementService.isVolatilityTooHigh] — ATR% больше лимита → запрет;
- *   на границе, при null/нулевых входах и при выключенном конфиге — пропуск.
+ *   на границе — пропуск; при недоступности ATR — fail-closed (БЛОК, default);
+ *   при выключенном конфиге — пропуск.
  * - [RiskManagementService.exceedsPortfolioLimits] — Gross/Net Exposure лимиты
  *   (порог, направленность long/short, пустой кандидат, метрики блокировок).
  */
@@ -50,8 +51,18 @@ class RiskManagementServiceThresholdTest {
     }
 
     @Test
-    fun `volatility ignores null or non-positive inputs`() {
+    fun `unavailable ATR blocks by default (fail-closed)`() {
         val s = service()
+        assertTrue(s.isVolatilityTooHigh(null, BigDecimal("100")))
+        assertTrue(s.isVolatilityTooHigh(BigDecimal.ZERO, BigDecimal("100")))
+        assertTrue(s.isVolatilityTooHigh(BigDecimal("6"), BigDecimal.ZERO))
+        assertTrue(s.isVolatilityTooHigh(BigDecimal("6"), BigDecimal("-1")))
+    }
+
+    @Test
+    fun `unavailable ATR allowed when fail-closed disabled`() {
+        val config = RiskConfig().apply { volatilityFailClosed = false }
+        val s = service(config)
         assertFalse(s.isVolatilityTooHigh(null, BigDecimal("100")))
         assertFalse(s.isVolatilityTooHigh(BigDecimal.ZERO, BigDecimal("100")))
         assertFalse(s.isVolatilityTooHigh(BigDecimal("6"), BigDecimal.ZERO))
@@ -62,6 +73,7 @@ class RiskManagementServiceThresholdTest {
     fun `volatility check skipped when risk disabled`() {
         val config = RiskConfig().apply { enabled = false }
         assertFalse(service(config).isVolatilityTooHigh(BigDecimal("60"), BigDecimal("100")))
+        assertFalse(service(config).isVolatilityTooHigh(null, BigDecimal("100")))
     }
 
     @Test

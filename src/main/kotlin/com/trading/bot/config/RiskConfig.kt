@@ -20,6 +20,18 @@ class RiskConfig {
     var maxOpenPositions: Int = 1
     var maxSectorExposure: Int = 2
     var maxVolatilityPercent: Double = 5.0
+
+    /**
+     * Fail-closed политика для ATR-гейта волатильности (VOLATILITY_GUARD).
+     *
+     * ATR является обязательным risk input: если он недоступен/невалиден
+     * (null, <= 0, цена <= 0), а риск-движок включён — вход БЛОКИРУЕТСЯ
+     * (default true) вместо того, чтобы молча пропускать гейт (fail-open).
+     *
+     * true  — недоступность ATR трактуется как «риск не определён» → BLOCK.
+     * false — прежнее поведение: недоступность ATR пропускает гейт (НЕ безопасно).
+     */
+    var volatilityFailClosed: Boolean = true
     var defaultStopLossPercent: BigDecimal = BigDecimal("2.0")
     var defaultTakeProfitPercent: BigDecimal = BigDecimal("15.0")
 

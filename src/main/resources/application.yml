@@ -468,6 +468,10 @@ risk:
   futures-max-open-positions: 1
   max-sector-exposure: 2
   max-volatility-percent: 5.0
+  # Fail-closed для ATR-гейта волатильности (VOLATILITY_GUARD): ATR — обязательный
+  # risk input. Если ATR/цена недоступны или невалидны, а риск включён — вход
+  # блокируется (true). false возвращает старое fail-open поведение (НЕ безопасно).
+  volatility-fail-closed: ${RISK_VOLATILITY_FAIL_CLOSED:true}
   default-stop-loss-percent: 2.0
   default-take-profit-percent: 4.0
   trailing-stop-enabled: true

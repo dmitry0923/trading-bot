@@ -182,7 +182,15 @@ class BacktestRiskSimulator(
         }
 
         // ===== Gate 4: Volatility (ATR% guard) =====
-        if (atr != null && atr > BigDecimal.ZERO && entryPrice > BigDecimal.ZERO) {
+        if (atr == null || atr <= BigDecimal.ZERO || entryPrice <= BigDecimal.ZERO) {
+            // ATR — обязательный risk input (паритет с live StockRiskEngine /
+            // RiskManagementService). Недоступность данных о волатильности блокирует
+            // вход (fail-closed), см. risk.volatility-fail-closed.
+            if (riskConfig.volatilityFailClosed) {
+                logger.debug { "Backtest risk: VOLATILITY_GUARD $ticker ATR unavailable (=$atr) -> fail-closed" }
+                return GateResult(allowed = false, reason = "VOLATILITY_GUARD")
+            }
+        } else {
             val atrPercent = atr.multiply(BigDecimal("100")).divide(entryPrice, 4, RoundingMode.HALF_UP).toDouble()
             if (atrPercent > riskConfig.maxVolatilityPercent) {
                 logger.debug { "Backtest risk: VOLATILITY_GUARD $ticker ATR%=${String.format("%.2f%%", atrPercent)}" }

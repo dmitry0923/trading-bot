@@ -2418,8 +2418,8 @@ signal strength. Из-за этого идеальный backtest НЕ дока�
   positions HHI), sector/max positions, vol-ATR guard, duplicate/макс. позиции.
 
 **Новые дефолты** (были false → true):
-- `bt.agent.live-strategies: `
-- `bt.live-risk-gates: `
+- `bt.agent.live-strategies: ${BT_AGENT_LIVE_STRATEGIES:true}`
+- `bt.live-risk-gates: ${BT_LIVE_RISK_GATES:true}`
 
 **Следствие**: `BacktestResult.isPassable()` теперь валидирует ту же стратегию,
 что торгует в live. RSI/MACD-эвристика остаётся доступной как альтернативный
@@ -2428,3 +2428,24 @@ signal strength. Из-за этого идеальный backtest НЕ дока�
 **Метрики**: avgHoldBars и monthlyReturns уже реально вычисляются в
 BacktestEngine (tradeHoldBars.add(closeBar - entryBars), computeMonthlyReturns) —
 не заглушки.
+
+### 13.30. ATR fail-closed (P1) — волатильностный риск-гейт
+
+**Проблема (аудит)**: `VOLATILITY_GUARD` был fail-open — при недоступном/невалидном
+ATR (null, ≤ 0, цена ≤ 0) гейт молча пропускал вход, хотя ATR является
+обязательным risk input. В production это означало бы вход без проверки
+волатильности инструмента (после рестарта, при неполном кэше свечей,
+новой листинге).
+
+**Решение**: введён флаг `risk.volatility-fail-closed` (default `true`) — при
+недоступности ATR/цены вход БЛОКИРУЕТСЯ (VOLATILITY_GUARD / `ATR unavailable`).
+
+Затронутые места (паритет LIVE и backtest):
+- `RiskManagementService.isVolatilityTooHigh` — используется `TradingGate` (per-ticker);
+- `StockRiskEngine.isVolatilityTooHigh` — риск-этап `DecisionEngine` (live акции);
+- `BacktestRiskSimulator` Gate 4 — паритетный риск-контур бэктеста.
+
+При `volatility-fail-closed=false` сохраняется прежнее fail-open поведение
+(обратная совместимость). Тесты: обновлён `RiskManagementServiceThresholdTest`,
+добавлен `StockRiskEngineTest` (5 сценариев, включая null/невалидный ATR).
+

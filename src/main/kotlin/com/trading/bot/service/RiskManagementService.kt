@@ -52,7 +52,16 @@ class RiskManagementService(
         atr: BigDecimal?,
         price: BigDecimal,
     ): Boolean {
-        if (!riskConfig.enabled || atr == null || atr <= BigDecimal.ZERO || price <= BigDecimal.ZERO) return false
+        if (!riskConfig.enabled) return false
+        if (atr == null || atr <= BigDecimal.ZERO || price <= BigDecimal.ZERO) {
+            // ATR — обязательный risk input. Недоступность данных о волатильности
+            // по умолчанию блокирует вход (fail-closed), см. risk.volatility-fail-closed.
+            val blocked = riskConfig.volatilityFailClosed
+            if (blocked) {
+                logger.warn { "Volatility check: ATR/price unavailable (atr=$atr, price=$price) -> BLOCK (fail-closed)" }
+            }
+            return blocked
+        }
         val atrPercent =
             atr
                 .multiply(BigDecimal("100"))

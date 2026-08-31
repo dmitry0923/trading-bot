@@ -225,6 +225,27 @@ class LiveStrategyBacktestSignalGeneratorTest {
     }
 
     /**
+     * UNKNOWN regime (insufficient data < minBars) with regime enabled → HOLD.
+     * Mirrors LIVE fail-closed: UNKNOWN != SAFE, entry blocked.
+     */
+    @Test
+    fun `unknown regime blocks entry when regime enabled`() {
+        val genWithRegime =
+            LiveStrategyBacktestSignalGenerator(
+                regimeConfig = RegimeDetectionConfig(minBars = 50),
+            )
+
+        // 30 свечей < minBars=50 → RegimeDetector returns UNKNOWN → blocksEntry.
+        val candles = rampCandles(count = 30, start = 100.0, step = 1.0)
+        val action =
+            runBlocking {
+                genWithRegime.signal("SBER", candles, candles.lastIndex, minBars, "cycle")
+            }
+
+        assertEquals(StrategyAction.HOLD, action, "unknown regime must block entry (fail-closed)")
+    }
+
+    /**
      * No regime config (null) → backward compatible, no regime filtering.
      * All strategies compete without fitScore weighting.
      */

@@ -47,15 +47,18 @@ data class PerTickerRegime(
     val volatility: RegimeVolatility,
     val liquidity: RegimeLiquidity,
     val event: MarketEvent,
+    /** true = режим не удалось определить (недостаток данных) → fail-closed блокира входы. */
+    val isUnknown: Boolean = false,
 ) {
     /**
-     * Блокирует ли режим новые входы. Crash/Pump (резкое направленное движение),
-     * низкая ликвидность (THIN) и экстремальная волатильность (EXTREME) — входы
-     * запрещены (стратегии не выбираются, сигнал не публикуется).
+     * Блокирует ли режим новые входы. Fail-safe [UNKNOWN] (недостаток данных) —
+     * входы блокируются (fail-closed); также Crash/Pump (резкое направленное
+     * движение), низкая ликвидность (THIN) и экстремальная волатильность (EXTREME).
      */
     val blocksEntry: Boolean
         get() =
-            event != MarketEvent.NONE ||
+            isUnknown ||
+                event != MarketEvent.NONE ||
                 liquidity == RegimeLiquidity.THIN ||
                 volatility == RegimeVolatility.EXTREME
 
@@ -76,6 +79,7 @@ data class PerTickerRegime(
     /** Причина блокировки входов (для метрик/логов), null если режим не блокирует. */
     fun blockReason(): String? =
         when {
+            isUnknown -> "UNKNOWN"
             event == MarketEvent.CRASH -> "CRASH"
             event == MarketEvent.PUMP -> "PUMP"
             liquidity == RegimeLiquidity.THIN -> "LOW_LIQUIDITY"
@@ -90,13 +94,14 @@ data class PerTickerRegime(
     fun encodedLevel(): Double = (event.ordinal * 1000 + volatility.ordinal * 100 + direction.ordinal * 10 + liquidity.ordinal).toDouble()
 
     companion object {
-        /** Fail-safe режим при недостатке данных: нейтральный, не блокирует. */
+        /** Fail-safe режим при недостатке данных: входы блокируются (fail-closed). */
         val UNKNOWN: PerTickerRegime =
             PerTickerRegime(
                 direction = RegimeDirection.RANGE,
                 volatility = RegimeVolatility.NORMAL,
                 liquidity = RegimeLiquidity.NORMAL,
                 event = MarketEvent.NONE,
+                isUnknown = true,
             )
     }
 }

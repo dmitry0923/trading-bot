@@ -2449,3 +2449,31 @@ ATR (null, ≤ 0, цена ≤ 0) гейт молча пропускал вхо�
 (обратная совместимость). Тесты: обновлён `RiskManagementServiceThresholdTest`,
 добавлен `StockRiskEngineTest` (5 сценариев, включая null/невалидный ATR).
 
+### 13.31. UNKNOWN regime fail-closed (P1) — per-ticker regime гейт
+
+**Проблема (аудит)**: `PerTickerRegime.UNKNOWN` (недостаток свечей < `regime.min-bars`)
+был нейтральным fail-safe (`NORMAL/RANGE`, `blocksEntry=false`) — при включённом
+per-ticker regime и нехватке данных вход был **разрешён** (недостаток данных
+трактовался как «режим безопасен», а не «режим неизвестен»).
+
+Дополнительно была семантическая путаница: один и тот же `UNKNOWN` использовался
+и для «режим выключен» (`per-ticker-regime-enabled=false`), и для «данных мало» —
+мешая отделить осознанный отказ от гейта от fail-safe срабатывания.
+
+**Решение**:
+- `PerTickerRegime` получил флаг `isUnknown`; `UNKNOWN.blocksEntry` теперь `true`
+  (fail-closed: UNKNOWN ≠ SAFE → вход блок).
+- «Режим выключен» теперь представлен **`null`** (паритет с `StrategyContext.regime`):
+  `StrategyService` и `LiveStrategyBacktestSignalGenerator` при выключенном режиме
+  передают `null` вместо `UNKNOWN` → legacy pass-through без гейта; при включённом
+  и нехватке данных — `UNKNOWN` → блок.
+- `sizeMultiplier()` для UNKNOWN → 0 (fail-closed sizing), `blockReason()` → `UNKNOWN`.
+
+Затронутые места: `PerTickerRegime`, `StrategyService.executeCycle`,
+`LiveStrategyBacktestSignalGenerator` (паритет бэктеста), через `StrategyRunner`
+/`StrategySelector` корректно гейтят UNKNOWN в HOLD.
+
+Тесты: `RegimeDetectorTest` (UNKNOWN блокирует + blockReason), новый кейс в
+`LiveStrategyBacktestSignalGeneratorTest` (UNKNOWN → HOLD), новый кейс в
+`StrategyRunnerTest` (UNKNOWN → HOLD без оценки стратегий).
+

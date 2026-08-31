@@ -147,10 +147,11 @@ class RegimeDetectorTest {
     }
 
     @Test
-    fun `insufficient candles yield fail-safe unknown regime`() {
+    fun `insufficient candles yield fail-safe unknown regime that blocks entry`() {
         val closes = (0 until 10).map { 100.0 }
         val regime = RegimeDetector.detect(series(closes, risingVolumes(closes.size)), config)
         assertEquals(PerTickerRegime.UNKNOWN, regime)
-        assertFalse(regime.blocksEntry)
+        assertTrue(regime.blocksEntry)
+        assertEquals("UNKNOWN", regime.blockReason())
     }
 }

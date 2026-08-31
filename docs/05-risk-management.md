@@ -579,7 +579,9 @@ Score **информационный**: входа не блокирует (ге
 | `event` | NONE / CRASH / PUMP | движение open→close за `move-window-bars` (6): падение ≥ 2.5% → CRASH, рост ≥ 2.5% → PUMP |
 
 **Fail-safe**: меньше `regime.min-bars` (20) свечей → `PerTickerRegime.UNKNOWN`
-(NORMAL/RANGE, входы не блокируются).
+(`isUnknown=true`) — **входы блокируются (fail-closed)**: недостаток данных ≠
+безопасная торговля. Режим полностью выключен (`risk.per-ticker-regime-enabled`
+= false) → regime = null, гейт не применяется (обсознанный pass-through).
 
 **Блокировка входов** (`blocksEntry`) — при любом из условий: CRASH, PUMP, THIN
 или EXTREME. Множитель размера (`sizeMultiplier`): блок → 0, HIGH → 0.5, иначе 1.0.

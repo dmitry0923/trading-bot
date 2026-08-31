@@ -29,9 +29,11 @@ import java.time.ZoneId
  * Regime parity (P0#1): when [regimeConfig] is non-null, the generator
  * mirrors [com.trading.bot.application.StrategyRunner.runAll] behaviour:
  *   1. Detect per-ticker regime via [RegimeDetector];
- *   2. If regime blocks entry → HOLD;
+ *   2. If regime blocks entry (incl. UNKNOWN due to insufficient data — fail-closed)
+ *      → HOLD;
  *   3. Filter strategies by [StrategySelector.eligibleStrategyIds];
  *   4. Weight signalStrength by [StrategySelector.fitScore].
+ * When [regimeConfig] is null, regime is not applied (legacy pass-through).
  *
  * Adaptive confidence gate (P0#2): mirrors [com.trading.bot.service.StrategyService]
  * adaptive threshold. Signals with strength below [adaptiveConfidenceThreshold]
@@ -84,17 +86,12 @@ class LiveStrategyBacktestSignalGenerator(
                 timestamp = bar.time.atZone(ZoneId.systemDefault()).toInstant(),
             )
 
-        val regimeEnabled = regimeConfig != null
-        val regime: PerTickerRegime =
-            if (regimeEnabled) {
-                RegimeDetector.detect(window, regimeConfig!!)
-            } else {
-                PerTickerRegime.UNKNOWN
-            }
+        val regime: PerTickerRegime? =
+            regimeConfig?.let { RegimeDetector.detect(window, it) }
 
-        if (regimeEnabled && regime.blocksEntry) return StrategyAction.HOLD
+        if (regime != null && regime.blocksEntry) return StrategyAction.HOLD
 
-        val eligibleIds = if (regimeEnabled) strategySelector.eligibleStrategyIds(regime) else null
+        val eligibleIds = regime?.let { strategySelector.eligibleStrategyIds(it) }
 
         val context =
             StrategyContext(
@@ -119,7 +116,7 @@ class LiveStrategyBacktestSignalGenerator(
                 }
             if (decision.action != StrategyAction.HOLD) {
                 val strength =
-                    if (regimeEnabled) {
+                    if (regime != null) {
                         val fit = strategySelector.fitScore(strategy.id, regime)
                         (decision.signalStrength * fit).coerceIn(0.0, 1.0)
                     } else {

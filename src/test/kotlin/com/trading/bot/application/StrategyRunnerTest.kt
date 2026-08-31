@@ -111,6 +111,21 @@ class StrategyRunnerTest {
     }
 
     @Test
+    fun `UNKNOWN regime blocks entry (fail-closed)`() {
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "buy")),
+                ),
+            )
+        val unknownContext = context.copy(regime = PerTickerRegime.UNKNOWN)
+        val result = runBlocking { runner.runAll(unknownContext) }
+        assertEquals("NONE", result.winnerId)
+        assertEquals(StrategyAction.HOLD, result.decision.action)
+        assertEquals(emptyMap<String, StrategyDecision>(), result.all)
+    }
+
+    @Test
     fun `regime filters incompatible strategies from evaluation`() {
         val runner =
             runner(

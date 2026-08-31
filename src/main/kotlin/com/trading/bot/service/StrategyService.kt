@@ -275,17 +275,19 @@ class StrategyService(
         }
 
         // Per-ticker рыночный режим: определяется ДО запуска стратегий. Если режим
-        // блокирует входы (Crash/Pump/низкая ликвидность/экстремальная волатильность) —
-        // тикер пропускается целиком (экономия LLM-вызовов, нет сигнала).
-        val regime: PerTickerRegime =
+        // блокирует входы (UNKNOWN из-за недостатка данных, Crash/Pump, низкая
+        // ликвидность, экстремальная волатильность) — тикер пропускается целиком
+        // (экономия LLM-вызовов, нет сигнала). Режим выключен (`perTickerRegimeEnabled`
+        // = false) → regime = null, старый pass-through без гейта.
+        val regime: PerTickerRegime? =
             if (riskConfig.perTickerRegimeEnabled) {
                 RegimeDetector.detect(candles, riskConfig.toRegimeDetectionConfig())
             } else {
-                PerTickerRegime.UNKNOWN
+                null
             }
-        recordRegimeMetrics(ticker, regime)
-        if (regime.blocksEntry) {
-            logger.warn { "Skipping $ticker/$timeframe — regime blocks entry: ${regime.describe()}" }
+        if (regime != null) recordRegimeMetrics(ticker, regime)
+        if (regime?.blocksEntry == true) {
+            logger.warn { "Skipping $ticker/$timeframe — regime blocks entry: ${regime?.describe()}" }
             meterRegistry
                 .counter(
                     "strategy.skipped",
@@ -344,7 +346,7 @@ class StrategyService(
                 signalStrength = gated.signalStrength,
                 reasoning =
                     gated.reasoning +
-                        " | Regime: ${regime.describe()} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}" +
+                        " | Regime: ${regime?.describe() ?: "n/a"} | Meta: confAdj=${fb?.confidenceAdjustment ?: 0.0}" +
                         " | Advisor: ${advisorVerdict.verdict} (confAdj=${advisorVerdict.confidenceAdjustment}, risk=${advisorVerdict.riskLevel})",
                 timeframe = timeframe,
                 cycleId = cycleId,
@@ -417,7 +419,7 @@ class StrategyService(
             ).increment()
         logger.info {
             "Strategy $ticker/$timeframe: ${gated.action} @ ${gated.targetPrice} " +
-                "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime.describe()}, advisor=${advisorVerdict.verdict})"
+                "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime?.describe() ?: "n/a"}, advisor=${advisorVerdict.verdict})"
         }
     }
 

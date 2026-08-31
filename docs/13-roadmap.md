@@ -2477,3 +2477,32 @@ per-ticker regime и нехватке данных вход был **разре�
 `LiveStrategyBacktestSignalGeneratorTest` (UNKNOWN → HOLD), новый кейс в
 `StrategyRunnerTest` (UNKNOWN → HOLD без оценки стратегий).
 
+### 13.32. Statistical confidence edge'а (P1) — bootstrap-значимость по сделкам
+
+**Проблема (аудит)**: панельные/калибровочные прогоны показывали только точечные
+метрики (Return/PF/WR), без оценки того, является ли положительная доходность
+статистически достоверной или чистым шумом. При малом числе сделок (11..54 в
+калибровках из AGENTS.md) это критично: даже явно прибыльный `totalReturn` может
+быть результатом «удачного порядка» или единичных выбросов.
+
+**Решение**: добавлен `TradeSignificance.bootstrap(tradeReturns, 2000, seed=42)` —
+bootstrap с возвращением по P&L сделок (на том же принципе, что существующий
+`MonteCarlo`, но по сделкам, а не по периодным доходностям кривой):
+- 95% confidence interval среднего P&L (`meanTradeCI95Low/High`, перцентильный метод);
+- `probabilityOfNoEdge` — доля bootstrap-средних ≤ 0 (аналог одностороннего p-value);
+- `edgeStatisticallySignificant` — `probabilityOfNoEdge <= 0.05`.
+
+Новые поля в `BacktestResult` (заполняются в `BacktestMetrics.compute`) и в
+компактный `PanelTickerSummary`. Выводятся в API: `/backtest/{ticker}`, панельные
+ответы, `/backtest/{ticker}/validate` (`oosEdgeStatisticallySignificant`,
+`oosProbabilityOfNoEdge`, `oosMeanTradeCI95*`). Персист через `metrics()` (добавлены
+5 ключей).
+
+Критерии приёмки `isPassable()`/`isRobust()` НЕ ужесточены (совместимость с
+существующим калибровочным пайплайном) — статистическая значимость выводится как
+диагностика; решение об ужесточении порогов остаётся за пользователем.
+
+Тесты: `TradeSignificanceTest` (5 кейсов: пусто/1 сделка, значимый edge, шум →
+не значим, детерминированность+CI накрывает mean, убыток → не значим); обновлён
+`BacktestEngineTest` (размер `metrics()` 16→21, bootstrap run, CI накрывает avgTrade).
+

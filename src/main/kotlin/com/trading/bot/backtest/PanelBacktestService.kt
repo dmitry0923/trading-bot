@@ -50,6 +50,10 @@ data class PanelTickerSummary(
     val profitFactor: Double,
     val totalTrades: Int,
     val passable: Boolean,
+    val edgeStatisticallySignificant: Boolean = false,
+    val probabilityOfNoEdge: Double = 1.0,
+    val meanTradeCI95Low: Double = 0.0,
+    val meanTradeCI95High: Double = 0.0,
 )
 
 /**
@@ -199,6 +203,10 @@ class PanelBacktestService(
                                 profitFactor = result.profitFactor,
                                 totalTrades = result.totalTrades,
                                 passable = result.isPassable(),
+                                edgeStatisticallySignificant = result.edgeStatisticallySignificant,
+                                probabilityOfNoEdge = result.probabilityOfNoEdge,
+                                meanTradeCI95Low = result.meanTradeCI95Low,
+                                meanTradeCI95High = result.meanTradeCI95High,
                             )
                         }
                     }.awaitAll()

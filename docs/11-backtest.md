@@ -276,6 +276,24 @@ data class BacktestResult(
 | `winRate` | `wins / totalTrades` | — |
 | `profitFactor` | `grossProfit / |grossLoss|` (∞, если потерь нет) | > 1.3 |
 | `totalTrades` | `tradeReturns.size` | >= 200 |
+| `sortinoRatio` | `(mean - rf) / downsideDev`, `rf=0` | — |
+| `calmarRatio` | `totalReturn / maxDrawdown` | — |
+| `expectancy` | `Win% × AvgWin − Loss% × \|AvgLoss\|` | — |
+| `winLossRatio` | `AvgWin / \|AvgLoss\|` | — |
+| `avgTrade` | средний P&L сделки | — |
+| `recoveryFactor` | `netProfit / maxDrawdown` | — |
+| `edgeStatisticallySignificant` | `probabilityOfNoEdge <= 0.05` (95%) | true |
+| `probabilityOfNoEdge` | доля bootstrap-средних P&L ≤ 0 | < 0.05 |
+| `meanTradeCI95Low/High` | 95% bootstrap-CI среднего P&L сделки | bracket > 0 |
+
+> **Статистическая значимость edge'а** (`TradeSignificance.bootstrap`): bootstrap
+> ресемплинг с возвращением по P&L сделок (`tradeReturns`, 2000 итераций, детерминированный
+> seed). 95% CI — перцентильный метод; `probabilityOfNoEdge` — аналог одностороннего
+> p-value (доля bootstrap-средних ≤ 0). При малом числе сделок (10..50, типично для
+> калибровок) положительный `totalReturn` может быть чистым шумом — флаг
+> `edgeStatisticallySignificant` показывает, пробивает ли edge 95%-порог значимости.
+> Метрика считается в `BacktestMetrics.compute()` (IS и агрегированный OOS-путь
+> `BacktestValidator`) и выводится в панельный/`/backtest/{ticker}`/`/validate` ответы.
 
 Особенности:
 

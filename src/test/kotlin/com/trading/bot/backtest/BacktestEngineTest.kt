@@ -185,6 +185,10 @@ class BacktestEngineTest {
         assertEquals((2.0 / 3.0) * 1500.0 - (1.0 / 3.0) * 500.0, result.expectancy, 1e-9)
         assertEquals(1500.0 / 500.0, result.winLossRatio, 1e-9)
         assertEquals(2500.0 / result.maxDrawdown, result.recoveryFactor, 1e-9)
+        // Статистическая значимость edge'а (bootstrap по сделкам) заполняется в compute.
+        assertTrue(result.significanceSimulations > 0, "bootstrap must run in metrics compute")
+        // 95% bootstrap-CI среднего P&L должен накрывать фактическое среднее.
+        assertTrue(result.meanTradeCI95Low <= result.avgTrade && result.avgTrade <= result.meanTradeCI95High)
     }
 
     @Test
@@ -212,7 +216,7 @@ class BacktestEngineTest {
 
         val metrics = result.metrics()
 
-        assertEquals(16, metrics.size)
+        assertEquals(21, metrics.size)
         assertEquals(1.5, metrics["sharpeRatio"])
         assertEquals(250, metrics["totalTrades"])
         assertEquals(true, metrics["passable"])
@@ -220,6 +224,7 @@ class BacktestEngineTest {
         assertFalse(metrics.containsKey("equityCurve"))
         assertFalse(metrics.containsKey("monthlyReturns"))
         assertFalse(metrics.containsKey("tradeReturns"))
+        assertEquals(false, metrics["edgeStatisticallySignificant"])
     }
 
     @Test

@@ -405,6 +405,10 @@ class ApiController(
             "winRate" to result.winRate,
             "profitFactor" to result.profitFactor,
             "totalTrades" to result.totalTrades,
+            "edgeStatisticallySignificant" to result.edgeStatisticallySignificant,
+            "probabilityOfNoEdge" to result.probabilityOfNoEdge,
+            "meanTradeCI95Low" to result.meanTradeCI95Low,
+            "meanTradeCI95High" to result.meanTradeCI95High,
             "passable" to result.isPassable(),
             "equityCurve" to result.equityCurve,
             "timestamp" to
@@ -481,6 +485,10 @@ class ApiController(
                         "winRate" to r.winRate,
                         "profitFactor" to r.profitFactor,
                         "totalTrades" to r.totalTrades,
+                        "edgeStatisticallySignificant" to r.edgeStatisticallySignificant,
+                        "probabilityOfNoEdge" to r.probabilityOfNoEdge,
+                        "meanTradeCI95Low" to r.meanTradeCI95Low,
+                        "meanTradeCI95High" to r.meanTradeCI95High,
                         "passable" to r.passable,
                     )
                 },
@@ -525,6 +533,10 @@ class ApiController(
                         "winRate" to r.winRate,
                         "profitFactor" to r.profitFactor,
                         "totalTrades" to r.totalTrades,
+                        "edgeStatisticallySignificant" to r.edgeStatisticallySignificant,
+                        "probabilityOfNoEdge" to r.probabilityOfNoEdge,
+                        "meanTradeCI95Low" to r.meanTradeCI95Low,
+                        "meanTradeCI95High" to r.meanTradeCI95High,
                         "passable" to r.passable,
                     )
                 },
@@ -592,6 +604,10 @@ class ApiController(
             "oosSharpe" to result.aggregateOutOfSample.sharpeRatio,
             "oosSortino" to result.aggregateOutOfSample.sortinoRatio,
             "oosProfitFactor" to result.aggregateOutOfSample.profitFactor,
+            "oosEdgeStatisticallySignificant" to result.aggregateOutOfSample.edgeStatisticallySignificant,
+            "oosProbabilityOfNoEdge" to result.aggregateOutOfSample.probabilityOfNoEdge,
+            "oosMeanTradeCI95Low" to result.aggregateOutOfSample.meanTradeCI95Low,
+            "oosMeanTradeCI95High" to result.aggregateOutOfSample.meanTradeCI95High,
             "timestamp" to LocalDateTime.now().toString(),
         )
     }

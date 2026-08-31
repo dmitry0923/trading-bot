@@ -42,6 +42,16 @@ data class BacktestResult(
     val totalCommissionPaid: BigDecimal = BigDecimal.ZERO,
     /** Доля комиссий в общей прибыли: commission / |gross_profit| × 100. */
     val costDragPercent: Double = 0.0,
+    /** Нижняя граница 95% bootstrap-CI среднего P&L сделки. */
+    val meanTradeCI95Low: Double = 0.0,
+    /** Верхняя граница 95% bootstrap-CI среднего P&L сделки. */
+    val meanTradeCI95High: Double = 0.0,
+    /** Доля bootstrap-средних с P&L <= 0 (аналог p-value для edge > 0). */
+    val probabilityOfNoEdge: Double = 1.0,
+    /** true, если edge статистически значим на 95% (probabilityOfNoEdge <= 0.05). */
+    val edgeStatisticallySignificant: Boolean = false,
+    /** Число bootstrap-итераций для оценки значимости. */
+    val significanceSimulations: Int = 0,
 ) {
     /**
      * Критерии приёма стратегии в прод:
@@ -74,6 +84,11 @@ data class BacktestResult(
             "calmarRatio" to calmarRatio,
             "totalCommissionPaid" to totalCommissionPaid.toDouble(),
             "costDragPercent" to costDragPercent,
+            "edgeStatisticallySignificant" to edgeStatisticallySignificant,
+            "meanTradeCI95Low" to meanTradeCI95Low,
+            "meanTradeCI95High" to meanTradeCI95High,
+            "probabilityOfNoEdge" to probabilityOfNoEdge,
+            "significanceSimulations" to significanceSimulations,
             "passable" to isPassable(),
         )
 }
@@ -165,6 +180,8 @@ object BacktestMetrics {
 
         val monthlyReturns = computeMonthlyReturns(equityCurve, equityTimestamps)
 
+        val sig = TradeSignificance.bootstrap(tradeReturns)
+
         return BacktestResult(
             ticker = ticker,
             totalReturn = totalReturn,
@@ -185,6 +202,11 @@ object BacktestMetrics {
             tradeReturns = tradeReturns,
             totalCommissionPaid = totalCommission,
             costDragPercent = costDragPercent,
+            meanTradeCI95Low = sig.ci95Low,
+            meanTradeCI95High = sig.ci95High,
+            probabilityOfNoEdge = sig.probabilityOfNoEdge,
+            edgeStatisticallySignificant = sig.edgeStatisticallySignificant,
+            significanceSimulations = sig.simulations,
         )
     }
 

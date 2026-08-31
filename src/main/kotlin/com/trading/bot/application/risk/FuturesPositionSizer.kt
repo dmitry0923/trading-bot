@@ -67,6 +67,18 @@ class FuturesPositionSizer(
         currentGo: BigDecimal,
         entryPrice: BigDecimal?,
         direction: PositionDirection?,
+    ): PositionSizeResult =
+        calculateContracts(ticker, portfolioMoney, stopLossPoints, currentGo, entryPrice, direction, null, null)
+
+    override fun calculateContracts(
+        ticker: String,
+        portfolioMoney: BigDecimal,
+        stopLossPoints: Int,
+        currentGo: BigDecimal,
+        entryPrice: BigDecimal?,
+        direction: PositionDirection?,
+        riskPerTradePercent: Double?,
+        maxContractsPerPosition: Int?,
     ): PositionSizeResult {
         if (portfolioMoney <= BigDecimal.ZERO) {
             return PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "NON_POSITIVE_PORTFOLIO")
@@ -87,7 +99,7 @@ class FuturesPositionSizer(
         val marginPerContract = currentGo
 
         // 2. Риск на сделку (руб): депозит * riskPerTradePercent%
-        val riskPercent = BigDecimal(riskConfig.riskPerTradePercent.toString())
+        val riskPercent = BigDecimal((riskPerTradePercent ?: riskConfig.riskPerTradePercent).toString())
         val riskAmount =
             portfolioMoney
                 .multiply(riskPercent)
@@ -127,7 +139,7 @@ class FuturesPositionSizer(
             minOf(
                 maxContractsByRisk,
                 maxContractsByMargin,
-                riskConfig.maxContractsPerPosition,
+                maxContractsPerPosition ?: riskConfig.maxContractsPerPosition,
             )
 
         if (finalQty < 1) {

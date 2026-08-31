@@ -48,4 +48,22 @@ interface PositionSizer {
         entryPrice: BigDecimal?,
         direction: PositionDirection?,
     ): PositionSizeResult
+
+    /**
+     * Полный расчёт с калибровочными override'ами (single source of truth для
+     * панельного бэктеста фьючерсов):
+     *
+     * @param riskPerTradePercent override риска на сделку (% портфеля); null = конфиг
+     * @param maxContractsPerPosition override жёсткого лимита контрактов; null = конфиг
+     */
+    fun calculateContracts(
+        ticker: String,
+        portfolioMoney: BigDecimal,
+        stopLossPoints: Int,
+        currentGo: BigDecimal,
+        entryPrice: BigDecimal?,
+        direction: PositionDirection?,
+        riskPerTradePercent: Double?,
+        maxContractsPerPosition: Int?,
+    ): PositionSizeResult
 }

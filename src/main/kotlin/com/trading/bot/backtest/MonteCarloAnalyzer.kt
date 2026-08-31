@@ -206,7 +206,23 @@ class MonteCarloAnalyzer(
         seed: Long = backtestConfig.monteCarloSeed,
     ): BacktestRobustnessReport {
         val baseResult =
-            backtestEngine.simulate(ticker, candles, initialCapital, minBarsForSignal, slPercent, tpPercent)
+            backtestEngine.simulate(
+                ticker,
+                candles,
+                initialCapital,
+                minBarsForSignal,
+                slPercent,
+                tpPercent,
+                commissionMultiplier = 1.0,
+                slippageMultiplier = 1.0,
+                slPoints = null,
+                tpPoints = null,
+                leverage = 1.0,
+                capitalSlice = null,
+                riskPerTradePercent = null,
+                futuresMaxContractsPerPosition = null,
+                signalGeneratorOverride = null,
+            )
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
         val monteCarlo =
@@ -232,6 +248,13 @@ class MonteCarloAnalyzer(
                         tpPercent,
                         commissionMultiplier = s.commissionMultiplier,
                         slippageMultiplier = s.slippageMultiplier,
+                        slPoints = null,
+                        tpPoints = null,
+                        leverage = 1.0,
+                        capitalSlice = null,
+                        riskPerTradePercent = null,
+                        futuresMaxContractsPerPosition = null,
+                        signalGeneratorOverride = null,
                     ),
                 )
             }

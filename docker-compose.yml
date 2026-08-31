@@ -13,6 +13,8 @@ services:
       POSTGRES_DB: ${DB_NAME:-trading_bot}
       POSTGRES_USER: ${DB_USER:-trader}
       POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required}
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,6 +26,8 @@ services:
   redis:
     image: redis:7-alpine
     container_name: trading-bot-redis
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:

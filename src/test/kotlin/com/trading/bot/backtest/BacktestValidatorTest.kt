@@ -63,6 +63,11 @@ class BacktestValidatorTest {
                         any(),
                         anyOrNull(),
                         anyOrNull(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(result())
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
@@ -89,6 +94,11 @@ class BacktestValidatorTest {
                         any(),
                         any(),
                         any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                     ),
@@ -130,6 +140,11 @@ class BacktestValidatorTest {
                         any(),
                         anyOrNull(),
                         anyOrNull(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(infinitePf)
                 whenever(
@@ -144,6 +159,11 @@ class BacktestValidatorTest {
                         any(),
                         anyOrNull(),
                         anyOrNull(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(mediocre)
                 whenever(
@@ -156,6 +176,11 @@ class BacktestValidatorTest {
                         Mockito.eq(0.06),
                         any(),
                         any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                     ),
@@ -177,13 +202,19 @@ class BacktestValidatorTest {
             runBlocking {
                 // Si — фьючерс: настройка идёт в пунктах (slPoints/tpPoints, BT-004).
                 whenever(
-                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(25), Mockito.eq(50)),
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(25), Mockito.eq(50), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
                 ).thenReturn(result())
                 whenever(
-                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(50), Mockito.eq(100)),
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(50), Mockito.eq(100), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
                 ).thenReturn(result())
                 whenever(
-                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(100), Mockito.eq(200)),
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(100), Mockito.eq(200), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
+                ).thenReturn(result())
+                whenever(
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(150), Mockito.eq(300), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
+                ).thenReturn(result())
+                whenever(
+                    engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), Mockito.eq(300), Mockito.eq(600), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
                 ).thenReturn(result())
                 validator.validate("Si", List(300) { mockCandle(it) }, folds = 3)
             }
@@ -191,15 +222,11 @@ class BacktestValidatorTest {
         assertEquals(25, result.folds[0].chosenSlPoints)
         assertEquals(50, result.folds[0].chosenTpPoints)
         // Последующие фолды тюнятся по пунктовой сетке.
-        assertTrue(result.folds[1].chosenSlPoints in listOf(25, 50, 100))
-        assertTrue(result.folds[1].chosenTpPoints in listOf(50, 100, 200))
+        assertTrue(result.folds[1].chosenSlPoints in listOf(25, 50, 100, 150, 300))
+        assertTrue(result.folds[1].chosenTpPoints in listOf(50, 100, 200, 300, 600))
         // Проценты для фьючерсов не используются.
         assertEquals(0.0, result.folds[0].chosenSlPercent)
         assertEquals(0.0, result.folds[0].chosenTpPercent)
-    }
-
-    private companion object {
-        const val OOS_TRADES = 3
     }
 
     @Test
@@ -216,6 +243,11 @@ class BacktestValidatorTest {
                         any(),
                         any(),
                         any(),
+                        anyOrNull(),
+                        anyOrNull(),
+                        any(),
+                        anyOrNull(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                     ),
@@ -316,5 +348,9 @@ class BacktestValidatorTest {
             )
         assertFalse(empty.isPassable())
         assertFalse(empty.isRobust())
+    }
+
+    private companion object {
+        const val OOS_TRADES = 3
     }
 }

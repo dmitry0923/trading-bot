@@ -120,6 +120,7 @@ class BacktestEngine(
         leverage: Double = 1.0,
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercent: Double? = null,
+        futuresMaxContractsPerPosition: Int? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
@@ -144,6 +145,7 @@ class BacktestEngine(
                 leverage,
                 capitalSlice,
                 riskPerTradePercent,
+                futuresMaxContractsPerPosition,
                 signalGeneratorOverride,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
@@ -217,10 +219,12 @@ class BacktestEngine(
         slPoints: Int? = null,
         tpPoints: Int? = null,
         leverage: Double = 1.0,
-        capitalSlice: Double = backtestConfig.capitalSlice,
+        capitalSlice: Double? = null,
         riskPerTradePercent: Double? = null,
+        futuresMaxContractsPerPosition: Int? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
     ): BacktestResult {
+        val effectiveCapitalSlice = capitalSlice ?: backtestConfig.capitalSlice
         val effectiveSignalGenerator = signalGeneratorOverride ?: signalGenerator
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
@@ -443,8 +447,9 @@ class BacktestEngine(
                             tpPoints,
                             current,
                             leverage,
-                            capitalSlice,
+                            effectiveCapitalSlice,
                             riskPerTradePercent,
+                            futuresMaxContractsPerPosition,
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -471,8 +476,9 @@ class BacktestEngine(
                     tpPoints,
                     current,
                     leverage,
-                    capitalSlice,
+                    effectiveCapitalSlice,
                     riskPerTradePercent,
+                    futuresMaxContractsPerPosition,
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -608,15 +614,30 @@ class BacktestEngine(
     ): BigDecimal {
         if (position == null) return cash
         val instrument = instrumentsConfig.find(ticker)
-        val lotSize = instrument?.lotSize?.toLong() ?: 1L
         val qty = position.quantity.toBigDecimal()
-        val notionalMultiplier = qty.multiply(BigDecimal(lotSize))
         val unrealized =
             when (position.direction) {
                 PositionDirection.LONG -> marketPrice.subtract(position.entryPrice)
                 PositionDirection.SHORT -> position.entryPrice.subtract(marketPrice)
-            }.multiply(notionalMultiplier)
+            }.multiply(profitMultiplierPerLot(ticker, instrument)).multiply(qty)
         return cash.add(unrealized)
+    }
+
+    /**
+     * Множитель P&L на один лот/контракт при движении цены на 1.0.
+     * - фьючерсы: pointValue = priceStepCost / priceStep (Si: 1000 ₽ на 1₽ цены,
+     *   RI: 1.686 ₽ на 1 пункт индекса, CNYRUBF: 1000 ₽ на 1₽ цены) — единый
+     *   источник истины с live ([com.trading.bot.application.OrderExecutionEngine.PnlCalculator.futures]).
+     * - акции/FX: lotSize (цена × акции в лоте ≡ номинал лота).
+     */
+    private fun profitMultiplierPerLot(
+        ticker: String,
+        instrument: InstrumentsConfig.InstrumentSpec?,
+    ): BigDecimal {
+        if (instrument != null && instrumentsConfig.isFutures(ticker)) {
+            return instrumentsConfig.pointValue(ticker)
+        }
+        return instrument?.lotSize?.toBigDecimal() ?: BigDecimal.ONE
     }
 
     private fun openPosition(
@@ -635,13 +656,15 @@ class BacktestEngine(
         leverage: Double = 1.0,
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercent: Double? = null,
+        futuresMaxContractsPerPosition: Int? = null,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
-        val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints, leverage, capitalSlice, riskPerTradePercent)
+        val qty = sizeQuantity(ticker, instrument, direction, price, cash, slPoints ?: stopPoints, leverage, capitalSlice, riskPerTradePercent, futuresMaxContractsPerPosition)
         if (qty <= 0) return null
+        logger.debug { "Backtest $ticker OPEN qty=$qty stopPoints=${slPoints ?: stopPoints} riskPct=${riskPerTradePercent ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} price=$price cash=$cash" }
 
         val fill =
             executionFill(
@@ -683,21 +706,37 @@ class BacktestEngine(
         leverage: Double = 1.0,
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercentOverride: Double? = null,
+        futuresMaxContractsPerPosition: Int? = null,
     ): Int {
         val futuresSizer = positionSizer
         if (instrument != null && instrumentsConfig.isFutures(ticker) && futuresSizer != null) {
+            val stopPointsResolved = stopPoints ?: riskConfig.defaultStopLossPoints
             val size =
-                futuresSizer.calculateContracts(
-                    ticker = ticker,
-                    portfolioMoney = cash,
-                    stopLossPoints = stopPoints ?: riskConfig.defaultStopLossPoints,
-                    currentGo = instrument.go,
-                    entryPrice = price,
-                    direction = direction,
-                )
+                if (riskPerTradePercentOverride == null && futuresMaxContractsPerPosition == null) {
+                    futuresSizer.calculateContracts(
+                        ticker = ticker,
+                        portfolioMoney = cash,
+                        stopLossPoints = stopPointsResolved,
+                        currentGo = instrument.go,
+                        entryPrice = price,
+                        direction = direction,
+                    )
+                } else {
+                    futuresSizer.calculateContracts(
+                        ticker = ticker,
+                        portfolioMoney = cash,
+                        stopLossPoints = stopPointsResolved,
+                        currentGo = instrument.go,
+                        entryPrice = price,
+                        direction = direction,
+                        riskPerTradePercent = riskPerTradePercentOverride,
+                        maxContractsPerPosition = futuresMaxContractsPerPosition,
+                    )
+                }
             if (size.quantity <= 0) {
                 logger.debug { "Backtest $ticker: sizer rejected entry (${size.reason})" }
             }
+            logger.debug { "Backtest $ticker SIZING qty=${size.quantity} stopPoints=$stopPointsResolved riskPct=${riskPerTradePercentOverride ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} money=$cash" }
             return size.quantity
         }
         val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1
@@ -841,12 +880,11 @@ class BacktestEngine(
         val commissionEntry = computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier)
         val commissionExit = computeCommission(ticker, fill.price, pos.quantity, commissionMultiplier)
         commissionAccumulator[0] = commissionAccumulator[0].add(commissionEntry).add(commissionExit)
-        val lotSize = instrument?.lotSize?.toLong() ?: 1L
         val gross =
             when (pos.direction) {
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
                 PositionDirection.SHORT -> pos.entryPrice.subtract(fill.price)
-            }.multiply(BigDecimal(pos.quantity * lotSize))
+            }.multiply(profitMultiplierPerLot(ticker, instrument)).multiply(BigDecimal(pos.quantity))
         val pnl = gross.subtract(commissionEntry).subtract(commissionExit)
 
         tradeReturns.add(pnl.toDouble())

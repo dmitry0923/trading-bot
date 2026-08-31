@@ -167,6 +167,11 @@ class MonteCarloAnalyzerTest {
                 Mockito.eq(slippageMultiplier),
                 anyOrNull(),
                 anyOrNull(),
+                any(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
             ),
         ).thenReturn(result)
     }

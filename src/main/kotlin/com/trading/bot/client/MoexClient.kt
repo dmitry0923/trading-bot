@@ -28,7 +28,11 @@ class MoexClient(
     private val objectMapper: ObjectMapper,
 ) {
     private val logger = KotlinLogging.logger {}
-    private val webClient = WebClient.create()
+    private val webClient =
+        WebClient
+            .builder()
+            .codecs { it.defaultCodecs().maxInMemorySize(64 * 1024 * 1024) }
+            .build()
     private val timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
     private val baseUrl = "https://iss.moex.com/iss"
 
@@ -399,4 +403,80 @@ class MoexClient(
             logger.debug { "Skipping malformed candle row for $ticker: ${e.message}" }
             null
         }
+
+    /**
+     * Загружает свечи фьючерса по базовому тикеру (напр. "RI") с клейкой контрактов.
+     * ISS не отдаёт свечи по generic-тикеру — нужен конкретный (RIU6, SiU6).
+     * Метод запрашивает список активных контрактов, загружает свечи по каждому,
+     * склеивает в хронологическом порядке без дубликатов.
+     */
+    suspend fun getFuturesCandlesPaged(
+        baseTicker: String,
+        from: LocalDateTime,
+        to: LocalDateTime,
+        intervalMinutes: Int = 10,
+    ): List<Candle> {
+        val contracts = resolveFuturesContracts(baseTicker)
+        if (contracts.isEmpty()) {
+            logger.warn { "No futures contracts found for base ticker $baseTicker" }
+            return emptyList()
+        }
+        logger.info { "Resolved $baseTicker -> ${contracts.joinToString()}" }
+
+        val allCandles = ArrayList<Candle>()
+        for (contractTicker in contracts) {
+            val candles = fetchCandlesPaged("futures", "forts", "RFUD", contractTicker, from, to, intervalMinutes)
+            logger.info { "  $contractTicker: ${candles.size} candles" }
+            allCandles.addAll(candles)
+        }
+        return allCandles.sortedBy { it.time }.distinctBy { it.time }
+    }
+
+    /**
+     * Запрашивает у ISS список активных фьючерсных контрактов для базового тикера.
+     *
+     * Срочные контракты имеют тикер <БАЗА><код месяца><цифра> (напр. RIU6, SiU6),
+     * а ASSETCODE (напр. RTS) не совпадает с базовым тикером — фильтруем по префиксу SECID.
+     * Бессрочные (вечные) контракты (напр. CNYRUBF, LASTDELDATE 2100) не имеют суффикса
+     * месяца — их SECID совпадает с базовым тикером точнo.
+     */
+    private suspend fun resolveFuturesContracts(baseTicker: String): List<String> {
+        return try {
+            val url = "$baseUrl/engines/futures/markets/forts/boards/RFUD/securities.json"
+            val raw: String =
+                webClient
+                    .get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(String::class.java)
+                    .timeout(Duration.ofSeconds(15))
+                    .awaitSingle()
+            val root = objectMapper.readTree(raw)
+            val securities = root.path("securities")
+            val columns = securities.path("columns").toList().map { it.asString() }
+            val tickerIdx = columns.indexOf("SECID")
+            val expiresIdx = columns.indexOf("LASTDELDATE")
+            if (tickerIdx < 0) return emptyList()
+
+            val rows = securities.path("data").toList()
+            val prefixLen = baseTicker.length
+            rows
+                .filter { row ->
+                    if (row.size() <= tickerIdx) return@filter false
+                    val ticker = row[tickerIdx].asString()
+                    // срочный контракт <БАЗА><месяц><цифра> ИЛИ бессрочный (совпадение 1-в-1)
+                    ticker == baseTicker || (ticker.startsWith(baseTicker) && ticker.length == prefixLen + 2)
+                }
+                .map { row ->
+                    val ticker = row[tickerIdx].asString()
+                    val expiry = if (expiresIdx >= 0 && row.size() > expiresIdx) row.get(expiresIdx)?.asString() ?: "" else ""
+                    ticker to expiry
+                }
+                .sortedBy { it.second }
+                .map { it.first }
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to resolve futures contracts for $baseTicker" }
+            emptyList()
+        }
+    }
 }

@@ -248,7 +248,7 @@ class RiskConfig {
     var criticalLiquidationDistancePercent: Double = 10.0
 
     /** Порог задействования маржи, % от депозита. > 30% → запрет входа. */
-    var maxMarginUsagePercent: Double = 30.0
+    var maxMarginUsagePercent: Double = 60.0
 
     /** Жёсткий лимит контрактов на позицию (Si: 1). */
     var maxContractsPerPosition: Int = 1

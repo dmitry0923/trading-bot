@@ -268,6 +268,8 @@ trading:
   mode: ${TRADING_MODE:SIMULATION}
   tickers:
     - Si
+    - RI
+    - CNYRUBF
     - SBER
     - GAZP
     - LKOH
@@ -348,6 +350,23 @@ instruments:
       go: "15000"
       leverage: "${leverage.user-leverage}"
       baseAsset: "USD"
+    - ticker: "RI"
+      type: "FUTURES"
+      lotSize: 1
+      priceStep: "10.0"
+      priceStepCost: "16.86"
+      go: "22000"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "USD"
+    - ticker: "CNYRUBF"
+      type: "FUTURES"
+      lotSize: 1000
+      priceStep: "0.001"
+      priceStepCost: "1.0"
+      go: "850"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "CNY"
+      quoteAsset: "RUB"
     - ticker: "SBER"
       type: "STOCK"
       lotSize: 10
@@ -503,7 +522,7 @@ risk:
   consecutive-zero-volume-bars: 3
   min-liquidation-distance-percent: 25.0
   max-margin-usage-percent: 30.0
-  max-contracts-per-position: 1
+  max-contracts-per-position: 2
   trading-hours-start: "10:00"
   trading-hours-end: "18:30"
   # Multi-Tier Drawdown Protection (% от AUM)

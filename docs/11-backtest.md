@@ -343,6 +343,14 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 - **Request** (JSON): `tickers` (обязателен, 400 при пустом), `days`, `timeframe`, `loadHistory`,
   `initialCapital`, `slPercent`, `tpPercent`, `minBarsForSignal`. Последние шесть опциональны —
   дефолты из конфига `bt.*` (11.8.1).
+- **Фьючерсные override-параметры** (все optional, действуют только для фьючерсов):
+  | Параметр | Тип | Назначение |
+  |---|---|---|
+  | `riskPerTradePercent` | number | % депозита на риск одной позиции (иначе `risk.risk-per-trade-percent`) |
+  | `futuresMaxContractsPerPosition` | number | кап контрактов на позицию (иначе `risk.max-contracts-per-position`) |
+  | `slPoints` | number | стоп-лосс в пунктах цены (иначе `risk.default-stop-loss-points`) |
+  | `tpPoints` | number | тейк-профит в пунктах цены (иначе `risk.default-take-profit-points`) |
+  SL/TP в пунктах, а не в % — для фьючерсов панельные `slPercent`/`tpPercent`/`leverage` игнорируются.
 - **Response 200**: `results[]` — `PanelTickerSummary` (без `equityCurve`) + `summary` —
   распределение: `tickerCount`, `passCount`, `passShare`, `avgTotalReturn`, `medianTotalReturn`,
   `minTotalReturn`, `maxTotalReturn`, `totalTrades`.
@@ -350,10 +358,77 @@ curl "http://localhost:8080/api/v1/backtest/SBER?days=365"
 - **UI**: `BacktestPage.tsx` — таблица распределения по тикерам со статусом PASS/REJECT.
 
 ```bash
+# акции: без override
 curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
   -H "Content-Type: application/json" \
   -d '{"tickers":["SBER","GAZP"],"days":365}'
+
+# фьючерсы: SL/TP в пунктах + риск и кап
+curl -X POST "http://localhost:8080/api/v1/backtest/panel" \
+  -H "Content-Type: application/json" \
+  -d '{"tickers":["CNYRUBF"],"days":365,"riskPerTradePercent":11,"futuresMaxContractsPerPosition":33,"slPoints":300,"tpPoints":600}'
 ```
+
+### Калибровка фьючерсов (365д, MINUTE_10, conf=0.6)
+
+Поскольку у фьючерса SL/TP задаётся в пунктах, а не в %, для панели
+добавлены `riskPerTradePercent`, `futuresMaxContractsPerPosition`, `slPoints`, `tpPoints`
+(см. таблицу выше). Сайзинг: `qty = min(риск-кап: cash·risk%/потеря-на-контракт,
+марж-кап: maxMarginUsagePercent·cash/GO, maxContractsPerPosition)`.
+`PanelBacktestService` пробрасывает параметры в `BacktestEngine.run →
+simulate → openPosition → sizeQuantity (FuturesPositionSizer)` — оба пути открытия
+(новый вход и REVERSAL) обязаны получать override (регресс 2026-08: инверсия теряла
+`futuresMaxContractsPerPosition`, см. `BacktestEngine`).
+
+Рекомендованные параметры калибровки 2026-08 (финал AGENTS.md):
+
+| Ticker | Параметры | Return | PF | WR | MDD | Trades |
+|--------|-----------|--------|----|----|-----|--------|
+| CNYRUBF | risk 11%, maxC 33, SL 300, TP 600 | +91.8% | 2.19 | 55% | 38.8% | 22 |
+| RI | risk 11%, maxC 33, SL 300, TP 600 | +26.7% | 2.57 | 60% | 9.1% | 10 |
+
+Наблюдения:
+- MDD фьючерсного прогона определяется SL×позицией, а не TP (TP900/TP1200 давали
+  идентичный MDD 49.6% при одинаковом сайте). Уменьшение экспозиции — инструмент контроля MDD.
+- CNYRUBF: return растёт почти линейно с экспозицией; 100% недостижимо при жёстком
+  MDD≤40% (best 91.8%/38.8%). TP1200 даёт PF 2.84, но позиции дольше в просадке → MDD выше.
+- RI: экспозиция фактически ограничена марж-гейтом 60% (GO ≈ 22000 → 2-3 контракта на 100k),
+  поэтому оверхед экспозиции невозможен — 26.7% это потолок при текущих лимитах.
+
+### Перекалибровка CNYRUBF при марже 90% (2026-08-30)
+
+Для калибровки `RISK_MAXMARGINUSAGEPERCENT=90` (на демо/live вернуть 60). Потолок
+позиции в `FuturesPositionSizer` расширился (~100 контрактов) → доходность 179% на 365д.
+
+| Горизонт | Параметры | Return | PF | MDD | Trades |
+|----------|-----------|--------|----|-----|--------|
+| 365д (IS) | risk 30%, maxC 100, SL 150, TP 1200, conf 0.63 | +179.0% | 6.55 | 36.7% | 6 |
+| 365д (OOS, folds=6) | те же | +82.9% | 4.53 | - | 8 |
+| 365д (OOS, folds=8) | те же | +57.8% | 3.46 | - | 8 |
+| 730д (IS) | risk 30%, maxC 100, SL 150, TP 1200, conf 0.6 | +381.9% | 1.86 | 81.3% | 54 |
+| 730д (OOS, folds=8) | те же | +104.4% | 1.22 | - | 63 |
+
+Выводы:
+- Форс conf в walk-forward: `/validate` принимает `adaptiveConfidenceThreshold` (напр. 0.63);
+  без него OOS-входы «сырые» (365д: −103% вместо +45%) — сигнал критичен для валидации.
+- Порог `conf=0.63` строго лучше 0.60: OOS 365д +45.1%→+82.9%, PF 1.83→4.53, Sharpe 0.94→1.49,
+  Sortino 4.0, consistency 0.33→0.50. Порог 0.64+ резко деградирует (IS с 179% до ~28%) —
+  калибровочный оптимум `conf=0.63`.
+- CNYRUBF OOS положителен на обоих горизонтах, но consistency 33–50%: доходность держится
+  на 1-2 фолдах из 6-8, `robust=false`. Слабый кандидат — live без доп. фильтра рискован.
+- MDD 730д не сжимается до 40% без радикального снижения позиции: минимальный ~60% при 217%.
+- RI на conf 0.63: OOS +7.8% / PF 1.36 / consistency 0.5 — слабо, исключить из портфеля.
+
+#### Паспорт кандидата CNYRUBF (для демо)
+
+- Параметры: `riskPerTradePercent=30`, `futuresMaxContractsPerPosition=100`,
+  `slPoints=150`, `tpPoints=1200`, `adaptiveConfidenceThreshold=0.63` (только фьючерс
+  CNYRUBF; для акций conf 0.60 остаётся оптимумом — дефолт в `BacktestConfig` не менять).
+- IS 365д: +179.0% / MDD 36.7% / PF 6.55 / 6 сделок; OOS 365д (folds=6): +82.9% / PF 4.53.
+- Ограничение: `RISK_MAXMARGINUSAGEPERCENT=90` в калибровке; на демо вернуть 60 → потолок
+  контрактов ниже и реальная доходность ниже калибровочной (масштаб ~0.6).
+- `robust=false` (consistency 0.5 max): доходность зависит от 2-3 сильных фолдов —
+  live-запуск только под наблюдением, с ограничением на 1 тикер.
 
 ### GET /api/v1/backtest/{ticker}/robustness?days=365
 

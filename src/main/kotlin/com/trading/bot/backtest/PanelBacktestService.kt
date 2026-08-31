@@ -34,6 +34,9 @@ data class PanelBacktestRequest(
     val capitalSlice: Double? = null,
     val riskPerTradePercent: Double? = null,
     val adaptiveConfidenceThreshold: Double? = null,
+    val slPoints: Int? = null,
+    val tpPoints: Int? = null,
+    val futuresMaxContractsPerPosition: Int? = null,
 )
 
 /** Компактный результат прогона одного тикера (без equityCurve — тяжёлых серий). */
@@ -143,6 +146,7 @@ class PanelBacktestService(
             }
 
             logger.info { "Panel backtest: tickers=$tickers days=$days timeframe=$timeframe" }
+            logger.debug { "Panel params: riskPct=${request.riskPerTradePercent} maxC=${request.futuresMaxContractsPerPosition} slPoints=${request.slPoints} tpPoints=${request.tpPoints} conf=${request.adaptiveConfidenceThreshold}" }
             val leverage = request.leverage ?: 1.0
             val capitalSlice = request.capitalSlice ?: backtestConfig.capitalSlice
             val riskPerTradePercent = request.riskPerTradePercent
@@ -172,6 +176,9 @@ class PanelBacktestService(
                                     leverage = leverage,
                                     capitalSlice = capitalSlice,
                                     riskPerTradePercent = riskPerTradePercent,
+                                    slPoints = request.slPoints,
+                                    tpPoints = request.tpPoints,
+                                    futuresMaxContractsPerPosition = request.futuresMaxContractsPerPosition,
                                     signalGeneratorOverride = signalGen,
                                 )
                             PanelTickerSummary(

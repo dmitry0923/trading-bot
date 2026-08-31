@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.client.MoexClient
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.repository.CandleRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -38,6 +39,7 @@ class HistoricalDataLoader(
     private val moexClient: MoexClient,
     private val candleRepo: CandleRepository,
     private val meterRegistry: MeterRegistry,
+    private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -54,7 +56,15 @@ class HistoricalDataLoader(
     ): LoadResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val to = LocalDateTime.now()
-        val candles = moexClient.getCandlesPaged(ticker, from, to)
+        val candles =
+            if (instrumentsConfig.isFutures(ticker)) {
+                moexClient
+                    .getFuturesCandlesPaged(ticker, from, to)
+                    .map { it.copy(ticker = ticker) }
+                    .distinctBy { it.time }
+            } else {
+                moexClient.getCandlesPaged(ticker, from, to)
+            }
         val saved = candleRepo.saveAll(candles)
         meterRegistry.counter("backtest.history.loaded", Tags.of("ticker", ticker)).increment(candles.size.toDouble())
         logger.info { "HistoricalDataLoader $ticker: loaded=${candles.size}, saved=$saved (days=$days)" }

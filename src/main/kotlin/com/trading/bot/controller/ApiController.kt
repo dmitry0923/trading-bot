@@ -4,12 +4,14 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestValidator
 import com.trading.bot.backtest.HistoricalDataLoader
+import com.trading.bot.backtest.LiveStrategyBacktestSignalGenerator
 import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.RagAnalysis
@@ -106,8 +108,9 @@ class ApiController(
     private val backtestResultRepository: BacktestResultRepository,
     private val panelBacktestService: PanelBacktestService,
     private val portfolioBacktestGuard: PortfolioBacktestGuard,
-    private val backtestConfig: BacktestConfig,
-    private val objectMapper: ObjectMapper,
+private val backtestConfig: BacktestConfig,
+private val riskConfig: RiskConfig,
+private val objectMapper: ObjectMapper,
     private val historicalDataLoader: HistoricalDataLoader,
     private val candleRepository: CandleRepository,
     private val dailyRiskSnapshotRepository: DailyRiskSnapshotRepository,
@@ -540,6 +543,10 @@ class ApiController(
         @RequestParam(defaultValue = "false") loadHistory: Boolean,
         @RequestParam(defaultValue = "4") folds: Int,
         @RequestParam(required = false) timeframe: String?,
+        @RequestParam(required = false) leverage: Double?,
+        @RequestParam(required = false) riskPerTradePercent: Double?,
+        @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
+        @RequestParam(required = false) adaptiveConfidenceThreshold: Double?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -554,7 +561,16 @@ class ApiController(
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
-        val result = backtestValidator.validate(ticker, candles, folds = folds)
+        val signalGeneratorOverride =
+            if (adaptiveConfidenceThreshold != null) {
+                LiveStrategyBacktestSignalGenerator(
+                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+                    adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
+                )
+            } else {
+                null
+            }
+        val result = backtestValidator.validate(ticker, candles, folds = folds, leverage = leverage ?: 1.0, riskPerTradePercent = riskPerTradePercent, futuresMaxContractsPerPosition = futuresMaxContractsPerPosition, signalGeneratorOverride = signalGeneratorOverride)
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
         return mapOf(
             "ticker" to ticker,

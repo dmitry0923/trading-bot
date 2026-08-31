@@ -15,6 +15,20 @@ import java.math.RoundingMode
  *   - go = 15 000 ₽ (гарантийное обеспечение)
  *   - leverage берётся из LeverageConfig (placeholder `${leverage.user-leverage}`)
  *
+ * RI — фьючерс на индекс РТС (MOEX FORTS):
+ *   - срочный контракт, продаётся сериями (RIU6/RIZ6/RIH7/...), нужен ролл
+ *   - MINSTEP = 10 (priceStep), STEPPRICE = 0.02 × курс USD ≈ 16.86 ₽ (priceStepCost)
+ *   - pointValue = 16.86 / 10 = 1.686 ₽ на 1 пункт индекса; контракт ≈ 100 000 ₽ номинала
+ *   - go = 22 000 ₽ (гарантийное обеспечение, ~x4 плечо при цене 100k)
+ *
+ * CNYRUBF — бессрочный фьючерс (юань/рубль, фортс):
+ *   - вечный контракт (LASTDELDATE 2100) — не требует ролла на длинном горизонте
+ *   - LOTVOLUME = 1000 CNY; MINSTEP = 0.001 (priceStep), STEPPRICE = 1.0 ₽ (priceStepCost)
+ *   - контракт ≈ 12 800 ₽ (при цене 12.8) — дёшев, умещается в депозит 50k
+ *   - ликвидность высокая (оборот > 70 млрд ₽/день); дневная волатильность ~1.9%
+ *   - go = 850 ₽ (консервативная оценка гарантийного обеспечения)
+ *   - max-contracts-per-position = 1 → сайзер откроет ровно 1 контракт
+ *
  * CNYRUB_TOM — кросс-курс юань/рубль MOEX (FX spot):
  *   - lotSize = 1 000 юаней (CETS)
  *   - priceStep = 0.0005 (0.05 копейки)
@@ -40,6 +54,16 @@ class InstrumentsConfig {
                 priceStepCost = BigDecimal("10.0"),
                 go = BigDecimal("15000"),
                 leverage = BigDecimal("2.0"),
+                baseAsset = "USD",
+            ),
+            InstrumentSpec(
+                ticker = "RI",
+                type = "FUTURES",
+                lotSize = 1,
+                priceStep = BigDecimal("10.0"),
+                priceStepCost = BigDecimal("16.86"),
+                go = BigDecimal("22000"),
+                leverage = BigDecimal("1.0"),
                 baseAsset = "USD",
             ),
             InstrumentSpec(
@@ -131,6 +155,17 @@ class InstrumentsConfig {
                 go = BigDecimal.ZERO,
                 leverage = BigDecimal("1.0"),
                 baseAsset = "RUB",
+            ),
+            InstrumentSpec(
+                ticker = "CNYRUBF",
+                type = "FUTURES",
+                lotSize = 1000,
+                priceStep = BigDecimal("0.001"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal("850"),
+                leverage = BigDecimal("1.0"),
+                baseAsset = "CNY",
+                quoteAsset = "RUB",
             ),
             InstrumentSpec(
                 ticker = "CNYRUB_TOM",

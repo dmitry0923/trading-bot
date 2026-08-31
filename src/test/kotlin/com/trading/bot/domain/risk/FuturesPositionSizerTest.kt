@@ -260,4 +260,63 @@ class FuturesPositionSizerTest {
             )
         assertEquals(1, result.quantity)
     }
+
+    @Test
+    fun `risk per trade override scales quantity`() {
+        // дефолтный риск 1% = 500 ₽; стоп 50 пунктов = 500 ₽/контракт → qty=1
+        val baseline =
+            sizer.calculateContracts(
+                ticker = "Si",
+                portfolioMoney = BigDecimal("50000"),
+                stopLossPoints = 50,
+                currentGo = BigDecimal("15000"),
+                entryPrice = BigDecimal("70"),
+                direction = PositionDirection.LONG,
+            )
+        assertEquals(1, baseline.quantity)
+
+        // риск 3% = 1 500 ₽; тот же стоп → 3 контракта (лимиты: риск, маржа 30k/15k=2, кап=50)
+        val result =
+            sizer.calculateContracts(
+                ticker = "Si",
+                portfolioMoney = BigDecimal("50000"),
+                stopLossPoints = 50,
+                currentGo = BigDecimal("15000"),
+                entryPrice = BigDecimal("70"),
+                direction = PositionDirection.LONG,
+                riskPerTradePercent = 3.0,
+                maxContractsPerPosition = 50,
+            )
+        assertEquals(2, result.quantity)
+        assertEquals(0, BigDecimal("1500").compareTo(result.riskAmount))
+    }
+
+    @Test
+    fun `max contracts override caps quantity`() {
+        val withoutCap =
+            sizer.calculateContracts(
+                ticker = "Si",
+                portfolioMoney = BigDecimal("200000"),
+                stopLossPoints = 10,
+                currentGo = BigDecimal("15000"),
+                entryPrice = BigDecimal("70"),
+                direction = PositionDirection.LONG,
+                riskPerTradePercent = 8.0,
+                maxContractsPerPosition = 100,
+            )
+        assert(withoutCap.quantity > 1)
+
+        val capped =
+            sizer.calculateContracts(
+                ticker = "Si",
+                portfolioMoney = BigDecimal("200000"),
+                stopLossPoints = 10,
+                currentGo = BigDecimal("15000"),
+                entryPrice = BigDecimal("70"),
+                direction = PositionDirection.LONG,
+                riskPerTradePercent = 8.0,
+                maxContractsPerPosition = 3,
+            )
+        assertEquals(3, capped.quantity)
+    }
 }

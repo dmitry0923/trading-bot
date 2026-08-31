@@ -68,3 +68,17 @@ data class TradingHaltedEvent(
     val reason: String,
     val timestamp: Instant = Instant.now(),
 )
+
+/**
+ * Автоматический emergency stop (5.8, source=AUTO) — реализованный убыток закрытых
+ * позиций за окно превысил порог. Обработчик — [com.trading.bot.service.AutoStopEventListener]:
+ * ['EmergencyStopService.stop'](reason, EmergencyStopSource.AUTO). Отдельное событие, чтобы
+ * не внедрять EmergencyStopService в DrawdownProtectionService напрямую (цикл зависимостей).
+ */
+data class AutoStopTriggeredEvent(
+    val hourlyLossRub: BigDecimal,
+    val limitRub: BigDecimal,
+    val windowMinutes: Long,
+    val accountId: Long? = null,
+    val timestamp: Instant = Instant.now(),
+)

@@ -304,7 +304,7 @@ per-ticker метрики с `passable`.
 - `TradingGate` — halt `EMERGENCY_STOP` → `TradingBlockReason.EMERGENCY_STOP` (source MANUAL/AUTO); блокирует все входы акций и фьючерсов (`isTradingEnabled()`).
 - `StrategyService.run()` — ранний выход при активном флаге (метрика `strategy.skipped{reason=EMERGENCY_STOP}`).
 - В текущей архитектуре `TradingBotService.run()`/`monitor()` отсутствуют (событийная модель): входы маршрутизируются через `onStrategyGenerated` → `TradingGate.isTradingEnabled()`, поэтому они блокируются автоматически; мониторинг открытых позиций и реконсиляция продолжают работать.
-- Авто-стоп (source=AUTO, убыток >10% за час) — не реализован, требует хранения PnL с таймстампами (см. 5.8).
+- Авто-стоп (source=AUTO, убыток >10% AUM за скользящее окно 60 мин) — ✅ реализовано: `DrawdownProtectionService.computeStatus()` → `AutoStopTriggeredEvent` → `AutoStopEventListener` → `EmergencyStopService.stop(source=AUTO)`. Параметры: `risk.auto-stop-enabled`, `risk.auto-stop-hourly-loss-percent` (10.0), `risk.auto-stop-window-minutes` (60). Тайм-кул между срабатываниями = длина окна. Без ликвидации позиций.
 | Метрики | `bot.emergency_stop{reason}`, alert `EmergencyStop` |
 
 ### 13.7.2. Persist daily PnL ✅

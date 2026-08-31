@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.event.AutoStopTriggeredEvent
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.DailyRiskSnapshot
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.springframework.context.ApplicationEventPublisher
 import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
@@ -41,6 +43,7 @@ class DrawdownProtectionServiceTest {
         config: RiskConfig = RiskConfig(),
         balance: BigDecimal = config.maxPositionRub,
         clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
+        publisher: ApplicationEventPublisher = Mockito.mock(ApplicationEventPublisher::class.java),
     ): DrawdownProtectionService {
         val aumProvider = Mockito.mock(AumProvider::class.java)
         // latestAum() = ТЕКУЩИЙ баланс счёта (moneyAmount), уже включает реализованный P&L.
@@ -53,6 +56,7 @@ class DrawdownProtectionServiceTest {
             SimpleMeterRegistry(),
             aumProvider,
             Mockito.mock(TradingAccountService::class.java),
+            publisher,
             clock,
         )
     }
@@ -224,6 +228,66 @@ class DrawdownProtectionServiceTest {
 
             assertEquals(0, BigDecimal("30000").compareTo(status.aum))
             assertEquals(0, BigDecimal("3000").compareTo(status.dailyLimitRub))
+        }
+
+    @Test
+    fun `hourly realized loss over limit publishes auto stop event`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(ZoneId.of("Europe/Moscow")))),
+            )
+            val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+            val s = service(publisher = publisher)
+            s.computeStatus()
+
+            // -6000 за 60 мин = 12% AUM (50000), порог авто-стопа 10% → публикация события
+            Mockito.verify(publisher, Mockito.times(1)).publishEvent(any<AutoStopTriggeredEvent>())
+        }
+
+    @Test
+    fun `hourly realized loss within limit does not publish auto stop event`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-4000"), LocalDateTime.now(ZoneId.of("Europe/Moscow")))),
+            )
+            val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+            val s = service(publisher = publisher)
+            s.computeStatus()
+
+            Mockito.verify(publisher, Mockito.times(0)).publishEvent(any<AutoStopTriggeredEvent>())
+        }
+
+    @Test
+    fun `auto stop breach outside hourly window does not publish`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(ZoneId.of("Europe/Moscow")).minusHours(2))),
+            )
+            val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+            val s = service(publisher = publisher)
+            s.computeStatus()
+
+            Mockito.verify(publisher, Mockito.times(0)).publishEvent(any<AutoStopTriggeredEvent>())
+        }
+
+    @Test
+    fun `auto stop publishes once within cooldown window despite repeated scans`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(ZoneId.of("Europe/Moscow")))),
+            )
+            val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+            val s = service(publisher = publisher)
+
+            s.computeStatus()
+            s.computeStatus() // тайм-кул (60 мин) — повторную публикацию не даёт
+            s.computeStatus()
+
+            Mockito.verify(publisher, Mockito.times(1)).publishEvent(any<AutoStopTriggeredEvent>())
         }
 
     @Test

@@ -532,6 +532,10 @@ risk:
   max-consecutive-losses: 3
   shadow-mode-enabled: true
   shadow-mode-cooldown-hours: 24
+  # Auto emergency stop (5.8, source=AUTO): убыток за окно > % AUM → остановка
+  auto-stop-enabled: true
+  auto-stop-hourly-loss-percent: 10.0
+  auto-stop-window-minutes: 60
   # Volatility index filter (MOEX RVI)
   volatility-index-enabled: true
   volatility-index-ticker: "RVI"

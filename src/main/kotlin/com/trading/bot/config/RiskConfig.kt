@@ -339,6 +339,19 @@ class RiskConfig {
     var maxRollingLossPercent30d: Double = 12.0
 
     /**
+     * Автоматический emergency stop (5.8, source=AUTO): если реализованный убыток
+     * закрытых позиций за [autoStopWindowMinutes] превышает [autoStopHourlyLossPercent]
+     * % от AUM — торговля останавливается (блок входов, позиции не ликвидируются).
+     */
+    var autoStopEnabled: Boolean = true
+
+    /** Порог автоматического останова, % от AUM за часовое окно. */
+    var autoStopHourlyLossPercent: Double = 10.0
+
+    /** Окно подсчёта реализованного убытка для авто-стопа, минуты. */
+    var autoStopWindowMinutes: Long = 60
+
+    /**
      * Лимит серии убыточных сделок подряд. При достижении LLM-агент переводится
      * в режим Shadow/Read-only (новые входы заблокированы) до появления прибыльной
      * сделки, но не менее [shadowModeCooldownHours].

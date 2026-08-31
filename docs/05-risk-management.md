@@ -427,7 +427,7 @@ fun calcTP(entryPrice: BigDecimal, direction: PositionDirection): BigDecimal {
 
 1. **Ручная остановка**: `POST /api/v1/bot/emergency-stop` — ставит флаг `bot:emergency-stop=true` в Redis + локально, персистит причину в `trading_halt` (reason `EMERGENCY_STOP`), блокирует новые входы через `TradingGate` (`TradingBlockReason.EMERGENCY_STOP`) и опционально закрывает все позиции рыночными ордерами (`liquidate=true`). `StrategyService.run()` проверяет флаг в начале цикла и выходит.
 2. **Возобновление**: только `POST /api/v1/bot/resume` (или рестарт — остановка переживает рестарт через `trading_halt`).
-3. **Автоматическая остановка**: если убыток закрытых позиций за час > 10% от `max-position-rub` (50 000 × 10% = 5 000 ₽) — автоматический emergency stop (`source=AUTO`). Реализация требует хранить PnL с таймстампами (БД) — roadmap.
+3. **Автоматическая остановка** (`source=AUTO`, реализовано): `DrawdownProtectionService.computeStatus()` суммирует реализованный PnL закрытых позиций за скользящее окно (по умолчанию 60 мин, `risk.auto-stop-window-minutes`). Если убыток за окно > порога в % от AUM (по умолчанию 10%, `risk.auto-stop-hourly-loss-percent`; AUM = текущий баланс счёта) — публикуется `AutoStopTriggeredEvent`, слушатель вызывает `EmergencyStopService.stop(source=AUTO)` (без ликвидации позиций). Триггер проверяется в каждом цикле `computeStatus`; тайм-кул между срабатываниями = длина окна (антиспам при повторных прогонах). Включается/выключается флагом `risk.auto-stop-enabled=true`. Метрика часового PnL: es `drawdown.hourly.pnl`.
 
 Метрики: `bot.emergency_stop{source}`, `bot.emergency_resume`.
 

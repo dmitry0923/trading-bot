@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.DailyRiskGuard
+import com.trading.bot.event.AutoStopTriggeredEvent
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.InstrumentType
@@ -22,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.boot.context.event.ApplicationReadyEvent
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -77,6 +79,7 @@ class DrawdownProtectionService(
     private val meterRegistry: MeterRegistry,
     private val aumProvider: AumProvider,
     private val tradingAccountService: TradingAccountService,
+    private val applicationEventPublisher: ApplicationEventPublisher,
     private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) : DailyRiskGuard {
     private val logger = KotlinLogging.logger {}
@@ -140,6 +143,17 @@ class DrawdownProtectionService(
     @Volatile
     private var todayPeakEquity: BigDecimal = BigDecimal.ZERO
     private val accountPeakEquity: java.util.concurrent.ConcurrentHashMap<Long, BigDecimal> = java.util.concurrent.ConcurrentHashMap()
+
+    /**
+     * Тайм-кул триггеров авто-стопа (5.8, source=AUTO): событие публикуется не чаще
+     * одного раза за [RiskConfig.autoStopWindowMinutes] на аккаунт. Это не даёт циклу
+     * риск-движка штамповать повторные EMERGENCY_STOP halt'ы каждый пересчёт, но
+     * позволяет повторную сработку после ручного [EmergencyStopService.resume].
+     * Ключ — [key](accountId) (пер-аккаунт, multi-account).
+     */
+    private val autoStopTriggeredUntilByAccount: java.util.concurrent.ConcurrentHashMap<Long, Instant> =
+        java.util.concurrent
+            .ConcurrentHashMap()
 
     /**
      * Загрузка дневного состояния из daily_risk_snapshot при старте (ApplicationReadyEvent),
@@ -217,6 +231,39 @@ class DrawdownProtectionService(
 
         val rolling7dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent7d)
         val rolling30dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent30d)
+
+        // 5.8 (source=AUTO): реализованный убыток закрытых позиций за окно больше
+        // autoStopHourlyLossPercent % AUM → автоматический emergency stop. Single-fire:
+        // публикуем событие один раз до сброса (новый день / resetDailyAccumulator).
+        val hourlyPnl = sumPnl(closedSince30d.filter { isClosedOnOrAfter(it, now.minusMinutes(riskConfig.autoStopWindowMinutes)) })
+        MutableGauges.set(
+            meterRegistry,
+            "drawdown.hourly.pnl",
+            hourlyPnl.toDouble(),
+            if (accountId != null) Tags.of("account", accountId.toString()) else Tags.empty(),
+        )
+        if (riskConfig.autoStopEnabled) {
+            val hourlyLossLimit = percentOfAum(aum, riskConfig.autoStopHourlyLossPercent)
+            val triggeredUntil = autoStopTriggeredUntilByAccount[key(accountId)]
+            if (hourlyPnl <= hourlyLossLimit.negate() &&
+                (triggeredUntil == null || Instant.now(clock).isAfter(triggeredUntil))
+            ) {
+                autoStopTriggeredUntilByAccount[key(accountId)] =
+                    Instant.now(clock).plus(java.time.Duration.ofMinutes(riskConfig.autoStopWindowMinutes))
+                applicationEventPublisher.publishEvent(
+                    AutoStopTriggeredEvent(
+                        hourlyLossRub = hourlyPnl,
+                        limitRub = hourlyLossLimit,
+                        windowMinutes = riskConfig.autoStopWindowMinutes,
+                        accountId = accountId,
+                    ),
+                )
+                logger.error {
+                    "AUTO EMERGENCY STOP threshold breached (account=${accountId ?: "legacy"}): " +
+                        "hourly realized=$hourlyPnl <= -$hourlyLossLimit (${riskConfig.autoStopHourlyLossPercent}% AUM / ${riskConfig.autoStopWindowMinutes} min)"
+                }
+            }
+        }
 
         val dailyBreached = dailyPnl <= dailyLimit.negate()
         val rolling7dBreached = rolling7d <= rolling7dLimit.negate()
@@ -657,6 +704,7 @@ class DrawdownProtectionService(
             accountLoadedDate.clear()
             todayPeakEquity = BigDecimal.ZERO
             accountPeakEquity.clear()
+            autoStopTriggeredUntilByAccount.clear()
             cachedStatusByAccount.clear()
         }
     }
@@ -673,6 +721,7 @@ class DrawdownProtectionService(
         todayPeakEquity = BigDecimal.ZERO
         accountDirty.clear()
         accountPeakEquity.clear()
+        autoStopTriggeredUntilByAccount.clear()
         loadDailyState(today)
     }
 

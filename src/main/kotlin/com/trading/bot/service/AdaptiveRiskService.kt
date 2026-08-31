@@ -462,7 +462,7 @@ class AdaptiveRiskService(
     }
 
     /**
-     * Адаптивный порог уверенности для арбитра по тикеру.
+     * Адаптивный порог уверенности для арбитра по тикеру (акции и фьючерсы единым путём).
      *
      * Онлайн-калибровка (roadmap 13.11.8): по закрытым сделкам тикера за
      * [RiskConfig.confidenceCalibrationDays] и уверенности стратега на входе
@@ -475,14 +475,123 @@ class AdaptiveRiskService(
      * @return порог уверенности
      */
     suspend fun getAdaptiveConfidenceThreshold(ticker: String): Double {
-        val calibrated = calibrateConfidenceThreshold(ticker)
-        if (calibrated != null) {
-            MutableGauges.set(meterRegistry, "adaptive.confidence_threshold", calibrated, Tags.of("ticker", ticker))
-            meterRegistry.counter("adaptive.confidence_calibrated", Tags.of("ticker", ticker)).increment()
-            return calibrated
+        val diagnostic = confidenceCalibrationDiagnostic(ticker)
+        MutableGauges.set(meterRegistry, "adaptive.confidence_threshold", diagnostic.threshold, Tags.of("ticker", ticker))
+        when (diagnostic.source) {
+            ConfidenceSource.CALIBRATED -> {
+                meterRegistry.counter("adaptive.confidence_calibrated", Tags.of("ticker", ticker)).increment()
+            }
+
+            ConfidenceSource.FALLBACK -> {
+                meterRegistry.counter("adaptive.confidence_fallback", Tags.of("ticker", ticker)).increment()
+            }
         }
+        return diagnostic.threshold
+    }
+
+    /**
+     * Источник действующего порога: калибровка по исходам сделок или fallback-правила.
+     */
+    enum class ConfidenceSource { CALIBRATED, FALLBACK }
+
+    /**
+     * Диагностика онлайн-калибровки порога по тикеру: итоговый порог, источник и
+     * статистика выборки. Используется эндпоинтом /analytics/adaptive-params, чтобы
+     * видеть ПРИЧИНУ fallback (недостаточно закрытых сделок, отсутствие confidence-логов,
+     * ни одна граница не даёт целевой win rate) — критично для фьючерсных тикеров,
+     * где выборка накапливается медленно.
+     */
+    data class ConfidenceCalibrationDiagnostic(
+        val ticker: String,
+        val source: ConfidenceSource,
+        val threshold: Double,
+        val reason: String,
+        val closedTrades: Int,
+        val scoredTrades: Int,
+        val sampleSize: Int,
+        val winRate: Double,
+    )
+
+    /**
+     * Публичная диагностика онлайн-калибровки (без влияния на счетчики/гейты).
+     */
+    suspend fun diagnoseConfidenceCalibration(ticker: String): ConfidenceCalibrationDiagnostic = confidenceCalibrationDiagnostic(ticker)
+
+    /**
+     * Калибровка порога + диагностика по фактическим исходам тикера.
+     *
+     * Закрытые позиции за окно калибровки джойнятся с силой сигнала стратега на входе
+     * (agent_logs, Agent-3-Strategist по cycleId). Позиции без cycleId или без лога
+     * стратега в оценку не попадают, но учитываются в полях closedTrades/scoredTrades
+     * для диагностики.
+     */
+    private suspend fun confidenceCalibrationDiagnostic(ticker: String): ConfidenceCalibrationDiagnostic {
+        if (!riskConfig.confidenceCalibrationEnabled) {
+            return fallbackDiagnostic(ticker, reason = "disabled")
+        }
+        val since = LocalDateTime.now().minusDays(riskConfig.confidenceCalibrationDays.toLong())
+        val closedWithOutcome =
+            positionRepo
+                .findClosedByTickerSince(ticker, since)
+                .filter { it.cycleId != null && it.pnl != null }
+        if (closedWithOutcome.size < riskConfig.confidenceCalibrationMinTrades) {
+            return fallbackDiagnostic(ticker, reason = "insufficient-closed-trades", closedTrades = closedWithOutcome.size)
+        }
+        val cycleIds = closedWithOutcome.mapNotNull { it.cycleId }
+        val confidenceByCycleId = agentLogRepository.findStrategySignalStrengthByCycleIds(ticker, cycleIds)
+        if (confidenceByCycleId.isEmpty()) {
+            return fallbackDiagnostic(ticker, reason = "no-confidence-logs", closedTrades = closedWithOutcome.size)
+        }
+        val outcomes =
+            closedWithOutcome.mapNotNull { pos ->
+                val cycleId = pos.cycleId ?: return@mapNotNull null
+                val pnl = pos.pnl ?: return@mapNotNull null
+                val signalStrength = confidenceByCycleId[cycleId] ?: return@mapNotNull null
+                signalStrength to (pnl > BigDecimal.ZERO)
+            }
+        if (outcomes.isEmpty()) {
+            return fallbackDiagnostic(ticker, reason = "no-confidence-logs", closedTrades = closedWithOutcome.size)
+        }
+        val calibration =
+            ConfidenceCalibrator.calibrate(
+                outcomes = outcomes,
+                targetWinRate = riskConfig.confidenceCalibrationTargetWinRate,
+                minTrades = riskConfig.confidenceCalibrationMinTrades,
+                minThreshold = riskConfig.confidenceCalibrationMinThreshold,
+                maxThreshold = riskConfig.confidenceCalibrationMaxThreshold,
+                step = riskConfig.confidenceCalibrationStep,
+            )
+        if (calibration != null) {
+            return ConfidenceCalibrationDiagnostic(
+                ticker = ticker,
+                source = ConfidenceSource.CALIBRATED,
+                threshold = calibration.threshold,
+                reason = "calibrated",
+                closedTrades = closedWithOutcome.size,
+                scoredTrades = outcomes.size,
+                sampleSize = calibration.sampleSize,
+                winRate = calibration.winRate,
+            )
+        }
+        return fallbackDiagnostic(
+            ticker = ticker,
+            reason = "no-satisfying-threshold",
+            closedTrades = closedWithOutcome.size,
+            scoredTrades = outcomes.size,
+        )
+    }
+
+    /**
+     * Fallback на правила по win rate при невозможности калибровки.
+     */
+    private suspend fun fallbackDiagnostic(
+        ticker: String,
+        reason: String,
+        closedTrades: Int = 0,
+        scoredTrades: Int = 0,
+    ): ConfidenceCalibrationDiagnostic {
         val stats = tradeAnalysisService.analyzeLastNDays(14)[ticker]
-        val fallback =
+        val threshold =
             when {
                 stats == null -> 0.60
                 stats.winRate < 0.35 -> 0.80
@@ -490,49 +599,16 @@ class AdaptiveRiskService(
                 stats.winRate > 0.60 -> 0.55
                 else -> 0.60
             }
-        MutableGauges.set(meterRegistry, "adaptive.confidence_threshold", fallback, Tags.of("ticker", ticker))
-        meterRegistry.counter("adaptive.confidence_fallback", Tags.of("ticker", ticker)).increment()
-        return fallback
-    }
-
-    /**
-     * Калибровка порога уверенности по фактическим исходам тикера.
-     *
-     * Закрытые позиции за окно калибровки джойнятся с силой сигнала стратега на входе
-     * (agent_logs, agent Agent-3-Strategist по cycleId). Позиции без cycleId или без
-     * лога стратега (детерминированные стратегии) в выборку не попадают. Возвращает null,
-     * если калибровка выключена, данных недостаточно или ни одна граница не даёт целевой
-     * win rate.
-     */
-    private suspend fun calibrateConfidenceThreshold(ticker: String): Double? {
-        if (!riskConfig.confidenceCalibrationEnabled) return null
-        val since = LocalDateTime.now().minusDays(riskConfig.confidenceCalibrationDays.toLong())
-        val closedWithOutcome =
-            positionRepo
-                .findClosedByTickerSince(ticker, since)
-                .filter { it.cycleId != null && it.pnl != null }
-                .mapNotNull { pos ->
-                    val cycleId = pos.cycleId ?: return@mapNotNull null
-                    val pnl = pos.pnl ?: return@mapNotNull null
-                    cycleId to pnl
-                }
-        if (closedWithOutcome.size < riskConfig.confidenceCalibrationMinTrades) return null
-        val confidenceByCycleId =
-            agentLogRepository.findStrategySignalStrengthByCycleIds(ticker, closedWithOutcome.map { it.first })
-        if (confidenceByCycleId.isEmpty()) return null
-        return ConfidenceCalibrator
-            .calibrate(
-                outcomes =
-                    closedWithOutcome.mapNotNull { (cycleId, pnl) ->
-                        val signalStrength = confidenceByCycleId[cycleId] ?: return@mapNotNull null
-                        signalStrength to (pnl > BigDecimal.ZERO)
-                    },
-                targetWinRate = riskConfig.confidenceCalibrationTargetWinRate,
-                minTrades = riskConfig.confidenceCalibrationMinTrades,
-                minThreshold = riskConfig.confidenceCalibrationMinThreshold,
-                maxThreshold = riskConfig.confidenceCalibrationMaxThreshold,
-                step = riskConfig.confidenceCalibrationStep,
-            )?.threshold
+        return ConfidenceCalibrationDiagnostic(
+            ticker = ticker,
+            source = ConfidenceSource.FALLBACK,
+            threshold = threshold,
+            reason = reason,
+            closedTrades = closedTrades,
+            scoredTrades = scoredTrades,
+            sampleSize = 0,
+            winRate = 0.0,
+        )
     }
 
     /**

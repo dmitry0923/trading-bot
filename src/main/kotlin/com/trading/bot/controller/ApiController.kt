@@ -731,13 +731,20 @@ class ApiController(
                 Tags
                     .of("ticker", ticker),
             ).increment()
-        return mapOf(
-            "ticker" to ticker,
-            "confidenceThreshold" to adaptiveRiskService.getAdaptiveConfidenceThreshold(ticker),
-            "maxPositionRub" to adaptiveRiskService.calculateOptimalPositionSize(ticker),
-            "isInRecovery" to adaptiveRiskService.isInDrawdownRecovery(),
-            "shouldPause" to adaptiveRiskService.shouldPauseTrading(ticker),
-        )
+        val confDiag = adaptiveRiskService.diagnoseConfidenceCalibration(ticker)
+        val params = mutableMapOf<String, Any>()
+        params["ticker"] = ticker
+        params["confidenceThreshold"] = confDiag.threshold
+        params["confidenceSource"] = confDiag.source.name
+        params["confidenceReason"] = confDiag.reason
+        params["confidenceClosedTrades"] = confDiag.closedTrades
+        params["confidenceScoredTrades"] = confDiag.scoredTrades
+        params["confidenceSampleSize"] = confDiag.sampleSize
+        params["confidenceWinRate"] = confDiag.winRate
+        params["maxPositionRub"] = adaptiveRiskService.calculateOptimalPositionSize(ticker)
+        params["isInRecovery"] = adaptiveRiskService.isInDrawdownRecovery()
+        params["shouldPause"] = adaptiveRiskService.shouldPauseTrading(ticker)
+        return params
     }
 
     @GetMapping("/analytics/blind-spots")

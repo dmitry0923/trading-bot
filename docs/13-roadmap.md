@@ -934,6 +934,14 @@ inBlindSpotHour/hourOfDay) и `skipped`.
 
 **Конфиг**: `risk.confidence-calibration-*` (enabled/days/min-trades/target-win-rate/min-threshold/max-threshold/step).
 
+**Диагностика**: `GET /api/v1/analytics/adaptive-params/{ticker}` отдаёт источник
+порога (`confidenceSource` = `CALIBRATED`/`FALLBACK`), причину (`confidenceReason`:
+`disabled`, `insufficient-closed-trades`, `no-confidence-logs`, `no-satisfying-threshold`,
+`calibrated`) и статистику выборки (`confidenceClosedTrades`,
+`confidenceScoredTrades`, `confidenceSampleSize`, `confidenceWinRate`) — по калибровке
+фьючерсов видно, когда порог ещё на fallback (выборка не набрана) и когда переключается
+на калиброванный.
+
 **Метрики**: `adaptive.confidence_threshold` (gauge, `ticker` — применяемый порог),
 `adaptive.confidence_calibrated` / `adaptive.confidence_fallback` (counters, `ticker`).
 

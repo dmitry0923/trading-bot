@@ -12,6 +12,7 @@ import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
@@ -226,4 +227,65 @@ class AdaptiveRiskServiceConfidenceTest {
             Mockito.verify(agentLogRepo, Mockito.never()).findStrategySignalStrengthByCycleIds(eq("SBER"), any())
         }
     }
+
+    @Test
+    fun `diagnose reports insufficient-closed-trades fallback for empty futures pipeline`() =
+        runBlocking {
+            riskConfig.confidenceCalibrationMinTrades = 5
+            stubClosed(
+                listOf(
+                    closedPos("c1", true),
+                    closedPos("c2", false),
+                    closedPos("c3", true),
+                ),
+            )
+            stubStats(null)
+
+            val diag = service.diagnoseConfidenceCalibration("SBER")
+
+            assertEquals(AdaptiveRiskService.ConfidenceSource.FALLBACK, diag.source)
+            assertEquals("insufficient-closed-trades", diag.reason)
+            assertEquals(0.60, diag.threshold, 1e-9)
+            assertEquals(3, diag.closedTrades)
+            assertEquals(0, diag.scoredTrades)
+        }
+
+    @Test
+    fun `diagnose reports calibrated source with sample stats`() =
+        runBlocking {
+            riskConfig.confidenceCalibrationMinTrades = 5
+            stubClosed(
+                listOf(
+                    closedPos("c1", true),
+                    closedPos("c2", true),
+                    closedPos("c3", true),
+                    closedPos("c4", false),
+                    closedPos("c5", true),
+                    closedPos("c6", false),
+                    closedPos("c7", false),
+                    closedPos("c8", false),
+                ),
+            )
+            stubSignalStrengths(
+                mapOf(
+                    "c1" to 0.85,
+                    "c2" to 0.85,
+                    "c3" to 0.80,
+                    "c4" to 0.80,
+                    "c5" to 0.60,
+                    "c6" to 0.60,
+                    "c7" to 0.50,
+                    "c8" to 0.50,
+                ),
+            )
+
+            val diag = service.diagnoseConfidenceCalibration("SBER")
+
+            assertEquals(AdaptiveRiskService.ConfidenceSource.CALIBRATED, diag.source)
+            assertEquals("calibrated", diag.reason)
+            assertEquals(8, diag.closedTrades)
+            assertEquals(8, diag.scoredTrades)
+            assertTrue(diag.sampleSize >= 5)
+            assertTrue(diag.winRate >= 0.55)
+        }
 }

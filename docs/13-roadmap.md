@@ -2533,3 +2533,37 @@ Dynamic-составляющая (уже была и уточнена): slippage
 зелёный (SL/TP в legacy несут slippage); `SimulatedExecutionTest` — без изменений.
 Паритет SL/TP без двойного спреда в realistic-режиме — поведение движка.
 
+### 13.34. Симуляция ликвидации фьючерсов (P1)
+
+**Проблема (аудит)**: live-monitor
+([FuturesPositionMonitor]) закрывает фьючерсную позицию по `LIQUIDATION_CRITICAL`,
+когда цена достигает уровня ликвидации (`FuturesRiskEngine.checkLiquidationDistance`).
+Бэктест это игнорировал — позиция удерживалась только до SL/TP/REVERSAL/END_OF_PERIOD.
+Если бар пробивал уровень ликвидации, реальная позиция была бы ликвидирована биржей
+с потерей маржи, а бэктест продолжал удерживать и мог позже отыгрывать — это
+**overestimates** доходность фьючерсных калибровок (RI/CNYRUBF в AGENTS.md).
+
+**Решение**:
+- `bt.futures-liquidation-simulation` (default `true`). При открытии фьючерсной
+  позиции `PositionSim` получает `liquidationPrice` (из `FuturesPositionSizer`
+  через `LiquidationPriceProvider`, как в live).
+- В цикле `simulate` перед SL/TP (приоритет №1, как в live-monitor): если
+  внутрисвечной диапазон преодолел `liquidationPrice` (LONG: low ≤ liq, SHORT:
+  high ≥ liq) → принудительное закрытие `LIQUIDATION` по цене ликвидации
+  (worst-case филл, маржа теряется), без повторного спреда поверх.
+- `sizeQuantity` возвращает `SizedPosition { quantity, liquidationPrice }` —
+  единый вызов sizer для qty и liq-цены.
+
+**Влияние**: для Si liq-буфер = GO/pointValue (15000/1000 = 15 руб цены) обычно
+ДАЛЬШЕ стопа (50 пт = 0.5 руб), поэтому ликвидация срабатывает, только когда бар
+проскакивает стоп (гэп/шок). Но при узких liq-буферах и широких барах она становится
+определяющей; результаты прошлых фьючерсных калибровок (без ликвидации) завышены.
+
+Затронутые места: `BacktestEngine.PositionSim/SizedPosition`, `sizeQuantity`,
+`openPosition`, цикл `simulate`; `BacktestConfig.futuresLiquidationSimulation`.
+
+Тесты: `BacktestEngineTest` — `futures liquidation closes position at liquidation
+price` (liq-филл хуже stop-only); фикстура `siCandles` сужена до реалистичного
+диапазона (не пробивает liq при штатном стопе), ATR-тест использует широкие бары,
+не пересекающие liq-уровень.
+

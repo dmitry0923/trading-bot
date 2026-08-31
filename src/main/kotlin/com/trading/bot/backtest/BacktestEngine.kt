@@ -88,6 +88,13 @@ class BacktestEngine(
         val stopLoss: BigDecimal?,
         val takeProfit: BigDecimal?,
         val entryBars: Int,
+        val liquidationPrice: BigDecimal? = null,
+    )
+
+    /** Результат определения размера позиции: кол-во и (для фьючерсов) liq-цена. */
+    data class SizedPosition(
+        val quantity: Int,
+        val liquidationPrice: BigDecimal? = null,
     )
 
     /**
@@ -257,6 +264,39 @@ class BacktestEngine(
 
         for (i in 1 until sorted.size) {
             val current = sorted[i]
+
+            // Симуляция принудительной ликвидации фьючерса (паритет live-monitorу):
+            // приоритет №1 — если внутрисвечной диапазон преодолел уровень
+            // ликвидации, позиция закрывается по цене ликвидации до SL/TP.
+            val liqPos = position
+            if (backtestConfig.futuresLiquidationSimulation && liqPos != null && liqPos.liquidationPrice != null) {
+                val liq = liqPos.liquidationPrice!!
+                val liquidated =
+                    when (liqPos.direction) {
+                        PositionDirection.LONG -> current.lowPrice.compareTo(liq) <= 0
+                        PositionDirection.SHORT -> current.highPrice.compareTo(liq) >= 0
+                    }
+                if (liquidated) {
+                    cash =
+                        closePosition(
+                            ticker,
+                            liqPos,
+                            "LIQUIDATION",
+                            liq,
+                            cash,
+                            i,
+                            tradeReturns,
+                            tradeHoldBars,
+                            commissionAccumulator,
+                            commissionMultiplier,
+                            slippageMultiplier,
+                            current,
+                            applySlippage = !backtestConfig.realisticExecution,
+                        )
+                    recordRiskSimClose(ticker, liqPos, "LIQUIDATION", liq, i, sorted, cash)
+                    position = null
+                }
+            }
 
             // Закрытие по SL/TP на внутрисвечном диапазоне текущей свечи
             val pos0 = position
@@ -664,7 +704,7 @@ class BacktestEngine(
         val instrument = instrumentsConfig.find(ticker)
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val stopPoints = resolveAtrStopPoints(history, ticker, instrument)
-        val qty =
+        val sized =
             sizeQuantity(
                 ticker,
                 instrument,
@@ -677,9 +717,9 @@ class BacktestEngine(
                 riskPerTradePercent,
                 futuresMaxContractsPerPosition,
             )
-        if (qty <= 0) return null
+        if (sized.quantity <= 0) return null
         logger.debug {
-            "Backtest $ticker OPEN qty=$qty stopPoints=${slPoints ?: stopPoints} riskPct=${riskPerTradePercent ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} price=$price cash=$cash"
+            "Backtest $ticker OPEN qty=${sized.quantity} stopPoints=${slPoints ?: stopPoints} riskPct=${riskPerTradePercent ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} price=$price cash=$cash"
         }
 
         val fill =
@@ -693,11 +733,12 @@ class BacktestEngine(
             )
         return PositionSim(
             direction = direction,
-            quantity = qty,
+            quantity = sized.quantity,
             entryPrice = fill.price,
             stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints, slPoints),
             takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent, tpPoints),
             entryBars = bar,
+            liquidationPrice = sized.liquidationPrice,
         )
     }
 
@@ -723,7 +764,7 @@ class BacktestEngine(
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercentOverride: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
-    ): Int {
+    ): SizedPosition {
         val futuresSizer = positionSizer
         if (instrument != null && instrumentsConfig.isFutures(ticker) && futuresSizer != null) {
             val stopPointsResolved = stopPoints ?: riskConfig.defaultStopLossPoints
@@ -755,7 +796,7 @@ class BacktestEngine(
             logger.debug {
                 "Backtest $ticker SIZING qty=${size.quantity} stopPoints=$stopPointsResolved riskPct=${riskPerTradePercentOverride ?: "default"} maxC=${futuresMaxContractsPerPosition ?: "default"} money=$cash"
             }
-            return size.quantity
+            return SizedPosition(size.quantity, size.liquidationPrice)
         }
         val lotSize = instrument?.lotSize?.coerceAtLeast(1) ?: 1
         val notionalPerLot = price.multiply(BigDecimal(lotSize))
@@ -790,7 +831,7 @@ class BacktestEngine(
             } else {
                 Int.MAX_VALUE
             }
-        return minOf(sliceLots, maxLotsByRisk)
+        return SizedPosition(minOf(sliceLots, maxLotsByRisk))
     }
 
     /**

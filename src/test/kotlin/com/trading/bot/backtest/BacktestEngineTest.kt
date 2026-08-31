@@ -500,8 +500,8 @@ class BacktestEngineTest {
                 signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
             )
 
-        val atr = runBlocking { atrEngine.simulate("Si", siCandles()) }
-        val fixed = runBlocking { fixedEngine.simulate("Si", siCandles()) }
+        val atr = runBlocking { atrEngine.simulate("Si", siCandles(spreadByPrice = BigDecimal("2.0"))) }
+        val fixed = runBlocking { fixedEngine.simulate("Si", siCandles(spreadByPrice = BigDecimal("2.0"))) }
 
         assertTrue(fixed.totalTrades > 0, "fixture must produce trades")
         assertTrue(atr.totalTrades > 0, "ATR stop must not block all entries")
@@ -514,6 +514,65 @@ class BacktestEngineTest {
             atr.tradeReturns.average() < fixed.tradeReturns.average(),
             "wider ATR stop must lose more per trade, " +
                 "atr=${atr.tradeReturns.average()} fixed=${fixed.tradeReturns.average()}",
+        )
+    }
+
+    @Test
+    fun `futures liquidation closes position at liquidation price`() {
+        // Si (GO 15000, pointValue 1000) при входе 92000: buffer = 15 руб ->
+        // liq LONG = 91985 (дальше, чем стоп 50 пт = 91999.5). Бар, пробивающий
+        // 91985 (low 91980), при включённой ликвидации закрывает позицию по liq
+        // (убыток ~15 руб/сделка) на каждом баре; при выключенной — стопом
+        // (убыток ~0.5 руб/сделка). Ликвидация — worst-case филл -> ниже equity.
+        fun candle(
+            o: Double,
+            h: Double,
+            l: Double,
+            c: Double,
+            i: Int,
+        ): Candle =
+            Candle(
+                ticker = "Si",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal(o.toString()),
+                highPrice = BigDecimal(h.toString()),
+                lowPrice = BigDecimal(l.toString()),
+                closePrice = BigDecimal(c.toString()),
+                volume = 1000L,
+                time = LocalDateTime.now().plusMinutes(10L * i),
+            )
+        val candles =
+            (0 until 60).map { i ->
+                candle(92000.0, 92000.5, 91980.0, 92000.0, i)
+            }
+
+        val onEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                positionSizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig()),
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+        val offEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                backtestConfig = BacktestConfig().apply { futuresLiquidationSimulation = false },
+                positionSizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig()),
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val withLiq = runBlocking { onEngine.simulate("Si", candles) }
+        val withoutLiq = runBlocking { offEngine.simulate("Si", candles) }
+
+        assertTrue(withLiq.totalTrades > 0, "fixture must produce trades")
+        assertTrue(withoutLiq.totalTrades > 0, "fixture must produce trades")
+        assertTrue(
+            withLiq.equityCurve.last() < withoutLiq.equityCurve.last(),
+            "liquidation (worst-case fill at liq) must be harsher than stop-only, " +
+                "liq=${withLiq.equityCurve.last()} stop=${withoutLiq.equityCurve.last()}",
         )
     }
 
@@ -1229,15 +1288,19 @@ class BacktestEngineTest {
     }
 
     /** Si-фьючерс на реальных уровнях цены (~92 000): capitalSlice-fallback даёт 0 лотов. */
-    private fun siCandles(count: Int = 300): List<Candle> =
+    private fun siCandles(
+        count: Int = 300,
+        spreadByPrice: BigDecimal = BigDecimal("0.5"),
+    ): List<Candle> =
         (0 until count).map { i ->
+            val center = BigDecimal("92000")
             Candle(
                 ticker = "Si",
                 timeframe = "MINUTE_10",
-                openPrice = BigDecimal("92000"),
-                highPrice = BigDecimal("92200"),
-                lowPrice = BigDecimal("91800"),
-                closePrice = BigDecimal("92000"),
+                openPrice = center,
+                highPrice = center.add(spreadByPrice),
+                lowPrice = center.subtract(spreadByPrice),
+                closePrice = center,
                 volume = 1000L,
                 time = LocalDateTime.now().plusMinutes(10L * i),
             )

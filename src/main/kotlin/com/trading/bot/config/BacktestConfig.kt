@@ -48,7 +48,13 @@ import java.math.BigDecimal
  *   свеча — fallback 0.1%/2; фьючерсы — 1 тик. При true стоп/таргет исполняются
  *   внутри свечи по цене стопа/таргета БЕЗ двойного спреда поверх (intrabar
  *   parity с live-защитными ордерами). При false — прежняя фиксированная ставка
- *   0.1% для всех исполнений, включая стопы (legacy-режим)/
+ *   0.1% для всех исполнений, включая стопы (legacy-режим).
+ * @property futuresLiquidationSimulation симулировать принудительную ликвидацию
+ *   фьючерсной позиции на уровне ликвидационной цены (паритет live-monitorу
+ *   [com.trading.bot.application.FuturesPositionMonitor]). При true позиция,
+ *   чей внутрисвечной диапазон преодолел уровень ликвидации, закрывается по цене
+ *   ликвидации (LIQUIDATION) с наивысшим приоритетом — до SL/TP. При false —
+ *   прежнее поведение без ликвидации (overestimates удержания).
  */
 @Component
 @ConfigurationProperties(prefix = "bt")
@@ -68,4 +74,5 @@ class BacktestConfig {
     var realisticExecution: Boolean = true
     var regimeDetectionEnabled: Boolean = true
     var adaptiveConfidenceThreshold: Double = 0.60
+    var futuresLiquidationSimulation: Boolean = true
 }

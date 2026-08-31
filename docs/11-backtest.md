@@ -413,6 +413,29 @@ simulate → openPosition → sizeQuantity (FuturesPositionSizer)` — оба п
 - RI: экспозиция фактически ограничена марж-гейтом 60% (GO ≈ 22000 → 2-3 контракта на 100k),
   поэтому оверхед экспозиции невозможен — 26.7% это потолок при текущих лимитах.
 
+### Симуляция ликвидации фьючерсов (13.34)
+
+`bt.futures-liquidation-simulation=true` (по умолчанию): фьючерсная позиция, чей
+внутрисвечной диапазон преодолел уровень ликвидации (`liquidationPrice` из
+`FuturesPositionSizer`, LONG = entry − GO/pointValue), закрывается по liq-цене
+(worst-case, до SL/TP) — паритет live-monitorу
+([FuturesPositionMonitor]). `PositionSim` хранит `liquidationPrice`; размер и liq-цена
+берутся одним вызовом sizer (`SizedPosition`). Для отключения в stress/сравнительном
+прогоне — `bt.futures-liquidation-simulation=false`.
+
+Пересчёт калибровки на доступной истории (3 мес: май–авг 2026), параметры
+`risk 11% / maxC 33 / SL 300 / TP 600`:
+
+| Ticker | Liq=true | Liq=false |
+|--------|----------|-----------|
+| CNYRUBF | +44.7% / PF 2.77 / MDD 18.5% / 9 | +44.7% / PF 2.77 / MDD 18.5% / 9 |
+| RI | +26.8% / PF 2.58 / MDD 9.0% / 10 | +26.8% / PF 2.58 / MDD 9.0% / 10 |
+
+Идентично: при SL 300 пт стоп срабатывает раньше liq-уровня, позиции не доживают до
+ликвидации. Механизм подтверждён юнит-тестом `futures liquidation closes position at
+liquidation price`; вступает в игру только при очень широких стопах (> liq-буфер) или
+гэпах через liq-уровень (на 3-мес окне таких эпизодов нет).
+
 ### Перекалибровка CNYRUBF при марже 90% (2026-08-30)
 
 Для калибровки `RISK_MAXMARGINUSAGEPERCENT=90` (на демо/live вернуть 60). Потолок

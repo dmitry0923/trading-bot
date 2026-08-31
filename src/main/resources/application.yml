@@ -319,6 +319,11 @@ bt:
   mtf-filter-enabled: ${BT_MTF_FILTER_ENABLED:false}
   # Monte Carlo + стресс-сценарии бэктеста (roadmap 13.7.8): число bootstrap-симуляций
   # и фиксированный seed для воспроизводимых прогонов /api/v1/backtest/{ticker}/robustness.
+  # Live risk-gate parity в бэктесте (BacktestRiskSimulator): воспроизводит полную
+  # цепочку risk gates из LIVE DecisionEngine (daily loss, drawdown, Kelly sizing,
+  # NET EV, portfolio concentration, sector/max positions). По умолчанию включён —
+  # бэктест и live используют одну риск-модель.
+  live-risk-gates: ${BT_LIVE_RISK_GATES:true}
   monte-carlo-simulations: ${BT_MONTE_CARLO_SIMULATIONS:1000}
   monte-carlo-seed: ${BT_MONTE_CARLO_SEED:42}
   # LLM-агенты в бэктесте (roadmap 13.8.1): по умолчанию выключены.
@@ -329,7 +334,7 @@ bt:
     # тот же ансамбль детерминированных стратегий, что и в live (StrategyRunner):
     # TrendFollowing/Breakout/Scalping/MeanReversion/Grid/CnyRub, победитель — по
     # максимальной силе сигнала. Приоритетнее bt.agent.enabled (@Primary).
-    live-strategies: ${BT_AGENT_LIVE_STRATEGIES:false}
+    live-strategies: ${BT_AGENT_LIVE_STRATEGIES:true}
     sample-every: ${BT_AGENT_SAMPLE_EVERY:20}
     temperature: ${BT_AGENT_TEMPERATURE:0.0}
     cache-namespace: ${BT_AGENT_CACHE_NAMESPACE:backtest}

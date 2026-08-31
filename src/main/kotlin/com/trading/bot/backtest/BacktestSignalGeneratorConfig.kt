@@ -12,7 +12,9 @@ import org.springframework.context.annotation.Primary
  *
  * Сам генератор — НЕ Spring-бин (детерминированный класс без зависимостей),
  * поэтому бин создаётся здесь только при `bt.agent.live-strategies=true`
- * (env `BT_AGENT_LIVE_STRATEGIES`). @Primary разрешает конфликт с
+ * (env `BT_AGENT_LIVE_STRATEGIES`). По умолчанию включён — бэктест использует
+ * тот же ансамбль детерминированных стратегий, что и live (P0 Strategy Parity).
+ * @Primary разрешает конфликт с
  * [DeterministicBacktestSignalGenerator] / [AgentBacktestSignalGenerator]:
  * live-стратегии имеют приоритет, если флаги пересекаются.
  *

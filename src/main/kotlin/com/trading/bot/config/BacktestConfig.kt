@@ -39,7 +39,9 @@ import java.math.BigDecimal
  * @property liveRiskGates включает полную цепочку risk gates из LIVE
  *   (BacktestRiskSimulator): daily loss, drawdown, Kelly sizing, NET EV,
  *   portfolio concentration, sector/max positions. При false — прежнее
- *   поведение (capitalSlice + risk cap). По умолчанию false (обратная совместимость).
+ *   поведение (capitalSlice + risk cap). По умолчанию true (паритет LIVE).
+ *   Отдельное свойство `liveStrategyBacktestSignalGenerator` (bt.agent.live-strategies)
+ *   включает те же стратегии что и live.
  * @property realisticExecution реалистичное исполнение для акций: спред оценивается
  *   из диапазона свечи (high-low)/4 ([com.trading.bot.backtest.SimulatedExecution.estimateHalfSpread]),
  *   плоская свеча — fallback 0.1%/2. При false — прежняя фиксированная ставка 0.1%.
@@ -58,7 +60,7 @@ class BacktestConfig {
     var mtfFilterEnabled: Boolean = false
     var monteCarloSimulations: Int = 1000
     var monteCarloSeed: Long = 42
-    var liveRiskGates: Boolean = false
+    var liveRiskGates: Boolean = true
     var realisticExecution: Boolean = true
     var regimeDetectionEnabled: Boolean = true
     var adaptiveConfidenceThreshold: Double = 0.60

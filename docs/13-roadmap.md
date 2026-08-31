@@ -78,6 +78,7 @@ gantt
 - ✅ **ML-оценка удержания тренда** (доп. шаг): `GET /api/v1/ml/trend` — ранжирование по trendScore (модель + индикаторная сила тренда), опциональный тренд-гейт входа `ml.filter.trend-gate-enabled` (раздел 13.11.7).
 - ✅ **Онлайн-калибровка порога уверенности** (доп. шаг): `ConfidenceCalibrator` — порог входа тикера подбирается по фактическим исходам сделок (уверенность стратега на входе × win/pnl), fallback — правила по win rate (раздел 13.11.8).
 - ✅ **Confidence-aware сайзинг** (доп. шаг): размер позиции масштабируется по уверенности сигнала относительно адаптивного порога — маржинальный сигнал режет размер, высокая уверенность даёт полный размер (раздел 13.11.9).
+- ✅ **Strategy/Backtest Parity (P0)**: бэктест по умолчанию использует тот же ансамбль детерминированных стратегий и те же risk gates, что и live — `bt.agent.live-strategies=true` + `bt.live-risk-gates=true` (раздел 13.29).
 
 ### v2.5 — Расширение горизонтов
 
@@ -2395,3 +2396,35 @@ from db including open positions` и per-account F-1-тесты проходят
 - **RISK-OPEN-4 — Kelly-кап к базе, а не к финальному размеру** (vol-таргетинг
   до 2.0 может раздуть позицию выше капа): дизайн, пересмотреть деплой-конфиг
   `kelly-max-position-fraction: 0.50`.
+
+### 13.29. Strategy/Backtest Parity (P0) — единая стратегия LIVE и BACKTEST
+
+**Проблема (аудит)**: backtest по умолчанию использовал RSI(14)+MACD(12/26/9) эвристику
+([DeterministicBacktestSignalGenerator]), тогда как live-вход строит
+[StrategyRunner.runAll] на ансамбле детерминированных стратегий
+(TrendFollowing/Breakout/Scalping/MeanReversion/Grid/CnyRub) с победителем по max
+signal strength. Из-за этого идеальный backtest НЕ доказывал прибыльность live-стратегии.
+
+**Решение**: включён уже реализованный механизм паритета — оба контура используют
+одну стратегическую и риск-модель.
+
+- [LiveStrategyBacktestSignalGenerator] (Spring @Primary бин при
+  `bt.agent.live-strategies=true`) зеркалит `StrategyRunner.runAll`: те же 6
+  стратегий, победитель по max взвешенной уверенности, regime-parity
+  ([RegimeDetector]/[StrategySelector], fitScore), адаптивный confidence-гейт.
+- [BacktestRiskSimulator] (при `bt.live-risk-gates=true`) воспроизводит полную
+  цепочку risk gates LIVE [DecisionEngine]: daily loss limit, drawdown (7d/30d/
+  consecutive), Kelly sizing (Wilson), NET EV, portfolio concentration (effective
+  positions HHI), sector/max positions, vol-ATR guard, duplicate/макс. позиции.
+
+**Новые дефолты** (были false → true):
+- `bt.agent.live-strategies: `
+- `bt.live-risk-gates: `
+
+**Следствие**: `BacktestResult.isPassable()` теперь валидирует ту же стратегию,
+что торгует в live. RSI/MACD-эвристика остаётся доступной как альтернативный
+генератор (для экспериментов/сравнения), но не является дефолтом.
+
+**Метрики**: avgHoldBars и monthlyReturns уже реально вычисляются в
+BacktestEngine (tradeHoldBars.add(closeBar - entryBars), computeMonthlyReturns) —
+не заглушки.

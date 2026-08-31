@@ -42,9 +42,13 @@ import java.math.BigDecimal
  *   поведение (capitalSlice + risk cap). По умолчанию true (паритет LIVE).
  *   Отдельное свойство `liveStrategyBacktestSignalGenerator` (bt.agent.live-strategies)
  *   включает те же стратегии что и live.
- * @property realisticExecution реалистичное исполнение для акций: спред оценивается
- *   из диапазона свечи (high-low)/4 ([com.trading.bot.backtest.SimulatedExecution.estimateHalfSpread]),
- *   плоская свеча — fallback 0.1%/2. При false — прежняя фиксированная ставка 0.1%.
+ * @property realisticExecution реалистичное исполнение: спред для market-ордеров
+ *   акций оценивается из диапазона свечи (high-low)/4
+ *   ([com.trading.bot.backtest.SimulatedExecution.estimateHalfSpread]), плоская
+ *   свеча — fallback 0.1%/2; фьючерсы — 1 тик. При true стоп/таргет исполняются
+ *   внутри свечи по цене стопа/таргета БЕЗ двойного спреда поверх (intrabar
+ *   parity с live-защитными ордерами). При false — прежняя фиксированная ставка
+ *   0.1% для всех исполнений, включая стопы (legacy-режим)/
  */
 @Component
 @ConfigurationProperties(prefix = "bt")

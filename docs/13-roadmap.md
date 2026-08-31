@@ -2506,3 +2506,30 @@ bootstrap с возвращением по P&L сделок (на том же п
 не значим, детерминированность+CI накрывает mean, убыток → не значим); обновлён
 `BacktestEngineTest` (размер `metrics()` 16→21, bootstrap run, CI накрывает avgTrade).
 
+### 13.33. Dynamic slippage + intrabar execution parity (P1) — модель исполнения
+
+**Проблема (аудит)**: при `bt.realistic-execution=true` (по умолчанию) спред
+накладывался на ВСЕ закрытия, включая защитные SL/TP. Стоп/таргет уже исполняется
+внутри свечи по цене стопа/таргета (`hitStopOrTarget` по high/low), и добавление
+спреда ПОВЕРХ — двойной учёт: результат хуже, чем реальная цена заданного стоп-ордера.
+
+**Решение**:
+- `closePosition` получил флаг `applySlippage`. Для SL/TP закрытий (STOP/TAKE_PROFIT)
+  при `realisticExecution=true` он `false` — исполнение ровно по цене стопа/таргета
+  (intrabar parity с live-защитными ордерами, которые срабатывают по заданной цене,
+  а не со спредом). Входы и market-выходы (REVERSAL/фильтры/END_OF_PERIOD) по-прежнему
+  исполняются по open следующего бара со спредом (акции — из диапазона свечи,
+  фьючерсы — 1 тик) — без look-ahead.
+- В `realisticExecution=false` (legacy) стопы сохраняют прежнюю чувствительность к
+  `slippageMultiplier` — обратная совместимость стресс-сценариев.
+
+Dynamic-составляющая (уже была и уточнена): slippage масштабируется инструментом и
+шириной спреда бара — акции `(high-low)/4` (+fallback 0.1%/2 на плоской свече),
+фьючерсы — 1 тик × `priceStep` (не процент — иначе 0.1% Si ≈ 92 пункта > стоп 50).
+
+Затронутые места: `BacktestEngine.closePosition` + вызовы в `simulate` (STOP/TAKE_PROFIT).
+
+Тесты: стресс-тест `stress multipliers degrade backtest equity` (legacy) сохранён —
+зелёный (SL/TP в legacy несут slippage); `SimulatedExecutionTest` — без изменений.
+Паритет SL/TP без двойного спреда в realistic-режиме — поведение движка.
+

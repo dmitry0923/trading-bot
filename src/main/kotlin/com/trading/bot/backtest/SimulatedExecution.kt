@@ -16,7 +16,9 @@ import java.math.RoundingMode
  *   фьючерса (0.1% Si ≈ 92 пункта) непропорционально велико относительно стопа
  *   в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] = 50 пунктов.
  * - Лотность: округление вниз до целого лота
- * - Исполнение по цене открытия следующей свечи (консервативно)
+ * - Исполнение по цене открытия следующей свечи (консервативно, входной signal)
+ * - SL/TP исполняются ВНУТРИ свечи по цене стопа/таргета ([hitStopOrTarget]);
+ *   при realistic-исполнении стопы не несут спреда поверх (intrabar parity).
  */
 object SimulatedExecution {
     val COMMISSION_RATE = BigDecimal("0.0005")

@@ -277,6 +277,7 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                                 current,
+                                applySlippage = !backtestConfig.realisticExecution,
                             )
                         recordRiskSimClose(ticker, pos0, "STOP_LOSS", pos0.stopLoss, i, sorted, cash)
                         position = null
@@ -297,6 +298,7 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                                 current,
+                                applySlippage = !backtestConfig.realisticExecution,
                             )
                         recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, i, sorted, cash)
                         position = null
@@ -882,17 +884,22 @@ class BacktestEngine(
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
         candle: Candle? = null,
+        applySlippage: Boolean = true,
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill =
-            executionFill(
-                instrument,
-                ticker,
-                price,
-                pos.direction == PositionDirection.SHORT,
-                slippageMultiplier,
-                candle,
-            )
+            if (applySlippage) {
+                executionFill(
+                    instrument,
+                    ticker,
+                    price,
+                    pos.direction == PositionDirection.SHORT,
+                    slippageMultiplier,
+                    candle,
+                )
+            } else {
+                SimulatedExecution.Fill(price)
+            }
         val commissionEntry = computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier)
         val commissionExit = computeCommission(ticker, fill.price, pos.quantity, commissionMultiplier)
         commissionAccumulator[0] = commissionAccumulator[0].add(commissionEntry).add(commissionExit)

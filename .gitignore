@@ -41,6 +41,7 @@ logs/
 .env
 .env.*
 !.env.example
+admin_token.txt
 
 # Остатки распакованных jar (ktlint-gradle, testcontainers и др.)
 META-INF/

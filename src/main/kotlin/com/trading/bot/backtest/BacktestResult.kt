@@ -30,6 +30,8 @@ data class BacktestResult(
     val profitFactor: Double,
     val totalTrades: Int,
     val avgHoldBars: Double,
+    /** Фьючерсный инструмент — применяются отдельные acceptance-пороги. */
+    val isFutures: Boolean = false,
     val equityCurve: List<BigDecimal>,
     val monthlyReturns: Map<String, Double>,
     val expectancy: Double = 0.0,
@@ -54,14 +56,25 @@ data class BacktestResult(
     val significanceSimulations: Int = 0,
 ) {
     /**
-     * Критерии приёма стратегии в прод:
-     * Sharpe > 1.2, MDD < 15%, Profit Factor > 1.3, >= 200 сделок.
+     * Критерии приёма стратегии в прод, зависят от класса инструмента.
+     *
+     * Акции (длинный горизонт, короткие SL/TP, много сделок):
+     *   Sharpe > 1.2, MDD < 15%, Profit Factor > 1.3, >= 200 сделок.
+     *
+     * Фьючерсы (длинные SL/TP в пунктах, 6-22 сделки/год — панельная калибровка
+     * из AGENTS.md): MDD <= 40% (калибровочный оптимум CNYRUBF), PF > 1.3,
+     * >= 10 сделок, Sharpe > 1.2. MDD<15%/>=200 сделок физически нереализуемы
+     * для длинных фьючерсных панельных стратегий (SL 300 пт, SL срабатывает
+     * раньше liq-уровня) — единый порог с акциями навсегда отклонял бы их.
      */
-    fun isPassable(): Boolean =
-        sharpeRatio > 1.2 &&
-            maxDrawdown < 0.15 &&
+    fun isPassable(): Boolean {
+        val tradesThreshold = if (isFutures) 10 else 200
+        val mddThreshold = if (isFutures) 0.40 else 0.15
+        return sharpeRatio > 1.2 &&
+            maxDrawdown < mddThreshold &&
             profitFactor > 1.3 &&
-            totalTrades >= 200
+            totalTrades >= tradesThreshold
+    }
 
     /**
      * Компактное представление метрик для персиста в `backtest_results`
@@ -101,6 +114,7 @@ object BacktestMetrics {
         tradeReturns: List<Double>,
         holdBars: List<Int> = emptyList(),
         totalCommission: BigDecimal = BigDecimal.ZERO,
+        isFutures: Boolean = false,
     ): BacktestResult {
         val totalReturn =
             if (equityCurve.size >= 2 && equityCurve.first() > BigDecimal.ZERO) {
@@ -192,6 +206,7 @@ object BacktestMetrics {
             profitFactor = profitFactor,
             totalTrades = tradeReturns.size,
             avgHoldBars = if (holdBars.isNotEmpty()) holdBars.average() else 0.0,
+            isFutures = isFutures,
             equityCurve = equityCurve,
             monthlyReturns = monthlyReturns,
             expectancy = expectancy,

@@ -42,8 +42,9 @@ data class ValidationResult(
      * Комбинированная проходимость: стратегия принимается только если она
      * устойчива ([isRobust] — консистентность, отсутствие переобучения)
      * И агрегированные OOS-метрики проходят минимальные пороги приёмки
-     * [BacktestResult.isPassable] (Sharpe > 1.2, MDD < 15%, PF > 1.3,
-     * >= 200 сделок).
+     * [BacktestResult.isPassable] (пороги зависят от класса инструмента:
+     * акции Sharpe > 1.2, MDD < 15%, PF > 1.3, >= 200 сделок; фьючерсы
+     * MDD <= 40%, PF > 1.3, >= 10 сделок).
      */
     fun isPassable(): Boolean = isRobust() && aggregateOutOfSample.isPassable()
 }
@@ -335,10 +336,17 @@ class BacktestValidator(
                 0.0
             }
         val totalCommission = folds.sumOf { it.outOfSample.totalCommissionPaid }
-        return BacktestMetrics
-            .compute(ticker, equity, tradeReturns = tradeReturns, totalCommission = totalCommission)
-            .copy(avgHoldBars = avgHoldBars)
+        val computed =
+            BacktestMetrics.compute(
+                ticker,
+                equity,
+                tradeReturns = tradeReturns,
+                totalCommission = totalCommission,
+                isFutures = instrumentsConfig.isFutures(ticker),
+            )
+        return computed.copy(avgHoldBars = avgHoldBars)
     }
 
-    private fun emptyResult(ticker: String): BacktestResult = BacktestMetrics.compute(ticker, emptyList(), tradeReturns = emptyList())
+    private fun emptyResult(ticker: String): BacktestResult =
+        BacktestMetrics.compute(ticker, emptyList(), tradeReturns = emptyList(), isFutures = instrumentsConfig.isFutures(ticker))
 }

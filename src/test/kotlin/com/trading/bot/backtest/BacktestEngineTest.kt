@@ -168,6 +168,69 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `futures acceptance pass with futures thresholds`() {
+        // Фьючерсы: MDD <= 40%, >= 10 сделок (не MDD<15%/>=200, нереализуемых
+        // для длинных панельных SL/TP). Тот же результат был бы REJECT как акция.
+        val result =
+            BacktestResult(
+                ticker = "CNYRUBF",
+                totalReturn = 0.45,
+                sharpeRatio = 1.5,
+                maxDrawdown = 0.185,
+                winRate = 0.55,
+                profitFactor = 2.7,
+                totalTrades = 12,
+                avgHoldBars = 3.0,
+                isFutures = true,
+                equityCurve = emptyList(),
+                monthlyReturns = emptyMap(),
+            )
+        assertTrue(result.isPassable())
+        // Контроль: без isFutures тот же результат отклоняется (акций пороги: MDD<15%).
+        assertFalse(result.copy(isFutures = false).isPassable())
+    }
+
+    @Test
+    fun `futures acceptance rejects too few trades`() {
+        // 9 сделок < 10 — честно сигналит о малом сэмпле даже при прочих PASS-метриках.
+        val result =
+            BacktestResult(
+                ticker = "CNYRUBF",
+                totalReturn = 0.45,
+                sharpeRatio = 1.5,
+                maxDrawdown = 0.185,
+                winRate = 0.55,
+                profitFactor = 2.7,
+                totalTrades = 9,
+                avgHoldBars = 3.0,
+                isFutures = true,
+                equityCurve = emptyList(),
+                monthlyReturns = emptyMap(),
+            )
+        assertFalse(result.isPassable())
+    }
+
+    @Test
+    fun `futures acceptance rejects excessive drawdown`() {
+        // MDD 45% > 40% фьючерсного порога.
+        val result =
+            BacktestResult(
+                ticker = "CNYRUBF",
+                totalReturn = 0.45,
+                sharpeRatio = 1.5,
+                maxDrawdown = 0.45,
+                winRate = 0.55,
+                profitFactor = 2.7,
+                totalTrades = 12,
+                avgHoldBars = 3.0,
+                isFutures = true,
+                equityCurve = emptyList(),
+                monthlyReturns = emptyMap(),
+            )
+        assertFalse(result.isPassable())
+    }
+
+    @Test
     fun `backtest metrics include risk and quality ratios`() {
         val result =
             BacktestMetrics.compute(

@@ -551,7 +551,16 @@ class BacktestEngine(
         equityCurve.add(cash)
         if (sorted.isNotEmpty()) equityTimestamps.add(sorted.last().time)
 
-        val result = BacktestMetrics.compute(ticker, equityCurve, equityTimestamps, tradeReturns, tradeHoldBars, commissionAccumulator[0])
+        val result =
+            BacktestMetrics.compute(
+                ticker,
+                equityCurve,
+                equityTimestamps,
+                tradeReturns,
+                tradeHoldBars,
+                commissionAccumulator[0],
+                instrumentsConfig.isFutures(ticker),
+            )
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
@@ -1024,6 +1033,7 @@ class BacktestEngine(
             profitFactor = 0.0,
             totalTrades = 0,
             avgHoldBars = 0.0,
+            isFutures = instrumentsConfig.isFutures(ticker),
             equityCurve = emptyList(),
             monthlyReturns = emptyMap(),
         )

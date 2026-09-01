@@ -212,13 +212,53 @@ class BacktestEngineTest {
 
     @Test
     fun `futures acceptance rejects excessive drawdown`() {
-        // MDD 45% > 40% фьючерсного порога.
+        // MDD 45% > 40% фьючерсного порога (и >40% на границе).
         val result =
             BacktestResult(
                 ticker = "CNYRUBF",
                 totalReturn = 0.45,
                 sharpeRatio = 1.5,
                 maxDrawdown = 0.45,
+                winRate = 0.55,
+                profitFactor = 2.7,
+                totalTrades = 12,
+                avgHoldBars = 3.0,
+                isFutures = true,
+                equityCurve = emptyList(),
+                monthlyReturns = emptyMap(),
+            )
+        assertFalse(result.isPassable())
+    }
+
+    @Test
+    fun `futures acceptance boundary drawdown equal to 40 percent passes`() {
+        // Граница: MDD == 40% включительно (<=) — PASS.
+        val result =
+            BacktestResult(
+                ticker = "CNYRUBF",
+                totalReturn = 0.45,
+                sharpeRatio = 1.5,
+                maxDrawdown = 0.40,
+                winRate = 0.55,
+                profitFactor = 2.7,
+                totalTrades = 12,
+                avgHoldBars = 3.0,
+                isFutures = true,
+                equityCurve = emptyList(),
+                monthlyReturns = emptyMap(),
+            )
+        assertTrue(result.isPassable())
+    }
+
+    @Test
+    fun `futures acceptance boundary drawdown just above 40 percent rejects`() {
+        // MDD 40.0001% > 40% — REJECT.
+        val result =
+            BacktestResult(
+                ticker = "CNYRUBF",
+                totalReturn = 0.45,
+                sharpeRatio = 1.5,
+                maxDrawdown = 0.400001,
                 winRate = 0.55,
                 profitFactor = 2.7,
                 totalTrades = 12,

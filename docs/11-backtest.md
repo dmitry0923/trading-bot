@@ -592,6 +592,8 @@ curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations
 | `futures acceptance pass with futures thresholds` | фьючерс (MDD 18.5%, 12 сделок) → `PASS`; тот же результат без `isFutures` → `REJECT` (акции MDD<15%) |
 | `futures acceptance rejects too few trades` | фьючерс с 9 сделками (< 10) → `REJECT` — честный сигнал малого сэмпла |
 | `futures acceptance rejects excessive drawdown` | фьючерс с MDD 45% (> 40%) → `REJECT` |
+| `futures acceptance boundary drawdown equal to 40 percent passes` | граница MDD == 40% (≤, включительно) → `PASS` |
+| `futures acceptance boundary drawdown just above 40 percent rejects` | MDD 40.0001% (> 40%) → `REJECT` |
 | `backtest metrics include risk and quality ratios` | Sortino, Expectancy, WinLoss, RecoveryFactor, AvgTrade |
 | `metrics map is compact and excludes heavy series` | `metrics()` — 13 полей, без `equityCurve`/`monthlyReturns`/`tradeReturns` |
 | `commission and slippage constants` | комиссия 0.05%, проскальзывание 0.1% |

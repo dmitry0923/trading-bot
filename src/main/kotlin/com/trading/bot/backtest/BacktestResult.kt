@@ -71,7 +71,7 @@ data class BacktestResult(
         val tradesThreshold = if (isFutures) 10 else 200
         val mddThreshold = if (isFutures) 0.40 else 0.15
         return sharpeRatio > 1.2 &&
-            maxDrawdown < mddThreshold &&
+            maxDrawdown <= mddThreshold &&
             profitFactor > 1.3 &&
             totalTrades >= tradesThreshold
     }

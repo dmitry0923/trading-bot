@@ -4,34 +4,42 @@
 
 ## 11.1. Назначение и цель
 
-Бэктест отвечает на вопрос «стоит ли вообще торговать этим тикером с текущими правилами входа/выхода» до ввода реальных денег. Реализованная версия использует **детерминированные индикаторы** (RSI + MACD + Bollinger) вместо LLM-агентов — это осознанное упрощение первого этапа:
+Бэктест отвечает на вопрос «стоит ли вообще торговать этим тикером с текущими правилами входа/выхода» до ввода реальных денег. Реализованная версия использует **тот же ансамбль детерминированных стратегий, что и live** (Strategy/Backtest Parity, P0) через `LiveStrategyBacktestSignalGenerator`, а не индикаторный эвристики и не LLM-агентов:
 
-| Критерий | Целевое состояние (документировано ниже) | Текущее состояние (реализовано) |
-|---|---|---|
-| Генерация сигналов | Конвейер агентов (tech → fund → strategy → contrarian → arbitrator) | Детерминированные индикаторы `signalAt()`: RSI(14) + MACD(12/26/9) |
-| Исполнение | `SimulatedExecution` + PortfolioSim | `SimulatedExecution` (реализован), `PortfolioSim` инлайнится в `BacktestEngine.simulate()` |
+| Критерий | Текущее состояние (реализовано) |
+|---|---|
+| Генерация сигналов | `LiveStrategyBacktestSignalGenerator` (по умолчанию, `bt.agent.live-strategies=true`): ансамбль TrendFollowing, Breakout, Scalping, MeanReversion, Grid, CnyRubStrategy — тот же, что в live `StrategyRunner`; победитель по максимальной взвешенной силе сигнала. Включает regime-паритет (блокировка входа при запрещающем/UNKNOWN режиме — fail-closed) и adaptive confidence gate (`adaptiveConfidenceThreshold`, по умолчанию 0.60) |
+| Ал. альтернативы | `AgentBacktestSignalGenerator` (LLM-агенты, `bt.agent.enabled=true`, профиль `backtest`) и `DeterministicBacktestSignalGenerator` (индикаторный RSI/MACD, унаследованный) — оба не-primary, уступают live-стратегиям |
+| Исполнение | `SimulatedExecution` (реализован), `PortfolioSim` инлайнится в `BacktestEngine.simulate()` |
 | Метрики | Sharpe, MDD, PF, win rate | `BacktestMetrics.compute()` — реализовано |
-| Критерии приёма | `isPassable()` — 4 условия | Реализовано в `BacktestResult.isPassable()` |
-| Запуск | отдельный Spring-профиль `backtest` | REST-вызов из основного приложения (профиль `backtest` — roadmap) |
+| Критерии приёма | `isPassable()` — пороги разделены по классу инструмента (акции MDD<15%/≥200 сделок; фьючерсы MDD≤40%/≥10 сделок) |
+| Запуск | REST-вызов из основного приложения (профиль `backtest` — roadmap) |
+
+> **Историческая справка (почему в тексте больше нет `signalAt()` RSI/MACD).** Ранние
+> версии этого документа (и кода) описывали детерминированный генератор по
+> `IndicatorCalculator` + RSI/MACD/Bollinger. С реализацией P0 Strategy/Backtest Parity
+> (13.29) прод-путь переведён на mirror живого конвейера `LiveStrategyBacktestSignalGenerator`,
+> и описание ниже актуализировано под фактическое состояние. Индикаторный генератор
+> остаётся в коде как fallback-режим, но не является прод-по-умолчанию.
 
 Основные задачи текущей версии:
 
-1. **Валидация индикаторной логики** — проверка, что RSI/MACD-сигналы статистически прибыльны на истории.
+1. **Валидация стратегий live-ансамбля** — проверка, что те же сигналы, что сработали бы в live, статистически прибыльны на истории.
 2. **Оценка исполнения** — учёт комиссии 0.05% и проскальзывания 0.1%, которые в реальном конвейере существенно режут профит.
-3. **Стоп-менеджмент** — проверка работы SL/TP по внутрисвечному диапазону (intraday high/low), как в живом `TradingBotService.monitor()`.
-4. **Критерии приёма** — объективное решение PASS/REJECT через `isPassable()`.
+3. **Стоп-менеджмент** — проверка работы SL/TP по внутрисвечному диапазону (intraday high/low), как в живом `TradingBotService.monitor()` (плюс симуляция ликвидации фьючерсов, см. 11.6).
+4. **Критерии приёма** — объективное решение PASS/REJECT через `isPassable()` (раздельно для акций и фьючерсов).
 
 ### Архитектура
 
 ```mermaid
 flowchart LR
     DB[(PostgreSQL<br/>candles MINUTE_10)] --> ENG[BacktestEngine<br/>@Service]
-    ENG -->|свеча за свечой<br/>sorted by time| SIG[signalAt<br/>RSI + MACD]
-    SIG -->|BUY/SELL/HOLD| SIM[SimulatedExecution<br/>комиссия/слippage/лот]
+    ENG -->|свеча за свечой<br/>sorted by time| SIG[LiveStrategyBacktestSignalGenerator<br/>live-ансамбль + regime + conf-гейт]
+    SIG -->|BUY/SELL/HOLD| SIM[SimulatedExecution<br/>комиссия/слippage/лот/SL/TP]
     SIM -->|fills| EQ[equity curve<br/>cash + позиция]
     EQ --> MET[BacktestMetrics<br/>Sharpe / MDD / PF / win rate]
     MET --> RES[BacktestResult]
-    RES --> ACC{isPassable?}
+    RES --> ACC{isPassable?<br/>акции vs фьючерсы}
     ACC -->|да| PASS[PASS — кандидат в прод]
     ACC -->|нет| REJ[REJECT — правка параметров]
 ```
@@ -44,17 +52,22 @@ flowchart LR
 | SL/TP | `monitor()` каждые 10 сек по `getLastPrice` | внутрисвечной диапазон `high/low` — даже если цена коснулась уровня и вернулась |
 | Комиссия | брокер Alor | `0.05%` от оборота |
 | Проскальзывание | фактическое исполнение | `0.1%` market |
-| Решения | LLM-агенты + guardrails | чистые индикаторы (без LLM) |
+| Решения | LLM-агенты + guardrails (live); стратегии — детерминированный ансамбль `StrategyRunner` | тот же ансамбль детерминированных стратегий (`LiveStrategyBacktestSignalGenerator`) |
 | Рынок | реальные ордера | симуляция |
 
 ## 11.2. Структура пакета
 
 ```
 com.trading.bot.backtest
-├── BacktestEngine.kt        # @Service: run() + simulate() + signalAt() + PositionSim
-├── SimulatedExecution.kt    # object: комиссия, slippage, лотность, hitStopOrTarget
-├── BacktestResult.kt        # data class + BacktestMetrics (Sharpe/MDD/PF/win rate)
-├── MonteCarloAnalyzer.kt    # Monte Carlo bootstrap + стресс-сценарии (13.7.8)
+├── BacktestEngine.kt            # @Service: run() + simulate() + PositionSim
+├── BacktestSignalGenerator.kt   # интерфейс генератора сигналов
+├── LiveStrategyBacktestSignalGenerator.kt  # ПРОД-по-умолчанию: live-ансамбль + regime + conf-гейт
+├── BacktestSignalGeneratorConfig.kt        # Spring-wiring live-генератора (bt.agent.live-strategies)
+├── DeterministicBacktestSignalGenerator.kt # fallback: индикаторный RSI/MACD
+├── AgentBacktestSignalGenerator.kt         # LLM-агентный режим (bt.agent.enabled)
+├── SimulatedExecution.kt       # object: комиссия, slippage, лотность, hitStopOrTarget
+├── BacktestResult.kt           # data class + BacktestMetrics (Sharpe/MDD/PF/win rate)
+├── MonteCarloAnalyzer.kt       # Monte Carlo bootstrap + стресс-сценарии (13.7.8)
 └── src/test/kotlin/com/trading/bot/backtest/  # BacktestEngineTest, MonteCarloAnalyzerTest и др.
 ```
 
@@ -79,11 +92,15 @@ fun simulate(
     ticker: String,
     candles: List<Candle>,
     initialCapital: BigDecimal = BigDecimal("100000"),
-    minBarsForSignal: Int = 30
+    minBarsForSignal: Int = 30,
+    slPercent: Double = 0.02,
+    tpPercent: Double = 0.04,
+    // фьючерсы: SL/TP в пунктах через riskPerTradePercent/futuresMaxContractsPerPosition/slPoints/tpPoints
 ): BacktestResult
-
-fun signalAt(candles: List<Candle>, index: Int, minBars: Int): StrategyAction
 ```
+
+Сигналы движок получает не из `signalAt()`, а через впрыснутый `BacktestSignalGenerator`
+(интерфейс). Прод-реализация — `LiveStrategyBacktestSignalGenerator` (см. 11.3.1).
 
 ### `run()` — загрузка данных
 
@@ -92,7 +109,7 @@ fun signalAt(candles: List<Candle>, index: Int, minBars: Int): StrategyAction
 3. Если свечей `< minBarsForSignal + 2` — возвращает `emptyResult()` (лог `insufficient candles`).
 4. Иначе — `simulate()`.
 
-Warm-up: индикаторы считаются на окне `subList(0, index+1)`; пока `window.size < minBars` (30 свечей) сигнал всегда `HOLD`. Это соответствует поведению `IndicatorCalculator.calculate` в живом боте (`< 30 → null`).
+Warm-up: пока `index < minBarsForSignal` (30 свечей по умолчанию) генератор возвращает `HOLD` (индикаторы/стратегии ещё не набрали окно). Это соответствует поведению `IndicatorCalculator.calculate` в живом боте (`< 30 → null`) и warm-up в `StrategyService`.
 
 ### `simulate()` — главный цикл
 
@@ -111,8 +128,8 @@ for (i in 1 until sorted.size) {
         }
     }
 
-    // 2) сигнал по бару i-1
-    val signal = signalAt(sorted, i - 1, minBarsForSignal)
+    // 2) сигнал по бару i-1 через генератор (live-ансамбль + regime + conf-гейт)
+    val signal = signalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
     if (signal == HOLD || signal == CLOSE) {
         equityCurve.add(equityAt(cash, position, current.closePrice)) // фиксируем equity
         continue
@@ -144,22 +161,59 @@ for (i in 1 until sorted.size) {
 - При закрытии: `cash += exit * qty - commission_exit` (тело возвращается автоматически).
 - PnL сделки включает обе комиссии (entry + exit).
 
-### `signalAt()` — детерминированный сигнал
+### 11.3.1 Генерация сигнала — `LiveStrategyBacktestSignalGenerator`
+
+Прод-реализация (`bt.agent.live-strategies=${BT_AGENT_LIVE_STRATEGIES:true}`, default true)
+зеркалит живые стратегии `StrategyRunner.runAll` (P0 Strategy/Backtest Parity, 13.29).
+Не Spring-бин, инстанцируется в `BacktestSignalGeneratorConfig`; `@Primary` разрешает
+конфликт с `DeterministicBacktestSignalGenerator`/`AgentBacktestSignalGenerator`.
+
+Алгоритм `signal(ticker, candles, index, minBars, cycleId)`:
 
 ```kotlin
-val ind = IndicatorCalculator.calculate(window) ?: return HOLD
-return when {
-    ind.rsi < 30 && ind.macdHistogram > 0 -> BUY   // перепроданность + бычий импульс
-    ind.rsi > 70 && ind.macdHistogram < 0 -> SELL  // перекупленность + медвежий импульс
-    else -> HOLD
+if (index < minBars) return HOLD
+
+val window = candles[0..index]
+val indicators = IndicatorCalculator.calculate(window)
+val snapshot = MarketSnapshot(ticker, currentPrice=close, volume, timestamp)
+
+val regime = regimeConfig?.let { RegimeDetector.detect(window, it) }
+if (regime != null && regime.blocksEntry) return HOLD      // incl. UNKNOWN — fail-closed
+
+val eligibleIds = regime?.let { strategySelector.eligibleStrategyIds(it) }
+
+best = HOLD; bestStrength = 0.0
+for (s in strategies) {                                    // 6 стратегий == live
+    if (eligibleIds != null && s.id !in eligibleIds) continue
+    d = s.evaluate(context)                                 // StrategyContext(live-shaped)
+    if d.action != HOLD:
+        strength = regime != null ? s.signalStrength * fitScore(s.id, regime) : s.signalStrength
+        if (strength > bestStrength) best = d.action
 }
+if (best == HOLD) return HOLD
+if (!bestStrength.isFinite() || bestStrength < adaptiveConfidenceThreshold) return HOLD
+return best
 ```
 
-Логика простая и прозрачная:
+Ключевые свойства:
 
-- `RSI < 30` — зона перепроданности, + положительный гистограммный MACD (сигнальная линия над MACD) — бычий импульс → `BUY`.
-- `RSI > 70` — зона перекупленности, + отрицательный гистограммный MACD — медвежий импульс → `SELL`.
-- Всё остальное — `HOLD`.
+- **Ансамбль**: `TrendFollowingStrategy`, `BreakoutStrategy`, `ScalpingStrategy`,
+  `MeanReversionStrategy`, `GridStrategy`, `CnyRubStrategy` — тот же, что в live
+  `StrategyRunner`; победитель — максимум взвешенной силы сигнала (детерминированно,
+  равенства разрешаются порядком регистрации).
+- **Regime parity**: при `bt.regime-detection-enabled=true` (default) детектируется
+  per-ticker regime; запрещающий или `UNKNOWN` (недостаточно данных — fail-closed)
+  режим → `HOLD`; стратегии фильтруются через `StrategySelector.eligibleStrategyIds`
+  и взвешиваются по `fitScore`.
+- **Adaptive confidence gate**: сигналы силой ниже `adaptiveConfidenceThreshold`
+  (default `0.60`) или неконечной (NaN) → `HOLD`. Это зеркалит адаптивный порог
+  `StrategyService` в live.
+- **Детерминизм**: никаких LLM/часов/внешних данных — только `candles[0..index]`.
+- **Microstructure limitation**: `MarketSnapshot` строится из свечи (close/volume) —
+  bid/ask/bidSize/askSize/OBI/microprice отсутствуют (в БД нет исторической
+  микроструктуры), поэтому `CnyRubStrategy` детерминированно падает в fallback-режим
+  чистого mean-reversion. **Полный микроструктурный паритет live==backtest для
+  CNY/RUB недостижим без исторического источника bid/ask/OBI** (см. 11.10 Ограничения).
 
 ### `openPosition()` — сайзинг
 
@@ -253,14 +307,18 @@ data class BacktestResult(
     val profitFactor: Double,
     val totalTrades: Int,
     val avgHoldBars: Double,
+    val isFutures: Boolean,              // фьючерс -> отдельные пороги приёма
     val equityCurve: List<BigDecimal>,
     val monthlyReturns: Map<String, Double>
 ) {
-    fun isPassable(): Boolean =
-        sharpeRatio > 1.2 &&
-        maxDrawdown < 0.15 &&
-        profitFactor > 1.3 &&
-        totalTrades >= 200
+    fun isPassable(): Boolean {
+        val tradesThreshold = if (isFutures) 10 else 200
+        val mddThreshold   = if (isFutures) 0.40 else 0.15
+        return sharpeRatio > 1.2 &&
+            maxDrawdown < mddThreshold &&
+            profitFactor > 1.3 &&
+            totalTrades >= tradesThreshold
+    }
 }
 ```
 
@@ -272,10 +330,10 @@ data class BacktestResult(
 |---|---|---|
 | `totalReturn` | `equity_final / initialCapital - 1` | — |
 | `sharpeRatio` | `mean(r - rf) / std(r) * sqrt(N)`, `rf=0` | > 1.2 |
-| `maxDrawdown` | `max(1 - equity/peak)` по кривой | < 15% |
+| `maxDrawdown` | `max(1 - equity/peak)` по кривой | < 15% акции / ≤ 40% фьючерсы |
 | `winRate` | `wins / totalTrades` | — |
 | `profitFactor` | `grossProfit / |grossLoss|` (∞, если потерь нет) | > 1.3 |
-| `totalTrades` | `tradeReturns.size` | >= 200 |
+| `totalTrades` | `tradeReturns.size` | >= 200 акции / >= 10 фьючерсы |
 | `sortinoRatio` | `(mean - rf) / downsideDev`, `rf=0` | — |
 | `calmarRatio` | `totalReturn / maxDrawdown` | — |
 | `expectancy` | `Win% × AvgWin − Loss% × \|AvgLoss\|` | — |
@@ -303,14 +361,24 @@ data class BacktestResult(
 
 ### Критерии приёма в прод
 
-Все четыре условия обязательны (`isPassable()`):
+Все четыре условия обязательны (`isPassable()`), пороги зависят от класса
+инструмента (`isFutures`). Единый старый порог MDD<15%/≥200 был нереализуем для
+длинных фьючерсных панельных стратегий (6-22 сделки/год, SL 300 пт), поэтому
+фьючерсы получили отдельные пороги в соответствии с калибровками AGENTS.md:
 
 ```kotlin
-sharpeRatio > 1.2 &&
-maxDrawdown < 0.15 &&
-profitFactor > 1.3 &&
-totalTrades >= 200
+// акции (isFutures = false):
+sharpeRatio > 1.2 && maxDrawdown < 0.15 && profitFactor > 1.3 && totalTrades >= 200
+
+// фьючерсы (isFutures = true):
+sharpeRatio > 1.2 && maxDrawdown <= 0.40 && profitFactor > 1.3 && totalTrades >= 10
 ```
+
+Обоснование фьючерсных порогов:
+- **MDD ≤ 40%** — калибровочный оптимум CNYRUBF из AGENTS.md (38.8-39%);
+  MDD<15% противоречит слайсу-на-сделку и собственной калибровке фьючерсов.
+- **≥ 10 сделок** — минимальная статистическая база; порог намеренно НЕ опущен
+  под текущие 9 сделок CNYRUBF, чтобы честно сигналить о малом сэмпле.
 
 Логика логов движка:
 
@@ -512,7 +580,7 @@ curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations
 
 ## 11.7. Тесты
 
-Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 12 тестов (нет Spring-контекста, чистые unit-тесты):
+Файл `src/test/kotlin/com/trading/bot/backtest/BacktestEngineTest.kt` — 50+ тестов (нет Spring-контекста, чистые unit-тесты):
 
 | Тест | Что проверяет |
 |---|---|
@@ -521,6 +589,9 @@ curl "http://localhost:8080/api/v1/backtest/SBER/robustness?days=365&simulations
 | `max drawdown is computed correctly` | расчёт MDD на серии эквити (пик → минимум) |
 | `acceptance criteria reject weak results` | слабый результат → `isPassable() = false` |
 | `acceptance criteria pass strong results` | сильный результат → `isPassable() = true` |
+| `futures acceptance pass with futures thresholds` | фьючерс (MDD 18.5%, 12 сделок) → `PASS`; тот же результат без `isFutures` → `REJECT` (акции MDD<15%) |
+| `futures acceptance rejects too few trades` | фьючерс с 9 сделками (< 10) → `REJECT` — честный сигнал малого сэмпла |
+| `futures acceptance rejects excessive drawdown` | фьючерс с MDD 45% (> 40%) → `REJECT` |
 | `backtest metrics include risk and quality ratios` | Sortino, Expectancy, WinLoss, RecoveryFactor, AvgTrade |
 | `metrics map is compact and excludes heavy series` | `metrics()` — 13 полей, без `equityCurve`/`monthlyReturns`/`tradeReturns` |
 | `commission and slippage constants` | комиссия 0.05%, проскальзывание 0.1% |
@@ -636,7 +707,9 @@ warm-up (index < minBars) и несэмплируемые бары возвра�
 Честный список того, чего в текущей реализации **нет** (важно не путать с дизайном из исходного раздела):
 
 1. ~~**Нет LLM-агентов**~~ — реализовано: конвейер tech→fund→strategy→contrarian→arbitrator
-   в агентном режиме `bt.agent.enabled=true` (11.8.1), по умолчанию — индикаторный режим.
+   в агентном режиме `bt.agent.enabled=true` (11.8.1). Прод-по-умолчанию — **live-стратегии**
+   (`bt.agent.live-strategies=true`), а не индикаторный режим; индикаторный `DeterministicBacktestSignalGenerator`
+   остаётся fallback-режимом (см. 11.3.1).
 2. **Нет `avgHoldBars` и `monthlyReturns`** — заглушки, расчёт по месяцам отложен.
 3. **Out-of-sample — детерминированно** — OOS покрыт walk-forward `BacktestValidator` (`/api/v1/backtest/{ticker}/validate`, раздел 13.7.7); LLM/ML-подход — roadmap.
 4. **Нет отдельного Spring-профиля `backtest`** — профиль-конфиг `application-backtest.yml`
@@ -646,6 +719,12 @@ warm-up (index < minBars) и несэмплируемые бары возвра�
 5. ~~**Нет распределения по тикерам**~~ — реализовано: панельный прогон `/api/v1/backtest/panel` (11.6.1). Один вызов = несколько тикеров с итоговой сводкой. Фронт: `BacktestPage.tsx`.
 6. ~~**Константы захардкожены** — 20% слайс капитала, 2%/4% SL/TP, `initialCapital = 100000`~~. Вынесено в конфиг `bt.*` (11.8.1).
 7. **Внутрисвечное исполнение SL/TP** — по уровню без уточнения «цена открытия следующей свечи» для limit-ордеров: вход всегда по открытию `t+1` через `marketFill`, лимитные входы не используются в цикле (функция `limitFill` готова, но в `simulate` не задействована).
+8. **Микроструктурный паритет CNY/RUB** — `MarketSnapshot` в бэктесте строится из свечи
+   (close/volume): bid/ask/bidSize/askSize/OBI/microprice отсутствуют (в БД нет исторической
+   микроструктуры). Live `CnyRubStrategy` использует микроструктуру и OBI-гейт, а в бэктесте
+   детерминированно падает в fallback чистого mean-reversion. **Полный parity
+   live==backtest для CNY/RUB недостижим без исторического источника bid/ask/OBI**
+   (см. 11.10).
 
 ### Проектный запуск (целевое, раздел 11.9)
 
@@ -674,3 +753,35 @@ warm-up (index < minBars) и несэмплируемые бары возвра�
 - **Распределение по тикерам**: результат не должен достигаться за счёт 1–2 тикеров.
 - **Режимы рынка**: отдельные прогоны на трендовых и волатильных периодах.
 - **Переобучение**: out-of-sample на удержанных 20%.
+
+## 11.10. Ограничения и открытые вопросы (актуальный аудит P1)
+
+### Микроструктурный паритет CNY/RUB(не закрыт)
+
+- **Проблема**: LIVE `CnyRubStrategy` получает `MarketSnapshot` из
+  `AlorClient.getMarketSnapshot` с bid/ask/bidSize/askSize/microprice/OBI и гейтится
+  `MarketDataGate` по OBI. Бэктест (`LiveStrategyBacktestSignalGenerator`) строит
+  snapshot только из свечи (close/volume) — микроструктура пуста, стратегия
+  детерминированно падает в fallback чистого mean-reversion.
+- **Блокер**: в PostgreSQL нет исторических таблиц микроструктуры
+  (quote/orderbook/depth/tick). Синтетическая оценка спреда из свечи закрывает лишь
+  цену исполнения, но не OBI/microprice-слой решения.
+- **Следствие**: backtest==live только при отсутствии OBI-зависимости у CNYRUB;
+  полный паритет невозможен, пока нет исторического источника bid/ask/OBI
+  (данные MOEX/библиотека тиковых архивов, либо запись живо `tick`-потока Alor WS
+  в БД с последующим бэктестом на этих записях).
+
+### Статистическая слабость CNYRUBF
+
+- CNYRUBF после перекалибровки: MDD 18.5% / **9 сделок** на доступной истории
+  (3 мес, май–авг 2026). Критерий фьючерсного `isPassable()` требует ≥ 10 сделок —
+  текущий результат их не набирает (честный сэмпл-сигнал).
+- SL/TP **не подгоняются** под 9 сделок (анти-оверфиттинг, ревьюер №2): для валидной
+  оценки нужны 1–3 года истории + walk-forward `/validate` + несколько режимов рынка.
+
+### Разделение порогов приёма (закрыто, `cd4a848`)
+
+- Единый `isPassable()` (MDD<15%, ≥200 сделок) был нереализуем для длинных
+  фьючерсных панельных стратегий и навсегда отклонял бы их. Пороги разделены
+  по классу инструмента (`isFutures`): акции MDD<15%/≥200, фьючерсы MDD≤40%/≥10 —
+  в соответствии с калибровками AGENTS.md. (см. 11.5)

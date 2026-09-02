@@ -9,20 +9,24 @@ import java.math.BigDecimal
 /**
  * Результат финального holdout-валидирования (статистический аудит P1).
  *
- * Замыкает риск OOS-leakage: walk-forward ([BacktestValidator]) выполняется ТОЛЬКО
- * на данных ДО [holdoutStart], а независимый [holdout]-окно (последние
- * [holdoutFraction] истории) трогается РОВНО один раз зафиксированными
- * параметрами — после того как WFA принял стратегию.
+ * Замыкает риск OOS-leakage: walk-forward ([BacktestValidator]) и базовый
+ * backtest ([devBacktest]) выполняются ТОЛЬКО на данных ДО [HoldoutValidation]
+ * holdout-границы, а независимый holdout-окно (последние [holdoutFraction]
+ * истории) трогается РОВНО один раз зафиксированными параметрами — после того
+ * как WFA принял стратегию.
  *
  * @property walkForward результат WFA на данных до holdout-границы
  * @property holdout результат одноразового прогона на независимом holdout-окне
- * @property paramsUsed параметры, зафиксированные по [walkForward] (последний
- *   выбранный фолдом кандидат) и применённые к holdout
+ * @property paramsUsed параметры, зафиксированные по [walkForward] и применённые
+ *   к holdout (включая confidence/leverage/risk — см. [StrategyParameters])
+ * @property devBacktest базовый backtest на данных ДО holdout-границы с
+ *   зафиксированными параметрами — используется для edge-проверки без утечки
  */
 data class HoldoutValidation(
     val walkForward: ValidationResult,
     val holdout: BacktestResult,
-    val paramsUsed: GridParams,
+    val paramsUsed: StrategyParameters,
+    val devBacktest: BacktestResult,
 ) {
     /**
      * Минимальный порог проходимости holdout: WFA принял стратегию на данных вне
@@ -63,6 +67,7 @@ class FinalHoldoutValidator(
         leverage: Double = 1.0,
         riskPerTradePercent: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
+        adaptiveConfidenceThreshold: Double? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
     ): HoldoutValidation {
         require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
@@ -70,10 +75,13 @@ class FinalHoldoutValidator(
         if (sorted.size < 2) {
             throw IllegalArgumentException("insufficient candles for holdout: ${sorted.size}")
         }
-        val holdoutSize = (sorted.size * holdoutFraction).toInt().coerceAtLeast(1)
-        val holdoutStart = sorted.size - holdoutSize
-        val wfaCandles = sorted.subList(0, holdoutStart)
-        val holdoutCandles = sorted.subList(holdoutStart, sorted.size)
+        val (wfaCandles, holdoutCandles) = splitDevHoldout(sorted, holdoutFraction)
+
+        val effectiveOverride =
+            signalGeneratorOverride
+                ?: adaptiveConfidenceThreshold?.let {
+                    LiveStrategyBacktestSignalGenerator(adaptiveConfidenceThreshold = it)
+                }
 
         // Walk-forward выполняется ТОЛЬКО на данных до holdout-границы.
         val walkForward =
@@ -87,19 +95,49 @@ class FinalHoldoutValidator(
                 leverage = leverage,
                 riskPerTradePercent = riskPerTradePercent,
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
-                signalGeneratorOverride = signalGeneratorOverride,
+                signalGeneratorOverride = effectiveOverride,
             )
 
         // Параметры фиксируются по последнему выбранному фолдом кандидату.
         val paramsUsed =
             walkForward.folds.lastOrNull()?.let { f ->
-                GridParams(
+                StrategyParameters(
                     slPercent = f.chosenSlPercent,
                     tpPercent = f.chosenTpPercent,
                     slPoints = f.chosenSlPoints,
                     tpPoints = f.chosenTpPoints,
+                    confidenceThreshold = adaptiveConfidenceThreshold,
+                    leverage = leverage,
+                    riskPerTradePercent = riskPerTradePercent,
+                    futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 )
-            } ?: defaultGrid(ticker)
+            } ?: defaultParams(
+                ticker,
+                adaptiveConfidenceThreshold,
+                leverage,
+                riskPerTradePercent,
+                futuresMaxContractsPerPosition,
+            )
+
+        // Базовый backtest на dev-данных (без holdout) с зафиксированными параметрами.
+        val devBacktest =
+            backtestEngine.simulate(
+                ticker,
+                wfaCandles,
+                initialCapital,
+                minBarsForSignal,
+                paramsUsed.slPercent,
+                paramsUsed.tpPercent,
+                commissionMultiplier = 1.0,
+                slippageMultiplier = 1.0,
+                slPoints = paramsUsed.slPoints,
+                tpPoints = paramsUsed.tpPoints,
+                leverage = leverage,
+                capitalSlice = null,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                signalGeneratorOverride = effectiveOverride,
+            )
 
         // Одноразовый финальный прогон на независимом holdout с зафиксированными параметрами.
         val holdout =
@@ -118,10 +156,10 @@ class FinalHoldoutValidator(
                 capitalSlice = null,
                 riskPerTradePercent = riskPerTradePercent,
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
-                signalGeneratorOverride = signalGeneratorOverride,
+                signalGeneratorOverride = effectiveOverride,
             )
 
-        val result = HoldoutValidation(walkForward, holdout, paramsUsed)
+        val result = HoldoutValidation(walkForward, holdout, paramsUsed, devBacktest)
         logger.info {
             "Holdout $ticker: " +
                 "wfa=${if (walkForward.isPassable()) "PASS" else "FAIL"} " +
@@ -133,10 +171,30 @@ class FinalHoldoutValidator(
         return result
     }
 
-    private fun defaultGrid(ticker: String): GridParams =
+    private fun defaultParams(
+        ticker: String,
+        confidenceThreshold: Double?,
+        leverage: Double,
+        riskPerTradePercent: Double?,
+        futuresMaxContractsPerPosition: Int?,
+    ): StrategyParameters =
         if (instrumentsConfig.isFutures(ticker)) {
-            GridParams(slPoints = 300, tpPoints = 600)
+            StrategyParameters(
+                slPoints = 300,
+                tpPoints = 600,
+                confidenceThreshold = confidenceThreshold,
+                leverage = leverage,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+            )
         } else {
-            GridParams(slPercent = 0.02, tpPercent = 0.04)
+            StrategyParameters(
+                slPercent = 0.02,
+                tpPercent = 0.04,
+                confidenceThreshold = confidenceThreshold,
+                leverage = leverage,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+            )
         }
 }

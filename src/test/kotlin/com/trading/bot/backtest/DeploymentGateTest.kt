@@ -70,7 +70,8 @@ class DeploymentGateTest {
         return HoldoutValidation(
             walkForward = strongWalkForward(),
             holdout = holdoutResult,
-            paramsUsed = GridParams(slPercent = 0.02, tpPercent = 0.04),
+            paramsUsed = StrategyParameters(slPercent = 0.02, tpPercent = 0.04),
+            devBacktest = strongBacktest(),
         )
     }
 
@@ -166,9 +167,18 @@ class DeploymentGateTest {
 
     @Test
     fun `non-significant edge - paper only`() {
-        // Passable backtest, но edge статистически незначим (probabilityOfNoEdge высокий).
-        val backtest = strongBacktest().copy(edgeStatisticallySignificant = false, probabilityOfNoEdge = 0.9)
-        val decision = DeploymentGate.decide(criteria(backtest = backtest))
+        // Edge берётся из dev-WFA OOS-агрегата; слабый OOS edge -> незначим.
+        val weakEdgeWf =
+            strongWalkForward().let { wf ->
+                wf.copy(
+                    aggregateOutOfSample =
+                        wf.aggregateOutOfSample.copy(
+                            edgeStatisticallySignificant = false,
+                            probabilityOfNoEdge = 0.9,
+                        ),
+                )
+            }
+        val decision = DeploymentGate.decide(criteria(wf = weakEdgeWf))
         assertEquals(DeploymentStatus.PAPER_ALLOWED, decision.status)
         assertTrue(decision.checks.first { it.key == "edge_significance" }.passed == false)
     }

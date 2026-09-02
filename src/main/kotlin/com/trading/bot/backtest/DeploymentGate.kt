@@ -78,10 +78,11 @@ data class DeploymentDecision(
  * @property robustness отчёт Monte Carlo + стресс (может быть null)
  * @property requiredHoldoutTrades минимальное число OOS-сделок holdout-окна для
  *   уверенного вывода (защита от «красивого результата на 2-3 сделках»)
- * @property researchMode при `true` исследовательские прогоны/параметры НИКОГДА
- *   не дают [DeploymentStatus.LIVE_ALLOWED] — максимум [DeploymentStatus.PAPER_ALLOWED]
- * @property confirmedForProduction операторское подтверждение, что используемые
- *   параметры — производственные (а не исследовательские)
+ * @property researchMode по умолчанию `true`: исследовательские прогоны/параметры
+ *   НИКОГДА не дают [DeploymentStatus.LIVE_ALLOWED] — максимум [DeploymentStatus.PAPER_ALLOWED].
+ *   LIVE достижим только при ЯВНОМ переносе в production-режим.
+ * @property confirmedForProduction по умолчанию `false`: операторское подтверждение
+ *   production-параметров требуется ЯВНО — без него LIVE недостижим
  */
 data class DeploymentCriteria(
     val backtest: BacktestResult,
@@ -89,8 +90,8 @@ data class DeploymentCriteria(
     val holdout: HoldoutValidation?,
     val robustness: BacktestRobustnessReport?,
     val requiredHoldoutTrades: Int = DEFAULT_REQUIRED_HOLDOUT_TRADES,
-    val researchMode: Boolean = false,
-    val confirmedForProduction: Boolean = true,
+    val researchMode: Boolean = true,
+    val confirmedForProduction: Boolean = false,
 ) {
     companion object {
         const val DEFAULT_REQUIRED_HOLDOUT_TRADES = 30
@@ -199,15 +200,18 @@ object DeploymentGate {
                 detail = "need >= ${fmt(MIN_CONSISTENCY)}, got ${fmt(criteria.validation.consistency)}",
             )
 
-        val edgeOk = criteria.backtest.edgeStatisticallySignificant
+        // Edge берётся из dev-WFA OOS-агрегата (данные ДО holdout-границы), НЕ из
+        // базового backtest на всей истории — иначе holdout протекал бы в edge.
+        val oos = criteria.validation.aggregateOutOfSample
+        val edgeOk = oos.edgeStatisticallySignificant
         list +=
             DeploymentCheck(
                 key = "edge_significance",
-                label = "Стат. значимость edge",
+                label = "Стат. значимость edge (dev-WFA OOS)",
                 passed = edgeOk,
                 detail =
-                    "probabilityOfNoEdge=${fmt(criteria.backtest.probabilityOfNoEdge)} " +
-                        "significant=${criteria.backtest.edgeStatisticallySignificant}",
+                    "probabilityOfNoEdge=${fmt(oos.probabilityOfNoEdge)} " +
+                        "significant=${oos.edgeStatisticallySignificant}",
             )
 
         val holdout = criteria.holdout

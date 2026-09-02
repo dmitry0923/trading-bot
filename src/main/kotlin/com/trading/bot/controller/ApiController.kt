@@ -13,6 +13,7 @@ import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
+import com.trading.bot.backtest.splitDevHoldout
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.config.RiskConfig
@@ -784,8 +785,8 @@ class ApiController(
         @RequestParam(defaultValue = "false") loadHistory: Boolean,
         @RequestParam(required = false) timeframe: String?,
         @RequestParam(defaultValue = "4") folds: Int,
-        @RequestParam(defaultValue = "false") researchMode: Boolean,
-        @RequestParam(defaultValue = "true") confirmedForProduction: Boolean,
+        @RequestParam(defaultValue = "true") researchMode: Boolean,
+        @RequestParam(defaultValue = "false") confirmedForProduction: Boolean,
         @RequestParam(required = false) leverage: Double?,
         @RequestParam(required = false) riskPerTradePercent: Double?,
         @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
@@ -816,17 +817,8 @@ class ApiController(
                 null
             }
 
-        val backtestResult = backtestEngine.run(ticker, effectiveDays)
-        val validation =
-            backtestValidator.validate(
-                ticker,
-                candles,
-                folds = folds,
-                leverage = leverage ?: 1.0,
-                riskPerTradePercent = riskPerTradePercent,
-                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
-                signalGeneratorOverride = signalGeneratorOverride,
-            )
+        // Holdout-валидация режет историю на dev (до holdout-границы) и holdout и
+        // возвращает WFA/backtest/devBacktest строго на dev-данных — без OOS-leakage.
         val holdout =
             finalHoldoutValidator.validate(
                 ticker,
@@ -838,10 +830,17 @@ class ApiController(
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 signalGeneratorOverride = signalGeneratorOverride,
             )
+        // Базовый backtest и WFA берём из holdout-валидации (уже на dev-данных):
+        // отдельный прогон на всей истории протекал бы holdout в edge-проверку.
+        val backtestResult = holdout.devBacktest
+        val validation = holdout.walkForward
+
+        // Monte Carlo тоже только на dev-части (первые 1 - holdoutFraction истории).
+        val devCandles = splitDevHoldout(candles, effectiveFraction).first
         val robustness =
             monteCarloAnalyzer.analyze(
                 ticker,
-                candles,
+                devCandles,
                 method = backtestConfig.mcMethod,
             )
 

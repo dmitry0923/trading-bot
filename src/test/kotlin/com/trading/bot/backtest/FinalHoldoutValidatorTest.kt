@@ -111,7 +111,7 @@ class FinalHoldoutValidatorTest {
         val result = runBlocking { validatorUnderTest.validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
 
         // Holdout окно = последние 20% от 300 = 60 свечей.
-        assertEquals(GridParams(0.02, 0.04), result.paramsUsed)
+        assertEquals(StrategyParameters(0.02, 0.04), result.paramsUsed)
         assertTrue(result.walkForward.folds.isNotEmpty())
         assertTrue(result.holdout.totalTrades > 0)
         assertTrue(result.holdout.isPassable())

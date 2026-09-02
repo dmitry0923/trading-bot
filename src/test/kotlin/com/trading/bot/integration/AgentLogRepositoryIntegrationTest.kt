@@ -5,6 +5,7 @@ import com.trading.bot.repository.AgentLogRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.annotation.Autowired
  * - NULL-сила исключается (не превращается в 0.0);
  * - несколько строк на cycleId -> MAX (детерминированно, вместо «последней строки БД»).
  */
+@Tag("integration")
 class AgentLogRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var repo: AgentLogRepository

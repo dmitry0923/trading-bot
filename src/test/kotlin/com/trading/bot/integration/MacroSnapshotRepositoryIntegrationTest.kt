@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
@@ -20,6 +21,7 @@ import java.time.LocalDateTime
  * - findBetween возвращает снапшоты по возрастанию captured_at, включая границы;
  * - findBetween пустой на окне без данных.
  */
+@Tag("integration")
 class MacroSnapshotRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var repo: MacroSnapshotRepository

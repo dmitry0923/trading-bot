@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.time.LocalDateTime
@@ -22,6 +23,7 @@ import java.time.LocalDateTime
  * - claim переводит строку в PROCESSING (вторая попытка её не забирает), а зависшие
  *   PROCESSING (краш во время доставки) снова подбираются после 60 сек.
  */
+@Tag("integration")
 class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var repo: OrderOutboxRepository

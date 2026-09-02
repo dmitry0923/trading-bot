@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.r2dbc.core.DatabaseClient
@@ -28,6 +29,7 @@ import java.time.format.DateTimeFormatter
  * - INSERT через репозиторий попадает в месячную партицию по opened_at;
  * - PartitionMaintenanceService создаёт будущие партиции идемпотентно.
  */
+@Tag("integration")
 class PartitionMaintenanceIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var databaseClient: DatabaseClient

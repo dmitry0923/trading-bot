@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -34,6 +35,7 @@ import java.time.LocalDateTime
  * дневных P&L, защита удаления аккаунта с позициями / неотправленными outbox-ордерами.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Tag("integration")
 class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
     @LocalServerPort
     private var port: Int = 0

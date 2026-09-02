@@ -1,5 +1,6 @@
 package com.trading.bot.integration
 
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -18,6 +19,7 @@ import kotlin.test.assertTrue
  * ролям и закрытый prometheus-эндпоинт (METRICS_SCRAPE_TOKEN).
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Tag("integration")
 class AuthControllerIntegrationTest : AbstractTestContainerTest() {
     @LocalServerPort
     private var port: Int = 0

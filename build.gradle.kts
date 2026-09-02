@@ -88,7 +88,6 @@ configurations.all {
 }
 
 tasks.withType<Test> {
-    useJUnitPlatform()
     jvmArgs("-Xshare:off", "-XX:+EnableDynamicAgentLoading")
     // Проброс system property в JVM тестов: полномасштабный нагрузочный прогон
     // (roadmap 13.3.4) запускается `./gradlew.bat test -Dload.full=true`.
@@ -98,6 +97,26 @@ tasks.withType<Test> {
         showExceptions = true
         showStackTraces = true
         showCauses = true
+    }
+}
+
+// Разделение unit / integration тестов.
+// `test` (default) гоняет только быстрые unit-тесты без Testcontainers.
+// `integrationTest` — тяжёлые интеграционные тесты (TimescaleDB/Redis/RabbitMQ через
+// Testcontainers): `./gradlew.bat integrationTest`. Классы помечены @Tag("integration").
+tasks.named<Test>("test") {
+    useJUnitPlatform {
+        excludeTags("integration")
+    }
+}
+
+tasks.register<Test>("integrationTest") {
+    description = "Runs integration tests (Testcontainers: TimescaleDB, Redis, RabbitMQ)"
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform {
+        includeTags("integration")
     }
 }
 

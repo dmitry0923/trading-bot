@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
@@ -56,6 +57,7 @@ import java.time.LocalDateTime
  * коллектят webSocketManager.events при старте контекста, до @BeforeEach.
  */
 @Import(WebSocketMockConfig::class)
+@Tag("integration")
 class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var eventPublisher: TradingEventPublisher

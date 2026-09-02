@@ -4,6 +4,7 @@ import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.CandleRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
@@ -17,6 +18,7 @@ import java.time.LocalDateTime
  * закрытые к моменту `toExclusive` бары (`time < :toExclusive`), т.е. бар,
  * начавшийся в `toExclusive`, не попадает в ML-признаки (его close был бы lookahead'ом).
  */
+@Tag("integration")
 class CandleRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var repo: CandleRepository

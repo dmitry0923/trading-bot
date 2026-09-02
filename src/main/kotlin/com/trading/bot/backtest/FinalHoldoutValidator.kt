@@ -123,8 +123,11 @@ class FinalHoldoutValidator(
 
         val result = HoldoutValidation(walkForward, holdout, paramsUsed)
         logger.info {
-            "Holdout $ticker: wfa=${if (walkForward.isPassable()) "PASS" else "FAIL"} holdout=${if (holdout.isPassable()) "PASS" else "FAIL"} " +
-                "trades=${holdout.totalTrades} return=${"%.2f".format(holdout.totalReturn * 100)}% " +
+            "Holdout $ticker: " +
+                "wfa=${if (walkForward.isPassable()) "PASS" else "FAIL"} " +
+                "holdout=${if (holdout.isPassable()) "PASS" else "FAIL"} " +
+                "trades=${holdout.totalTrades} " +
+                "return=${"%.2f".format(holdout.totalReturn * 100)}% " +
                 "-> ${if (result.passed) "PASSED" else "FAILED"}"
         }
         return result

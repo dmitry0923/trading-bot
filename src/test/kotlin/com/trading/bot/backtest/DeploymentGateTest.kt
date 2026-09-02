@@ -34,7 +34,10 @@ class DeploymentGateTest {
         )
     }
 
-    private fun strongWalkForward(trades: Int = 250, consistency: Double = 1.0): ValidationResult {
+    private fun strongWalkForward(
+        trades: Int = 250,
+        consistency: Double = 1.0,
+    ): ValidationResult {
         val returns = List(trades) { if (it % 2 == 0) 40.0 else -15.0 }
         val equity = returns.runningFold(capital) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
         val aggregate = BacktestMetrics.compute("SBER", equity, tradeReturns = returns)
@@ -52,7 +55,10 @@ class DeploymentGateTest {
         return ValidationResult(folds, aggregate)
     }
 
-    private fun holdout(passable: Boolean = true, trades: Int = 250): HoldoutValidation {
+    private fun holdout(
+        passable: Boolean = true,
+        trades: Int = 250,
+    ): HoldoutValidation {
         val returns = List(trades) { if (it % 2 == 0) 40.0 else -15.0 }
         val hEquity =
             if (passable) {
@@ -119,11 +125,12 @@ class DeploymentGateTest {
 
     @Test
     fun `weak backtest - rejected`() {
-        val weak = strongBacktest().copy(
-            sharpeRatio = 0.5,
-            profitFactor = 1.0,
-            maxDrawdown = 0.6,
-        )
+        val weak =
+            strongBacktest().copy(
+                sharpeRatio = 0.5,
+                profitFactor = 1.0,
+                maxDrawdown = 0.6,
+            )
         val decision = DeploymentGate.decide(criteria(backtest = weak))
         assertEquals(DeploymentStatus.REJECTED, decision.status)
     }

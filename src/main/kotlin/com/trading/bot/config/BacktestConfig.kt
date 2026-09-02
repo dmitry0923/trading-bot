@@ -75,12 +75,16 @@ class BacktestConfig {
     var regimeDetectionEnabled: Boolean = true
     var adaptiveConfidenceThreshold: Double = 0.60
     var futuresLiquidationSimulation: Boolean = true
+
     /** Доля КОНЦА истории, резервируемая под финальный независимый holdout (0..1). */
     var holdoutFraction: Double = 0.20
+
     /** Метод Monte Carlo: "iid" | "stationary" | "block". */
     var mcMethod: String = "stationary"
+
     /** Средняя длина блока для stationary bootstrap (>= 1). */
     var mcAvgBlockLength: Double = 5.0
+
     /** Фиксированная длина блока для block bootstrap (>= 1). */
     var mcBlockLength: Int = 5
 }

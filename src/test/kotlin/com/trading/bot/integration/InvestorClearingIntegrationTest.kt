@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
@@ -42,6 +43,7 @@ import java.time.LocalDateTime
  *
  * AlorClient замокан — детерминированные цены без обращения к брокеру.
  */
+@Tag("integration")
 class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var investorService: InvestorService

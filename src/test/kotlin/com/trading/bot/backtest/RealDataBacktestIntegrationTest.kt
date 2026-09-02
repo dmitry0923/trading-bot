@@ -3,6 +3,7 @@ package com.trading.bot.backtest
 import com.trading.bot.integration.AbstractTestContainerTest
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable
 import org.springframework.beans.factory.annotation.Autowired
@@ -24,6 +25,7 @@ import org.springframework.beans.factory.annotation.Autowired
  * $env:BK_REAL_TEST="true"; .\gradlew.bat test --tests "*RealDataBacktestIntegrationTest*"
  * ```
  */
+@Tag("integration")
 @EnabledIfEnvironmentVariable(named = "BK_REAL_TEST", matches = "true")
 class RealDataBacktestIntegrationTest : AbstractTestContainerTest() {
     @Autowired

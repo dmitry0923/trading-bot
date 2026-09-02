@@ -139,7 +139,23 @@ class FinalHoldoutValidatorTest {
                 validator.validate(eq("SBER"), any(), anyInt(), any(), any(), anyInt(), any(), anyOrNull(), anyOrNull(), anyOrNull()),
             ).thenReturn(wfResult)
             whenever(
-                engine.simulate(anyString(), any(), any(), anyInt(), eq(0.03), eq(0.06), any(), any(), anyOrNull(), anyOrNull(), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
+                engine.simulate(
+                    anyString(),
+                    any(),
+                    any(),
+                    anyInt(),
+                    eq(0.03),
+                    eq(0.06),
+                    any(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
             ).thenReturn(strongResult(40))
         }
         val validatorUnderTest = FinalHoldoutValidator(validator, engine)
@@ -170,10 +186,27 @@ class FinalHoldoutValidatorTest {
                 validator.validate(eq("SBER"), any(), anyInt(), any(), any(), anyInt(), any(), anyOrNull(), anyOrNull(), anyOrNull()),
             ).thenReturn(wfResult)
             whenever(
-                engine.simulate(anyString(), any(), any(), anyInt(), any(), any(), any(), any(), anyOrNull(), anyOrNull(), any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()),
+                engine.simulate(
+                    anyString(),
+                    any(),
+                    any(),
+                    anyInt(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
             ).thenReturn(weakHoldout)
         }
-        val result = runBlocking { FinalHoldoutValidator(validator, engine).validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
+        val result =
+            runBlocking { FinalHoldoutValidator(validator, engine).validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
         assertFalse(result.holdout.isPassable())
         assertFalse(result.passed)
     }

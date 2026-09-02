@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
@@ -19,6 +20,7 @@ import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 
 @Testcontainers
+@Tag("integration")
 class SemanticCacheTest {
     companion object {
         @Container

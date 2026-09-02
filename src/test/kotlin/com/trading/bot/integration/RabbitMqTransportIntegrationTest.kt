@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.amqp.rabbit.core.RabbitTemplate
@@ -38,6 +39,7 @@ import java.util.UUID
  * RabbitMQ-транспорт включается вручную через @DynamicPropertySource
  * (в src/test/resources/application.yml он по умолчанию выключен).
  */
+@Tag("integration")
 class RabbitMqTransportIntegrationTest : AbstractTestContainerTest() {
     companion object {
         private val logger = KotlinLogging.logger {}

@@ -233,15 +233,28 @@ object MonteCarlo {
     }
 
     /** exp-распределение длины блока: минимальное значение 1 (Politis-Romano). */
-    private fun geometric(rnd: Random, p: Double): Int {
+    private fun geometric(
+        rnd: Random,
+        p: Double,
+    ): Int {
         val u = rnd.nextDouble().coerceIn(1e-12, 1.0)
-        return kotlin.math.ceil(kotlin.math.ln(1.0 - u) / kotlin.math.ln(1.0 - p)).toInt().coerceAtLeast(1)
+        return kotlin.math
+            .ceil(kotlin.math.ln(1.0 - u) / kotlin.math.ln(1.0 - p))
+            .toInt()
+            .coerceAtLeast(1)
     }
 
-    private fun emptyGuard(periodReturns: List<Double>, simulations: Int, initialCapital: BigDecimal): Boolean =
-        periodReturns.isEmpty() || simulations <= 0 || initialCapital <= BigDecimal.ZERO
+    private fun emptyGuard(
+        periodReturns: List<Double>,
+        simulations: Int,
+        initialCapital: BigDecimal,
+    ): Boolean = periodReturns.isEmpty() || simulations <= 0 || initialCapital <= BigDecimal.ZERO
 
-    private fun emptyResult(simulations: Int, method: String, blockLen: Double): MonteCarloResult =
+    private fun emptyResult(
+        simulations: Int,
+        method: String,
+        blockLen: Double,
+    ): MonteCarloResult =
         MonteCarloResult(
             simulations = simulations,
             medianReturn = 0.0,
@@ -263,7 +276,10 @@ object MonteCarlo {
         val finalCapitalFraction: Double,
     )
 
-    private fun buildPathFrom(capital: Double, returns: List<Double>): PathData {
+    private fun buildPathFrom(
+        capital: Double,
+        returns: List<Double>,
+    ): PathData {
         var equity = capital
         var peak = capital
         var maxDd = 0.0
@@ -303,6 +319,7 @@ object MonteCarlo {
 
         // Худшие хвосты по конечному капиталу (доля от стартового).
         val sortedFractions = pathData.map { it.finalCapitalFraction }.sorted()
+
         fun tailMedian(tailSize: Int): Double {
             if (tailSize <= 0) return 1.0
             val head = sortedFractions.take(tailSize)
@@ -410,12 +427,17 @@ class MonteCarloAnalyzer(
         val periodReturns = BacktestMetrics.periodReturnsFromEquity(baseResult.equityCurve)
         val monteCarlo =
             when (method.lowercase()) {
-                "stationary" ->
+                "stationary" -> {
                     MonteCarlo.simulateStationary(periodReturns, initialCapital, simulations, avgBlockLength, seed)
-                "block" ->
+                }
+
+                "block" -> {
                     MonteCarlo.simulateBlock(periodReturns, initialCapital, simulations, blockLength, seed)
-                else ->
-                    MonteCarlo.simulate(periodReturns, initialCapital, simulations, seed) // "iid" и любие иные
+                }
+
+                else -> {
+                    MonteCarlo.simulate(periodReturns, initialCapital, simulations, seed)
+                } // "iid" и любие иные
             }
         val stress =
             scenarios.map { s ->

@@ -9,10 +9,12 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
 
+@Tag("integration")
 class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var repo: PositionRepository

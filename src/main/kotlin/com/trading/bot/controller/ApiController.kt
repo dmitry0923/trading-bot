@@ -817,7 +817,16 @@ class ApiController(
             }
 
         val backtestResult = backtestEngine.run(ticker, effectiveDays)
-        val validation = backtestValidator.validate(ticker, candles, folds = folds, leverage = leverage ?: 1.0, riskPerTradePercent = riskPerTradePercent, futuresMaxContractsPerPosition = futuresMaxContractsPerPosition, signalGeneratorOverride = signalGeneratorOverride)
+        val validation =
+            backtestValidator.validate(
+                ticker,
+                candles,
+                folds = folds,
+                leverage = leverage ?: 1.0,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                signalGeneratorOverride = signalGeneratorOverride,
+            )
         val holdout =
             finalHoldoutValidator.validate(
                 ticker,
@@ -856,14 +865,15 @@ class ApiController(
             "liveAllowed" to (decision.status == DeploymentStatus.LIVE_ALLOWED),
             "researchMode" to decision.researchMode,
             "confirmedForProduction" to decision.confirmedForProduction,
-            "checks" to decision.checks.map { c ->
-                mapOf(
-                    "key" to c.key,
-                    "label" to c.label,
-                    "passed" to c.passed,
-                    "detail" to c.detail,
-                )
-            },
+            "checks" to
+                decision.checks.map { c ->
+                    mapOf(
+                        "key" to c.key,
+                        "label" to c.label,
+                        "passed" to c.passed,
+                        "detail" to c.detail,
+                    )
+                },
             "timestamp" to LocalDateTime.now().toString(),
         )
     }

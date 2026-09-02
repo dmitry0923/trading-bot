@@ -4,6 +4,7 @@ import com.trading.bot.repository.DailyRiskSnapshotRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.math.BigDecimal
@@ -16,6 +17,7 @@ import java.time.LocalDate
  * - повторный upsert той же даты обновляет строку, а не создаёт новую;
  * - findRecent возвращает окно за N дней по возрастанию даты и отсекает старые.
  */
+@Tag("integration")
 class DailyRiskSnapshotRepositoryIntegrationTest : AbstractTestContainerTest() {
     @Autowired
     lateinit var repo: DailyRiskSnapshotRepository

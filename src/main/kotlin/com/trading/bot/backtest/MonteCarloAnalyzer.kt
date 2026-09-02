@@ -390,10 +390,20 @@ class MonteCarloAnalyzer(
     /**
      * Полный отчёт по тикеру: базовый прогон, Monte Carlo по его сделкам и
      * стресс-перепрогоны с ужесточённым исполнением.
+     *
+     * При передаче [parameters] (замороженный набор стратегии) базовый прогон,
+     * Monte Carlo и стресс используют ИМЕННО эти параметры (SL/TP/леверидж/риск/
+     * лимит контрактов) — robustness верифицирует ту же стратегию, что пойдёт на
+     * holdout/live, а не config-дефолты. [signalGeneratorOverride] (confidence/
+     * regime) должен быть тем же, что применялся в holdout.
+     *
+     * Без [parameters] сохраняется поведение по config-дефолтам (для standalone
+     * robustness-эндпоинта).
      */
     suspend fun analyze(
         ticker: String,
         candles: List<Candle>,
+        parameters: StrategyParameters? = null,
         initialCapital: BigDecimal = backtestConfig.initialCapital,
         minBarsForSignal: Int = backtestConfig.minBarsForSignal,
         slPercent: Double = backtestConfig.slPercent / 100.0,
@@ -403,24 +413,39 @@ class MonteCarloAnalyzer(
         method: String = backtestConfig.mcMethod,
         avgBlockLength: Double = backtestConfig.mcAvgBlockLength,
         blockLength: Int = backtestConfig.mcBlockLength,
+        signalGeneratorOverride: BacktestSignalGenerator? = null,
     ): BacktestRobustnessReport {
+        // Замороженные параметры стратегии (если переданы) приоритетнее config-дефолтов —
+        // robustness обязан проверять ту же стратегию, что уйдёт на holdout/live.
+        val effSlPercent = parameters?.slPercent ?: slPercent
+        val effTpPercent = parameters?.tpPercent ?: tpPercent
+        val effSlPoints = parameters?.slPoints
+        val effTpPoints = parameters?.tpPoints
+        val effLeverage = parameters?.leverage ?: 1.0
+        val effRisk = parameters?.riskPerTradePercent
+        val effMaxContracts = parameters?.futuresMaxContractsPerPosition
+        val effOverride =
+            signalGeneratorOverride
+                ?: parameters?.confidenceThreshold?.let {
+                    LiveStrategyBacktestSignalGenerator(adaptiveConfidenceThreshold = it)
+                }
         val baseResult =
             backtestEngine.simulate(
                 ticker,
                 candles,
                 initialCapital,
                 minBarsForSignal,
-                slPercent,
-                tpPercent,
+                effSlPercent,
+                effTpPercent,
                 commissionMultiplier = 1.0,
                 slippageMultiplier = 1.0,
-                slPoints = null,
-                tpPoints = null,
-                leverage = 1.0,
+                slPoints = effSlPoints,
+                tpPoints = effTpPoints,
+                leverage = effLeverage,
                 capitalSlice = null,
-                riskPerTradePercent = null,
-                futuresMaxContractsPerPosition = null,
-                signalGeneratorOverride = null,
+                riskPerTradePercent = effRisk,
+                futuresMaxContractsPerPosition = effMaxContracts,
+                signalGeneratorOverride = effOverride,
             )
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
@@ -451,17 +476,17 @@ class MonteCarloAnalyzer(
                         candles,
                         initialCapital,
                         minBarsForSignal,
-                        slPercent,
-                        tpPercent,
+                        effSlPercent,
+                        effTpPercent,
                         commissionMultiplier = s.commissionMultiplier,
                         slippageMultiplier = s.slippageMultiplier,
-                        slPoints = null,
-                        tpPoints = null,
-                        leverage = 1.0,
+                        slPoints = effSlPoints,
+                        tpPoints = effTpPoints,
+                        leverage = effLeverage,
                         capitalSlice = null,
-                        riskPerTradePercent = null,
-                        futuresMaxContractsPerPosition = null,
-                        signalGeneratorOverride = null,
+                        riskPerTradePercent = effRisk,
+                        futuresMaxContractsPerPosition = effMaxContracts,
+                        signalGeneratorOverride = effOverride,
                     ),
                 )
             }

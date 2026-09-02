@@ -790,7 +790,6 @@ class ApiController(
         @RequestParam(required = false) leverage: Double?,
         @RequestParam(required = false) riskPerTradePercent: Double?,
         @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
-        @RequestParam(required = false) adaptiveConfidenceThreshold: Double?,
         @RequestParam(required = false) holdoutFraction: Double?,
     ): Map<String, Any> {
         meterRegistry
@@ -807,15 +806,15 @@ class ApiController(
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        // Final deployment pipeline использует ЗАМОРОЖЕННЫЙ production-confidence
+        // (bt.adaptive-confidence-threshold), НЕ свободный request-параметр — иначе
+        // можно было бы подбирать confidence по holdout (confidence=0.60..0.64 и
+        // выбирать лучший), что протекало бы holdout в выбор параметров.
         val signalGeneratorOverride =
-            if (adaptiveConfidenceThreshold != null) {
-                LiveStrategyBacktestSignalGenerator(
-                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
-                    adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
-                )
-            } else {
-                null
-            }
+            LiveStrategyBacktestSignalGenerator(
+                regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+                adaptiveConfidenceThreshold = backtestConfig.adaptiveConfidenceThreshold,
+            )
 
         // Holdout-валидация режет историю на dev (до holdout-границы) и holdout и
         // возвращает WFA/backtest/devBacktest строго на dev-данных — без OOS-leakage.
@@ -835,13 +834,16 @@ class ApiController(
         val backtestResult = holdout.devBacktest
         val validation = holdout.walkForward
 
-        // Monte Carlo тоже только на dev-части (первые 1 - holdoutFraction истории).
+        // Monte Carlo + stress проверяют ТУ ЖЕ frozen-стратегию (dev-часть истории),
+        // что пошла на holdout: те же SL/TP/леверидж/риск и тот же confidence-override.
         val devCandles = splitDevHoldout(candles, effectiveFraction).first
         val robustness =
             monteCarloAnalyzer.analyze(
                 ticker,
                 devCandles,
+                parameters = holdout.paramsUsed,
                 method = backtestConfig.mcMethod,
+                signalGeneratorOverride = signalGeneratorOverride,
             )
 
         val decision =
@@ -864,6 +866,7 @@ class ApiController(
             "liveAllowed" to (decision.status == DeploymentStatus.LIVE_ALLOWED),
             "researchMode" to decision.researchMode,
             "confirmedForProduction" to decision.confirmedForProduction,
+            "frozenConfidenceThreshold" to backtestConfig.adaptiveConfidenceThreshold,
             "checks" to
                 decision.checks.map { c ->
                     mapOf(

@@ -10,7 +10,10 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.times
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -179,6 +182,62 @@ class MonteCarloAnalyzerTest {
     }
 
     @Test
+    fun `analyzer uses frozen strategy parameters in base and stress runs`() {
+        val engine = mock<BacktestEngine> {}
+        val baseResult = BacktestMetrics.compute("SBER", listOf(capital, BigDecimal("103000")), tradeReturns = listOf(3000.0))
+        val frozen =
+            StrategyParameters(
+                slPercent = 0.02,
+                tpPercent = 0.06,
+                slPoints = null,
+                tpPoints = null,
+                confidenceThreshold = 0.63,
+                leverage = 5.0,
+                riskPerTradePercent = 0.30,
+                futuresMaxContractsPerPosition = 33,
+            )
+        runBlocking {
+            stubSimulateWith(engine, frozen, baseResult)
+        }
+
+        val report =
+            runBlocking {
+                MonteCarloAnalyzer(engine, BacktestConfig()).analyze(
+                    "SBER",
+                    sampleCandles(),
+                    parameters = frozen,
+                    simulations = 50,
+                    seed = 42,
+                )
+            }
+
+        assertEquals(5, report.stress.size)
+        // Каждый стресс-сценарий и базовый прогон обязаны использовать те же frozen-параметры
+        // (леверидж 5x, риск 30%, лимит 33, confidence 0.63), а не config-дефолты.
+        val totalCalls = 1 + report.stress.size
+        runBlocking {
+            verify(engine, times(totalCalls))
+                .simulate(
+                    eq("SBER"),
+                    any(),
+                    eq(capital),
+                    any(),
+                    eq(0.02),
+                    eq(0.06),
+                    any(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    eq(5.0),
+                    anyOrNull(),
+                    eq(0.30),
+                    eq(33),
+                    anyOrNull(),
+                )
+        }
+    }
+
+    @Test
     fun `analyzer runs base bootstrap and all stress scenarios`() {
         val engine = mock<BacktestEngine> {}
         val baseResult = BacktestMetrics.compute("SBER", listOf(capital, BigDecimal("103000")), tradeReturns = listOf(3000.0))
@@ -232,6 +291,32 @@ class MonteCarloAnalyzerTest {
                 anyOrNull(),
                 anyOrNull(),
                 anyOrNull(),
+                anyOrNull(),
+            ),
+        ).thenReturn(result)
+    }
+
+    private suspend fun stubSimulateWith(
+        engine: BacktestEngine,
+        p: StrategyParameters,
+        result: BacktestResult,
+    ) {
+        whenever(
+            engine.simulate(
+                eq("SBER"),
+                any(),
+                eq(capital),
+                any(),
+                eq(p.slPercent),
+                eq(p.tpPercent),
+                any(),
+                any(),
+                anyOrNull(),
+                anyOrNull(),
+                eq(p.leverage),
+                anyOrNull(),
+                eq(p.riskPerTradePercent),
+                eq(p.futuresMaxContractsPerPosition),
                 anyOrNull(),
             ),
         ).thenReturn(result)

@@ -326,6 +326,15 @@ bt:
   live-risk-gates: ${BT_LIVE_RISK_GATES:true}
   monte-carlo-simulations: ${BT_MONTE_CARLO_SIMULATIONS:1000}
   monte-carlo-seed: ${BT_MONTE_CARLO_SEED:42}
+  # Метод Monte Carlo ресемплинга (аудит P1): stationary (по умолчанию) учитывает
+  # serial correlation / volatility clustering; block — жёстче сохраняет
+  # последовательности; iid — классический bootstrap.
+  mc-method: ${BT_MC_METHOD:stationary}
+  mc-avg-block-length: ${BT_MC_AVG_BLOCK_LENGTH:5.0}
+  mc-block-length: ${BT_MC_BLOCK_LENGTH:5}
+  # Доля КОНЦА истории под финальный независимый holdout (аудит P1): walk-forward
+  # выполняется только на данных до holdout-границы, holdout трогается один раз.
+  holdout-fraction: ${BT_HOLDOUT_FRACTION:0.20}
   # LLM-агенты в бэктесте (roadmap 13.8.1): по умолчанию выключены.
   # Включаются профилем `backtest` (application-backtest.yml) или переменной BT_AGENT_ENABLED=true.
   agent:

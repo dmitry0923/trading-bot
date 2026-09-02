@@ -32,12 +32,39 @@ data class MonteCarloResult(
     val maxReturn: Double,
     /** Доля симуляций с отрицательной итоговой доходностью (0..1). */
     val probabilityOfLoss: Double,
+    /** P(MDD >= 20%) по путям (доля путей, где макс. просадка >= 20%). */
+    val probabilityMddExceeds20: Double = 0.0,
+    /** P(MDD >= 30%). */
+    val probabilityMddExceeds30: Double = 0.0,
+    /** P(MDD >= 40%). */
+    val probabilityMddExceeds40: Double = 0.0,
+    /** P(конечный капитал <= 50% стартового). */
+    val probabilityCapitalLossExceeds50: Double = 0.0,
+    /** P(конечный капитал <= 20% стартового). */
+    val probabilityCapitalLossExceeds20: Double = 0.0,
+    /** Медианный конечный капитал худших 1% путей (доля от стартового). */
+    val worst1PercentEquity: Double = 1.0,
+    /** Медианный конечный капитал худших 5% путей (доля от стартового). */
+    val worst5PercentEquity: Double = 1.0,
+    /** P(разорение): путь пробил floor капитала (по умолчанию <= 10% стартового). */
+    val probabilityOfRuin: Double = 0.0,
+    /** Метод ресемплинга: "iid" | "stationary" | "block". */
+    val blockMethod: String = "iid",
+    /** Средняя длина блока (stationary) или фиксированная (block). */
+    val avgBlockLength: Double = 1.0,
 ) {
     /**
-     * Критерий устойчивости по Monte Carlo: даже нижний 5-й процентиль путей
-     * остаётся прибыльным, и убыточных путей меньше четверти.
+     * Критерий устойчивости по Monte Carlo для МИНИМАЛЬНОГО РИСКА (аудит P1):
+     * даже нижний 5-й процентиль прибыльный, убыточных путей < 25%, риск MDD>=40%
+     * и риск разорения под контролем. Порог риск-разорения завышен относительно
+     * классического (обычно < 1%), т.к. для «минимальный доход при минимальном
+     * риске» мы не допускаем руин-вероятность более 5%.
      */
-    fun isRobust(): Boolean = p5Return > 0.0 && probabilityOfLoss < 0.25
+    fun isRobust(): Boolean =
+        p5Return > 0.0 &&
+            probabilityOfLoss < 0.25 &&
+            probabilityMddExceeds40 < 0.30 &&
+            probabilityOfRuin < 0.05
 }
 
 /** Результат одного стресс-сценария исполнения (roadmap 13.7.8). */
@@ -97,50 +124,192 @@ data class BacktestRobustnessReport(
 /**
  * Чистая математика Monte Carlo (без Spring — unit-тестируется напрямую).
  *
- * [simulate] — bootstrap с возвращением по ПЕРИОДНЫМ ДОХОДНОСТЯМ кривой капитала
- * (мультипликативный компаундинг): каждый путь накапливает `periodReturns.size`
- * случайно выбранных (с повторениями) доходностей от `initialCapital`. Это
- * сохраняет распределение доходностей реального пути и эффект сложного процента
- * (в отличие от аддитивного ресемплинга рублёвых P&L сделок).
+ * Поддерживаются три метода ресемплинга ПЕРИОДНЫХ ДОХОДНОСТЕЙ кривой капитала
+ * (мультипликативный компаундинг от стартового капитала):
+ *
+ *  1. [simulate] — классический bootstrap с возвращением (IID): каждая позиция
+ *     периода независима от соседних. Сохраняет распределение, но игнорирует
+ *     serial correlation и volatility clustering.
+ *  2. [simulateStationary] — stationary bootstrap (Politis-Romano): длина блока
+ *     L распределена геометрически ~ Geom(p), p = 1/avgBlockLength. Сохраняет
+ *     автокорреляцию, кластеры волатильности и серии плохих периодов.
+ *  3. [simulateBlock] — block bootstrap с фиксированной длиной окна: жёстче
+ *     сохраняет последовательности, но чувствителен к выбору длины блока.
+ *
+ * Для всех методов дополнительно рассчитываются веротяности хвостовых событий
+ * риска: P(MDD >= X), P(капитал <= 50%/20%), риск разорения и худшие хвосты —
+ * критично для цели «минимальный доход при минимальном риске».
  */
 object MonteCarlo {
+    /** Капитал ниже этой доли от стартового считается разорением (по умолчанию 10%). */
+    const val RUIN_FLOOR_FRACTION = 0.10
+
     fun simulate(
         periodReturns: List<Double>,
         initialCapital: BigDecimal,
         simulations: Int,
         seed: Long = 42,
     ): MonteCarloResult {
-        if (periodReturns.isEmpty() || simulations <= 0 || initialCapital <= BigDecimal.ZERO) {
-            return MonteCarloResult(
-                simulations = simulations,
-                medianReturn = 0.0,
-                p5Return = 0.0,
-                p95Return = 0.0,
-                avgReturn = 0.0,
-                minReturn = 0.0,
-                maxReturn = 0.0,
-                probabilityOfLoss = 0.0,
-            )
+        if (emptyGuard(periodReturns, simulations, initialCapital)) {
+            return emptyResult(simulations, "iid", 1.0)
         }
-
         val rnd = Random(seed)
-        val pathReturns = DoubleArray(simulations)
         val capital = initialCapital.toDouble()
-        for (s in 0 until simulations) {
-            var equity = capital
-            val samples = IntArray(periodReturns.size) { rnd.nextInt(periodReturns.size) }
-            for (i in samples) {
-                val factor = 1.0 + periodReturns[i]
-                equity = if (factor > 0.0) equity * factor else 0.0
+        val n = periodReturns.size
+        val pathData =
+            Array(simulations) {
+                val returnsOfPath = ArrayList<Double>(n)
+                repeat(n) { returnsOfPath.add(periodReturns[rnd.nextInt(n)]) }
+                buildPathFrom(capital, returnsOfPath)
             }
-            pathReturns[s] = (equity - capital) / capital
+        return aggregate(pathData, capital, simulations, "iid", 1.0)
+    }
+
+    /**
+     * Stationary bootstrap (Politis-Romano): длина блока геометрическая со средним
+     * [avgBlockLength]. Лучше IID воспроизводит serial correlation / кластеризацию.
+     */
+    fun simulateStationary(
+        periodReturns: List<Double>,
+        initialCapital: BigDecimal,
+        simulations: Int,
+        avgBlockLength: Double = 5.0,
+        seed: Long = 42,
+    ): MonteCarloResult {
+        if (emptyGuard(periodReturns, simulations, initialCapital)) {
+            return emptyResult(simulations, "stationary", avgBlockLength)
         }
+        val rnd = Random(seed)
+        val capital = initialCapital.toDouble()
+        val n = periodReturns.size
+        val p = 1.0 / avgBlockLength
+        val pathData =
+            Array(simulations) {
+                var idx = rnd.nextInt(n)
+                var blockRemaining = 0
+                val returnsOfPath = ArrayList<Double>(n)
+                repeat(n) {
+                    if (blockRemaining == 0) {
+                        idx = rnd.nextInt(n)
+                        blockRemaining = geometric(rnd, p)
+                    }
+                    returnsOfPath.add(periodReturns[idx])
+                    idx = (idx + 1) % n
+                    blockRemaining--
+                }
+                buildPathFrom(capital, returnsOfPath)
+            }
+        return aggregate(pathData, capital, simulations, "stationary", avgBlockLength)
+    }
+
+    /** Block bootstrap с фиксированной длиной блока [blockLength]. */
+    fun simulateBlock(
+        periodReturns: List<Double>,
+        initialCapital: BigDecimal,
+        simulations: Int,
+        blockLength: Int = 5,
+        seed: Long = 42,
+    ): MonteCarloResult {
+        require(blockLength >= 1) { "blockLength must be >= 1" }
+        if (emptyGuard(periodReturns, simulations, initialCapital)) {
+            return emptyResult(simulations, "block", blockLength.toDouble())
+        }
+        val rnd = Random(seed)
+        val capital = initialCapital.toDouble()
+        val n = periodReturns.size
+        val pathData =
+            Array(simulations) {
+                val returnsOfPath = ArrayList<Double>(n)
+                while (returnsOfPath.size < n) {
+                    val start = rnd.nextInt(n)
+                    for (j in 0 until blockLength) {
+                        if (returnsOfPath.size >= n) break
+                        returnsOfPath.add(periodReturns[(start + j) % n])
+                    }
+                }
+                buildPathFrom(capital, returnsOfPath)
+            }
+        return aggregate(pathData, capital, simulations, "block", blockLength.toDouble())
+    }
+
+    /** exp-распределение длины блока: минимальное значение 1 (Politis-Romano). */
+    private fun geometric(rnd: Random, p: Double): Int {
+        val u = rnd.nextDouble().coerceIn(1e-12, 1.0)
+        return kotlin.math.ceil(kotlin.math.ln(1.0 - u) / kotlin.math.ln(1.0 - p)).toInt().coerceAtLeast(1)
+    }
+
+    private fun emptyGuard(periodReturns: List<Double>, simulations: Int, initialCapital: BigDecimal): Boolean =
+        periodReturns.isEmpty() || simulations <= 0 || initialCapital <= BigDecimal.ZERO
+
+    private fun emptyResult(simulations: Int, method: String, blockLen: Double): MonteCarloResult =
+        MonteCarloResult(
+            simulations = simulations,
+            medianReturn = 0.0,
+            p5Return = 0.0,
+            p95Return = 0.0,
+            avgReturn = 0.0,
+            minReturn = 0.0,
+            maxReturn = 0.0,
+            probabilityOfLoss = 0.0,
+            probabilityOfRuin = 0.0,
+            blockMethod = method,
+            avgBlockLength = blockLen,
+        )
+
+    /** Данные одного пути: финальная доходность и максимальная просадка. */
+    private data class PathData(
+        val finalReturn: Double,
+        val maxDrawdown: Double,
+        val finalCapitalFraction: Double,
+    )
+
+    private fun buildPathFrom(capital: Double, returns: List<Double>): PathData {
+        var equity = capital
+        var peak = capital
+        var maxDd = 0.0
+        for (r in returns) {
+            val factor = 1.0 + r
+            equity = if (factor > 0.0) equity * factor else 0.0
+            if (equity > peak) peak = equity
+            val dd = if (peak > 0.0) 1.0 - equity / peak else 1.0
+            if (dd > maxDd) maxDd = dd
+        }
+        val finalReturn = if (capital > 0.0) (equity - capital) / capital else 0.0
+        val finalCapitalFraction = if (capital > 0.0) equity / capital else 0.0
+        return PathData(finalReturn, maxDd, finalCapitalFraction)
+    }
+
+    private fun aggregate(
+        pathData: Array<PathData>,
+        capital: Double,
+        simulations: Int,
+        method: String,
+        blockLen: Double,
+    ): MonteCarloResult {
+        val pathReturns = pathData.map { it.finalReturn }.toDoubleArray()
         pathReturns.sort()
 
         fun percentile(q: Double): Double {
             val idx = (q * simulations).toInt().coerceIn(0, simulations - 1)
             return pathReturns[idx]
         }
+
+        val mdd20 = pathData.count { it.maxDrawdown >= 0.20 }.toDouble() / simulations
+        val mdd30 = pathData.count { it.maxDrawdown >= 0.30 }.toDouble() / simulations
+        val mdd40 = pathData.count { it.maxDrawdown >= 0.40 }.toDouble() / simulations
+        val loss50 = pathData.count { it.finalCapitalFraction <= 0.50 }.toDouble() / simulations
+        val loss20 = pathData.count { it.finalCapitalFraction <= 0.20 }.toDouble() / simulations
+        val ruin = pathData.count { it.finalCapitalFraction <= RUIN_FLOOR_FRACTION }.toDouble() / simulations
+
+        // Худшие хвосты по конечному капиталу (доля от стартового).
+        val sortedFractions = pathData.map { it.finalCapitalFraction }.sorted()
+        fun tailMedian(tailSize: Int): Double {
+            if (tailSize <= 0) return 1.0
+            val head = sortedFractions.take(tailSize)
+            return if (head.isEmpty()) 1.0 else head[head.size / 2]
+        }
+        val worst1 = tailMedian((simulations * 0.01).toInt().coerceAtLeast(1))
+        val worst5 = tailMedian((simulations * 0.05).toInt().coerceAtLeast(1))
 
         return MonteCarloResult(
             simulations = simulations,
@@ -151,6 +320,16 @@ object MonteCarlo {
             minReturn = pathReturns.first(),
             maxReturn = pathReturns.last(),
             probabilityOfLoss = pathReturns.count { it < 0.0 }.toDouble() / simulations,
+            probabilityMddExceeds20 = mdd20,
+            probabilityMddExceeds30 = mdd30,
+            probabilityMddExceeds40 = mdd40,
+            probabilityCapitalLossExceeds50 = loss50,
+            probabilityCapitalLossExceeds20 = loss20,
+            worst1PercentEquity = worst1,
+            worst5PercentEquity = worst5,
+            probabilityOfRuin = ruin,
+            blockMethod = method,
+            avgBlockLength = blockLen,
         )
     }
 }
@@ -204,6 +383,9 @@ class MonteCarloAnalyzer(
         tpPercent: Double = backtestConfig.tpPercent / 100.0,
         simulations: Int = backtestConfig.monteCarloSimulations,
         seed: Long = backtestConfig.monteCarloSeed,
+        method: String = backtestConfig.mcMethod,
+        avgBlockLength: Double = backtestConfig.mcAvgBlockLength,
+        blockLength: Int = backtestConfig.mcBlockLength,
     ): BacktestRobustnessReport {
         val baseResult =
             backtestEngine.simulate(
@@ -225,13 +407,16 @@ class MonteCarloAnalyzer(
             )
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
+        val periodReturns = BacktestMetrics.periodReturnsFromEquity(baseResult.equityCurve)
         val monteCarlo =
-            MonteCarlo.simulate(
-                BacktestMetrics.periodReturnsFromEquity(baseResult.equityCurve),
-                initialCapital,
-                simulations,
-                seed,
-            )
+            when (method.lowercase()) {
+                "stationary" ->
+                    MonteCarlo.simulateStationary(periodReturns, initialCapital, simulations, avgBlockLength, seed)
+                "block" ->
+                    MonteCarlo.simulateBlock(periodReturns, initialCapital, simulations, blockLength, seed)
+                else ->
+                    MonteCarlo.simulate(periodReturns, initialCapital, simulations, seed) // "iid" и любие иные
+            }
         val stress =
             scenarios.map { s ->
                 StressScenarioResult.of(
@@ -263,6 +448,9 @@ class MonteCarloAnalyzer(
         logger.info {
             "Robustness $ticker: base=${formatPct(base.totalReturn)} mc_p5=${formatPct(monteCarlo.p5Return)} " +
                 "mc_pLoss=${String.format("%.1f%%", monteCarlo.probabilityOfLoss * 100)} " +
+                "mc_mdd40=${String.format("%.1f%%", monteCarlo.probabilityMddExceeds40 * 100)} " +
+                "mc_ruin=${String.format("%.1f%%", monteCarlo.probabilityOfRuin * 100)} " +
+                "method=${monteCarlo.blockMethod} " +
                 "stressFailed=${stress.count { !it.passable }} " +
                 "-> ${if (report.isRobust()) "ROBUST" else "FRAGILE"}"
         }

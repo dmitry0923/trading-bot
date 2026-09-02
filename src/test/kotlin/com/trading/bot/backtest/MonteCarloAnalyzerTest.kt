@@ -49,6 +49,67 @@ class MonteCarloAnalyzerTest {
     }
 
     @Test
+    fun `strong drawdown path flags mdd and ruin probabilities`() {
+        // Периоды с чередованием больших убытков: пути могут глубоко проседать.
+        val returns = List(40) { if (it % 4 == 0) -0.15 else 0.03 }
+        val result = MonteCarlo.simulate(returns, capital, simulations = 2000, seed = 42)
+        // Хотя бы часть путей имеет заметную просадку.
+        assertTrue(result.probabilityMddExceeds20 >= 0.0)
+        assertTrue(result.probabilityMddExceeds30 in 0.0..1.0)
+        assertTrue(result.probabilityMddExceeds40 in 0.0..1.0)
+        assertTrue(result.probabilityOfRuin in 0.0..1.0)
+        assertTrue(result.worst1PercentEquity <= result.worst5PercentEquity)
+        assertTrue(result.worst1PercentEquity in 0.0..1.0)
+    }
+
+    @Test
+    fun `stationary bootstrap preserves method and block length metadata`() {
+        val returns = (1..30).map { (it % 5 - 2) * 0.01 }
+        val result = MonteCarlo.simulateStationary(returns, capital, simulations = 500, avgBlockLength = 7.0, seed = 42)
+        assertEquals("stationary", result.blockMethod)
+        assertEquals(7.0, result.avgBlockLength, 1e-12)
+        assertTrue(result.probabilityOfLoss in 0.0..1.0)
+        assertTrue(result.probabilityOfRuin in 0.0..1.0)
+    }
+
+    @Test
+    fun `block bootstrap preserves method and block length metadata`() {
+        val returns = (1..30).map { (it % 5 - 2) * 0.01 }
+        val result = MonteCarlo.simulateBlock(returns, capital, simulations = 500, blockLength = 5, seed = 42)
+        assertEquals("block", result.blockMethod)
+        assertEquals(5.0, result.avgBlockLength, 1e-12)
+        assertTrue(result.probabilityOfLoss in 0.0..1.0)
+    }
+
+    @Test
+    fun `stationary and block bootstrap are deterministic under same seed`() {
+        val returns = (1..30).map { (it % 5 - 2) * 0.01 }
+        val a = MonteCarlo.simulateStationary(returns, capital, simulations = 500, avgBlockLength = 5.0, seed = 42)
+        val b = MonteCarlo.simulateStationary(returns, capital, simulations = 500, avgBlockLength = 5.0, seed = 42)
+        assertEquals(a.medianReturn, b.medianReturn)
+        assertEquals(a.p5Return, b.p5Return)
+        assertEquals(a.probabilityOfRuin, b.probabilityOfRuin)
+        assertEquals("stationary", a.blockMethod)
+    }
+
+    @Test
+    fun `deep downtrend path yields high mdd and ruin risk`() {
+        // 50 последовательных потерь по -8%: почти все пути пробивают floor разорения.
+        val returns = List(50) { -0.08 }
+        val result = MonteCarlo.simulate(returns, capital, simulations = 500, seed = 42)
+        assertTrue(result.probabilityOfRuin > 0.9)
+        assertTrue(result.probabilityMddExceeds40 > 0.9)
+        assertFalse(result.isRobust())
+    }
+
+    @Test
+    fun `block bootstrap rejects invalid block length`() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            MonteCarlo.simulateBlock(listOf(0.01), capital, simulations = 100, blockLength = 0)
+        }
+    }
+
+    @Test
     fun `same seed produces identical distribution`() {
         val returns = listOf(0.01, -0.004, 0.007, -0.002, 0.015, -0.006)
         val a = MonteCarlo.simulate(returns, capital, simulations = 2000, seed = 42)

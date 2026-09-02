@@ -3,6 +3,10 @@ package com.trading.bot.controller
 import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestValidator
+import com.trading.bot.backtest.DeploymentCriteria
+import com.trading.bot.backtest.DeploymentGate
+import com.trading.bot.backtest.DeploymentStatus
+import com.trading.bot.backtest.FinalHoldoutValidator
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.backtest.LiveStrategyBacktestSignalGenerator
 import com.trading.bot.backtest.MonteCarloAnalyzer
@@ -105,6 +109,7 @@ class ApiController(
     private val backtestEngine: BacktestEngine,
     private val backtestValidator: BacktestValidator,
     private val monteCarloAnalyzer: MonteCarloAnalyzer,
+    private val finalHoldoutValidator: FinalHoldoutValidator,
     private val backtestResultRepository: BacktestResultRepository,
     private val panelBacktestService: PanelBacktestService,
     private val portfolioBacktestGuard: PortfolioBacktestGuard,
@@ -626,6 +631,9 @@ class ApiController(
         @RequestParam(required = false) timeframe: String?,
         @RequestParam(required = false) simulations: Int?,
         @RequestParam(required = false) seed: Long?,
+        @RequestParam(required = false) method: String?,
+        @RequestParam(required = false) avgBlockLength: Double?,
+        @RequestParam(required = false) blockLength: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -648,6 +656,9 @@ class ApiController(
                 candles,
                 simulations = effectiveSimulations,
                 seed = effectiveSeed,
+                method = method ?: backtestConfig.mcMethod,
+                avgBlockLength = avgBlockLength ?: backtestConfig.mcAvgBlockLength,
+                blockLength = blockLength ?: backtestConfig.mcBlockLength,
             )
         return mapOf(
             "ticker" to ticker,
@@ -664,9 +675,195 @@ class ApiController(
                     "minReturn" to report.monteCarlo.minReturn,
                     "maxReturn" to report.monteCarlo.maxReturn,
                     "probabilityOfLoss" to report.monteCarlo.probabilityOfLoss,
+                    "probabilityMddExceeds20" to report.monteCarlo.probabilityMddExceeds20,
+                    "probabilityMddExceeds30" to report.monteCarlo.probabilityMddExceeds30,
+                    "probabilityMddExceeds40" to report.monteCarlo.probabilityMddExceeds40,
+                    "probabilityCapitalLossExceeds50" to report.monteCarlo.probabilityCapitalLossExceeds50,
+                    "probabilityCapitalLossExceeds20" to report.monteCarlo.probabilityCapitalLossExceeds20,
+                    "worst1PercentEquity" to report.monteCarlo.worst1PercentEquity,
+                    "worst5PercentEquity" to report.monteCarlo.worst5PercentEquity,
+                    "probabilityOfRuin" to report.monteCarlo.probabilityOfRuin,
+                    "blockMethod" to report.monteCarlo.blockMethod,
+                    "avgBlockLength" to report.monteCarlo.avgBlockLength,
                     "mcRobust" to report.monteCarlo.isRobust(),
                 ),
             "stress" to report.stress.map { stressToMap(it) },
+            "timestamp" to LocalDateTime.now().toString(),
+        )
+    }
+
+    /**
+     * Финальный независимый holdout (аудит P1): последние [holdoutFraction]%
+     * истории резервируются и НЕ участвуют в настройке. Walk-forward выполняется
+     * только на данных до holdout-границы, затем параметры фиксируются и holdout
+     * трогается ОДИН раз. Закрывает OOS-leakage от просмотра OOS при выборе
+     * конфигурации (например confidence).
+     */
+    @GetMapping("/backtest/{ticker}/holdout")
+    suspend fun holdoutValidation(
+        @PathVariable ticker: String,
+        @RequestParam(required = false) days: Int?,
+        @RequestParam(defaultValue = "false") loadHistory: Boolean,
+        @RequestParam(required = false) timeframe: String?,
+        @RequestParam(required = false) holdoutFraction: Double?,
+        @RequestParam(defaultValue = "4") folds: Int,
+        @RequestParam(required = false) leverage: Double?,
+        @RequestParam(required = false) riskPerTradePercent: Double?,
+        @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
+        @RequestParam(required = false) adaptiveConfidenceThreshold: Double?,
+    ): Map<String, Any> {
+        meterRegistry
+            .counter(
+                "api.backtest.holdout",
+                Tags
+                    .of("ticker", ticker),
+            ).increment()
+        val effectiveDays = days ?: backtestConfig.days
+        val effectiveTimeframe = timeframe ?: backtestConfig.timeframe
+        val effectiveFraction = holdoutFraction ?: backtestConfig.holdoutFraction
+        if (loadHistory) {
+            historicalDataLoader.loadAndSave(ticker, effectiveDays)
+        }
+        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
+        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val signalGeneratorOverride =
+            if (adaptiveConfidenceThreshold != null) {
+                LiveStrategyBacktestSignalGenerator(
+                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+                    adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
+                )
+            } else {
+                null
+            }
+        val result =
+            finalHoldoutValidator.validate(
+                ticker,
+                candles,
+                holdoutFraction = effectiveFraction,
+                folds = folds,
+                leverage = leverage ?: 1.0,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                signalGeneratorOverride = signalGeneratorOverride,
+            )
+        return mapOf(
+            "ticker" to ticker,
+            "timeframe" to effectiveTimeframe,
+            "holdoutFraction" to effectiveFraction,
+            "passed" to result.passed,
+            "wfaPassable" to result.walkForward.isPassable(),
+            "holdoutPassable" to result.holdout.isPassable(),
+            "holdoutTrades" to result.holdout.totalTrades,
+            "holdoutReturn" to result.holdout.totalReturn,
+            "holdoutSharpe" to result.holdout.sharpeRatio,
+            "holdoutMaxDrawdown" to result.holdout.maxDrawdown,
+            "holdoutProfitFactor" to result.holdout.profitFactor,
+            "paramsUsed" to
+                mapOf(
+                    "slPercent" to result.paramsUsed.slPercent,
+                    "tpPercent" to result.paramsUsed.tpPercent,
+                    "slPoints" to result.paramsUsed.slPoints,
+                    "tpPoints" to result.paramsUsed.tpPoints,
+                ),
+            "wfaConsistency" to result.walkForward.consistency,
+            "wfaOosTrades" to result.walkForward.aggregateOutOfSample.totalTrades,
+            "timestamp" to LocalDateTime.now().toString(),
+        )
+    }
+
+    /**
+     * Единый DeploymentGate (аудит P1): консолидирует backtest / walk-forward /
+     * holdout / Monte Carlo + stress в один статус допуска. Только при
+     * [DeploymentStatus.LIVE_ALLOWED] можно торговать реальными деньгами.
+     * Исследовательские прогоны (researchMode=true) максимум дают PAPER_ALLOWED.
+     */
+    @GetMapping("/backtest/{ticker}/deployment-gate")
+    suspend fun deploymentGate(
+        @PathVariable ticker: String,
+        @RequestParam(required = false) days: Int?,
+        @RequestParam(defaultValue = "false") loadHistory: Boolean,
+        @RequestParam(required = false) timeframe: String?,
+        @RequestParam(defaultValue = "4") folds: Int,
+        @RequestParam(defaultValue = "false") researchMode: Boolean,
+        @RequestParam(defaultValue = "true") confirmedForProduction: Boolean,
+        @RequestParam(required = false) leverage: Double?,
+        @RequestParam(required = false) riskPerTradePercent: Double?,
+        @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
+        @RequestParam(required = false) adaptiveConfidenceThreshold: Double?,
+        @RequestParam(required = false) holdoutFraction: Double?,
+    ): Map<String, Any> {
+        meterRegistry
+            .counter(
+                "api.backtest.deployment.gate",
+                Tags
+                    .of("ticker", ticker),
+            ).increment()
+        val effectiveDays = days ?: backtestConfig.days
+        val effectiveTimeframe = timeframe ?: backtestConfig.timeframe
+        val effectiveFraction = holdoutFraction ?: backtestConfig.holdoutFraction
+        if (loadHistory) {
+            historicalDataLoader.loadAndSave(ticker, effectiveDays)
+        }
+        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
+        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val signalGeneratorOverride =
+            if (adaptiveConfidenceThreshold != null) {
+                LiveStrategyBacktestSignalGenerator(
+                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+                    adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
+                )
+            } else {
+                null
+            }
+
+        val backtestResult = backtestEngine.run(ticker, effectiveDays)
+        val validation = backtestValidator.validate(ticker, candles, folds = folds, leverage = leverage ?: 1.0, riskPerTradePercent = riskPerTradePercent, futuresMaxContractsPerPosition = futuresMaxContractsPerPosition, signalGeneratorOverride = signalGeneratorOverride)
+        val holdout =
+            finalHoldoutValidator.validate(
+                ticker,
+                candles,
+                holdoutFraction = effectiveFraction,
+                folds = folds,
+                leverage = leverage ?: 1.0,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                signalGeneratorOverride = signalGeneratorOverride,
+            )
+        val robustness =
+            monteCarloAnalyzer.analyze(
+                ticker,
+                candles,
+                method = backtestConfig.mcMethod,
+            )
+
+        val decision =
+            DeploymentGate.decide(
+                DeploymentCriteria(
+                    backtest = backtestResult,
+                    validation = validation,
+                    holdout = holdout,
+                    robustness = robustness,
+                    researchMode = researchMode,
+                    confirmedForProduction = confirmedForProduction,
+                ),
+            )
+
+        return mapOf(
+            "ticker" to ticker,
+            "timeframe" to effectiveTimeframe,
+            "days" to effectiveDays,
+            "status" to decision.status.name,
+            "liveAllowed" to (decision.status == DeploymentStatus.LIVE_ALLOWED),
+            "researchMode" to decision.researchMode,
+            "confirmedForProduction" to decision.confirmedForProduction,
+            "checks" to decision.checks.map { c ->
+                mapOf(
+                    "key" to c.key,
+                    "label" to c.label,
+                    "passed" to c.passed,
+                    "detail" to c.detail,
+                )
+            },
             "timestamp" to LocalDateTime.now().toString(),
         )
     }

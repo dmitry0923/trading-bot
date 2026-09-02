@@ -13,6 +13,7 @@ import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
+import com.trading.bot.backtest.StrategyParameters
 import com.trading.bot.backtest.splitDevHoldout
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
@@ -42,6 +43,7 @@ import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.ClearingService
 import com.trading.bot.service.DashboardService
 import com.trading.bot.service.DashboardSseService
+import com.trading.bot.service.DeploymentApprovalService
 import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.EmergencyStopService
 import com.trading.bot.service.EmergencyStopSource
@@ -133,6 +135,7 @@ class ApiController(
     private val ragErrorAnalyzer: RagErrorAnalyzer,
     private val traceQueryService: TraceQueryService,
     private val meterRegistry: MeterRegistry,
+    private val deploymentApprovalService: DeploymentApprovalService,
 ) {
     private val logger =
         io.github.oshai.kotlinlogging.KotlinLogging
@@ -858,12 +861,27 @@ class ApiController(
                 ),
             )
 
+        // Execution interlock: approval персистится ТОЛЬКО из DeploymentGate при
+        // LIVE_ALLOWED. Любой другой статус отзывает одобрение (fail-closed).
+        if (decision.status == DeploymentStatus.LIVE_ALLOWED) {
+            deploymentApprovalService.approve(
+                ticker,
+                "LIVE_ALLOWED",
+                backtestConfig.adaptiveConfidenceThreshold,
+                paramsHashOf(holdout.paramsUsed),
+            )
+        } else {
+            deploymentApprovalService.revoke(ticker)
+        }
+        val liveApproval = deploymentApprovalService.isLiveAllowed(ticker)
+
         return mapOf(
             "ticker" to ticker,
             "timeframe" to effectiveTimeframe,
             "days" to effectiveDays,
             "status" to decision.status.name,
             "liveAllowed" to (decision.status == DeploymentStatus.LIVE_ALLOWED),
+            "liveApprovalActive" to liveApproval,
             "researchMode" to decision.researchMode,
             "confirmedForProduction" to decision.confirmedForProduction,
             "frozenConfidenceThreshold" to backtestConfig.adaptiveConfidenceThreshold,
@@ -895,6 +913,21 @@ class ApiController(
             "totalTrades" to scenario.totalTrades,
             "passable" to scenario.passable,
         )
+
+    private fun paramsHashOf(p: StrategyParameters): String {
+        val content =
+            listOf(
+                p.slPercent,
+                p.tpPercent,
+                p.slPoints,
+                p.tpPoints,
+                p.confidenceThreshold,
+                p.leverage,
+                p.riskPerTradePercent,
+                p.futuresMaxContractsPerPosition,
+            ).joinToString("|")
+        return content.hashCode().toUInt().toString(16)
+    }
 
     private suspend fun persistValidationResult(
         ticker: String,

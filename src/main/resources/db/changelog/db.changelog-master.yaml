@@ -61,3 +61,5 @@ databaseChangeLog:
       file: db/changelog/changes/030-protection-cumulative-fill-qty.sql
   - include:
       file: db/changelog/changes/031-close-cancel-pending.sql
+  - include:
+      file: db/changelog/changes/032-deployment-approval.sql

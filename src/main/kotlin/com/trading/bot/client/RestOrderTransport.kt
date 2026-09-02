@@ -2,6 +2,7 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.service.DeploymentApprovalService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
@@ -52,12 +53,27 @@ class RestOrderTransport(
     private val retryRegistry: RetryRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
+    private val deploymentApprovalService: DeploymentApprovalService? = null,
 ) : OrderTransport {
     private val logger = KotlinLogging.logger {}
 
     private val webClient = WebClient.create()
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
+
+    /**
+     * Execution interlock (P1): в LIVE-режиме реальный ордер уходит на биржу ТОЛЬКО
+     * для тикера, одобренного DeploymentGate (per-ticker approval). Неодобренный тикер
+     * получает определённый отказ (null) — outbox не ретраит. В SIMULATION не влияет.
+     */
+    private fun denyIfNotLiveApproved(ticker: String): Boolean {
+        if (!isLive) return false
+        val approval = deploymentApprovalService ?: return false
+        if (approval.isLiveAllowed(ticker)) return false
+        logger.error { "LIVE order BLOCKED for $ticker — not approved for live trading (execution interlock)" }
+        meterRegistry.counter("alor.order.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
+        return true
+    }
 
     override suspend fun placeLimit(
         ticker: String,
@@ -68,6 +84,7 @@ class RestOrderTransport(
         portfolio: String,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
+        if (denyIfNotLiveApproved(ticker)) return null
         val start = System.currentTimeMillis()
         return try {
             val body =
@@ -140,6 +157,7 @@ class RestOrderTransport(
         portfolio: String,
     ): String? {
         if (!isLive) return "sim-$type-$ticker-$idempotencyKey"
+        if (denyIfNotLiveApproved(ticker)) return null
         val start = System.currentTimeMillis()
         return try {
             val body =

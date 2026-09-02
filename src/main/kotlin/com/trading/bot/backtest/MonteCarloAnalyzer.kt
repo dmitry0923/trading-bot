@@ -269,11 +269,12 @@ object MonteCarlo {
             avgBlockLength = blockLen,
         )
 
-    /** Данные одного пути: финальная доходность и максимальная просадка. */
+    /** Данные одного пути: финальная доходность, макс. просадка и МИНИМАЛЬНЫЙ капитал за путь. */
     private data class PathData(
         val finalReturn: Double,
         val maxDrawdown: Double,
         val finalCapitalFraction: Double,
+        val minCapitalFraction: Double,
     )
 
     private fun buildPathFrom(
@@ -283,16 +284,19 @@ object MonteCarlo {
         var equity = capital
         var peak = capital
         var maxDd = 0.0
+        var minEquity = capital
         for (r in returns) {
             val factor = 1.0 + r
             equity = if (factor > 0.0) equity * factor else 0.0
+            if (equity < minEquity) minEquity = equity
             if (equity > peak) peak = equity
             val dd = if (peak > 0.0) 1.0 - equity / peak else 1.0
             if (dd > maxDd) maxDd = dd
         }
         val finalReturn = if (capital > 0.0) (equity - capital) / capital else 0.0
         val finalCapitalFraction = if (capital > 0.0) equity / capital else 0.0
-        return PathData(finalReturn, maxDd, finalCapitalFraction)
+        val minCapitalFraction = if (capital > 0.0) minEquity / capital else 0.0
+        return PathData(finalReturn, maxDd, finalCapitalFraction, minCapitalFraction)
     }
 
     private fun aggregate(
@@ -315,7 +319,9 @@ object MonteCarlo {
         val mdd40 = pathData.count { it.maxDrawdown >= 0.40 }.toDouble() / simulations
         val loss50 = pathData.count { it.finalCapitalFraction <= 0.50 }.toDouble() / simulations
         val loss20 = pathData.count { it.finalCapitalFraction <= 0.20 }.toDouble() / simulations
-        val ruin = pathData.count { it.finalCapitalFraction <= RUIN_FLOOR_FRACTION }.toDouble() / simulations
+        // Разорение = капитал достиг RUIN_FLOOR_FRACTION В ЛЮБОЙ ТОЧКЕ пути (не только в конце):
+        // 100% -> 8% -> 90% считается разорением, т.к. в процессе капитал падал ниже 10%.
+        val ruin = pathData.count { it.minCapitalFraction <= RUIN_FLOOR_FRACTION }.toDouble() / simulations
 
         // Худшие хвосты по конечному капиталу (доля от стартового).
         val sortedFractions = pathData.map { it.finalCapitalFraction }.sorted()

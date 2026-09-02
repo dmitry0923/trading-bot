@@ -2,13 +2,17 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.service.DeploymentApprovalService
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry
 import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 
@@ -53,4 +57,37 @@ class RestOrderTransportTest {
             val result = transport.cancel("ord-1", "idem-3", "P1")
             assertEquals(CancelResult.CONFIRMED, result)
         }
+
+    @Test
+    fun `live placeLimit is blocked for unapproved ticker`() =
+        runBlocking {
+            val approval = mock<DeploymentApprovalService>()
+            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            val live = liveTransport(approval)
+            assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+        }
+
+    @Test
+    fun `live placeConditional is blocked for unapproved ticker`() =
+        runBlocking {
+            val approval = mock<DeploymentApprovalService>()
+            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            val live = liveTransport(approval)
+            assertNull(live.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
+        }
+
+    private fun liveTransport(approval: DeploymentApprovalService): RestOrderTransport {
+        val liveConfig = TradingConfig().apply { mode = "LIVE" }
+        return RestOrderTransport(
+            liveConfig,
+            alorConfig,
+            jacksonObjectMapper(),
+            SimpleMeterRegistry(),
+            AlorTokenProvider(alorConfig, jacksonObjectMapper()),
+            RetryRegistry.ofDefaults(),
+            RateLimiterRegistry.ofDefaults(),
+            CircuitBreakerRegistry.ofDefaults(),
+            approval,
+        )
+    }
 }

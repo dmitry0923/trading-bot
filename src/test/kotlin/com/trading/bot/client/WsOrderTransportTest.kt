@@ -2,6 +2,7 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.service.DeploymentApprovalService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,8 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import java.math.BigDecimal
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -206,5 +209,41 @@ class WsOrderTransportTest {
             assertFailsWith<OrderDeliveryUncertainException> {
                 place.await()
             }
+        }
+
+    @Test
+    fun `placeLimit is blocked for unapproved ticker in live`() =
+        runBlocking {
+            val approval = mock<DeploymentApprovalService>()
+            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            val blocked =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    fakeFactory,
+                    scope,
+                    approval,
+                )
+            assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
+        }
+
+    @Test
+    fun `placeConditional is blocked for unapproved ticker in live`() =
+        runBlocking {
+            val approval = mock<DeploymentApprovalService>()
+            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            val blocked =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    fakeFactory,
+                    scope,
+                    approval,
+                )
+            assertNull(blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-2") })
         }
 }

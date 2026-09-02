@@ -106,6 +106,18 @@ class MonteCarloAnalyzerTest {
     }
 
     @Test
+    fun `ruin is path-based - mid dip below floor counts even if it recovers by end`() {
+        // Каждый путь разорения(-0.95) -> +19x: середина пути падает до 5% (floor пробит),
+        // но к концу капитал восстанавливается до 100%. finalCapitalFraction >= 0.5 всегда,
+        // а minCapitalFraction = 0.05 у части путей -> только path-based ruin зафиксирует разорение.
+        val result = MonteCarlo.simulateBlock(listOf(-0.95, 19.0), capital, simulations = 500, blockLength = 2, seed = 42)
+        // По конечному капиталу разорения НЕТ (все пути заканчивают >= 100%)
+        assertEquals(0.0, result.probabilityCapitalLossExceeds20, 1e-12)
+        // Но по минимальному капиталу пути разорение есть
+        assertTrue(result.probabilityOfRuin > 0.0)
+    }
+
+    @Test
     fun `block bootstrap rejects invalid block length`() {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
             MonteCarlo.simulateBlock(listOf(0.01), capital, simulations = 100, blockLength = 0)

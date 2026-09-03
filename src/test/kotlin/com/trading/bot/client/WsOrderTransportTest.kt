@@ -3,10 +3,7 @@ package com.trading.bot.client
 import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
-import com.trading.bot.repository.DeploymentApprovalRepository
-import com.trading.bot.service.DeploymentApprovalService
-import com.trading.bot.service.FrozenStrategyStore
-import com.trading.bot.service.LiveStrategyFingerprintProvider
+import com.trading.bot.service.LiveFrozenStrategyResolver
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,43 +84,33 @@ class WsOrderTransportTest {
                 SimpleMeterRegistry(),
                 fakeFactory,
                 scope,
-                approvedService(),
-                fingerprintProvider(),
-                frozenStrategyStore(),
+                resolver(frozenFor("SBER", "live-v2")),
             )
     }
 
-    private fun approvedService(): DeploymentApprovalService {
-        val approval = mock<DeploymentApprovalService>()
-        whenever(approval.isLiveAllowed(any(), any())).thenReturn(true)
-        return approval
+    private fun resolver(frozen: FrozenStrategy? = null): LiveFrozenStrategyResolver {
+        val r = mock<LiveFrozenStrategyResolver>()
+        whenever(r.resolveActive(any())).thenReturn(frozen)
+        return r
     }
 
-    private fun fingerprintProvider(): LiveStrategyFingerprintProvider {
-        val fp = mock<LiveStrategyFingerprintProvider>()
-        whenever(fp.fingerprint(any())).thenReturn("fp")
-        return fp
-    }
-
-    private fun frozenStrategyStore(): FrozenStrategyStore {
-        val store = mock<FrozenStrategyStore>()
-        whenever(store.current(any())).thenReturn(
-            FrozenStrategy(
-                ticker = "SBER",
-                strategyVersion = "live-v2",
-                gitCommitSha = null,
-                slPercent = 2.0,
-                tpPercent = 15.0,
-                slPoints = null,
-                tpPoints = null,
-                confidenceThreshold = 0.6,
-                leverage = 1.0,
-                riskPerTradePercent = null,
-                futuresMaxContractsPerPosition = null,
-            ),
+    private fun frozenFor(
+        ticker: String,
+        version: String,
+    ): FrozenStrategy =
+        FrozenStrategy(
+            ticker = ticker,
+            strategyVersion = version,
+            gitCommitSha = null,
+            slPercent = 2.0,
+            tpPercent = 15.0,
+            slPoints = null,
+            tpPoints = null,
+            confidenceThreshold = 0.6,
+            leverage = 1.0,
+            riskPerTradePercent = null,
+            futuresMaxContractsPerPosition = null,
         )
-        return store
-    }
 
     @AfterEach
     fun tearDown() {
@@ -254,8 +241,6 @@ class WsOrderTransportTest {
     @Test
     fun `placeLimit is blocked for unapproved ticker in live`() =
         runBlocking {
-            val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val blocked =
                 WsOrderTransport(
                     alorConfig,
@@ -263,9 +248,7 @@ class WsOrderTransportTest {
                     SimpleMeterRegistry(),
                     fakeFactory,
                     scope,
-                    approval,
-                    fingerprintProvider(),
-                    frozenStrategyStore(),
+                    resolver(null),
                 )
             assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
@@ -274,8 +257,6 @@ class WsOrderTransportTest {
     @Test
     fun `placeConditional is blocked for unapproved ticker in live`() =
         runBlocking {
-            val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val blocked =
                 WsOrderTransport(
                     alorConfig,
@@ -283,9 +264,7 @@ class WsOrderTransportTest {
                     SimpleMeterRegistry(),
                     fakeFactory,
                     scope,
-                    approval,
-                    fingerprintProvider(),
-                    frozenStrategyStore(),
+                    resolver(null),
                 )
             assertNull(blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-2") })
@@ -294,7 +273,6 @@ class WsOrderTransportTest {
     @Test
     fun `placeLimit is blocked when approval service not ready`() =
         runBlocking {
-            val notReady = DeploymentApprovalService(mock<DeploymentApprovalRepository>())
             val blocked =
                 WsOrderTransport(
                     alorConfig,
@@ -302,9 +280,7 @@ class WsOrderTransportTest {
                     SimpleMeterRegistry(),
                     fakeFactory,
                     scope,
-                    notReady,
-                    fingerprintProvider(),
-                    frozenStrategyStore(),
+                    resolver(null),
                 )
             assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
@@ -313,8 +289,6 @@ class WsOrderTransportTest {
     @Test
     fun `cancel remains available without approval`() =
         runBlocking {
-            val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val isolatedConnection = FakeConnection()
             val transport2 =
                 WsOrderTransport(
@@ -323,9 +297,7 @@ class WsOrderTransportTest {
                     SimpleMeterRegistry(),
                     FakeSocketFactory(isolatedConnection),
                     scope,
-                    approval,
-                    fingerprintProvider(),
-                    frozenStrategyStore(),
+                    resolver(null),
                 )
             awaitFakeSubscribe(isolatedConnection)
             val result = async { transport2.cancel("ord-1", "idem-c", "P1") }

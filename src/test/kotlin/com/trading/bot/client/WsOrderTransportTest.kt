@@ -2,7 +2,9 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.repository.DeploymentApprovalRepository
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
@@ -82,7 +85,21 @@ class WsOrderTransportTest {
                 SimpleMeterRegistry(),
                 fakeFactory,
                 scope,
+                approvedService(),
+                fingerprintProvider(),
             )
+    }
+
+    private fun approvedService(): DeploymentApprovalService {
+        val approval = mock<DeploymentApprovalService>()
+        whenever(approval.isLiveAllowed(any(), any())).thenReturn(true)
+        return approval
+    }
+
+    private fun fingerprintProvider(): LiveStrategyFingerprintProvider {
+        val fp = mock<LiveStrategyFingerprintProvider>()
+        whenever(fp.fingerprint()).thenReturn("fp")
+        return fp
     }
 
     @AfterEach
@@ -215,7 +232,7 @@ class WsOrderTransportTest {
     fun `placeLimit is blocked for unapproved ticker in live`() =
         runBlocking {
             val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val blocked =
                 WsOrderTransport(
                     alorConfig,
@@ -224,6 +241,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     approval,
+                    fingerprintProvider(),
                 )
             assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
@@ -233,7 +251,7 @@ class WsOrderTransportTest {
     fun `placeConditional is blocked for unapproved ticker in live`() =
         runBlocking {
             val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val blocked =
                 WsOrderTransport(
                     alorConfig,
@@ -242,8 +260,65 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     approval,
+                    fingerprintProvider(),
                 )
             assertNull(blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-2") })
         }
+
+    @Test
+    fun `placeLimit is blocked when approval service not ready`() =
+        runBlocking {
+            val notReady = DeploymentApprovalService(mock<DeploymentApprovalRepository>())
+            val blocked =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    fakeFactory,
+                    scope,
+                    notReady,
+                    fingerprintProvider(),
+                )
+            assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
+        }
+
+    @Test
+    fun `cancel remains available without approval`() =
+        runBlocking {
+            val approval = mock<DeploymentApprovalService>()
+            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
+            val isolatedConnection = FakeConnection()
+            val transport2 =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    FakeSocketFactory(isolatedConnection),
+                    scope,
+                    approval,
+                    fingerprintProvider(),
+                )
+            awaitFakeSubscribe(isolatedConnection)
+            val result = async { transport2.cancel("ord-1", "idem-c", "P1") }
+            awaitCommandContainingOn(isolatedConnection, "idem-c")
+            isolatedConnection.inbound.send("""{"orderNumber":"ord-1","status":"cancelled"}""")
+            assertEquals(CancelResult.CONFIRMED, result.await())
+        }
+
+    private suspend fun awaitFakeSubscribe(connection: FakeConnection) {
+        withTimeout(5_000) {
+            while (connection.sent.isEmpty()) delay(10)
+        }
+    }
+
+    private suspend fun awaitCommandContainingOn(
+        connection: FakeConnection,
+        text: String,
+    ) {
+        withTimeout(5_000) {
+            while (connection.sent.none { it.contains(text) }) delay(10)
+        }
+    }
 }

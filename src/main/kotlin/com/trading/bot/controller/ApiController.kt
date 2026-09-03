@@ -13,7 +13,6 @@ import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
-import com.trading.bot.backtest.StrategyParameters
 import com.trading.bot.backtest.splitDevHoldout
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
@@ -48,6 +47,7 @@ import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.EmergencyStopService
 import com.trading.bot.service.EmergencyStopSource
 import com.trading.bot.service.InvestorService
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import com.trading.bot.service.PaperTradingService
 import com.trading.bot.service.ProfitForecastService
 import com.trading.bot.service.RagErrorAnalyzer
@@ -136,6 +136,7 @@ class ApiController(
     private val traceQueryService: TraceQueryService,
     private val meterRegistry: MeterRegistry,
     private val deploymentApprovalService: DeploymentApprovalService,
+    private val liveStrategyFingerprintProvider: LiveStrategyFingerprintProvider,
 ) {
     private val logger =
         io.github.oshai.kotlinlogging.KotlinLogging
@@ -862,18 +863,19 @@ class ApiController(
             )
 
         // Execution interlock: approval персистится ТОЛЬКО из DeploymentGate при
-        // LIVE_ALLOWED. Любой другой статус отзывает одобрение (fail-closed).
+        // LIVE_ALLOWED и привязывается к runtime-фрintprиntу стратегии (SHA-256).
+        // Любой другой статус отзывает одобрение (персистентный REVOKED, fail-closed).
         if (decision.status == DeploymentStatus.LIVE_ALLOWED) {
             deploymentApprovalService.approve(
                 ticker,
-                "LIVE_ALLOWED",
+                DeploymentApprovalService.LIVE_ALLOWED,
                 backtestConfig.adaptiveConfidenceThreshold,
-                paramsHashOf(holdout.paramsUsed),
+                liveStrategyFingerprintProvider.fingerprint(),
             )
         } else {
             deploymentApprovalService.revoke(ticker)
         }
-        val liveApproval = deploymentApprovalService.isLiveAllowed(ticker)
+        val liveApproval = deploymentApprovalService.isLiveAllowed(ticker, liveStrategyFingerprintProvider.fingerprint())
 
         return mapOf(
             "ticker" to ticker,
@@ -913,21 +915,6 @@ class ApiController(
             "totalTrades" to scenario.totalTrades,
             "passable" to scenario.passable,
         )
-
-    private fun paramsHashOf(p: StrategyParameters): String {
-        val content =
-            listOf(
-                p.slPercent,
-                p.tpPercent,
-                p.slPoints,
-                p.tpPoints,
-                p.confidenceThreshold,
-                p.leverage,
-                p.riskPerTradePercent,
-                p.futuresMaxContractsPerPosition,
-            ).joinToString("|")
-        return content.hashCode().toUInt().toString(16)
-    }
 
     private suspend fun persistValidationResult(
         ticker: String,

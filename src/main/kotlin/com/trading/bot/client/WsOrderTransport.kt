@@ -4,6 +4,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -53,7 +54,8 @@ class WsOrderTransport(
     private val meterRegistry: MeterRegistry,
     private val socketFactory: WsOrderSocketFactory = ReactorWsOrderSocketFactory(alorConfig),
     private val scope: CoroutineScope? = null,
-    private val deploymentApprovalService: DeploymentApprovalService? = null,
+    private val deploymentApprovalService: DeploymentApprovalService,
+    private val fingerprintProvider: LiveStrategyFingerprintProvider,
 ) : OrderTransport {
     private val logger = KotlinLogging.logger {}
 
@@ -66,13 +68,13 @@ class WsOrderTransport(
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
     /**
-     * Execution interlock (P1): WS-доставка только в LIVE; тикер, не одобренный
-     * DeploymentGate, получает определённый отказ (null) — на биржу не уходит.
+     * Execution interlock (P1): WS-доставка только в LIVE; тикер, не прошедший
+     * approval + strategy fingerprint, получает определённый отказ (null) — на биржу
+     * не уходит. fail-closed: неготовность/ошибка состояния => deny.
      */
     private fun denyIfNotLiveApproved(ticker: String): Boolean {
-        val approval = deploymentApprovalService ?: return false
-        if (approval.isLiveAllowed(ticker)) return false
-        logger.error { "LIVE order BLOCKED for $ticker — not approved for live trading (execution interlock)" }
+        if (deploymentApprovalService.isLiveAllowed(ticker, fingerprintProvider.fingerprint())) return false
+        logger.error { "LIVE order BLOCKED for $ticker — ticker not approved or strategy fingerprint mismatch (execution interlock)" }
         meterRegistry.counter("alor.ws.orders.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
         return true
     }
@@ -98,8 +100,8 @@ class WsOrderTransport(
         idempotencyKey: String,
         portfolio: String,
     ): String? {
-        requireWsAvailable(portfolio)
         if (denyIfNotLiveApproved(ticker)) return null
+        requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
         pending[idempotencyKey] = PendingRequest(guid, isCancel = false, orderId = null, deferred)
@@ -138,8 +140,8 @@ class WsOrderTransport(
         idempotencyKey: String,
         portfolio: String,
     ): String? {
-        requireWsAvailable(portfolio)
         if (denyIfNotLiveApproved(ticker)) return null
+        requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
         pending[idempotencyKey] = PendingRequest(guid, isCancel = false, orderId = null, deferred)

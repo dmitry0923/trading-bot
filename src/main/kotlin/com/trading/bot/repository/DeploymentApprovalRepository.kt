@@ -53,14 +53,6 @@ class DeploymentApprovalRepository(
             .awaitSingleOrNull()
     }
 
-    suspend fun delete(ticker: String) {
-        databaseClient
-            .sql("DELETE FROM deployment_approval WHERE ticker = :ticker")
-            .bind("ticker", ticker)
-            .then()
-            .awaitSingleOrNull()
-    }
-
     suspend fun latest(): List<DeploymentApprovalRecord> =
         databaseClient
             .sql("SELECT * FROM deployment_approval")

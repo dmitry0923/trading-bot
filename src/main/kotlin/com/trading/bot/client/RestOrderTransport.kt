@@ -3,6 +3,7 @@ package com.trading.bot.client
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
@@ -53,7 +54,8 @@ class RestOrderTransport(
     private val retryRegistry: RetryRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
-    private val deploymentApprovalService: DeploymentApprovalService? = null,
+    private val deploymentApprovalService: DeploymentApprovalService,
+    private val fingerprintProvider: LiveStrategyFingerprintProvider,
 ) : OrderTransport {
     private val logger = KotlinLogging.logger {}
 
@@ -63,14 +65,16 @@ class RestOrderTransport(
 
     /**
      * Execution interlock (P1): в LIVE-режиме реальный ордер уходит на биржу ТОЛЬКО
-     * для тикера, одобренного DeploymentGate (per-ticker approval). Неодобренный тикер
-     * получает определённый отказ (null) — outbox не ретраит. В SIMULATION не влияет.
+     * для тикера, чей runtime-фрintprиnt стратегии совпадает с одобренным
+     * DeploymentGate (per-ticker approval + strategy fingerprint). Несоответствие —
+     * определённый отказ (null): outbox не ретраит. В SIMULATION не влияет.
+     * Независимо от [DeploymentApprovalService] — fail-closed (ошибка/неготовность
+     * => deny), никакого fail-open при отсутствующем состоянии.
      */
     private fun denyIfNotLiveApproved(ticker: String): Boolean {
         if (!isLive) return false
-        val approval = deploymentApprovalService ?: return false
-        if (approval.isLiveAllowed(ticker)) return false
-        logger.error { "LIVE order BLOCKED for $ticker — not approved for live trading (execution interlock)" }
+        if (deploymentApprovalService.isLiveAllowed(ticker, fingerprintProvider.fingerprint())) return false
+        logger.error { "LIVE order BLOCKED for $ticker — ticker not approved or strategy fingerprint mismatch (execution interlock)" }
         meterRegistry.counter("alor.order.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
         return true
     }

@@ -1,8 +1,12 @@
 package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.BacktestConfig
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.repository.DeploymentApprovalRepository
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry
 import io.github.resilience4j.retry.RetryRegistry
@@ -11,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import tools.jackson.module.kotlin.jacksonObjectMapper
@@ -20,7 +25,7 @@ import java.math.BigDecimal
  * Unit-тесты REST-транспорта ([RestOrderTransport]) в не-LIVE режиме:
  * имитация исполнения (sim-*), отмена подтверждается. HTTP-ветки (4xx/reject,
  * UNCERTAIN) семантически идентичны прежним телам [AlorClient] и покрываются
- * интеграционными тестами исполнения.
+ * интеграционными тестами исполнения. LIVE-interlock тесты — ниже.
  */
 class RestOrderTransportTest {
     private val tradingConfig = TradingConfig().apply { mode = "SIMULATION" }
@@ -35,6 +40,8 @@ class RestOrderTransportTest {
             RetryRegistry.ofDefaults(),
             RateLimiterRegistry.ofDefaults(),
             CircuitBreakerRegistry.ofDefaults(),
+            mock(),
+            mockFingerprints(),
         )
 
     @Test
@@ -62,7 +69,7 @@ class RestOrderTransportTest {
     fun `live placeLimit is blocked for unapproved ticker`() =
         runBlocking {
             val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val live = liveTransport(approval)
             assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
         }
@@ -71,12 +78,39 @@ class RestOrderTransportTest {
     fun `live placeConditional is blocked for unapproved ticker`() =
         runBlocking {
             val approval = mock<DeploymentApprovalService>()
-            whenever(approval.isLiveAllowed("SBER")).thenReturn(false)
+            whenever(approval.isLiveAllowed(any(), any())).thenReturn(false)
             val live = liveTransport(approval)
             assertNull(live.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
         }
 
-    private fun liveTransport(approval: DeploymentApprovalService): RestOrderTransport {
+    @Test
+    fun `live placeLimit is blocked when approval service not ready`() =
+        runBlocking {
+            val notReady = DeploymentApprovalService(mock<DeploymentApprovalRepository>())
+            val live = liveTransport(notReady, mockFingerprints())
+            assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+        }
+
+    @Test
+    fun `live placeLimit is blocked when config changed after approval (fingerprint mismatch)`() =
+        runBlocking {
+            val backtest = BacktestConfig().apply { adaptiveConfidenceThreshold = 0.60 }
+            val risk = RiskConfig()
+            val provider = LiveStrategyFingerprintProvider(backtest, risk)
+            val approval = DeploymentApprovalService(mock())
+            approval.init()
+            approval.approve("SBER", DeploymentApprovalService.LIVE_ALLOWED, 0.60, provider.fingerprint())
+
+            // Конфигурация изменилась после approve => fingerprint сменился => вход БЛОКИРОВАН.
+            backtest.adaptiveConfidenceThreshold = 0.63
+            val changed = liveTransport(approval, provider)
+            assertNull(changed.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
+        }
+
+    private fun liveTransport(
+        approval: DeploymentApprovalService,
+        fingerprints: LiveStrategyFingerprintProvider,
+    ): RestOrderTransport {
         val liveConfig = TradingConfig().apply { mode = "LIVE" }
         return RestOrderTransport(
             liveConfig,
@@ -88,6 +122,15 @@ class RestOrderTransportTest {
             RateLimiterRegistry.ofDefaults(),
             CircuitBreakerRegistry.ofDefaults(),
             approval,
+            fingerprints,
         )
+    }
+
+    private fun liveTransport(approval: DeploymentApprovalService) = liveTransport(approval, mockFingerprints())
+
+    private fun mockFingerprints(): LiveStrategyFingerprintProvider {
+        val fingerprints = mock<LiveStrategyFingerprintProvider>()
+        whenever(fingerprints.fingerprint()).thenReturn("fp")
+        return fingerprints
     }
 }

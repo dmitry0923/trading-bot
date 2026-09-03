@@ -5,13 +5,17 @@ import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component
 
 /**
- * Build-identity для fingerprint (P2-аудит): immutable SHA сборки.
+ * Build-identity для execution interlock (P1): immutable git SHA сборки.
  *
  * Резолвит полный git-коммит из стандартного ресурса `git.properties`
  * (генерируется git-commit-id плагином), либо из переменной окружения
- * `GIT_COMMIT`. Если ни одно недоступно — возвращает null, и fingerprint
- * продолжает опираться на [com.trading.bot.backtest.FrozenStrategy.strategyVersion]
- * + параметры (fail-safe, не ломает одобрение при отсутствии билд-плагина).
+ * `GIT_COMMIT`. Если ни одно недоступно — возвращает null.
+ *
+ * MANIFEST `implementationVersion` (например "2.0.0") НЕ используется как
+ * build-identity: это не git SHA, и его подстановка сделала бы поле
+ * `gitCommitSha()` нечестным. Отсутствие настоящего commit SHA у текущего
+ * процесса => [gitCommitSha] возвращает null => [LiveFrozenStrategyResolver]
+ * fail-closed отказывает (DENY), не легитимизируя исполнение.
  *
  * Цель: автоматическая инвалидация одобрения при новой сборке — разработчику не
  * нужно вручную повышать версию стратегии, чтобы старый LIVE-approve не
@@ -35,12 +39,11 @@ class BuildIdentity(
             val value =
                 envOverride
                     ?: readFromClasspath()
-                    ?: readFromManifest()
             resolved = value
             if (value != null) {
                 logger.info { "Build identity: gitCommit=${value.take(12)}..." }
             } else {
-                logger.info { "Build identity: git.properties/manifest not found — fingerprint falls back to strategyVersion+params" }
+                logger.info { "Build identity: git.properties/GIT_COMMIT not found — LIVE execution disabled (fail-closed)" }
             }
             return value
         }
@@ -65,15 +68,6 @@ class BuildIdentity(
                 }
         } catch (e: Exception) {
             logger.warn { "Failed to read git.properties: ${e.message}" }
-            null
-        }
-
-    private fun readFromManifest(): String? =
-        try {
-            BuildIdentity::class.java.`package`
-                ?.implementationVersion
-                ?.takeIf { it.isNotBlank() }
-        } catch (e: Exception) {
             null
         }
 }

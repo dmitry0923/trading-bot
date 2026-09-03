@@ -19,6 +19,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.service.CandleCacheService
+import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -65,6 +66,7 @@ class FuturesStopWiringTest {
                     anyPositionSizeResult(),
                     anyBigDecimal(),
                     Mockito.anyInt(),
+                    Mockito.isNull(),
                 ),
             ).thenAnswer { inv ->
                 captured[0] = inv.getArgument<Int>(6)
@@ -89,6 +91,7 @@ class FuturesStopWiringTest {
                 tradingAccountService = Mockito.mock(TradingAccountService::class.java),
                 candleCache = candleCache,
                 futuresStopResolver = FuturesStopResolver(),
+                liveFrozenStrategyResolver = Mockito.mock(LiveFrozenStrategyResolver::class.java),
             )
 
         profile.buildOrderParams(

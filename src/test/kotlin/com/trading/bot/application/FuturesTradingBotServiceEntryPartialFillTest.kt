@@ -37,6 +37,7 @@ import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
+import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
@@ -111,6 +112,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             tradingAccountService,
             Mockito.mock(CandleCacheService::class.java),
             FuturesStopResolver(),
+            Mockito.mock(LiveFrozenStrategyResolver::class.java),
         )
     private val decisionEngine =
         DecisionEngine(
@@ -331,6 +333,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                         anyPositionSizeResult(),
                         anyBigDecimal(),
                         Mockito.anyInt(),
+                        Mockito.isNull(),
                     ),
                 ).thenReturn(
                     OrderParams(

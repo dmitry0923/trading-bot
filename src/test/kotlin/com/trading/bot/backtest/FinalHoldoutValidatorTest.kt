@@ -2,6 +2,8 @@ package com.trading.bot.backtest
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.service.BuildIdentity
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -28,6 +30,14 @@ import java.time.LocalDateTime
  */
 class FinalHoldoutValidatorTest {
     private val capital = BigDecimal("100000")
+
+    private fun buildIdentity(): BuildIdentity = mock<BuildIdentity>()
+
+    private fun fingerprintProvider(): LiveStrategyFingerprintProvider {
+        val fp = mock<LiveStrategyFingerprintProvider>()
+        whenever(fp.strategyVersion).thenReturn("live-v2")
+        return fp
+    }
 
     private fun mockCandle(i: Int): Candle =
         Candle(
@@ -107,7 +117,7 @@ class FinalHoldoutValidatorTest {
             ).thenReturn(holdoutCandidate)
         }
 
-        val validatorUnderTest = FinalHoldoutValidator(validator, engine)
+        val validatorUnderTest = FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider())
         val result = runBlocking { validatorUnderTest.validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
 
         // Holdout окно = последние 20% от 300 = 60 свечей.
@@ -158,7 +168,7 @@ class FinalHoldoutValidatorTest {
                 ),
             ).thenReturn(strongResult(40))
         }
-        val validatorUnderTest = FinalHoldoutValidator(validator, engine)
+        val validatorUnderTest = FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider())
         val result = runBlocking { validatorUnderTest.validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
         assertEquals(0.03, result.paramsUsed.slPercent)
         assertEquals(0.06, result.paramsUsed.tpPercent)
@@ -206,7 +216,15 @@ class FinalHoldoutValidatorTest {
             ).thenReturn(weakHoldout)
         }
         val result =
-            runBlocking { FinalHoldoutValidator(validator, engine).validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
+            runBlocking {
+                FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider()).validate(
+                    "SBER",
+                    List(300) {
+                        mockCandle(it)
+                    },
+                    holdoutFraction = 0.2,
+                )
+            }
         assertFalse(result.holdout.isPassable())
         assertFalse(result.passed)
     }
@@ -215,7 +233,7 @@ class FinalHoldoutValidatorTest {
     fun `invalid holdout fraction rejected`() {
         val validator = Mockito.mock(BacktestValidator::class.java)
         val engine = mock<BacktestEngine> {}
-        val validatorUnderTest = FinalHoldoutValidator(validator, engine)
+        val validatorUnderTest = FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider())
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking { validatorUnderTest.validate("SBER", List(100) { mockCandle(it) }, holdoutFraction = 0.0) }
         }

@@ -71,6 +71,20 @@ class DeploymentGateTest {
             walkForward = strongWalkForward(),
             holdout = holdoutResult,
             paramsUsed = StrategyParameters(slPercent = 0.02, tpPercent = 0.04),
+            frozenStrategy =
+                FrozenStrategy(
+                    ticker = "SBER",
+                    strategyVersion = "live-v2",
+                    gitCommitSha = null,
+                    slPercent = 2.0,
+                    tpPercent = 15.0,
+                    slPoints = null,
+                    tpPoints = null,
+                    confidenceThreshold = 0.6,
+                    leverage = 1.0,
+                    riskPerTradePercent = null,
+                    futuresMaxContractsPerPosition = null,
+                ),
             devBacktest = strongBacktest(),
         )
     }

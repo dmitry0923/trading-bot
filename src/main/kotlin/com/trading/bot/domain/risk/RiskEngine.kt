@@ -1,5 +1,6 @@
 package com.trading.bot.domain.risk
 
+import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Position
@@ -30,6 +31,7 @@ data class EntryRequest(
     val openPositions: List<Position> = emptyList(),
     val accountId: Long? = null,
     val maxOpenPositions: Int? = null,
+    val frozenStrategy: FrozenStrategy? = null,
 )
 
 /**

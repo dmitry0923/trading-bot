@@ -4,9 +4,12 @@ import com.trading.bot.model.entity.DeploymentApprovalRecord
 import com.trading.bot.repository.DeploymentApprovalRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Per-ticker LIVE-одобрение (execution interlock, P1 аудит).
@@ -37,6 +40,12 @@ class DeploymentApprovalService(
 
     @Volatile
     private var approved: Map<String, DeploymentApprovalRecord> = emptyMap()
+
+    // P1-аудит: сериализация approve/revoke per-ticker, чтобы исключить грязное
+    // чередование двух операций над одним тикером (напр. «DB=REVOKED / CACHE=LIVE»).
+    private val tickerLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun lockFor(ticker: String): Mutex = tickerLocks.computeIfAbsent(ticker) { Mutex() }
 
     @Volatile
     private var ready: Boolean = false
@@ -89,7 +98,7 @@ class DeploymentApprovalService(
         status: String,
         frozenConfidenceThreshold: Double?,
         fingerprint: String?,
-    ) {
+    ) = lockFor(ticker).withLock {
         val record = DeploymentApprovalRecord(ticker, status, frozenConfidenceThreshold, fingerprint)
         repository.save(record)
         approved = approved + (ticker to record)
@@ -106,20 +115,21 @@ class DeploymentApprovalService(
      * входов не будет, пока persistence не восстановится. Не выполняем auto-reinit
      * из БД, чтобы случайно не воскресить всё ещё живую запись LIVE_ALLOWED.
      */
-    suspend fun revoke(ticker: String) {
-        val previous = approved[ticker]
-        approved = approved - ticker
-        try {
-            repository.save(DeploymentApprovalRecord(ticker, REVOKED, previous?.frozenConfidenceThreshold, previous?.paramsHash))
-            logger.info { "Deployment revoked for $ticker (persistent REVOKED)" }
-        } catch (e: Exception) {
-            ready = false
-            logger.error(e) {
-                "FAILED to persist REVOKED for $ticker — entering global NOT_READY (fail-closed), " +
-                    "ALL LIVE entries denied until persistence restored"
+    suspend fun revoke(ticker: String) =
+        lockFor(ticker).withLock {
+            val previous = approved[ticker]
+            approved = approved - ticker
+            try {
+                repository.save(DeploymentApprovalRecord(ticker, REVOKED, previous?.frozenConfidenceThreshold, previous?.paramsHash))
+                logger.info { "Deployment revoked for $ticker (persistent REVOKED)" }
+            } catch (e: Exception) {
+                ready = false
+                logger.error(e) {
+                    "FAILED to persist REVOKED for $ticker — entering global NOT_READY (fail-closed), " +
+                        "ALL LIVE entries denied until persistence restored"
+                }
             }
         }
-    }
 
     fun allApproved(): Map<String, DeploymentApprovalRecord> = approved
 

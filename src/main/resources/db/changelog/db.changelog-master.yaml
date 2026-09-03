@@ -63,3 +63,5 @@ databaseChangeLog:
       file: db/changelog/changes/031-close-cancel-pending.sql
   - include:
       file: db/changelog/changes/032-deployment-approval.sql
+  - include:
+      file: db/changelog/changes/033-frozen-strategy.sql

@@ -46,6 +46,7 @@ import com.trading.bot.service.DeploymentApprovalService
 import com.trading.bot.service.DrawdownProtectionService
 import com.trading.bot.service.EmergencyStopService
 import com.trading.bot.service.EmergencyStopSource
+import com.trading.bot.service.FrozenStrategyStore
 import com.trading.bot.service.InvestorService
 import com.trading.bot.service.LiveStrategyFingerprintProvider
 import com.trading.bot.service.PaperTradingService
@@ -137,6 +138,7 @@ class ApiController(
     private val meterRegistry: MeterRegistry,
     private val deploymentApprovalService: DeploymentApprovalService,
     private val liveStrategyFingerprintProvider: LiveStrategyFingerprintProvider,
+    private val frozenStrategyStore: FrozenStrategyStore,
 ) {
     private val logger =
         io.github.oshai.kotlinlogging.KotlinLogging
@@ -863,19 +865,29 @@ class ApiController(
             )
 
         // Execution interlock: approval персистится ТОЛЬКО из DeploymentGate при
-        // LIVE_ALLOWED и привязывается к runtime-фрintprиntу стратегии (SHA-256).
+        // LIVE_ALLOWED и привязывается к frozen fingerprint (SHA-256) ЗАМОРОЖЕННОЙ
+        // стратегии (P1-аудит: fingerprint строится из реально перевалидированных
+        // параметров HoldoutValidation, а не из текущего ambient-конфига).
         // Любой другой статус отзывает одобрение (персистентный REVOKED, fail-closed).
+        val frozen = holdout.frozenStrategy
+        val frozenFingerprint = liveStrategyFingerprintProvider.fingerprint(frozen)
         if (decision.status == DeploymentStatus.LIVE_ALLOWED) {
+            frozenStrategyStore.upsert(frozen)
             deploymentApprovalService.approve(
                 ticker,
                 DeploymentApprovalService.LIVE_ALLOWED,
-                backtestConfig.adaptiveConfidenceThreshold,
-                liveStrategyFingerprintProvider.fingerprint(),
+                frozen.confidenceThreshold,
+                frozenFingerprint,
             )
         } else {
             deploymentApprovalService.revoke(ticker)
+            frozenStrategyStore.clear(ticker)
         }
-        val liveApproval = deploymentApprovalService.isLiveAllowed(ticker, liveStrategyFingerprintProvider.fingerprint())
+        val liveApproval =
+            deploymentApprovalService.isLiveAllowed(
+                ticker,
+                liveStrategyFingerprintProvider.fingerprint(frozen),
+            )
 
         return mapOf(
             "ticker" to ticker,
@@ -886,7 +898,7 @@ class ApiController(
             "liveApprovalActive" to liveApproval,
             "researchMode" to decision.researchMode,
             "confirmedForProduction" to decision.confirmedForProduction,
-            "frozenConfidenceThreshold" to backtestConfig.adaptiveConfidenceThreshold,
+            "frozenConfidenceThreshold" to (frozen.confidenceThreshold ?: backtestConfig.adaptiveConfidenceThreshold),
             "checks" to
                 decision.checks.map { c ->
                     mapOf(

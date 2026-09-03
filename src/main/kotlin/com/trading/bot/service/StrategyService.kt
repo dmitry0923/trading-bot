@@ -86,6 +86,7 @@ class StrategyService(
     private val objectMapper: ObjectMapper,
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
+    private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -94,6 +95,17 @@ class StrategyService(
     fun close() {
         scope.cancel()
     }
+
+    /**
+     * Публикует frozen confidence-порог для тикера, если он LIVE-одобрен с ИМЕННО
+     * этой замороженной стратегией (fingerprint совпадает). Иначе — null, и гейт
+     * продолжает использовать онлайн-калибровку. Fail-closed: неготовность store /
+     * отсутствие frozen / несовпадение fingerprint => null (не выдумываем порог).
+     */
+    private fun resolvedFrozenConfidence(ticker: String): Double? =
+        liveFrozenStrategyResolver
+            .resolveActive(ticker)
+            ?.confidenceThreshold
 
     /**
      * Scheduled-точка входа стратегического цикла. Не блокирует поток планировщика:
@@ -310,7 +322,13 @@ class StrategyService(
                 regime = regime,
             )
         val result = strategyRunner.runAll(context)
+        // Порог уверенности: для LIVE-тикера с ЗАМОРОЖЕННОЙ стратегией (одобрен
+        // DeploymentGate, fingerprint совпадает) используется frozen-порог, НЕ
+        // онлайн-калибровка — чтобы runtime-гейт ровно повторял перевалидированную
+        // стратегию (P1-аудит). Без frozen (paper/SIM или неодобренный тикер) —
+        // онлайн-калибровка.
         val adaptiveConf = adaptiveRisk.getAdaptiveConfidenceThreshold(ticker)
+        val gateConf = resolvedFrozenConfidence(ticker) ?: adaptiveConf
 
         // LLM-советник (C-001): оценивает детерминированное решение вне критического
         // пути. VETO (CRITICAL-риск) блокирует вход; иначе — ограниченная поправка
@@ -333,10 +351,10 @@ class StrategyService(
         // или с non-finite силой (NaN из LLM-советника) -> HOLD. Раньше
         // `coerceAtLeast` раздувал слабые сигналы до порога — гейт не блокировал
         // ничего, а сила сигнала в истории/Kelly-сайзинге была фальшивой.
-        val gated = StrategyDecision.gatedByConfidence(decision, snapshot.currentPrice, adaptiveConf)
+        val gated = StrategyDecision.gatedByConfidence(decision, snapshot.currentPrice, gateConf)
         if (gated.action == StrategyAction.HOLD && decision.action != StrategyAction.HOLD) {
             meterRegistry.counter("strategy.low_confidence", Tags.of("ticker", ticker)).increment()
-            logger.info { "Holding $ticker/$timeframe — decision below adaptive confidence threshold $adaptiveConf" }
+            logger.info { "Holding $ticker/$timeframe — decision below confidence threshold $gateConf" }
         }
         val signal =
             Signal(

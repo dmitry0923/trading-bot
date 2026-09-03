@@ -16,6 +16,7 @@ import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.AumProvider
 import com.trading.bot.service.CandleCacheService
+import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.RiskManagementService
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -52,6 +53,7 @@ class StockEntryProfileTest {
             instrumentsConfig = instrumentsConfig,
             agentLogRepo = agentLogRepo,
             aumProvider = aumProvider,
+            liveFrozenStrategyResolver = mock<LiveFrozenStrategyResolver>(),
         )
 
     // ── matches ─────────────────────────────────────────────

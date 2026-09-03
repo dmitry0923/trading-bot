@@ -18,6 +18,7 @@ import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.AumProvider
 import com.trading.bot.service.CandleCacheService
+import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.RiskManagementService
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -47,6 +48,7 @@ class StockEntryProfile(
     private val instrumentsConfig: InstrumentsConfig,
     private val agentLogRepo: AgentLogRepository,
     private val aumProvider: AumProvider,
+    private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
 ) : EntryProfile {
     override val instrumentType: InstrumentType = InstrumentType.STOCK
     override val metricPrefix: String = "bot"
@@ -70,6 +72,7 @@ class StockEntryProfile(
             atr = candleCache.calculateAtr(signal.ticker, "MINUTE_10", 14),
             openPositions = openPositions,
             accountId = accountId,
+            frozenStrategy = liveFrozenStrategyResolver.resolveActive(signal.ticker),
         )
 
     override suspend fun preSizingChecks(
@@ -107,13 +110,18 @@ class StockEntryProfile(
 
         // Риск-кап на сделку: убыток при срабатывании стопа не может превысить
         // riskPerTradePercent% от AUM. lossPerLot = slDistance × lotSize + 2×commission.
-        // ATR-based SL: slDistance = ATR × slMultiplier; fallback — effectiveSlPercent.
+        // P1-аудит: при LIVE-исполнении замороженной стратегии SL берётся ИЗ frozen
+        // (процент, ровно как в backtest), ATR-путь отключён.
+        val frozen = request.frozenStrategy
+        val frozenSlPercent = frozen?.slPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
         val effectiveSlPercent =
-            spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+            frozenSlPercent
+                ?: spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
                 ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
         val useAtr =
-            request.atr != null && request.atr > BigDecimal.ZERO &&
+            frozenSlPercent == null &&
+                request.atr != null && request.atr > BigDecimal.ZERO &&
                 riskConfig.atrSlMultiplier > BigDecimal.ZERO
         val slDistance =
             if (useAtr) {
@@ -216,7 +224,16 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         request: EntryRequest,
-    ): OrderParams = orderBuilder.buildSpotOrderParams(ticker, direction, size.quantity, entryPrice, request.atr)
+    ): OrderParams =
+        orderBuilder.buildSpotOrderParams(
+            ticker,
+            direction,
+            size.quantity,
+            entryPrice,
+            request.atr,
+            frozenSlPercent = request.frozenStrategy?.slPercent,
+            frozenTpPercent = request.frozenStrategy?.tpPercent,
+        )
 
     override fun portfolioMode(): PortfolioMode = PortfolioMode.ENFORCED
 

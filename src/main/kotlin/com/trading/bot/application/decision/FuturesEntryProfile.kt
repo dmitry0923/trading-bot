@@ -20,6 +20,7 @@ import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import com.trading.bot.service.CandleCacheService
+import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -59,6 +60,7 @@ class FuturesEntryProfile(
     private val tradingAccountService: TradingAccountService,
     private val candleCache: CandleCacheService,
     private val futuresStopResolver: FuturesStopResolver,
+    private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
 ) : EntryProfile {
     private val logger = KotlinLogging.logger {}
 
@@ -92,6 +94,7 @@ class FuturesEntryProfile(
             currentGo = currentGo,
             openPositions = openPositions,
             accountId = accountId,
+            frozenStrategy = liveFrozenStrategyResolver.resolveActive(signal.ticker),
         )
     }
 
@@ -105,7 +108,14 @@ class FuturesEntryProfile(
         entryPrice: BigDecimal,
         request: EntryRequest,
     ): PositionSizeResult {
-        val stopLossPoints = resolveStopLossPoints(signal.ticker)
+        val frozen = request.frozenStrategy
+        // P1-аудит: при LIVE-исполнении замороженной стратегии стоп в пунктах —
+        // ПЛОСКИЙ из frozen (ровно как перевалидировано), НЕ ATR-адаптивный.
+        val stopLossPoints =
+            frozen
+                ?.slPoints
+                ?.takeIf { it > 0 }
+                ?: resolveStopLossPoints(signal.ticker)
         val size =
             futuresPositionSizer.calculateContracts(
                 signal.ticker,
@@ -114,6 +124,8 @@ class FuturesEntryProfile(
                 request.currentGo,
                 entryPrice,
                 request.direction,
+                riskPerTradePercent = frozen?.riskPerTradePercent,
+                maxContractsPerPosition = frozen?.futuresMaxContractsPerPosition,
             )
         if (size.quantity == 0) {
             logger.warn { "Position sizer rejected ${signal.ticker}: ${size.reason}" }
@@ -138,16 +150,25 @@ class FuturesEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         request: EntryRequest,
-    ): OrderParams =
-        orderBuilder.buildFuturesOrderParams(
+    ): OrderParams {
+        val frozen = request.frozenStrategy
+        return orderBuilder.buildFuturesOrderParams(
             ticker = ticker,
             direction = direction,
             entryPrice = entryPrice,
             currentGo = request.currentGo,
             size = size,
-            leverage = leverageConfig.effective(),
-            stopLossPoints = resolveStopLossPoints(ticker),
+            // P1-аудит: плечо и SL/TP-пункты при LIVE-исполнении берутся ИЗ frozen.
+            leverage =
+                frozen
+                    ?.leverage
+                    ?.takeIf { it > 0.0 }
+                    ?.let { BigDecimal.valueOf(it) }
+                    ?: leverageConfig.effective(),
+            stopLossPoints = frozen?.slPoints?.takeIf { it > 0 } ?: resolveStopLossPoints(ticker),
+            takeProfitPointsOverride = frozen?.tpPoints?.takeIf { it > 0 },
         )
+    }
 
     /**
      * Дистанция стоп-лосса фьючерса в пунктах: ATR по свечам MINUTE_10 из кэша,

@@ -1,11 +1,13 @@
 package com.trading.bot.client
 
+import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.config.AlorConfig
-import com.trading.bot.config.BacktestConfig
-import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.repository.DeploymentApprovalRepository
+import com.trading.bot.repository.FrozenStrategyRepository
+import com.trading.bot.service.BuildIdentity
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.FrozenStrategyStore
 import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.ratelimiter.RateLimiterRegistry
@@ -42,6 +44,7 @@ class RestOrderTransportTest {
             CircuitBreakerRegistry.ofDefaults(),
             mock(),
             mockFingerprints(),
+            mockStore(),
         )
 
     @Test
@@ -92,24 +95,27 @@ class RestOrderTransportTest {
         }
 
     @Test
-    fun `live placeLimit is blocked when config changed after approval (fingerprint mismatch)`() =
+    fun `live placeLimit is blocked when frozen strategy changed after approval (fingerprint mismatch)`() =
         runBlocking {
-            val backtest = BacktestConfig().apply { adaptiveConfidenceThreshold = 0.60 }
-            val risk = RiskConfig()
-            val provider = LiveStrategyFingerprintProvider(backtest, risk)
+            val provider = LiveStrategyFingerprintProvider(BuildIdentity())
             val approval = DeploymentApprovalService(mock())
             approval.init()
-            approval.approve("SBER", DeploymentApprovalService.LIVE_ALLOWED, 0.60, provider.fingerprint())
+            val frozen = frozenFor("SBER", "live-v2")
+            val store = mock<FrozenStrategyStore>()
+            whenever(store.current("SBER")).thenReturn(frozen)
+            approval.approve("SBER", DeploymentApprovalService.LIVE_ALLOWED, 0.6, provider.fingerprint(frozen))
 
-            // Конфигурация изменилась после approve => fingerprint сменился => вход БЛОКИРОВАН.
-            backtest.adaptiveConfidenceThreshold = 0.63
-            val changed = liveTransport(approval, provider)
+            // Замороженная стратегия изменилась (новая версия/параметры) => fingerprint
+            // сменился => вход БЛОКИРОВАН (frozen-driven interlock, P1-аудит).
+            whenever(store.current("SBER")).thenReturn(frozenFor("SBER", "live-v3"))
+            val changed = liveTransport(approval, provider, store)
             assertNull(changed.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
         }
 
     private fun liveTransport(
         approval: DeploymentApprovalService,
         fingerprints: LiveStrategyFingerprintProvider,
+        store: FrozenStrategyStore = mockStore(),
     ): RestOrderTransport {
         val liveConfig = TradingConfig().apply { mode = "LIVE" }
         return RestOrderTransport(
@@ -123,14 +129,31 @@ class RestOrderTransportTest {
             CircuitBreakerRegistry.ofDefaults(),
             approval,
             fingerprints,
+            store,
         )
     }
 
     private fun liveTransport(approval: DeploymentApprovalService) = liveTransport(approval, mockFingerprints())
 
-    private fun mockFingerprints(): LiveStrategyFingerprintProvider {
-        val fingerprints = mock<LiveStrategyFingerprintProvider>()
-        whenever(fingerprints.fingerprint()).thenReturn("fp")
-        return fingerprints
-    }
+    private fun mockFingerprints(): LiveStrategyFingerprintProvider = mock<LiveStrategyFingerprintProvider>()
+
+    private fun mockStore(): FrozenStrategyStore = FrozenStrategyStore(mock<FrozenStrategyRepository>())
+
+    private fun frozenFor(
+        ticker: String,
+        version: String,
+    ): FrozenStrategy =
+        FrozenStrategy(
+            ticker = ticker,
+            strategyVersion = version,
+            gitCommitSha = null,
+            slPercent = 2.0,
+            tpPercent = 15.0,
+            slPoints = null,
+            tpPoints = null,
+            confidenceThreshold = 0.6,
+            leverage = 1.0,
+            riskPerTradePercent = null,
+            futuresMaxContractsPerPosition = null,
+        )
 }

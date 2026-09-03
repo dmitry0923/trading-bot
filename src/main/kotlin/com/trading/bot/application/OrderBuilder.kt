@@ -42,11 +42,12 @@ class OrderBuilder(
         size: PositionSizeResult,
         leverage: BigDecimal,
         stopLossPoints: Int,
+        takeProfitPointsOverride: Int? = null,
     ): OrderParams {
         val instrument =
             instrumentsConfig.find(ticker)
                 ?: return OrderParams(direction = direction, quantity = 0)
-        val takeProfitPoints = riskConfig.defaultTakeProfitPoints
+        val takeProfitPoints = takeProfitPointsOverride ?: riskConfig.defaultTakeProfitPoints
         val slOffset = BigDecimal(stopLossPoints).multiply(instrument.priceStep)
         val tpOffset = BigDecimal(takeProfitPoints).multiply(instrument.priceStep)
         val stopLoss =
@@ -88,27 +89,51 @@ class OrderBuilder(
         quantity: Int,
         entryPrice: BigDecimal,
         atr: BigDecimal? = null,
+        frozenSlPercent: Double? = null,
+        frozenTpPercent: Double? = null,
     ): OrderParams {
         val spec =
             instrumentsConfig.find(ticker)
                 ?: return OrderParams(direction = direction, quantity = 0)
         val priceStep = spec.priceStep
+        // P1-аудит: при LIVE-исполнении замороженной стратегии SL/TP берутся ИЗ frozen
+        // (проценты), НЕ из ATR/дефолтного конфига. Процентный путь также исключает
+        // ATR-адаптивность, ровно как в перевалидированном backtest.
+        val frozenSl = frozenSlPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
+        val frozenTp = frozenTpPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
         val useAtr =
-            atr != null && atr > BigDecimal.ZERO &&
+            frozenSl == null && frozenTp == null &&
+                atr != null && atr > BigDecimal.ZERO &&
                 riskConfig.atrSlMultiplier > BigDecimal.ZERO && riskConfig.atrTpMultiplier > BigDecimal.ZERO
         val stopLoss =
-            if (useAtr) {
-                ExitRules.calcSLByAtr(entryPrice, direction, atr!!, riskConfig.atrSlMultiplier, priceStep)
-            } else {
-                val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
-                ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
+            when {
+                frozenSl != null -> {
+                    ExitRules.calcSL(entryPrice, direction, frozenSl, priceStep)
+                }
+
+                useAtr -> {
+                    ExitRules.calcSLByAtr(entryPrice, direction, atr!!, riskConfig.atrSlMultiplier, priceStep)
+                }
+
+                else -> {
+                    val slPercent = spec.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+                    ExitRules.calcSL(entryPrice, direction, slPercent, priceStep)
+                }
             }
         val takeProfit =
-            if (useAtr) {
-                ExitRules.calcTPByAtr(entryPrice, direction, atr!!, riskConfig.atrTpMultiplier, priceStep)
-            } else {
-                val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
-                ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
+            when {
+                frozenTp != null -> {
+                    ExitRules.calcTP(entryPrice, direction, frozenTp, priceStep)
+                }
+
+                useAtr -> {
+                    ExitRules.calcTPByAtr(entryPrice, direction, atr!!, riskConfig.atrTpMultiplier, priceStep)
+                }
+
+                else -> {
+                    val tpPercent = spec.effectiveTpPercent(riskConfig.defaultTakeProfitPercent)
+                    ExitRules.calcTP(entryPrice, direction, tpPercent, priceStep)
+                }
             }
         return OrderParams(
             direction = direction,

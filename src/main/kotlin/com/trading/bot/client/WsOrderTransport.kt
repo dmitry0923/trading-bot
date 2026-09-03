@@ -4,6 +4,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.FrozenStrategyStore
 import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -56,6 +57,7 @@ class WsOrderTransport(
     private val scope: CoroutineScope? = null,
     private val deploymentApprovalService: DeploymentApprovalService,
     private val fingerprintProvider: LiveStrategyFingerprintProvider,
+    private val frozenStrategyStore: FrozenStrategyStore,
 ) : OrderTransport {
     private val logger = KotlinLogging.logger {}
 
@@ -73,8 +75,11 @@ class WsOrderTransport(
      * не уходит. fail-closed: неготовность/ошибка состояния => deny.
      */
     private fun denyIfNotLiveApproved(ticker: String): Boolean {
-        if (deploymentApprovalService.isLiveAllowed(ticker, fingerprintProvider.fingerprint())) return false
-        logger.error { "LIVE order BLOCKED for $ticker — ticker not approved or strategy fingerprint mismatch (execution interlock)" }
+        val frozen = frozenStrategyStore.current(ticker)
+        if (frozen != null && deploymentApprovalService.isLiveAllowed(ticker, fingerprintProvider.fingerprint(frozen))) return false
+        logger.error {
+            "LIVE order BLOCKED for $ticker — ticker not approved or strategy frozen fingerprint mismatch (execution interlock)"
+        }
         meterRegistry.counter("alor.ws.orders.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
         return true
     }

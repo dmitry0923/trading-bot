@@ -2,6 +2,8 @@ package com.trading.bot.backtest
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.service.BuildIdentity
+import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -19,6 +21,9 @@ import java.math.BigDecimal
  * @property holdout результат одноразового прогона на независимом holdout-окне
  * @property paramsUsed параметры, зафиксированные по [walkForward] и применённые
  *   к holdout (включая confidence/leverage/risk — см. [StrategyParameters])
+ * @property frozenStrategy единый ЗАМОРОЖЕННЫЙ объект стратегии (из [paramsUsed] +
+ *   strategy version + build identity): тот же объект, что идёт в MC, DeploymentGate,
+ *   fingerprint и live-execution (P1-аудит — один источник правды)
  * @property devBacktest базовый backtest на данных ДО holdout-границы с
  *   зафиксированными параметрами — используется для edge-проверки без утечки
  */
@@ -26,6 +31,7 @@ data class HoldoutValidation(
     val walkForward: ValidationResult,
     val holdout: BacktestResult,
     val paramsUsed: StrategyParameters,
+    val frozenStrategy: FrozenStrategy,
     val devBacktest: BacktestResult,
 ) {
     /**
@@ -48,6 +54,8 @@ data class HoldoutValidation(
 class FinalHoldoutValidator(
     private val backtestValidator: BacktestValidator,
     private val backtestEngine: BacktestEngine,
+    private val buildIdentity: BuildIdentity,
+    private val fingerprintProvider: LiveStrategyFingerprintProvider,
     private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
@@ -119,6 +127,16 @@ class FinalHoldoutValidator(
                 futuresMaxContractsPerPosition,
             )
 
+        // Единый ЗАМОРОЖЕННЫЙ объект стратегии: он же идёт в MC, DeploymentGate,
+        // fingerprint и live-execution (P1-аудит — один источник правды).
+        val frozenStrategy =
+            FrozenStrategy.from(
+                parameters = paramsUsed,
+                ticker = ticker,
+                strategyVersion = fingerprintProvider.strategyVersion,
+                gitCommitSha = buildIdentity.gitCommitSha(),
+            )
+
         // Базовый backtest на dev-данных (без holdout) с зафиксированными параметрами.
         val devBacktest =
             backtestEngine.simulate(
@@ -159,7 +177,7 @@ class FinalHoldoutValidator(
                 signalGeneratorOverride = effectiveOverride,
             )
 
-        val result = HoldoutValidation(walkForward, holdout, paramsUsed, devBacktest)
+        val result = HoldoutValidation(walkForward, holdout, paramsUsed, frozenStrategy, devBacktest)
         logger.info {
             "Holdout $ticker: " +
                 "wfa=${if (walkForward.isPassable()) "PASS" else "FAIL"} " +

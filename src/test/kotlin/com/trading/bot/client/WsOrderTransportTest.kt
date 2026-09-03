@@ -1,9 +1,11 @@
 package com.trading.bot.client
 
+import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.repository.DeploymentApprovalRepository
 import com.trading.bot.service.DeploymentApprovalService
+import com.trading.bot.service.FrozenStrategyStore
 import com.trading.bot.service.LiveStrategyFingerprintProvider
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +89,7 @@ class WsOrderTransportTest {
                 scope,
                 approvedService(),
                 fingerprintProvider(),
+                frozenStrategyStore(),
             )
     }
 
@@ -98,8 +101,28 @@ class WsOrderTransportTest {
 
     private fun fingerprintProvider(): LiveStrategyFingerprintProvider {
         val fp = mock<LiveStrategyFingerprintProvider>()
-        whenever(fp.fingerprint()).thenReturn("fp")
+        whenever(fp.fingerprint(any())).thenReturn("fp")
         return fp
+    }
+
+    private fun frozenStrategyStore(): FrozenStrategyStore {
+        val store = mock<FrozenStrategyStore>()
+        whenever(store.current(any())).thenReturn(
+            FrozenStrategy(
+                ticker = "SBER",
+                strategyVersion = "live-v2",
+                gitCommitSha = null,
+                slPercent = 2.0,
+                tpPercent = 15.0,
+                slPoints = null,
+                tpPoints = null,
+                confidenceThreshold = 0.6,
+                leverage = 1.0,
+                riskPerTradePercent = null,
+                futuresMaxContractsPerPosition = null,
+            ),
+        )
+        return store
     }
 
     @AfterEach
@@ -242,6 +265,7 @@ class WsOrderTransportTest {
                     scope,
                     approval,
                     fingerprintProvider(),
+                    frozenStrategyStore(),
                 )
             assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
@@ -261,6 +285,7 @@ class WsOrderTransportTest {
                     scope,
                     approval,
                     fingerprintProvider(),
+                    frozenStrategyStore(),
                 )
             assertNull(blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-2") })
@@ -279,6 +304,7 @@ class WsOrderTransportTest {
                     scope,
                     notReady,
                     fingerprintProvider(),
+                    frozenStrategyStore(),
                 )
             assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
@@ -299,6 +325,7 @@ class WsOrderTransportTest {
                     scope,
                     approval,
                     fingerprintProvider(),
+                    frozenStrategyStore(),
                 )
             awaitFakeSubscribe(isolatedConnection)
             val result = async { transport2.cancel("ord-1", "idem-c", "P1") }

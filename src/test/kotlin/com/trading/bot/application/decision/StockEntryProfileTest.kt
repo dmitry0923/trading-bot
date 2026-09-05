@@ -2,6 +2,7 @@ package com.trading.bot.application.decision
 
 import com.trading.bot.application.OrderBuilder
 import com.trading.bot.application.risk.StockRiskEngine
+import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.domain.risk.EntryRequest
@@ -11,7 +12,6 @@ import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
-import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.AumProvider
@@ -27,7 +27,6 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
-import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
 
@@ -101,7 +100,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -141,7 +140,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -171,7 +170,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -203,7 +202,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -234,7 +233,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -271,7 +270,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -308,7 +307,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -343,7 +342,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .expectedNetProfitPerLot("CNYRUB_TOM", accountId = null)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -374,7 +373,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -403,7 +402,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -435,7 +434,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -468,7 +467,7 @@ class StockEntryProfileTest {
                 .`when`(adaptiveRisk)
                 .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
 
-            val signal = makeSignal("CNYRUB_TOM", StrategyAction.BUY)
+            val signal = makeSignal()
             val request =
                 EntryRequest(
                     ticker = "CNYRUB_TOM",
@@ -485,7 +484,53 @@ class StockEntryProfileTest {
             assertEquals(1, size.quantity)
         }
 
-    // ── postSizingChecks ────────────────────────────────────
+    @Test
+    fun `sizePosition honours frozen riskPerTradePercent for risk cap`() =
+        runBlocking {
+            // P1-аудит: риск-кап должен использовать frozen riskPerTradePercent (1%),
+            // а не runtime (10%). lossPerLot = 12.42*0.005*1000 + 2*10 = 82.1.
+            // frozen riskAmount = 50000*1/100 = 500 -> maxLotsByRisk = floor(500/82.1) = 6.
+            // runtime (10%) дал бы 5000 -> 60. Kelly большой (kellyLots=40), чтобы риск-кап
+            // был сдерживающим: min(40, 6) = 6 при frozen vs min(40,60)=40 при runtime.
+            riskConfig.riskPerTradePercent = 10.0
+            Mockito.doReturn(BigDecimal("50000")).`when`(aumProvider).currentAum(null)
+            Mockito
+                .doReturn(BigDecimal("500000"))
+                .`when`(adaptiveRisk)
+                .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+
+            val signal = makeSignal()
+            val frozen =
+                FrozenStrategy(
+                    ticker = "CNYRUB_TOM",
+                    strategyVersion = "live-v2",
+                    gitCommitSha = "abc",
+                    slPercent = 0.5,
+                    tpPercent = 2.0,
+                    slPoints = null,
+                    tpPoints = null,
+                    confidenceThreshold = 0.6,
+                    leverage = 1.0,
+                    riskPerTradePercent = 1.0,
+                    futuresMaxContractsPerPosition = null,
+                )
+            val request =
+                EntryRequest(
+                    ticker = "CNYRUB_TOM",
+                    action = StrategyAction.BUY,
+                    entryPrice = BigDecimal("12.42"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal.ZERO,
+                    atr = null,
+                    openPositions = emptyList(),
+                    frozenStrategy = frozen,
+                )
+
+            val size = profile.sizePosition(signal, BigDecimal("12.42"), request)
+
+            assertEquals(6, size.quantity)
+        }
 
     @Test
     fun `postSizingChecks returns ZERO_RISK_SIZE when quantity is 0`() =
@@ -655,12 +700,9 @@ class StockEntryProfileTest {
 
     // ── helpers ─────────────────────────────────────────────
 
-    private fun makeSignal(
-        ticker: String,
-        action: StrategyAction,
-    ) = Signal(
-        ticker = ticker,
-        action = action,
+    private fun makeSignal() = Signal(
+        ticker = "CNYRUB_TOM",
+        action = StrategyAction.BUY,
         targetPrice = BigDecimal("12.42"),
         signalStrength = 0.7,
         reasoning = "test",

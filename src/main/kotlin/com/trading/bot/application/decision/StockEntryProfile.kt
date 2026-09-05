@@ -110,10 +110,16 @@ class StockEntryProfile(
 
         // Риск-кап на сделку: убыток при срабатывании стопа не может превысить
         // riskPerTradePercent% от AUM. lossPerLot = slDistance × lotSize + 2×commission.
-        // P1-аудит: при LIVE-исполнении замороженной стратегии SL берётся ИЗ frozen
-        // (процент, ровно как в backtest), ATR-путь отключён.
+        // P1-аудит: при LIVE-исполнении замороженной стратегии риск-кап берётся ИЗ frozen
+        // (riskPerTradePercent, ровно как перевалидировалось), с fallback на runtime.
         val frozen = request.frozenStrategy
         val frozenSlPercent = frozen?.slPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
+        val effectiveRiskPerTradePercent =
+            frozen
+                ?.riskPerTradePercent
+                ?.takeIf { it > 0.0 }
+                ?.let { BigDecimal.valueOf(it) }
+                ?: BigDecimal(riskConfig.riskPerTradePercent.toString())
         val effectiveSlPercent =
             frozenSlPercent
                 ?: spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
@@ -125,13 +131,13 @@ class StockEntryProfile(
                 riskConfig.atrSlMultiplier > BigDecimal.ZERO
         val slDistance =
             if (useAtr) {
-                request.atr!!.multiply(riskConfig.atrSlMultiplier)
+                request.atr.multiply(riskConfig.atrSlMultiplier)
             } else {
                 entryPrice.multiply(effectiveSlPercent).divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
             }
         val riskAmount =
             request.portfolioMoney
-                .multiply(BigDecimal(riskConfig.riskPerTradePercent.toString()))
+                .multiply(effectiveRiskPerTradePercent)
                 .divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val lossPerLot =
             slDistance

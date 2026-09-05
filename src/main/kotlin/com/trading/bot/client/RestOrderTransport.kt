@@ -33,8 +33,9 @@ import java.util.concurrent.TimeUnit
  * - отмена: POST `.../actions/cancel`.
  *
  * Контракт доставки (единый с [WsOrderTransport], см. [OrderTransport]):
- * - `orderNumber` (non-null) — принято; `null` — определённый отказ биржи (4xx,
- *   кроме 429) — ретраить не нужно;
+ * - `orderNumber` (non-null) — принято;
+ * - 4xx (кроме 429) — определённый отказ биржи → [OrderRejectedException]
+ *   (outbox пометит ТЕРМИНАЛЬНЫЙ REJECTED, ретраить не нужно);
  * - сетевой сбой/таймаут/5xx/429 после исчерпания Resilience4j-ретраев →
  *   [OrderDeliveryUncertainException] (outbox пометит UNCERTAIN + State Reconciliation);
  * - до отправки (rate-limit / разомкнутый circuit breaker) — `null` с метрикой
@@ -141,7 +142,11 @@ class RestOrderTransport(
             meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
             if (isDefinitiveRejection(e)) {
                 logger.error(e) { "Limit order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
-                null
+                throw OrderRejectedException(
+                    "Limit order definitively REJECTED by Alor $ticker (${e.statusCode.value()}): " +
+                        "${e.responseBodyAsString.take(500)}",
+                    e,
+                )
             } else {
                 logger.error(e) { "placeLimitOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
                 throw OrderDeliveryUncertainException("REST limit order delivery uncertain: ${e.message}", e)
@@ -216,7 +221,11 @@ class RestOrderTransport(
             meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", type)).increment()
             if (isDefinitiveRejection(e)) {
                 logger.error(e) { "$type order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
-                null
+                throw OrderRejectedException(
+                    "$type order definitively REJECTED by Alor $ticker (${e.statusCode.value()}): " +
+                        "${e.responseBodyAsString.take(500)}",
+                    e,
+                )
             } else {
                 logger.error(e) { "placeConditionalOrder failed for $ticker after retries (${e.statusCode.value()}) — delivery UNCERTAIN" }
                 throw OrderDeliveryUncertainException("REST conditional order delivery uncertain: ${e.message}", e)

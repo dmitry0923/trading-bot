@@ -290,4 +290,24 @@ class OrderOutboxRepository(
             .then()
             .awaitSingleOrNull()
     }
+
+    /**
+     * Помечает ордер в терминальное состояние REJECTED (определённый отказ биржи:
+     * 4xx / WS rejected-событие). [claimRetryable] никогда не выбирает REJECTED —
+     * такой ордер окончательно отвергнут и НЕ переотправляется
+     * (retry_count не инкрементируется).
+     */
+    suspend fun markRejected(
+        id: UUID,
+        error: String,
+    ) {
+        databaseClient
+            .sql(
+                "UPDATE order_outbox SET status = 'REJECTED', processed_at = :now, error_message = :err WHERE id = :id",
+            ).bind("now", LocalDateTime.now())
+            .bind("err", error.take(2000))
+            .bind("id", id)
+            .then()
+            .awaitSingleOrNull()
+    }
 }

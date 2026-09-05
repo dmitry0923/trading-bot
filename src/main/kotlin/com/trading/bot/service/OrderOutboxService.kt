@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.OrderInterlockDeniedException
 import com.trading.bot.client.OrderPurpose
+import com.trading.bot.client.OrderRejectedException
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.infrastructure.UuidV7
@@ -229,6 +230,12 @@ class OrderOutboxService(
                 logger.warn { "Outbox ${outbox.id} BLOCKED (final, interlock deny) — rabbit skip, not retryable" }
                 PlaceOrderResult(outboxId, null, success = false)
             }
+
+            OutboxStatus.REJECTED -> {
+                // Терминальный отказ биржи — final, никогда не переотправляется.
+                logger.warn { "Outbox ${outbox.id} REJECTED (final, exchange reject) — rabbit skip, not retryable" }
+                PlaceOrderResult(outboxId, null, success = false)
+            }
         }
     }
 
@@ -366,9 +373,12 @@ class OrderOutboxService(
                 logger.info { "Outbox order SENT: ${outbox.id} -> alorOrderId=$orderId (idem=$idempotencyKey)" }
                 PlaceOrderResult(id, orderId, success = true)
             } else {
-                outboxRepo.markFailed(id, "Order rejected by Alor (no orderNumber)")
+                // null = команда НЕ отправлена на биржу (rate limit / CB open / spread-block /
+                // нет котировки) — БЕЗОПАСНО ретраить на следующем цикле worker'ом (в отличие
+                // от OrderRejectedException → REJECTED и OrderInterlockDeniedException → BLOCKED).
+                outboxRepo.markFailed(id, "Order not sent (retryable): rate limit / circuit open / spread block")
                 meterRegistry.counter("outbox.failed", Tags.of("type", type)).increment()
-                logger.warn { "Outbox order REJECTED: ${outbox.id} (definitive, retry later via worker)" }
+                logger.warn { "Outbox order NOT SENT: ${outbox.id} — retryable, worker retries with backoff" }
                 PlaceOrderResult(id, null, success = false)
             }
         } catch (e: OrderInterlockDeniedException) {
@@ -378,6 +388,13 @@ class OrderOutboxService(
             outboxRepo.markBlocked(id, e.message ?: "execution interlock deny")
             meterRegistry.counter("outbox.blocked", Tags.of("type", type)).increment()
             logger.warn { "Outbox order BLOCKED (final): ${outbox.id} — interlock deny, never retried" }
+            PlaceOrderResult(id, null, success = false)
+        } catch (e: OrderRejectedException) {
+            // Определённый отказ биржи (4xx/WS-reject) — ТЕРМИНАЛЬНЫЙ: не retryable.
+            // Повторная отправка того же ордера даст тот же отказ — финальный REJECTED.
+            outboxRepo.markRejected(id, e.message ?: "definitive exchange reject")
+            meterRegistry.counter("outbox.rejected", Tags.of("type", type)).increment()
+            logger.warn { "Outbox order REJECTED (final): ${outbox.id} — exchange reject, never retried" }
             PlaceOrderResult(id, null, success = false)
         } catch (e: Exception) {
             outboxRepo.markFailed(id, e.message ?: "dispatch error")

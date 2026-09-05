@@ -197,6 +197,10 @@ class ExecutionReconciler(
                 abandonEntry(pos, CloseReason.ENTRY_NOT_CONFIRMED)
             }
 
+            outbox.status == OutboxStatus.REJECTED -> {
+                abandonEntry(pos, CloseReason.ENTRY_NOT_CONFIRMED)
+            }
+
             else -> {}
         }
     }
@@ -305,6 +309,13 @@ class ExecutionReconciler(
 
             outbox.status == OutboxStatus.BLOCKED -> {
                 logger.warn { "Pending close ${pos.id}/${pos.ticker} BLOCKED (interlock deny); resetting for a fresh close order" }
+                pos.pendingClose = false
+                pos.closeOrderId = null
+                positionRepo.save(pos)
+            }
+
+            outbox.status == OutboxStatus.REJECTED -> {
+                logger.warn { "Pending close ${pos.id}/${pos.ticker} REJECTED by exchange; resetting for a fresh close order" }
                 pos.pendingClose = false
                 pos.closeOrderId = null
                 positionRepo.save(pos)

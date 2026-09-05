@@ -65,11 +65,31 @@ class OrderInterlockDeniedException(
 ) : OrderTransportException(message, cause)
 
 /**
+ * ОРДЕР ОКОНЧАТЕЛЬНО ОТКЛОНЁН БИРЖЕЙ (REST 4xx кроме 429 / WS-событие rejected):
+ * заявка долетела до биржи, но получила определённый отказ. Это ТЕРМИНАЛЬНЫЙ исход:
+ * outbox переводит строку в `REJECTED`, который worker НЕ переотправляет (в отличие
+ * от [OrderDeliveryUncertainException]), — в отличие от `null`, означающего
+ * «не отправлено до биржи» (rate limit / CB / spread-block) и допускающего retry.
+ *
+ * Маршрутизатор НЕ переключается на fallback: определённый отказ не изменится от
+ * смены транспорта, повторная отправка приведёт к тому же REJECT.
+ */
+class OrderRejectedException(
+    message: String,
+    cause: Throwable? = null,
+) : OrderTransportException(message, cause)
+
+/**
  * Абстракция доставки ордеров (roadmap 13.8.2 «WebSocket-only исполнение»).
  *
- * Единый контракт трёх исходов для размещения и отмены:
+ * Единый контракт четырёх исходов для размещения и отмены:
  * - возврат `orderNumber` (non-null) — биржа приняла заявку;
- * - возврат `null` — определённый отказ биржи (4xx / WS-reject) — ретраить не нужно;
+ * - возврат `null` — команда НЕ отправлена на биржу (rate limit / разомкнутый CB /
+ *   spread-block / нет котировки) — БЕЗОПАСНО ретраить на следующем цикле outbox;
+ * - исключение [OrderRejectedException] — биржа определённо отвергла заявку
+ *   (4xx/WS-reject) — ТЕРМИНАЛЬНО, outbox пометит `REJECTED`, ретраить не нужно;
+ * - исключение [OrderInterlockDeniedException] — execution interlock deny —
+ *   ТЕРМИНАЛЬНО, outbox пометит `BLOCKED`;
  * - исключение [OrderDeliveryUncertainException] — результат неизвестен (UNCERTAIN),
  *   outbox пометит доставку и переотправит только после State Reconciliation;
  * - исключение [OrderTransportUnavailableException] — до отправки команды транспорт

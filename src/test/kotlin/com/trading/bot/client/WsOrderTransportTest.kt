@@ -18,7 +18,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -166,13 +165,16 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit returns null on rejected event`() =
+    fun `placeLimit throws OrderRejectedException on rejected event`() =
         runBlocking {
             awaitSubscribe()
             val result = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1") }
             awaitCommandContaining("idem-1")
             fakeConnection.inbound.send("""{"id":"idem-1","status":"rejected","error":"not enough money"}""")
-            assertNull(result.await())
+            assertFailsWith<OrderRejectedException> {
+                result.await()
+                Unit
+            }
         }
 
     @Test

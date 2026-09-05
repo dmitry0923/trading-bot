@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.OrderInterlockDeniedException
 import com.trading.bot.client.OrderPurpose
+import com.trading.bot.client.OrderRejectedException
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.model.PositionDirection
@@ -37,7 +38,9 @@ import java.util.UUID
  *   FOUND → markSent без переотправки; UNKNOWN → пропуск (uncertain); NOT_FOUND → повторная
  *   отправка с ТЕМ ЖЕ idempotency key;
  * - bounded retry: worker использует alorConfig.maxOrderRetries;
- * - определённый отказ (null orderNumber) → FAILED без uncertain; сетевой сбой → FAILED + uncertain.
+ * - null orderNumber → FAILED без uncertain (не отправлено — retryable); 4xx/WS-reject
+ *   (OrderRejectedException) → ТЕРМИНАЛЬНЫЙ REJECTED; interlock deny → ТЕРМИНАЛЬНЫЙ
+ *   BLOCKED; сетевой сбой → FAILED + uncertain.
  */
 class OrderOutboxServiceTest {
     private val outboxRepo = Mockito.mock(OrderOutboxRepository::class.java)
@@ -115,6 +118,13 @@ class OrderOutboxServiceTest {
     private suspend fun stubMarkBlockedRecording(blockedErrors: MutableList<String>) {
         Mockito.`when`(outboxRepo.markBlocked(anyUuid(), Mockito.anyString())).thenAnswer { inv ->
             blockedErrors += inv.getArgument<String>(1)
+            null
+        }
+    }
+
+    private suspend fun stubMarkRejectedRecording(rejectedErrors: MutableList<String>) {
+        Mockito.`when`(outboxRepo.markRejected(anyUuid(), Mockito.anyString())).thenAnswer { inv ->
+            rejectedErrors += inv.getArgument<String>(1)
             null
         }
     }
@@ -376,7 +386,7 @@ class OrderOutboxServiceTest {
     }
 
     @Test
-    fun `definitive rejection is failed but not uncertain`() {
+    fun `not sent (null from transport) is failed but not uncertain - retryable`() {
         val outboxId = UUID.randomUUID()
         val failedErrors = mutableListOf<String>()
         runBlocking {
@@ -390,7 +400,42 @@ class OrderOutboxServiceTest {
             assertFalse(result.uncertain)
             Mockito.verify(outboxRepo).markFailed(anyUuid(), Mockito.anyString())
         }
-        assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
+        assertEquals(listOf("Order not sent (retryable): rate limit / circuit open / spread block"), failedErrors)
+    }
+
+    @Test
+    fun `definitive exchange reject marks rejected terminal - never retried`() {
+        val outboxId = UUID.randomUUID()
+        val rejectedErrors = mutableListOf<String>()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyPurpose(),
+                    ),
+                ).thenThrow(
+                    OrderRejectedException("Limit order definitively REJECTED by Alor (400): insufficient funds"),
+                )
+            stubMarkRejectedRecording(rejectedErrors)
+
+            val result = service.placeOrder("Si", "buy", 1, BigDecimal("92000"), "limit")
+
+            assertFalse(result.success)
+            assertNull(result.alorOrderId)
+            assertFalse(result.uncertain)
+            Mockito.verify(outboxRepo).markRejected(anyUuid(), Mockito.anyString())
+            Mockito.verify(outboxRepo, Mockito.never()).markFailed(anyUuid(), Mockito.anyString())
+            Mockito.verify(outboxRepo, Mockito.never()).markBlocked(anyUuid(), Mockito.anyString())
+        }
+        assertEquals(1, rejectedErrors.size)
+        assertTrue(rejectedErrors[0].contains("REJECTED"))
     }
 
     @Test
@@ -1023,7 +1068,7 @@ class OrderOutboxServiceTest {
                     anyPurpose(),
                 )
         }
-        assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
+        assertEquals(listOf("Order not sent (retryable): rate limit / circuit open / spread block"), failedErrors)
     }
 
     @Test
@@ -1133,7 +1178,7 @@ class OrderOutboxServiceTest {
                 .verify(alorClient, Mockito.never())
                 .cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
         }
-        assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
+        assertEquals(listOf("Order not sent (retryable): rate limit / circuit open / spread block"), failedErrors)
     }
 
     @Test

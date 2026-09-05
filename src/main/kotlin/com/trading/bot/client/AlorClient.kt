@@ -158,9 +158,11 @@ class AlorClient(
      * @param idempotencyKey уникальный клиентский id ордера (генерируется один раз
      *   на логический ордер в OrderOutboxService). Все повторные доставки/ретраи
      *   используют ТОТ ЖЕ ключ → Alor дедуплицирует.
-     * @return orderNumber при успехе; null при определённом отказе биржи (4xx);
-     *   при сетевом сбое/таймауте/5xx после исчерпания ретраев — бросает исключение
-     *   (верхний слой пометит доставку как UNCERTAIN и выполнит State Reconciliation).
+     * @return orderNumber при успехе; null при НЕ-отправке (rate limit / CB open /
+     *   spread-block) — безопасно ретраить; при определённом отказе биржи (4xx) —
+     *   бросает [OrderRejectedException]; при сетевом сбое/таймауте/5xx после
+     *   исчерпания ретраев — [OrderDeliveryUncertainException] (верхний слой пометит
+     *   доставку как UNCERTAIN и выполнит State Reconciliation).
      */
     suspend fun placeLimitOrder(
         ticker: String,

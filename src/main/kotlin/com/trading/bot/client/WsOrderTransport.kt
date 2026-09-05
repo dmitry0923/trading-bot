@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * Контракт доставки (тот же, что у REST):
  * - [MatchResult.Confirmed] → возвращается orderNumber;
- * - [MatchResult.Rejected] → возвращается null (определённый отказ);
+ * - [MatchResult.Rejected] → [OrderRejectedException] (определённый отказ, ТЕРМИНАЛЬНЫЙ);
  * - таймаут ответа ([AlorConfig.wsOrderTimeoutMs]) или обрыв соединения после
  *   отправки → [OrderDeliveryUncertainException] (UNCERTAIN — повторная отправка
  *   только после State Reconciliation по idempotency key);
@@ -256,7 +256,7 @@ class WsOrderTransport(
             is WsOrderMessages.MatchResult.Rejected -> {
                 meterRegistry.counter("alor.ws.orders.rejected", Tags.of("type", type)).increment()
                 logger.warn { "WS order REJECTED (type=$type, idem=$idempotencyKey): ${result.reason}" }
-                null
+                throw OrderRejectedException("WS order $type definitively REJECTED (idem=$idempotencyKey): ${result.reason}")
             }
 
             is WsOrderMessages.MatchResult.NotMatch -> {

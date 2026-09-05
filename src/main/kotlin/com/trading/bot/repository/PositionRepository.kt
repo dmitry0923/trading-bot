@@ -90,6 +90,22 @@ class PositionRepository(
     }
 
     /**
+     * Есть ли хотя бы одна открытая позиция тикера (execution interlock, P1-a):
+     * risk-reducing ордеры (close/SL/TP) разрешены при наличии открытой позиции,
+     * даже если тикер revoked / build SHA сменился.
+     */
+    suspend fun hasOpenPosition(ticker: String): Boolean {
+        val sql = "SELECT EXISTS(SELECT 1 FROM positions WHERE status = 'OPEN' AND ticker = :ticker) AS present"
+        return databaseClient
+            .sql(sql)
+            .bind("ticker", ticker)
+            .map { row, _ -> row.get("present", Boolean::class.javaObjectType) ?: false }
+            .one()
+            .awaitSingleOrNull()
+            ?: false
+    }
+
+    /**
      * Открытые позиции конкретного тикера (без загрузки ВСЕХ открытых позиций).
      * Используется в onPriceChanged для мониторинга одного тикера за тик.
      */

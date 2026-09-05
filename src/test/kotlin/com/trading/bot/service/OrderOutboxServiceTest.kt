@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderPurpose
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.model.PositionDirection
@@ -78,6 +79,11 @@ class OrderOutboxServiceTest {
     private fun anyBigDecimal(): BigDecimal {
         Mockito.any(BigDecimal::class.java)
         return BigDecimal.ZERO
+    }
+
+    private fun anyPurpose(): OrderPurpose {
+        Mockito.any(OrderPurpose::class.java)
+        return OrderPurpose.ENTRY
     }
 
     private fun anyOutbox(): OrderOutbox {
@@ -201,6 +207,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-1")
             stubMarkSentRecording(sentOrders)
@@ -234,6 +241,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyBoolean(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-m")
             stubMarkSentRecording(sentOrders)
@@ -251,6 +259,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("ord-m"), sentOrders)
@@ -270,6 +279,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.eq(true),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-m")
             stubMarkSentRecording(mutableListOf())
@@ -303,6 +313,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.eq(true),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-m")
             stubMarkSentRecording(mutableListOf())
@@ -336,6 +347,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.eq(false),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-m")
             stubMarkSentRecording(mutableListOf())
@@ -388,6 +400,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenThrow(RuntimeException("network timeout"))
             stubMarkFailedRecording(failedErrors)
@@ -428,6 +441,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -438,6 +452,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("ord-9"), sentOrders)
@@ -464,6 +479,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -474,6 +490,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
@@ -496,6 +513,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenAnswer { inv ->
                     usedKeys += inv.getArgument<String>(4)
@@ -514,6 +532,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
@@ -563,6 +582,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
@@ -594,6 +614,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
@@ -616,6 +637,7 @@ class OrderOutboxServiceTest {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyBoolean(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-c3")
             stubMarkSentRecording(sentOrders)
@@ -631,6 +653,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
@@ -664,6 +687,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
@@ -683,6 +707,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-1")
             stubMarkSentRecording(mutableListOf())
@@ -710,6 +735,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-rabbit")
             stubMarkSentRecording(sentOrders)
@@ -727,6 +753,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("ord-rabbit"), sentOrders)
@@ -753,6 +780,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
@@ -776,6 +804,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
@@ -801,6 +830,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
         }
@@ -824,6 +854,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
     }
@@ -843,6 +874,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-stop")
             stubMarkSentRecording(sentOrders)
@@ -860,6 +892,7 @@ class OrderOutboxServiceTest {
                     eq(BigDecimal("91500")),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -870,6 +903,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -880,6 +914,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("ord-stop"), sentOrders)
@@ -900,6 +935,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-tp")
             stubMarkSentRecording(sentOrders)
@@ -917,6 +953,7 @@ class OrderOutboxServiceTest {
                     eq(BigDecimal("92500")),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("ord-tp"), sentOrders)
@@ -942,6 +979,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
@@ -1026,6 +1064,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -1036,6 +1075,7 @@ class OrderOutboxServiceTest {
                     Mockito.anyString(),
                     Mockito.anyString(),
                     Mockito.anyBoolean(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -1046,6 +1086,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
             Mockito
                 .verify(alorClient, Mockito.never())
@@ -1082,6 +1123,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
     }
@@ -1099,6 +1141,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-1")
         }
@@ -1129,6 +1172,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenAnswer { inv ->
                     portfolios += inv.getArgument<String>(5)
@@ -1176,6 +1220,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenAnswer { inv ->
                     portfolios += inv.getArgument<String>(5)
@@ -1195,6 +1240,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("PORTFOLIO-42"), portfolios)
@@ -1237,6 +1283,7 @@ class OrderOutboxServiceTest {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenAnswer { inv ->
                     portfolios += inv.getArgument<String>(5)
@@ -1256,6 +1303,7 @@ class OrderOutboxServiceTest {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
         assertEquals(listOf("PORTFOLIO-9"), portfolios)

@@ -169,7 +169,8 @@ class AlorClient(
         price: BigDecimal,
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
-    ): String? = orderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio)
+        purpose: OrderPurpose = OrderPurpose.ENTRY,
+    ): String? = orderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio, purpose)
 
     /**
      * Маркет-ордер (через лимитный по лучшему ask/bid). Запрещён при спреде > 0.5%
@@ -186,6 +187,7 @@ class AlorClient(
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
         forceMarket: Boolean = false,
+        purpose: OrderPurpose = OrderPurpose.ENTRY,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
         val snapshot = getMarketSnapshot(ticker) ?: return null
@@ -210,7 +212,7 @@ class AlorClient(
                 "sell" -> snapshot.bid ?: snapshot.currentPrice
                 else -> snapshot.currentPrice
             }
-        val orderId = placeLimitOrder(ticker, side, qty, price, idempotencyKey, portfolio)
+        val orderId = placeLimitOrder(ticker, side, qty, price, idempotencyKey, portfolio, purpose)
         if (orderId != null) {
             meterRegistry.counter("alor.order.placed", Tags.of("type", "market", "status", "OK")).increment()
         }
@@ -232,7 +234,8 @@ class AlorClient(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
-    ): String? = placeConditionalOrder("stop", ticker, side, qty, stopPrice, idempotencyKey, portfolio)
+        purpose: OrderPurpose = OrderPurpose.SL,
+    ): String? = placeConditionalOrder("stop", ticker, side, qty, stopPrice, idempotencyKey, portfolio, purpose)
 
     /**
      * Тейк-профит-заявка (type="take-profit"): срабатывает при пересечении ценой
@@ -246,7 +249,8 @@ class AlorClient(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String = alorConfig.portfolio,
-    ): String? = placeConditionalOrder("take-profit", ticker, side, qty, stopPrice, idempotencyKey, portfolio)
+        purpose: OrderPurpose = OrderPurpose.TP,
+    ): String? = placeConditionalOrder("take-profit", ticker, side, qty, stopPrice, idempotencyKey, portfolio, purpose)
 
     /**
      * Условная (стоп/тейк) заявка (делегирование в [OrderTransport]).
@@ -260,7 +264,8 @@ class AlorClient(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
-    ): String? = orderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio)
+        purpose: OrderPurpose,
+    ): String? = orderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio, purpose)
 
     /**
      * Результат отмены заявки (см. [CancelResult]).

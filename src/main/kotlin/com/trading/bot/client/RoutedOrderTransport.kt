@@ -42,15 +42,16 @@ class RoutedOrderTransport(
         price: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose,
     ): String? {
         if (canUseWs(portfolio)) {
             try {
-                return wsOrderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio)
+                return wsOrderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio, purpose)
             } catch (e: OrderTransportUnavailableException) {
                 recordFallback("limit", e)
             }
         }
-        return restOrderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio)
+        return restOrderTransport.placeLimit(ticker, side, qty, price, idempotencyKey, portfolio, purpose)
     }
 
     override suspend fun placeConditional(
@@ -61,15 +62,16 @@ class RoutedOrderTransport(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose,
     ): String? {
         if (canUseWs(portfolio)) {
             try {
-                return wsOrderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio)
+                return wsOrderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio, purpose)
             } catch (e: OrderTransportUnavailableException) {
                 recordFallback(type, e)
             }
         }
-        return restOrderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio)
+        return restOrderTransport.placeConditional(type, ticker, side, qty, stopPrice, idempotencyKey, portfolio, purpose)
     }
 
     override suspend fun cancel(

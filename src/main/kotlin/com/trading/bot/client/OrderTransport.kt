@@ -68,6 +68,11 @@ interface OrderTransport {
     /**
      * Размещение лимитной заявки с обязательным idempotency key.
      *
+     * @param purpose назначение ордера: [OrderPurpose.ENTRY] проверяется execution
+     *   interlock'ом (тикер должен быть LIVE-approved), CLOSE/SL/TP проходят и при
+     *   наличии открытой позиции по тикеру (P1-a — бот обязан мочь закрыть позицию
+     *   после revoke/смены build SHA). По умолчанию [OrderPurpose.ENTRY] — самый
+     *   строгий вариант для прямых вызовов без явного назначения.
      * @param idempotencyKey уникальный клиентский id — все повторные доставки/ретраи
      *   используют ТОТ ЖЕ ключ (Alor дедуплицирует).
      */
@@ -78,10 +83,12 @@ interface OrderTransport {
         price: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose = OrderPurpose.ENTRY,
     ): String?
 
     /**
      * Размещение условной заявки (stop / take-profit) через единый тип [type].
+     * Назначение [purpose] используется тем же interlock'ом, что и [placeLimit].
      */
     suspend fun placeConditional(
         type: String,
@@ -91,6 +98,7 @@ interface OrderTransport {
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose = OrderPurpose.ENTRY,
     ): String?
 
     /**

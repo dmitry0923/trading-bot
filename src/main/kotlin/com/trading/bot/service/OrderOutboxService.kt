@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderPurpose
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.infrastructure.UuidV7
@@ -245,6 +246,9 @@ class OrderOutboxService(
         val type = payload.path("type").asString("limit")
         val idempotencyKey = outbox.idempotencyKey ?: payload.path("idempotencyKey").asString()
         val isCancel = type == "cancel"
+        // Назначение ордера для execution interlock (P1-a): entry — строгий approve;
+        // close/sl/tp разрешаются при наличии открытой позиции.
+        val purpose = OrderPurpose.from(payload.path("purpose").asString(null)) ?: OrderPurpose.ENTRY
         val portfolio = resolvePortfolio(payload, outbox)
 
         // STATE RECONCILIATION перед любым ПОВТОРНЫМ запросом.
@@ -310,7 +314,7 @@ class OrderOutboxService(
             val orderId =
                 when (type) {
                     "limit" -> {
-                        price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                        price?.let { alorClient.placeLimitOrder(ticker, side, qty, it, idempotencyKey, portfolio, purpose) }
                     }
 
                     "market" -> {
@@ -323,15 +327,16 @@ class OrderOutboxService(
                             idempotencyKey,
                             portfolio,
                             forceMarket = isEmergencyClose(payload.path("closeReason").asString(null)),
+                            purpose = purpose,
                         )
                     }
 
                     "stop" -> {
-                        stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                        stopPrice?.let { alorClient.placeStopOrder(ticker, side, qty, it, idempotencyKey, portfolio, purpose) }
                     }
 
                     "take-profit" -> {
-                        stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey, portfolio) }
+                        stopPrice?.let { alorClient.placeTakeProfitOrder(ticker, side, qty, it, idempotencyKey, portfolio, purpose) }
                     }
 
                     "cancel" -> {

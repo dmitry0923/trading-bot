@@ -78,7 +78,7 @@ class AlorClientTest {
 
     private suspend fun stubPlaceLimit(result: String) {
         whenever(
-            orderTransport.placeLimit(any(), any(), any(), any(), any(), any()),
+            orderTransport.placeLimit(any(), any(), any(), any(), any(), any(), any()),
         ).thenReturn(result)
     }
 
@@ -410,7 +410,7 @@ class AlorClientTest {
 
                 assertNull(orderId)
                 assertEquals(1.0, registry.counter("alor.order.blocked", "reason", "WIDE_SPREAD").count())
-                verify(orderTransport, never()).placeLimit(any(), any(), any(), any(), any(), any())
+                verify(orderTransport, never()).placeLimit(any(), any(), any(), any(), any(), any(), any())
             }
         }
     }

@@ -33,6 +33,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * команда/ответ коррелируются по idempotency key и guid; таймаут ответа →
  * [OrderDeliveryUncertainException]; недоступность канала ДО отправки →
  * [OrderTransportUnavailableException]; обрыв соединения → pending UNCERTAIN.
+ *
+ * P1-a: Risk-reducing ордера (close/SL/TP) проходят interlock при наличии
+ * открытой позиции, даже если тикер revoked / build SHA сменился.
  */
 class WsOrderTransportTest {
     private lateinit var alorConfig: AlorConfig
@@ -88,9 +91,21 @@ class WsOrderTransportTest {
             )
     }
 
-    private fun resolver(frozen: FrozenStrategy? = null): LiveFrozenStrategyResolver {
+    private fun resolver(
+        frozen: FrozenStrategy? = null,
+        reducingAllowed: Boolean = false,
+    ): LiveFrozenStrategyResolver {
         val r = mock<LiveFrozenStrategyResolver>()
         whenever(r.resolveActive(any())).thenReturn(frozen)
+        runBlocking {
+            whenever(r.isOrderAllowed(any(), any())).thenAnswer { invocation ->
+                val purpose = invocation.getArgument<OrderPurpose>(1)
+                when (purpose) {
+                    OrderPurpose.ENTRY -> frozen != null
+                    else -> reducingAllowed
+                }
+            }
+        }
         return r
     }
 
@@ -304,6 +319,85 @@ class WsOrderTransportTest {
             awaitCommandContainingOn(isolatedConnection, "idem-c")
             isolatedConnection.inbound.send("""{"orderNumber":"ord-1","status":"cancelled"}""")
             assertEquals(CancelResult.CONFIRMED, result.await())
+        }
+
+    @Test
+    fun `close placeLimit passes interlock when open position exists after revoke`() =
+        runBlocking {
+            // P1-a: тикер revoked (frozen = null -> entry denied), но риск-reducing
+            // закрытие разрешено, т.к. для тикера есть открытая позиция.
+            val isolatedConnection = FakeConnection()
+            val closeTransport =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    FakeSocketFactory(isolatedConnection),
+                    scope,
+                    resolver(frozen = null, reducingAllowed = true),
+                )
+            awaitFakeSubscribe(isolatedConnection)
+            val result = async {
+                closeTransport.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c1", "P1", OrderPurpose.CLOSE)
+            }
+            awaitCommandContainingOn(isolatedConnection, "idem-c1")
+            isolatedConnection.inbound.send("""{"id":"idem-c1","orderNumber":"99991"}""")
+            assertEquals("99991", result.await())
+        }
+
+    @Test
+    fun `close placeLimit blocked after revoke without open position`() =
+        runBlocking {
+            val blocked =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    fakeFactory,
+                    scope,
+                    resolver(frozen = null, reducingAllowed = false),
+                )
+            assertNull(
+                blocked.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c2", "P1", OrderPurpose.CLOSE),
+            )
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-c2") })
+        }
+
+    @Test
+    fun `entry placeLimit still blocked after revoke even with open position`() =
+        runBlocking {
+            // P1-a: наличие открытой позиции НЕ легитимирует новый entry.
+            val blocked =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    fakeFactory,
+                    scope,
+                    resolver(frozen = null, reducingAllowed = true),
+                )
+            assertNull(
+                blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY),
+            )
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-e1") })
+        }
+
+    @Test
+    fun `tp placeConditional blocked after revoke without open position`() =
+        runBlocking {
+            val blocked =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    fakeFactory,
+                    scope,
+                    resolver(frozen = null, reducingAllowed = false),
+                )
+            assertNull(
+                blocked.placeConditional("take-profit", "SBER", "sell", 1, BigDecimal("280"), "idem-tp1", "P1", OrderPurpose.TP),
+            )
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-tp1") })
         }
 
     private suspend fun awaitFakeSubscribe(connection: FakeConnection) {

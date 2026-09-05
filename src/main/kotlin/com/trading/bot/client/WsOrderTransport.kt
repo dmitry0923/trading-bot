@@ -69,11 +69,18 @@ class WsOrderTransport(
      * Execution interlock (P1): WS-доставка только в LIVE; тикер, не прошедший
      * approval + strategy fingerprint, получает определённый отказ (null) — на биржу
      * не уходит. fail-closed: неготовность/ошибка состояния => deny.
+     *
+     * Назначение ордера (P1-a): strict-denial применяется только к ENTRY; risk-reducing
+     * закрытия (close/SL/TP) разрешаются при наличии открытой позиции по тикеру даже
+     * после revoke / смены build SHA, чтобы бот оставался способным выйти из позиции.
      */
-    private fun denyIfNotLiveApproved(ticker: String): Boolean {
-        if (liveFrozenStrategyResolver.resolveActive(ticker) != null) return false
+    private suspend fun denyIfNotLiveApproved(
+        ticker: String,
+        purpose: OrderPurpose,
+    ): Boolean {
+        if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return false
         logger.error {
-            "LIVE order BLOCKED for $ticker — ticker not approved, strategy fingerprint mismatch, or build identity mismatch (execution interlock)"
+            "LIVE order BLOCKED for $ticker (purpose=$purpose) — ticker not approved and no open position (execution interlock)"
         }
         meterRegistry.counter("alor.ws.orders.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
         return true
@@ -99,8 +106,9 @@ class WsOrderTransport(
         price: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose,
     ): String? {
-        if (denyIfNotLiveApproved(ticker)) return null
+        if (denyIfNotLiveApproved(ticker, purpose)) return null
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
@@ -139,8 +147,9 @@ class WsOrderTransport(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose,
     ): String? {
-        if (denyIfNotLiveApproved(ticker)) return null
+        if (denyIfNotLiveApproved(ticker, purpose)) return null
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()

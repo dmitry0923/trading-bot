@@ -1,6 +1,5 @@
 package com.trading.bot.client
 
-import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.service.LiveFrozenStrategyResolver
@@ -21,10 +20,10 @@ import java.math.BigDecimal
 /**
  * Unit-тесты REST-транспорта ([RestOrderTransport]) в не-LIVE режиме: имитация
  * исполнения (sim-*), отмена подтверждается. LIVE-interlock делегирован единому
- * [LiveFrozenStrategyResolver] (P1): резолвер возвращает активную frozen-стратегию —
- * ордер проходит, иначе (null) — ордер блокируется. Семантика самого резолвера
- * (build-identity/fingerprint/fail-closed) покрывается отдельным юнит-тестом
- * LiveFrozenStrategyResolverTest, а реальная доставка ордера — интеграционными тестами.
+ * [LiveFrozenStrategyResolver] (P1): резолвер проверяет назначение ордера
+ * (P1-a): entry требует approved, close/SL/TP — открытую позицию. Семантика
+ * самого резолвера покрывается отдельным юнит-тестом [LiveFrozenStrategyResolverTest],
+ * а реальная доставка ордера — интеграционными тестами.
  */
 class RestOrderTransportTest {
     private val tradingConfig = TradingConfig().apply { mode = "SIMULATION" }
@@ -66,22 +65,44 @@ class RestOrderTransportTest {
     @Test
     fun `live placeLimit is blocked for unapproved ticker`() =
         runBlocking {
-            val live = liveTransport(resolver(null))
+            val live = liveTransport(resolver())
             assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
         }
 
     @Test
     fun `live placeConditional is blocked for unapproved ticker`() =
         runBlocking {
-            val live = liveTransport(resolver(null))
+            val live = liveTransport(resolver())
             assertNull(live.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
         }
 
     @Test
     fun `live placeLimit is blocked when approval service not ready`() =
         runBlocking {
-            val live = liveTransport(resolver(null))
+            val live = liveTransport(resolver())
             assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+        }
+
+    @Test
+    fun `live placeLimit close purpose is blocked after revoke without open position`() =
+        runBlocking {
+            val live = liveTransport(resolver(reducingAllowed = false))
+            assertNull(live.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c1", "P1", OrderPurpose.CLOSE))
+        }
+
+    @Test
+    fun `live placeConditional sl purpose is blocked after revoke without open position`() =
+        runBlocking {
+            val live = liveTransport(resolver(reducingAllowed = false))
+            assertNull(live.placeConditional("stop", "SBER", "sell", 1, BigDecimal("240"), "idem-sl1", "P1", OrderPurpose.SL))
+        }
+
+    @Test
+    fun `live placeLimit entry still blocked even with reducing allowed (revoke scenario)`() =
+        runBlocking {
+            // P1-a: entry requires full approval even if reducing is allowed via open position
+            val live = liveTransport(resolver(entryAllowed = false, reducingAllowed = true))
+            assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY))
         }
 
     private fun liveTransport(resolver: LiveFrozenStrategyResolver): RestOrderTransport {
@@ -99,9 +120,22 @@ class RestOrderTransportTest {
         )
     }
 
-    private fun resolver(frozen: FrozenStrategy? = null): LiveFrozenStrategyResolver {
+    private fun resolver(
+        entryAllowed: Boolean = false,
+        reducingAllowed: Boolean = false,
+    ): LiveFrozenStrategyResolver {
         val r = mock<LiveFrozenStrategyResolver>()
-        whenever(r.resolveActive(any())).thenReturn(frozen)
+        runBlocking {
+            whenever(r.isOrderAllowed(any(), any())).thenAnswer { invocation ->
+                val purpose = invocation.getArgument<OrderPurpose>(1)
+                when (purpose) {
+                    OrderPurpose.ENTRY -> entryAllowed
+                    else -> reducingAllowed
+                }
+            }
+        }
+        // resolveActive kept for callers that use it directly
+        whenever(r.resolveActive(any())).thenReturn(null)
         return r
     }
 }

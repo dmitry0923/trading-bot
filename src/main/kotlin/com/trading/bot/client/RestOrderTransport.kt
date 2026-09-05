@@ -61,19 +61,26 @@ class RestOrderTransport(
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
-    /**
+/**
      * Execution interlock (P1): в LIVE-режиме реальный ордер уходит на биржу ТОЛЬКО
-     * для тикера, чей runtime-фрintprиnt стратегии совпадает с одобренным
+     * для тикера, чей runtime-фrintprиnt стратегии совпадает с одобренным
      * DeploymentGate (per-ticker approval + strategy fingerprint). Несоответствие —
      * определённый отказ (null): outbox не ретраит. В SIMULATION не влияет.
      * Независимо от [DeploymentApprovalService] — fail-closed (ошибка/неготовность
      * => deny), никакого fail-open при отсутствующем состоянии.
+     *
+     * Назначение ордера (P1-a): strict-denial только для ENTRY; risk-reducing закрытия
+     * (close/SL/TP) разрешаются при наличии открытой позиции по тикеру даже после
+     * revoke / смены build SHA, чтобы бот оставался способным выйти из позиции.
      */
-    private fun denyIfNotLiveApproved(ticker: String): Boolean {
+    private suspend fun denyIfNotLiveApproved(
+        ticker: String,
+        purpose: OrderPurpose,
+    ): Boolean {
         if (!isLive) return false
-        if (liveFrozenStrategyResolver.resolveActive(ticker) != null) return false
+        if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return false
         logger.error {
-            "LIVE order BLOCKED for $ticker — ticker not approved, strategy fingerprint mismatch, or build identity mismatch (execution interlock)"
+            "LIVE order BLOCKED for $ticker (purpose=$purpose) — ticker not approved and no open position (execution interlock)"
         }
         meterRegistry.counter("alor.order.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
         return true
@@ -86,9 +93,10 @@ class RestOrderTransport(
         price: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
-        if (denyIfNotLiveApproved(ticker)) return null
+        if (denyIfNotLiveApproved(ticker, purpose)) return null
         val start = System.currentTimeMillis()
         return try {
             val body =
@@ -159,9 +167,10 @@ class RestOrderTransport(
         stopPrice: BigDecimal,
         idempotencyKey: String,
         portfolio: String,
+        purpose: OrderPurpose,
     ): String? {
         if (!isLive) return "sim-$type-$ticker-$idempotencyKey"
-        if (denyIfNotLiveApproved(ticker)) return null
+        if (denyIfNotLiveApproved(ticker, purpose)) return null
         val start = System.currentTimeMillis()
         return try {
             val body =

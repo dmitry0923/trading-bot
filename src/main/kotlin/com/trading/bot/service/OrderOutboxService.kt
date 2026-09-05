@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderInterlockDeniedException
 import com.trading.bot.client.OrderPurpose
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
@@ -222,6 +223,12 @@ class OrderOutboxService(
                 logger.info { "Outbox ${outbox.id} FAILED (attempt ${outbox.retryCount}) — rabbit skip, DB worker retries" }
                 PlaceOrderResult(outboxId, null, success = false)
             }
+
+            OutboxStatus.BLOCKED -> {
+                // Терминальный отказ execution interlock'а — final, никогда не переотправляется.
+                logger.warn { "Outbox ${outbox.id} BLOCKED (final, interlock deny) — rabbit skip, not retryable" }
+                PlaceOrderResult(outboxId, null, success = false)
+            }
         }
     }
 
@@ -364,6 +371,14 @@ class OrderOutboxService(
                 logger.warn { "Outbox order REJECTED: ${outbox.id} (definitive, retry later via worker)" }
                 PlaceOrderResult(id, null, success = false)
             }
+        } catch (e: OrderInterlockDeniedException) {
+            // Execution interlock deny — ОКОНЧАТЕЛЬНЫЙ отказ: не retryable.
+            // Заблокированный ENTRY нельзя сохранить как FAILED, иначе worker позже
+            // переотправит его после получения LIVE-approval (устаревший ордер на биржу).
+            outboxRepo.markBlocked(id, e.message ?: "execution interlock deny")
+            meterRegistry.counter("outbox.blocked", Tags.of("type", type)).increment()
+            logger.warn { "Outbox order BLOCKED (final): ${outbox.id} — interlock deny, never retried" }
+            PlaceOrderResult(id, null, success = false)
         } catch (e: Exception) {
             outboxRepo.markFailed(id, e.message ?: "dispatch error")
             logger.error(e) { "Outbox order FAILED: ${outbox.id} — delivery UNCERTAIN (may have reached Alor)" }

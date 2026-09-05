@@ -76,14 +76,16 @@ class RestOrderTransport(
     private suspend fun denyIfNotLiveApproved(
         ticker: String,
         purpose: OrderPurpose,
-    ): Boolean {
-        if (!isLive) return false
-        if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return false
+    ) {
+        if (!isLive) return
+        if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return
         logger.error {
             "LIVE order BLOCKED for $ticker (purpose=$purpose) — ticker not approved and no open position (execution interlock)"
         }
         meterRegistry.counter("alor.order.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
-        return true
+        throw OrderInterlockDeniedException(
+            "LIVE order BLOCKED for $ticker (purpose=$purpose) — execution interlock deny (final, not retryable)",
+        )
     }
 
     override suspend fun placeLimit(
@@ -96,7 +98,7 @@ class RestOrderTransport(
         purpose: OrderPurpose,
     ): String? {
         if (!isLive) return "sim-$ticker-$idempotencyKey"
-        if (denyIfNotLiveApproved(ticker, purpose)) return null
+        denyIfNotLiveApproved(ticker, purpose)
         val start = System.currentTimeMillis()
         return try {
             val body =
@@ -170,7 +172,7 @@ class RestOrderTransport(
         purpose: OrderPurpose,
     ): String? {
         if (!isLive) return "sim-$type-$ticker-$idempotencyKey"
-        if (denyIfNotLiveApproved(ticker, purpose)) return null
+        denyIfNotLiveApproved(ticker, purpose)
         val start = System.currentTimeMillis()
         return try {
             val body =

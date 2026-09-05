@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderInterlockDeniedException
 import com.trading.bot.client.OrderPurpose
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.DistributedLockConfig
@@ -107,6 +108,13 @@ class OrderOutboxServiceTest {
     private suspend fun stubMarkFailedRecording(failedErrors: MutableList<String>) {
         Mockito.`when`(outboxRepo.markFailed(anyUuid(), Mockito.anyString())).thenAnswer { inv ->
             failedErrors += inv.getArgument<String>(1)
+            null
+        }
+    }
+
+    private suspend fun stubMarkBlockedRecording(blockedErrors: MutableList<String>) {
+        Mockito.`when`(outboxRepo.markBlocked(anyUuid(), Mockito.anyString())).thenAnswer { inv ->
+            blockedErrors += inv.getArgument<String>(1)
             null
         }
     }
@@ -383,6 +391,39 @@ class OrderOutboxServiceTest {
             Mockito.verify(outboxRepo).markFailed(anyUuid(), Mockito.anyString())
         }
         assertEquals(listOf("Order rejected by Alor (no orderNumber)"), failedErrors)
+    }
+
+    @Test
+    fun `interlock deny marks blocked terminal - never retried`() {
+        val outboxId = UUID.randomUUID()
+        val blockedErrors = mutableListOf<String>()
+        runBlocking {
+            stubSaveReturning(outboxId)
+            Mockito
+                .`when`(
+                    alorClient.placeLimitOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyPurpose(),
+                    ),
+                ).thenThrow(
+                    OrderInterlockDeniedException("LIVE order BLOCKED for Si (purpose=ENTRY) — execution interlock deny"),
+                )
+            stubMarkBlockedRecording(blockedErrors)
+
+            val result = service.placeOrder("Si", "buy", 1, BigDecimal("92000"), "limit")
+
+            assertFalse(result.success)
+            assertNull(result.alorOrderId)
+            assertFalse(result.uncertain)
+            Mockito.verify(outboxRepo, Mockito.never()).markFailed(anyUuid(), Mockito.anyString())
+        }
+        assertEquals(1, blockedErrors.size)
+        assertTrue(blockedErrors[0].contains("execution interlock deny"))
     }
 
     @Test

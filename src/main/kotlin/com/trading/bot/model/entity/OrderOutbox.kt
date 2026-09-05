@@ -8,6 +8,14 @@ enum class OutboxStatus {
     PROCESSING,
     SENT,
     FAILED,
+
+    /**
+     * Терминальное состояние: ордер окончательно отклонён execution interlock'ом
+     * ([OrderInterlockDeniedException]) — никогда не переотправляется worker'ом
+     * (в отличие от [FAILED]). Запрещённый ENTRY не должен "ожить" после получения
+     * LIVE-approval и уйти на биржу как устаревший ордер.
+     */
+    BLOCKED,
 }
 
 /**

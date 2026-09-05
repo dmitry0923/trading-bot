@@ -77,13 +77,15 @@ class WsOrderTransport(
     private suspend fun denyIfNotLiveApproved(
         ticker: String,
         purpose: OrderPurpose,
-    ): Boolean {
-        if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return false
+    ) {
+        if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return
         logger.error {
             "LIVE order BLOCKED for $ticker (purpose=$purpose) — ticker not approved and no open position (execution interlock)"
         }
         meterRegistry.counter("alor.ws.orders.blocked", Tags.of("reason", "NOT_LIVE_APPROVED", "ticker", ticker)).increment()
-        return true
+        throw OrderInterlockDeniedException(
+            "LIVE order BLOCKED for $ticker (purpose=$purpose) — execution interlock deny (final, not retryable)",
+        )
     }
 
     private data class PendingRequest(
@@ -108,7 +110,7 @@ class WsOrderTransport(
         portfolio: String,
         purpose: OrderPurpose,
     ): String? {
-        if (denyIfNotLiveApproved(ticker, purpose)) return null
+        denyIfNotLiveApproved(ticker, purpose)
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
@@ -149,7 +151,7 @@ class WsOrderTransport(
         portfolio: String,
         purpose: OrderPurpose,
     ): String? {
-        if (denyIfNotLiveApproved(ticker, purpose)) return null
+        denyIfNotLiveApproved(ticker, purpose)
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()

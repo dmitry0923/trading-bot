@@ -232,6 +232,11 @@ class ProtectionOrderManager(
                         "Exchange SL for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure"
                     }
                     onSlProtectionFailed(pos)
+                } else if (row.status == OutboxStatus.BLOCKED) {
+                    logger.warn {
+                        "Exchange SL for ${pos.ticker} BLOCKED (${row.errorMessage}); triggering SL protection failure"
+                    }
+                    onSlProtectionFailed(pos)
                 }
             }
         }
@@ -250,6 +255,11 @@ class ProtectionOrderManager(
                 } else if (row.status == OutboxStatus.FAILED && row.retryCount >= alorConfig.maxOrderRetries) {
                     logger.warn {
                         "Exchange TP for ${pos.ticker} permanently failed (${row.errorMessage}); triggering SL protection failure"
+                    }
+                    onSlProtectionFailed(pos)
+                } else if (row.status == OutboxStatus.BLOCKED) {
+                    logger.warn {
+                        "Exchange TP for ${pos.ticker} BLOCKED (${row.errorMessage}); triggering SL protection failure"
                     }
                     onSlProtectionFailed(pos)
                 }

@@ -265,7 +265,9 @@ class WsOrderTransportTest {
                     scope,
                     resolver(null),
                 )
-            assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+            assertFailsWith<OrderInterlockDeniedException> {
+                blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
+            }
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
         }
 
@@ -281,7 +283,9 @@ class WsOrderTransportTest {
                     scope,
                     resolver(null),
                 )
-            assertNull(blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
+            assertFailsWith<OrderInterlockDeniedException> {
+                blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1")
+            }
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-2") })
         }
 
@@ -297,7 +301,9 @@ class WsOrderTransportTest {
                     scope,
                     resolver(null),
                 )
-            assertNull(blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+            assertFailsWith<OrderInterlockDeniedException> {
+                blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
+            }
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-1") })
         }
 
@@ -357,9 +363,9 @@ class WsOrderTransportTest {
                     scope,
                     resolver(frozen = null, reducingAllowed = false),
                 )
-            assertNull(
-                blocked.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c2", "P1", OrderPurpose.CLOSE),
-            )
+            assertFailsWith<OrderInterlockDeniedException> {
+                blocked.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c2", "P1", OrderPurpose.CLOSE)
+            }
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-c2") })
         }
 
@@ -376,9 +382,9 @@ class WsOrderTransportTest {
                     scope,
                     resolver(frozen = null, reducingAllowed = true),
                 )
-            assertNull(
-                blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY),
-            )
+            assertFailsWith<OrderInterlockDeniedException> {
+                blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY)
+            }
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-e1") })
         }
 
@@ -394,9 +400,9 @@ class WsOrderTransportTest {
                     scope,
                     resolver(frozen = null, reducingAllowed = false),
                 )
-            assertNull(
-                blocked.placeConditional("take-profit", "SBER", "sell", 1, BigDecimal("280"), "idem-tp1", "P1", OrderPurpose.TP),
-            )
+            assertFailsWith<OrderInterlockDeniedException> {
+                blocked.placeConditional("take-profit", "SBER", "sell", 1, BigDecimal("280"), "idem-tp1", "P1", OrderPurpose.TP)
+            }
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-tp1") })
         }
 

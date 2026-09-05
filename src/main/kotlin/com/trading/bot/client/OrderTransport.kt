@@ -50,6 +50,21 @@ class OrderDeliveryUncertainException(
 ) : OrderTransportException(message, cause)
 
 /**
+ * Ордер отклонён execution interlock'ом (тикер не одобрен / fingerprint / build
+ * не совпадает — [LiveFrozenStrategyResolver.isOrderAllowed] == false). Это
+ * ОКОНЧАТЕЛЬНЫЙ отказ: outbox переводит строку в терминальное состояние
+ * `BLOCKED`, которое worker НЕ переотправляет (в отличие от [OrderDeliveryUncertainException]).
+ *
+ * Отдельный тип от [OrderDeliveryUncertainException] важен: заблокированный ENTRY
+ * должен быть окончательно отвергнут, а НЕ стать retryable FAILED — иначе после
+ * получения LIVE-approval старый (устаревший) ордер уйдёт на биржу.
+ */
+class OrderInterlockDeniedException(
+    message: String,
+    cause: Throwable? = null,
+) : OrderTransportException(message, cause)
+
+/**
  * Абстракция доставки ордеров (roadmap 13.8.2 «WebSocket-only исполнение»).
  *
  * Единый контракт трёх исходов для размещения и отмены:

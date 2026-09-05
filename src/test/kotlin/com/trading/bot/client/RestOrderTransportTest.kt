@@ -9,7 +9,7 @@ import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
@@ -66,35 +66,45 @@ class RestOrderTransportTest {
     fun `live placeLimit is blocked for unapproved ticker`() =
         runBlocking {
             val live = liveTransport(resolver())
-            assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+            assertFailsWith<OrderInterlockDeniedException> {
+                live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
+            }
         }
 
     @Test
     fun `live placeConditional is blocked for unapproved ticker`() =
         runBlocking {
             val live = liveTransport(resolver())
-            assertNull(live.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1"))
+            assertFailsWith<OrderInterlockDeniedException> {
+                live.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1")
+            }
         }
 
     @Test
     fun `live placeLimit is blocked when approval service not ready`() =
         runBlocking {
             val live = liveTransport(resolver())
-            assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1"))
+            assertFailsWith<OrderInterlockDeniedException> {
+                live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
+            }
         }
 
     @Test
     fun `live placeLimit close purpose is blocked after revoke without open position`() =
         runBlocking {
             val live = liveTransport(resolver(reducingAllowed = false))
-            assertNull(live.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c1", "P1", OrderPurpose.CLOSE))
+            assertFailsWith<OrderInterlockDeniedException> {
+                live.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c1", "P1", OrderPurpose.CLOSE)
+            }
         }
 
     @Test
     fun `live placeConditional sl purpose is blocked after revoke without open position`() =
         runBlocking {
             val live = liveTransport(resolver(reducingAllowed = false))
-            assertNull(live.placeConditional("stop", "SBER", "sell", 1, BigDecimal("240"), "idem-sl1", "P1", OrderPurpose.SL))
+            assertFailsWith<OrderInterlockDeniedException> {
+                live.placeConditional("stop", "SBER", "sell", 1, BigDecimal("240"), "idem-sl1", "P1", OrderPurpose.SL)
+            }
         }
 
     @Test
@@ -102,7 +112,9 @@ class RestOrderTransportTest {
         runBlocking {
             // P1-a: entry requires full approval even if reducing is allowed via open position
             val live = liveTransport(resolver(entryAllowed = false, reducingAllowed = true))
-            assertNull(live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY))
+            assertFailsWith<OrderInterlockDeniedException> {
+                live.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY)
+            }
         }
 
     private fun liveTransport(resolver: LiveFrozenStrategyResolver): RestOrderTransport {
@@ -137,5 +149,16 @@ class RestOrderTransportTest {
         // resolveActive kept for callers that use it directly
         whenever(r.resolveActive(any())).thenReturn(null)
         return r
+    }
+
+    private suspend inline fun <reified T : Throwable> assertFailsWith(block: suspend () -> Unit): T {
+        try {
+            block()
+        } catch (e: Throwable) {
+            if (e is T) return e
+            throw e
+        }
+        fail<T>("Expected ${T::class.simpleName} but no exception was thrown")
+        error("unreachable")
     }
 }

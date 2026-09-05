@@ -271,4 +271,23 @@ class OrderOutboxRepository(
             .then()
             .awaitSingleOrNull()
     }
+
+    /**
+     * Помечает ордер в терминальное состояние BLOCKED (execution interlock deny).
+     * [claimRetryable] никогда не выбирает BLOCKED — такой ордер окончательно
+     * отвергнут и НЕ переотправляется (retry_count не инкрементируется).
+     */
+    suspend fun markBlocked(
+        id: UUID,
+        error: String,
+    ) {
+        databaseClient
+            .sql(
+                "UPDATE order_outbox SET status = 'BLOCKED', processed_at = :now, error_message = :err WHERE id = :id",
+            ).bind("now", LocalDateTime.now())
+            .bind("err", error.take(2000))
+            .bind("id", id)
+            .then()
+            .awaitSingleOrNull()
+    }
 }

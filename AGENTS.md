@@ -91,3 +91,49 @@ OOS-выводы:
 | OOS 365д (folds=4) | те же | -26.9% | 0.68 | - | 14 |
 
 RI OOS убыточен — исключить из портфеля.
+
+## Статистическая валидность (независимый прогон, 2026-09-05)
+
+Воспроизведено кодом проекта (WFA `validate` / MC `robustness` / IS-panel `panelBacktest`)
+на live-стеке (postgres+redis, `bootRun`). Числа подтверждают калибровки.
+
+### WFA OOS (365д, MINUTE_10)
+
+| Ticker | Folds | Consistency | OOS Ret | OOS Sharpe | OOS PF | OOS Trades | Robust |
+|--------|-------|-------------|---------|------------|--------|------------|--------|
+| CNYRUBF (conf 0.63, risk30%, maxC100) | 6 | 0.33 | +24.4% | 1.27 | 5.29 | 5 | false |
+| CNYRUBF (conf 0.63, risk30%, maxC100) | 8 | 0.25 | +23.0% | 1.21 | 4.45 | 6 | false |
+| RI (conf 0.60, risk30%, maxC33) | 4 | 0.75 | +24.6% | 1.60 | 3.28 | 9 | false |
+
+- CNYRUBF OOS положителен, но `robust=false`: consistency 0.25–0.33, OOS trades 5–6 << 100
+  (критерий `BacktestValidator`). Меньшее абсолютное OOS по сравнению с панельной калибровкой
+  (+83%/+58%) объясняется доступной историей (3 мес) и иной схеме персиста фолдов.
+- RI на малой истории дал OOS +24.6% (в отличие от -26.9% на полной), но `robust=false`
+  (trades 9 << 100) — **порог trades ≥ 100 не достижим**; исключение подтверждено.
+
+### IS panel (калибровочные параметры)
+
+| Ticker | Параметры | Return | Sharpe | MDD | PF | Trades | Edge Sig |
+|--------|-----------|--------|--------|-----|----|----|---------|
+| CNYRUBF (risk30%/maxC100/SL150/TP1200, conf 0.63) | 365д | +86.1% | 2.63 | 16.6% | 14.1 | 5 | true (P(no-edge)=0.003) |
+
+### Monte Carlo robustness (CNYRUBF, 365д, 1000 sims, stationary blocks)
+
+| Показатель | Значение |
+|-----------|----------|
+| robust | false |
+| base return (default SL/TP 2%/4%) | −0.09% |
+| P(loss) | 58.6% |
+| P(MDD≥20/30/40%) | 0% |
+| P(ruin) | 0% |
+| MC-деградация commission×2/×5, slippage×2/×5, combined×3 | все negative (PF<1), чуствительность к комиссии высокая |
+
+Ограничение инструмента: `robustness` endpoint НЕ принимает futures SL/TP в пунктах —
+использует дефолтные SL 2%/TP 4%, поэтому MC-прогон по фьючерсу отрицателен и к
+калибровочным (150/1200) не применим. Для оценки жизнеспособности фьючерсной калибровки
+использовать WFA `validate` (учитывает пункты), а НЕ `robustness`.
+
+### Баг-кандидат (из аудита «в поле»)
+- `AlorClient.getMarketSnapshot` (`AlorClient.kt:97`): `BigDecimal.setScale` без `RoundingMode`
+  → `ArithmeticException: Rounding necessary` при циклах стратегий в SIM (падает в live-циклах тоже).
+  P2: падает с исключением, а не ошибкой котировки. Фикс: добавить `RoundingMode`.

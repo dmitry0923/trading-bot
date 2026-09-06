@@ -84,7 +84,8 @@ class RiskManagementService(
      *
      * @param candidateNotionalRub нотионал кандидата в рублях (spec.notional(qty, price))
      * @param candidateDirection направление кандидата
-     * @param openPositions текущие открытые позиции
+     * @param openPositions текущие открытые позиции (скоуп аккаунта); их accountId
+     *   определяет AUM-базу для лимитов (per-account, multi-account)
      * @return true, если портфель выйдет за лимиты exposure
      */
     fun exceedsPortfolioLimits(
@@ -93,7 +94,12 @@ class RiskManagementService(
         openPositions: List<Position>,
     ): Boolean {
         if (candidateNotionalRub <= BigDecimal.ZERO) return false
-        val deposit = aumProvider.latestAum()
+        // P2-аудит: позиции в DecisionEngine скоупированы по выбранному аккаунту (F-11),
+        // поэтому AUM и лимиты exposure берутся по ЭТОМУ аккаунту, а не по глобальному
+        // fallback (иначе в multi-account лимиты размывались на пул всех аккаунтов).
+        // Край: первый вход в пустой аккаунт (openPositions пуст) — fallback на глобальный AUM.
+        val accountId = openPositions.firstOrNull()?.accountId
+        val deposit = aumProvider.latestAum(accountId)
 
         fun positionNotional(pos: Position): BigDecimal {
             val spec = instrumentsConfig.find(pos.ticker)

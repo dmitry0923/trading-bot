@@ -747,8 +747,11 @@ class DrawdownProtectionService(
 
     private fun persistDailyState() {
         try {
+            // P2-аудит: единый источник дня — LocalDate.now(clock), как в per-account
+            // persistDailyState(accountId). lastTradingDate === now(clock) после
+            // resetDailyStateIfNewDay(), но неявная зависимость от поля — хрупкая.
             dailyRiskSnapshotRepo.upsert(
-                lastTradingDate,
+                LocalDate.now(clock),
                 todayPnl,
                 todayDailyLossReached,
                 todayPnl.coerceAtMost(BigDecimal.ZERO),

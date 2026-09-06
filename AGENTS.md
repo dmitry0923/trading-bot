@@ -137,3 +137,22 @@ RI OOS убыточен — исключить из портфеля.
 - `AlorClient.getMarketSnapshot` (`AlorClient.kt:97`): `BigDecimal.setScale` без `RoundingMode`
   → `ArithmeticException: Rounding necessary` при циклах стратегий в SIM (падает в live-циклах тоже).
   P2: падает с исключением, а не ошибкой котировки. Фикс: добавить `RoundingMode`.
+
+### P2-аудит риск-слоя (закрыто, 2026-09-06, коммит e0ab5ed+)
+- **P2-a (исправлено)**: `RiskManagementService.exceedsPortfolioLimits` использовал глобальный
+  `latestAum()` — в multi-account лимиты Gross/Net Exposure считались от пула всех аккаунтов.
+  Фикс: AUM берётся по аккаунту открытых позиций (`openPositions.firstOrNull()?.accountId`),
+  скользящий скоуп — F-11 (позиции уже per-account в `DecisionEngine`). Регрессия:
+  `gross exposure uses per-account AUM from open positions`.
+- **P2-b (исправлено)**: `persistDailyState()` (legacy) писал снапшот на `lastTradingDate`,
+  per-account версия — на `LocalDate.now(clock)`. Фикс: единый `LocalDate.now(clock)` в обеих.
+- **P2-c (решено — задокументировать, без изменения кода)**: плечо акций x5/x6 из калибровки
+  не воспроизводится в live, потому что live-сайзинг акций — Kelly (`StockEntryProfile` +
+  `AdaptiveRiskService`), а «leverage» из конфига участвует только как информационное поле
+  фьючерсной позиции (`OrderBuilder.kt:70`); фьючерсный сайзинг — полный GO. Поднимать
+  `LEVERAGE_USER/MAX` до 5/6 не стали: это меняет только записываемое плечо фьючерсов
+  (закреплено `FuturesTradingBotServiceIntegrationTest:172` = 2.0), а акциям x5 не даёт.
+  Акционное x5/x6 = параметр бэктест-сайзера (позиция = equity × leverage × вес) и требует
+  пересмотра live-сайзера акций отдельно (правки `StockEntryProfile`/Kelly).
+  Вывод: live-сайзинг акций остаётся Kelly; связка «акционная калибровка ↔ live» — открытый
+  вопрос (решение за пользователем, min ПРИОРИТЕТ).

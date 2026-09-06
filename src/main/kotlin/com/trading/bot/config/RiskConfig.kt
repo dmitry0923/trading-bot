@@ -81,12 +81,13 @@ class RiskConfig {
     var kellyMinTrades: Int = 15
 
     /**
-     * Доля от AUM при отсутствии/недостатке статистики для Kelly.
-     * 0.25 = 25% от 50k = 12 500 ₽ — минимум для 1 лота CNYRUB.
-     * Эффективно ограничивается сверху жёстким капом [kellyMaxPositionFraction]
-     * (min(noDataFraction, cap)) — «жёсткий кап» не обходится без статистики.
+     * Доля от AUM при отсутствии статистики для Kelly (cold-start, P1-аудит).
+     * 0.003 = 0.3% от AUM (50k → 150 ₽) — консервативный cold-start: пока нет
+     * статистики закрытых сделок, нельзя поставить крупную позицию «на чувство».
+     * По мере накопления обработок работает staged Kelly ([kellySampleSizeTiers]),
+     * увеличивая размер плавно. Ограничено сверху [kellyMaxPositionFraction].
      */
-    var kellyNoDataFraction: Double = 0.25
+    var kellyNoDataFraction: Double = 0.003
 
     // ===== Staged Kelly by sample size (P1#8) =====
 

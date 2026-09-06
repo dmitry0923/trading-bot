@@ -13,6 +13,7 @@ import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.DegenerateCaseGuard
@@ -83,6 +84,23 @@ class DecisionEngine(
     /** Per-ticker mutex входа: сериализует openPosition по тикеру (защита от
      *  гонки двух сигналов на один тикер → двойного ордера). */
     private val entryLocks = ConcurrentHashMap<String, Mutex>()
+
+    /**
+     * Per-account mutex входа (P1-аудит): сериализует ПОРТФЕЛЬНЫЙ пайплайн
+     * (снапшот позиций → risk checks → placing ордера) для одного аккаунта —
+     * закрывает race двух сигналов по РАЗНЫМ тикерам, которые оба проходят
+     * MAX_POSITIONS/сектор/корреляцию/exposure/VaR по одному устаревшему снапшоту.
+     * Per-ticker лок (и Redis) дубль по тикеру уже закрывает; этот закрывает
+     * кросс-тикерные портфельные инварианты внутри аккаунта.
+     */
+    private val accountLocks = ConcurrentHashMap<String, Mutex>()
+
+    /**
+     * Сериализация выбора аккаунта ([TradingAccountService.selectAccount]): round-robin
+     * счётчик и чтение ёмкости неатомарны — два параллельных сигнала могли выбрать
+     * один аккаунт с неактуальной ёмкостью. Критическая секция короткая (только выбор).
+     */
+    private val entryAdmissionMutex = Mutex()
 
     /**
      * Вход по стратегическому сигналу (BUY/SELL). Тикер маршрутизируется на
@@ -161,9 +179,10 @@ class DecisionEngine(
         val rawEntryPrice = snapshot?.microprice ?: snapshot?.currentPrice ?: signal.targetPrice
         val entryPrice = alignPriceToGrid(rawEntryPrice, spec.priceStep)
 
-        // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью).
+        // Multi-account: выбор портфеля для входа (весовой round-robin с ёмкостью),
+        // сериализован — round-robin счётчик и чтение ёмкости неатомарны.
         // null = legacy single-account (таблица пуста) или все аккаунты переполнены.
-        val accountId = tradingAccountService.selectAccount()
+        val accountId = entryAdmissionMutex.withLock { tradingAccountService.selectAccount() }
 
         // Если аккаунты сконфигурированы, но все переполнены — отклоняем вход,
         // а не утекаем в дефолтный (legacy) портфель.
@@ -174,6 +193,55 @@ class DecisionEngine(
                 .increment()
             return
         }
+
+        // Per-account admission (P1-аудит): снапшот позиций → риск-проверки → placing
+        // ордера сериализуются по аккаунту (in-JVM mutex + Redis-лок). Второй сигнал
+        // в тот же аккаунт ждёт и читает СВЕЖИЙ снапшот, поэтому MAX_POSITIONS/сектор/
+        // корреляция/Gross-Net/VaR не могут «пройти вдвоём» по устаревшему состоянию.
+        val accountKey = accountId?.toString() ?: "legacy"
+        val acquired =
+            accountLocks.computeIfAbsent(accountKey) { Mutex() }.withLock {
+                distributedLockService.runExclusive(
+                    name = "position:account:$accountKey",
+                    ttlSeconds = distributedLockConfig.positionOpenTtlSeconds,
+                    failOpenOnError = false,
+                ) {
+                    doOpenPositionForAccount(
+                        signal = signal,
+                        profile = profile,
+                        gateway = gateway,
+                        ticker = ticker,
+                        direction = direction,
+                        entryPrice = entryPrice,
+                        spec = spec,
+                        snapshot = snapshot,
+                        accountId = accountId,
+                    )
+                }
+            }
+        if (!acquired) {
+            logger.info {
+                "Entry skipped $ticker: account distributed lock not acquired " +
+                    "(another instance opening on account $accountKey / Redis unavailable)"
+            }
+        }
+    }
+
+    /** Тело риск-пайплайна ПОСЛЕ выбора аккаунта, сериализованное на аккаунт
+     *  (per-account mutex + Redis [position:account:*], см. [doOpenPosition]).
+     *  Цена входа и снапшот приходят из вызывающего контекста — повторный сетевой
+     *  вызов внутри account-лока не делается. */
+    private suspend fun doOpenPositionForAccount(
+        signal: Signal,
+        profile: EntryProfile,
+        gateway: ExecutionGateway,
+        ticker: String,
+        direction: PositionDirection,
+        entryPrice: BigDecimal,
+        spec: InstrumentsConfig.InstrumentSpec,
+        snapshot: MarketSnapshot?,
+        accountId: Long?,
+    ) {
 
         // F-11 (roadmap 13.25): открытые позиции берутся ТОЛЬКО по выбранному аккаунту —
         // иначе MAX_POSITIONS, корреляционные и портфельные лимиты считались по ПУЛУ всех
@@ -234,7 +302,7 @@ class DecisionEngine(
         // Сайзинг (Kelly для акций, маржа/риск для фьючерсов).
         val size = profile.sizePosition(signal, entryPrice, request)
 
-        profile.postSizingChecks(ticker, direction, entryPrice, size, openPositions)?.let { reason ->
+        profile.postSizingChecks(ticker, direction, entryPrice, size, openPositions, accountId)?.let { reason ->
             logger.warn { "Post-sizing filter reject $ticker: $reason" }
             meterRegistry
                 .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", reason))

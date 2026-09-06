@@ -611,6 +611,7 @@ class DecisionEngineTest {
             entryPrice: BigDecimal,
             size: PositionSizeResult,
             openPositions: List<Position>,
+            accountId: Long?,
         ): String? = postSizingReason
 
         override fun buildOrderParams(

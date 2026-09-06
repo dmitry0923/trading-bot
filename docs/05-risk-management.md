@@ -18,7 +18,7 @@
 | `risk.enabled` | `true` | Boolean | мастер-выключатель риск-движка |
 | `risk.max-position-rub` | `50000` | BigDecimal | максимальный размер позиции в рублях (база для Kelly) |
 | `risk.max-daily-loss-rub` | `5000` | BigDecimal | дневной лимит убытка (закрытые сделки) |
-| `risk.max-open-positions` | `5` | Integer | максимум одновременных открытых позиций |
+| `risk.max-open-positions` | `3` (yml) / `1` (конструктор `RiskConfig`) | Integer | максимум одновременно открытых позиций |
 | `risk.max-sector-exposure` | `2` | Integer | макс. открытых позиций в одном секторе |
 | `risk.max-volatility-percent` | `5.0` | Double | ATR% от цены, выше которого вход запрещён |
 | `risk.default-stop-loss-percent` | `2.0` | Double | стоп-лосс по умолчанию, % от цены входа |

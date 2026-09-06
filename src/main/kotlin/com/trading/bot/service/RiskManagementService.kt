@@ -84,21 +84,27 @@ class RiskManagementService(
      *
      * @param candidateNotionalRub нотионал кандидата в рублях (spec.notional(qty, price))
      * @param candidateDirection направление кандидата
-     * @param openPositions текущие открытые позиции (скоуп аккаунта); их accountId
-     *   определяет AUM-базу для лимитов (per-account, multi-account)
-     * @return true, если портфель выйдет за лимиты exposure
+     * @param openPositions текущие открытые позиции (должны принадлежать [accountId])
+     * @param accountId аккаунт кандидата/позиций (AUM-база лимитов; null = legacy)
+     * @return true, если портфель выйдет за лимиты exposure (или скоуп позиций нарушен)
      */
     fun exceedsPortfolioLimits(
         candidateNotionalRub: BigDecimal,
         candidateDirection: PositionDirection,
         openPositions: List<Position>,
+        accountId: Long?,
     ): Boolean {
         if (candidateNotionalRub <= BigDecimal.ZERO) return false
-        // P2-аудит: позиции в DecisionEngine скоупированы по выбранному аккаунту (F-11),
-        // поэтому AUM и лимиты exposure берутся по ЭТОМУ аккаунту, а не по глобальному
-        // fallback (иначе в multi-account лимиты размывались на пул всех аккаунтов).
-        // Край: первый вход в пустой аккаунт (openPositions пуст) — fallback на глобальный AUM.
-        val accountId = openPositions.firstOrNull()?.accountId
+        // P1-аудит: accountId передаётся ЯВНО, а не выводится из первой позиции —
+        // иначе кандидат аккаунта B мерился бы AUM аккаунта A при scope-ошибке.
+        // Нарушение scope (позиции другого аккаунта) — fail-closed: DENY + warn.
+        if (openPositions.any { it.accountId != accountId }) {
+            logger.warn {
+                "Portfolio limit scope mismatch: accountId=$accountId vs positions " +
+                    "${openPositions.map { it.accountId }} — DENY (P1)"
+            }
+            return true
+        }
         val deposit = aumProvider.latestAum(accountId)
 
         fun positionNotional(pos: Position): BigDecimal {

@@ -543,6 +543,7 @@ class StockEntryProfileTest {
                     BigDecimal("12.42"),
                     size,
                     emptyList(),
+                    null,
                 )
             assertEquals("ZERO_RISK_SIZE", result)
         }
@@ -551,7 +552,7 @@ class StockEntryProfileTest {
     fun `postSizingChecks returns null when portfolio within limits`() =
         runBlocking {
             val size = PositionSizeResult(1, BigDecimal("12420"), BigDecimal("500"), null, null)
-            whenever(risk.exceedsPortfolioLimits(any(), any(), any())).thenReturn(false)
+            whenever(risk.exceedsPortfolioLimits(any(), any(), any(), any())).thenReturn(false)
             val result =
                 profile.postSizingChecks(
                     "CNYRUB_TOM",
@@ -559,6 +560,7 @@ class StockEntryProfileTest {
                     BigDecimal("12.42"),
                     size,
                     emptyList(),
+                    5L,
                 )
             assertNull(result)
         }
@@ -567,7 +569,7 @@ class StockEntryProfileTest {
     fun `postSizingChecks returns PORTFOLIO_LIMIT when exposure exceeded`() =
         runBlocking {
             val size = PositionSizeResult(1, BigDecimal("12420"), BigDecimal("500"), null, null)
-            whenever(risk.exceedsPortfolioLimits(any(), any(), any())).thenReturn(true)
+            whenever(risk.exceedsPortfolioLimits(any(), any(), any(), any())).thenReturn(true)
             val result =
                 profile.postSizingChecks(
                     "CNYRUB_TOM",
@@ -575,6 +577,7 @@ class StockEntryProfileTest {
                     BigDecimal("12.42"),
                     size,
                     emptyList(),
+                    5L,
                 )
             assertEquals("PORTFOLIO_LIMIT", result)
         }

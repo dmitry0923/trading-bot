@@ -142,6 +142,7 @@ class FuturesEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         openPositions: List<Position>,
+        accountId: Long?,
     ): String? = null
 
     override fun buildOrderParams(

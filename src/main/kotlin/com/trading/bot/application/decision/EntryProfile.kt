@@ -85,6 +85,9 @@ interface EntryProfile {
     /**
      * Фильтры ПОСЛЕ сайзинга (портфельный exposure). Возвращает причину отказа или null.
      * Метрику/лог отклонения фиксирует [DecisionEngine].
+     *
+     * @param accountId аккаунт кандидата (null = legacy) — AUM-база лимитов exposure;
+     *   вызывающая сторона обязана такой же accountId проставить в openPositions (P1-аудит).
      */
     suspend fun postSizingChecks(
         ticker: String,
@@ -92,6 +95,7 @@ interface EntryProfile {
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         openPositions: List<Position>,
+        accountId: Long?,
     ): String?
 
     /** Сборка параметров заявки из размера и данных входа. */

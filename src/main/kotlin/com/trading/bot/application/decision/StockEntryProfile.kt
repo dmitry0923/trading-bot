@@ -215,13 +215,14 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         size: PositionSizeResult,
         openPositions: List<Position>,
+        accountId: Long?,
     ): String? {
         if (size.quantity < 1) return "ZERO_RISK_SIZE"
         val spec = instrumentsConfig.find(ticker)
         val candidateNotional =
             spec?.notional(size.quantity, entryPrice)
                 ?: entryPrice.multiply(BigDecimal(size.quantity))
-        return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions)) "PORTFOLIO_LIMIT" else null
+        return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions, accountId)) "PORTFOLIO_LIMIT" else null
     }
 
     override fun buildOrderParams(

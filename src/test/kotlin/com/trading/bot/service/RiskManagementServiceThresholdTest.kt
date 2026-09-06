@@ -88,7 +88,7 @@ class RiskManagementServiceThresholdTest {
                 Position(ticker = "B", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("40000")),
             )
 
-        val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open)
+        val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open, null)
 
         assertTrue(blocked)
         assertEquals(1.0, registry.counter("risk.portfolio.gross_exposure.blocked").count())
@@ -104,7 +104,7 @@ class RiskManagementServiceThresholdTest {
         val s = service(config = config)
         val open = listOf(Position(ticker = "A", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("55000")))
 
-        assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open))
+        assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open, null))
     }
 
     @Test
@@ -122,7 +122,7 @@ class RiskManagementServiceThresholdTest {
         val s = service(config = config, registry = registry)
         val open = listOf(Position(ticker = "A", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal("40000")))
 
-        val blocked = s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open)
+        val blocked = s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open, null)
 
         assertTrue(blocked)
         assertEquals(0.0, registry.counter("risk.portfolio.gross_exposure.blocked").count())
@@ -135,7 +135,7 @@ class RiskManagementServiceThresholdTest {
         val s = service()
         val open = listOf(Position(ticker = "A", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("40000")))
 
-        assertTrue(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.SHORT, open))
+        assertTrue(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.SHORT, open, null))
     }
 
     @Test
@@ -144,7 +144,7 @@ class RiskManagementServiceThresholdTest {
         val s = service()
         val open = listOf(Position(ticker = "A", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal("30000")))
 
-        assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open))
+        assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open, null))
     }
 
     @Test
@@ -157,7 +157,7 @@ class RiskManagementServiceThresholdTest {
                 Position(ticker = "B", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("10000")),
             )
 
-        assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open))
+        assertFalse(s.exceedsPortfolioLimits(BigDecimal("20000"), PositionDirection.LONG, open, null))
     }
 
     @Test
@@ -166,13 +166,13 @@ class RiskManagementServiceThresholdTest {
         val s = service()
         val open = emptyList<Position>()
 
-        assertFalse(s.exceedsPortfolioLimits(BigDecimal.ZERO, PositionDirection.LONG, open))
-        assertFalse(s.exceedsPortfolioLimits(BigDecimal("-100"), PositionDirection.LONG, open))
+        assertFalse(s.exceedsPortfolioLimits(BigDecimal.ZERO, PositionDirection.LONG, open, null))
+        assertFalse(s.exceedsPortfolioLimits(BigDecimal("-100"), PositionDirection.LONG, open, null))
     }
 
     @Test
     fun `gross exposure uses per-account AUM from open positions`() {
-        // P2-регрессия: лимиты exposure считаются от AUM аккаунта позиций (accountId),
+        // P2/P1-регрессия: лимиты exposure считаются от AUM ЯВНО переданного accountId,
         // а не от глобального AUM пула. account AUM 30k → grossAfter 50k > 30k → BLOCK;
         // при глобальном AUM 50k лимит 50k → пропуск (баг).
         Mockito.`when`(aumProvider.latestAum(5L)).thenReturn(BigDecimal("30000"))
@@ -188,7 +188,29 @@ class RiskManagementServiceThresholdTest {
                 ),
             )
 
-        val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open)
+        val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open, 5L)
+
+        assertTrue(blocked)
+    }
+
+    @Test
+    fun `positions from another account DENY entry (scope check P1)`() {
+        // P1-регрессия: если в openPositions попали позиции НЕ того аккаунта, что
+        // передан accountId, — fail-closed DENY (нельзя мерить кандидата B по AUM A).
+        Mockito.`when`(aumProvider.latestAum(5L)).thenReturn(BigDecimal("50000"))
+        val s = service()
+        val open =
+            listOf(
+                Position(
+                    ticker = "A",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("40000"),
+                    accountId = 7L,
+                ),
+            )
+
+        val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open, 5L)
 
         assertTrue(blocked)
     }

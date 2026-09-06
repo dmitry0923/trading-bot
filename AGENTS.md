@@ -156,3 +156,52 @@ RI OOS убыточен — исключить из портфеля.
   пересмотра live-сайзера акций отдельно (правки `StockEntryProfile`/Kelly).
   Вывод: live-сайзинг акций остаётся Kelly; связка «акционная калибровка ↔ live» — открытый
   вопрос (решение за пользователем, min ПРИОРИТЕТ).
+
+### P1-аудит входного конвейера (закрыто, 2026-09-06)
+- **P1-1 (исправлено): race admission control.** `DecisionEngine` сериализовал вход только
+  per-ticker (`entryLocks` + Redis `position:<ticker>`); два сигнала по РАЗНЫМ тикерам могли
+  оба пройти MAX_POSITIONS/сектор/корреляцию/Gross-Net/VaR по одному устаревшему снапшоту.
+  Фикс: выбор аккаунта (`selectAccount`, неатомарный round-robin) под глобальным
+  `entryAdmissionMutex`, а снапшот→риск-проверки→placing — под per-account in-JVM `Mutex`
+  (`accountLocks`) + Redis `position:account:<id>` (fail-closed, TTL `position-open-ttl`).
+  Второй сигнал в тот же аккаунт теперь ждёт и читает СВЕЖИЙ снапшот.
+- **P1-2 (исправлено): accountId в exposure-лимиты передаётся ЯВНО.**
+  `RiskManagementService.exceedsPortfolioLimits(candidateNotional, direction, openPositions,
+  accountId)` — AUM-база берётся из `latestAum(accountId)`, а не из
+  `openPositions.firstOrNull()?.accountId` (кандидат аккаунта B при scope-ошибке мерился бы AUM A).
+  Нарушение скоупа (`openPositions.any { it.accountId != accountId }`) → fail-closed DENY + warn.
+  `accountId` протреден через `EntryProfile.postSizingChecks` (interface) → `StockEntryProfile`
+  (вызов), `FuturesEntryProfile` (игнор), `DecisionEngine` (:305). Регрессии:
+  `positions from another account DENY entry (scope check P1)`,
+  `gross exposure uses per-account AUM from open positions`.
+- **P1-3 (исправлено): консервативный cold-start.** `kellyNoDataFraction` 0.25 → **0.003**
+  (`RiskConfig.kt:90` + `application.yml:495`; env-overridable). При отсутствии статистики
+  Kelly ставил 25% AUM «на чувство» (а после min с капом kellyMaxPositionFraction=0.10 — 10% AUM).
+  Теперь cold-start ≈ 0.3% AUM, а на 1-лот флорах сайзинг возвращает ZERO_RISK_SIZE —
+  до накопления статистики бот позиции практически не открывает. Staged Kelly
+  (`kellySampleSizeTiers`) плавно поднимает размер. Live↔backtest parity сохранена:
+  `BacktestRiskSimulator.kt:456` использует ту же формулу `min(noData, cap)`.
+  Тесты: `AdaptiveRiskServiceConfidenceSizingTest` пересчитаны под 0.003 (150 ₽ база на 50k);
+  `BacktestRiskSimulatorTest.makeRiskConfig()` пинит `kellyNoDataFraction=1.0`, чтобы
+  post-sizing гейты (GROSS_EXPOSURE/NET_EV/PORTFOLIO_CONCENTRATION) проверялись на
+  осмысленном размере (10%-cap), как раньше.
+- **#5 (решено — задокументировать, без изменения кода): confidence null.** `Signal.signalStrength`
+  — non-nullable `Double` (`Signal.kt:19`), в live всегда заполняется из `gated.signalStrength`
+  (`StrategyService.kt:364`). Null-путь существует только в REST API/тестах — там сайзинг
+  нейтрален (factor 1.0). DENY-гейт на null снова не нужен: до DecisionEngine сигнал с
+  confidence не доживает в рабочем входе.
+- **#6 (решено — доказано fail-closed, без изменения кода): волатильность.**
+  ATR-гейт `isVolatilityTooHigh(atr, price)` при недоступности ATR блокирует вход при
+  `volatility-fail-closed=true` (дефолт): `StockRiskEngine.kt:62` → `VOLATILITY_GUARD`,
+  `BacktestRiskSimulator.kt:190-191` (тот же fail-closed), `TradingGate.kt:134`. Покрыто:
+  `unavailable ATR blocks by default (fail-closed)` и `StockRiskEngineTest` (null/zero/negative).
+  Neutral volMultiplier=1.0 — только сайзинг, не гейт; гейт ниже блокирует отдельно.
+- **#10 (исправлено — синхронизированы доки): max-open-positions.** Источники истины:
+  `application.yml:476` = **3** (live), `RiskConfig.kt:20` default = **1** (консервативный
+  конструктор, перекрывается yml), доки показывали 5. Обновлено:
+  `docs/01`, `docs/05`, `docs/08` → 3 (с пометкой про дефолт конструктора 1).
+  Фьючерсный лимит `futures-max-open-positions: 1` не менялся (`docs/15` корректен).
+- **Оставлено вне скоупа**: live-сайзинг акций — Kelly против калибровочного x5/x6
+  (см. P2-c); инструментальное ограничение MC `robustness` для фьючерсов (SL/TP пунктами);
+  увеличение `position-open-ttl` под медленные сети (entry под account-локом может держать
+  Redis-лок дольше TTL — тогда вторая реплика могла бы параллелить вход; окно ограничено).

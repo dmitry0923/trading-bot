@@ -96,6 +96,12 @@ class BacktestRiskSimulatorTest {
             // Gate 11 выключен по умолчанию: одна позиция всегда даёт effectivePositions = 1.0 < 1.5
             portfolioRiskEnabled = false
             sectors = mapOf("TEST" to "TECH", "TEST2" to "TECH", "TEST3" to "TECH")
+            // Стенд-хелпер: холодный старт 0.3% AUM (P1-3) слишком мал для гейтов ПОСЛЕ сайзинга
+            // (GROSS_EXPOSURE / NET_EV / PORTFOLIO_CONCENTRATION / correct kelly size) — они
+            // должны проверяться на осмысленном размере. Пин 1.0 → cap kellyMaxPositionFraction
+            // (10% AUM) → тот же размер, что и при старом дефолте. Консервативный cold-start
+            // проверяется отдельно (AdaptiveRiskServiceConfidenceSizingTest / KellyTest).
+            kellyNoDataFraction = 1.0
         }
 
     private fun makeInstrumentsConfig(): InstrumentsConfig =

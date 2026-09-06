@@ -106,7 +106,8 @@ class AdaptiveRiskServiceConfidenceSizingTest {
     }
 
     // Порог fallback без данных = 0.60, ceiling = 0.90, minFactor = 0.5, maxFactor = 1.0.
-    // База без Kelly-статистики = aum * min(0.15, 0.10) = 50000 * 0.10 = 5000.
+    // База без Kelly-статистики = aum * min(kellyNoDataFraction=0.003, kellyMaxPositionFraction=0.10)
+    //   = 50000 * 0.003 = 150 (P1-3: cold-start консервативный, 0.3% AUM).
     private fun assertSize(
         signalStrength: Double?,
         expected: BigDecimal,
@@ -117,41 +118,41 @@ class AdaptiveRiskServiceConfidenceSizingTest {
 
     @Test
     fun `null signal strength keeps size neutral`() {
-        assertSize(null, BigDecimal("5000"))
+        assertSize(null, BigDecimal("150"))
     }
 
     @Test
     fun `signal strength at threshold uses minimum factor`() {
-        // signalStrength = порог (0.60) -> factor 0.5 -> 2500
-        assertSize(0.60, BigDecimal("2500"))
+        // signalStrength = порог (0.60) -> factor 0.5 -> 75
+        assertSize(0.60, BigDecimal("75"))
     }
 
     @Test
     fun `signal strength at ceiling uses max factor`() {
-        // signalStrength = ceiling (0.90) -> factor 1.0 -> 5000
-        assertSize(0.90, BigDecimal("5000"))
+        // signalStrength = ceiling (0.90) -> factor 1.0 -> 150
+        assertSize(0.90, BigDecimal("150"))
     }
 
     @Test
     fun `signal strength above ceiling stays at max factor`() {
-        assertSize(0.95, BigDecimal("5000"))
+        assertSize(0.95, BigDecimal("150"))
     }
 
     @Test
     fun `mid signal strength interpolates linearly`() {
-        // t = (0.75 - 0.60) / (0.90 - 0.60) = 0.5 -> factor = 0.5 + 0.5*0.5 = 0.75 -> 3750
-        assertSize(0.75, BigDecimal("3750"))
+        // t = (0.75 - 0.60) / (0.90 - 0.60) = 0.5 -> factor = 0.5 + 0.5*0.5 = 0.75 -> 112.5
+        assertSize(0.75, BigDecimal("112.5"))
     }
 
     @Test
     fun `below threshold clamps to min factor`() {
-        assertSize(0.50, BigDecimal("2500"))
+        assertSize(0.50, BigDecimal("75"))
     }
 
     @Test
     fun `disabled sizing returns neutral factor`() {
         riskConfig.confidenceSizingEnabled = false
-        assertSize(0.60, BigDecimal("5000"))
+        assertSize(0.60, BigDecimal("150"))
     }
 
     @Test

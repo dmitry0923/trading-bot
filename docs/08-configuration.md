@@ -177,7 +177,7 @@ risk:
   enabled: true
   max-position-rub: 50000
   max-daily-loss-rub: 5000
-  max-open-positions: 5
+  max-open-positions: 3              # макс. одновременно открытых позиций
   max-sector-exposure: 2              # макс. открытых позиций в одном секторе
   max-volatility-percent: 5.0         # ATR% от цены, выше которого вход запрещён
   default-stop-loss-percent: 2.0

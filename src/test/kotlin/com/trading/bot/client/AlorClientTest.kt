@@ -20,6 +20,7 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.net.InetSocketAddress
 import java.util.Collections
 import java.util.concurrent.Executors
@@ -100,6 +101,27 @@ class AlorClientTest {
                 assertEquals(0, expectedPrice.multiply(BigDecimal("1.001")).setScale(2).compareTo(snapshot?.ask))
                 assertEquals(1_000_000L, snapshot?.volume)
                 assertTrue(server.requests.isEmpty(), "no REST call expected in SIMULATION")
+            }
+        }
+
+    @Test
+    fun `simulation snapshot rounds bid ask with RoundingMode (P2 regression)`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                // "AAPL" → base 836 (не кратно 10): price×0.999 даёт ненулевые разряды
+                // за сотыми — до фикса setScale(2) без RoundingMode бросал
+                // ArithmeticException: Rounding necessary для большинства тикеров.
+                val c = client(server, mode = "SIMULATION")
+
+                val snapshot = c.getMarketSnapshot("AAPL")
+
+                assert(snapshot != null)
+                assertEquals(2, snapshot?.currentPrice?.scale())
+                assertEquals("AAPL", snapshot?.ticker)
+                val expectedBid = snapshot?.currentPrice?.multiply(BigDecimal("0.999"))?.setScale(2, RoundingMode.HALF_UP)
+                val expectedAsk = snapshot?.currentPrice?.multiply(BigDecimal("1.001"))?.setScale(2, RoundingMode.HALF_UP)
+                assertEquals(0, expectedBid?.compareTo(snapshot?.bid))
+                assertEquals(0, expectedAsk?.compareTo(snapshot?.ask))
             }
         }
 

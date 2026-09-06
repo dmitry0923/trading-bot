@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
@@ -93,9 +94,11 @@ class AlorClient(
         if (!isLive) {
             val seed = ticker.hashCode().toLong().and(0x7FFFFFFFL)
             val base = 100 + (seed % 900)
-            val price = BigDecimal(base).setScale(2)
-            val bid = price.multiply(BigDecimal("0.999")).setScale(2)
-            val ask = price.multiply(BigDecimal("1.001")).setScale(2)
+            // P2 (аудит «в поле»): уменьшение scale (bid/ask после ~×0.999/1.001) без
+            // RoundingMode бросало ArithmeticException: Rounding necessary в SIM-циклах.
+            val price = BigDecimal(base).setScale(2, RoundingMode.HALF_UP)
+            val bid = price.multiply(BigDecimal("0.999")).setScale(2, RoundingMode.HALF_UP)
+            val ask = price.multiply(BigDecimal("1.001")).setScale(2, RoundingMode.HALF_UP)
             val bidSize = 150L + (seed % 850)
             val askSize = 150L + ((seed shr 8) % 850)
             logger.warn { "SIMULATION mode: returning synthetic price for $ticker = $price" }

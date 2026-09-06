@@ -550,6 +550,60 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
+    fun `daily pnl includes unrealized of positions opened before today (P1-2)`() =
+        runBlocking {
+            // Open LONG открыта ВЧЕРА: entry=100, current=97 → unrealized -3000 (SBER lotSize=10, qty=100).
+            stubClosedPositions(emptyList())
+            Mockito.`when`(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 100,
+                        entryPrice = BigDecimal("100"),
+                        currentPrice = BigDecimal("97"),
+                        status = PositionStatus.OPEN,
+                        openedAt = LocalDateTime.now().minusDays(1),
+                    ),
+                ),
+            )
+
+            val s = service()
+            val status = s.computeStatus()
+
+            // Внутридневной MTM по позиции, открытой ранее, обязан попасть в дневной
+            // лимит: при старом коде (только открытые сегодня) dailyPnl был бы 0 →
+            // убыток -3000 проходил «под радаром» дневного лимита.
+            assertEquals(0, BigDecimal("-3000").compareTo(status.dailyPnlRub))
+            assertTrue(status.dailyLimitBreached)
+            assertTrue(status.reasons.any { it.startsWith("DAILY_LOSS") })
+            assertEquals(0, BigDecimal("-3000").compareTo(s.getDailyPnl()))
+        }
+
+    @Test
+    fun `account daily loss limit is not overridden by legacy breach (P1-3)`() =
+        runBlocking {
+            stubNoOpenPositions()
+            stubAccountClosedPositions(
+                mapOf(
+                    null to listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(), null)),
+                    7L to listOf(closedPosition(BigDecimal("500"), LocalDateTime.now(), 7L)),
+                ),
+            )
+
+            val s = service()
+            // Legacy-путь пробил дневной лимит (−6000 ≤ −5000).
+            val legacy = s.computeStatus(null)
+            assertTrue(legacy.dailyLimitBreached)
+            assertTrue(s.isDailyLossLimitReached())
+
+            // Аккаунт 7 прибыльный: legacy-статус НЕ должен перекрывать его дневной лимит.
+            s.computeStatus(7L)
+            assertFalse(s.isDailyLossLimitReached(7L))
+            assertFalse(s.isEntryBlocked(7L))
+        }
+
+    @Test
     fun `computeStatus does not clobber live accumulator with stale recompute (RISK-OPEN-3)`() =
         runBlocking {
             // recompute из БД не видит concurrent-закрытие (запрос прошёл до его коммита):

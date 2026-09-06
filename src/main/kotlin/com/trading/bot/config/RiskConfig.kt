@@ -259,7 +259,12 @@ class RiskConfig {
      * < X% → немедленный market close (должен быть строго меньше minLiquidationDistancePercent). */
     var criticalLiquidationDistancePercent: Double = 10.0
 
-    /** Порог задействования маржи, % от депозита. > 30% → запрет входа. */
+    /**
+     * Маржинальный бюджет, % от депозита: используется [FuturesPositionSizer] для
+     * расчёта максимума контрактов (marginBudget = deposit × percent / 100).
+     * Не является жёстким запретом входа — только ограничение размера позиции.
+     * Калибровка CNYRUBF/RI выполнялась при 90% (backtest-only); demo/live — 60%.
+     */
     var maxMarginUsagePercent: Double = 60.0
 
     /** Жёсткий лимит контрактов на позицию (Si: 1). */

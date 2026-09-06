@@ -539,7 +539,9 @@ risk:
   max-gap-percent: 3.0
   consecutive-zero-volume-bars: 3
   min-liquidation-distance-percent: 25.0
-  max-margin-usage-percent: 30.0
+  # Калибровка фьючерсов выполняется при 90% (для backtest-only, 2026-08); demo/live = 60%.
+  # ENV-переопределение: RISK_MAXMARGINUSAGEPERCENT=<...>. > производит перекалибровку.
+  max-margin-usage-percent: ${RISK_MAXMARGINUSAGEPERCENT:60.0}
   max-contracts-per-position: 2
   trading-hours-start: "10:00"
   trading-hours-end: "18:30"

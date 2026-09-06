@@ -197,7 +197,10 @@ class DrawdownProtectionService(
         val (peakAum, drawdownPercent) = peakAumAndDrawdown(accountId, open)
 
         val realizedToday = sumPnl(closedToday)
-        val dailyUnrealized = open.filter { !it.openedAt.isBefore(todayStart) }.sumOf { unrealizedPnl(it) }
+        // P1-2: mark-to-market ВСЕХ открытых позиций (не только открытых сегодня).
+        // Внутридневные движения по позициям, открытым ранее, обязаны учитываться в
+        // дневном лимите — иначе крупный дневной дрейф уходит «под радар» лимита.
+        val dailyUnrealized = open.sumOf { unrealizedPnl(it) }
         val dailyPnl = realizedToday.add(dailyUnrealized)
 
         // Реконсиляция синхронного аккумулятора с фактами из БД. RISK-OPEN-3 (roadmap
@@ -455,7 +458,10 @@ class DrawdownProtectionService(
         if (accountLoadedDate[accountId] != day) {
             loadAccountDailyState(accountId, day)
         }
-        return (accountLossReached[accountId] ?: false) || cachedOrNeutral().dailyLimitBreached
+        // P1-3: дневной лимит аккаунта НЕ перекрывается статусом legacy-пути (accountId=null).
+        // Раньше `|| cachedOrNeutral().dailyLimitBreached` блокировал ВСЕ аккаунты одним
+        // legacy-счётом, что противоречит F-13 (статус аккаунта скоупирован по аккаунту).
+        return accountLossReached[accountId] ?: false
     }
 
     /**

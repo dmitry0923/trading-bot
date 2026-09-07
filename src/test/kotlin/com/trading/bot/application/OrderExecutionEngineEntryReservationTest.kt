@@ -230,9 +230,9 @@ class OrderExecutionEngineEntryReservationTest {
 
         val result =
             runBlocking {
-                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
                     buildPos(o, p, pr, q)
-                }
+                })
             }
 
         assertNull(result)
@@ -256,9 +256,9 @@ class OrderExecutionEngineEntryReservationTest {
 
         val result =
             runBlocking {
-                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
                     buildPos(o, p, pr, q)
-                }
+                })
             }
 
         verifyEntryPlaceOrder(1)
@@ -281,9 +281,9 @@ class OrderExecutionEngineEntryReservationTest {
 
         val result =
             runBlocking {
-                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
                     buildPos(o, p, pr, q)
-                }
+                })
             }
 
         assertNull(result)
@@ -304,9 +304,9 @@ class OrderExecutionEngineEntryReservationTest {
 
         val result =
             runBlocking {
-                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
                     buildPos(o, p, pr, q)
-                }
+                })
             }
 
         assertNull(result)
@@ -328,9 +328,9 @@ class OrderExecutionEngineEntryReservationTest {
 
         val result =
             runBlocking {
-                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
                     buildPos(o, p, pr, q)
-                }
+                })
             }
 
         assertNull(result)
@@ -353,9 +353,9 @@ class OrderExecutionEngineEntryReservationTest {
 
         val result =
             runBlocking {
-                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000")) { o, p, pr, q ->
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
                     buildPos(o, p, pr, q)
-                }
+                })
             }
 
         assertNull(result)

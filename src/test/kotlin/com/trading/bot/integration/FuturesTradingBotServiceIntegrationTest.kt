@@ -6,6 +6,7 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.application.TradingHoursGuard
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderPurpose
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.client.WsStream
 import com.trading.bot.domain.signal.Signal
@@ -143,6 +144,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-limit-1")
             Mockito
@@ -154,6 +156,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyBoolean(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-market-1")
         }
@@ -351,6 +354,12 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     private fun anyBigDecimal(): BigDecimal {
         Mockito.any(BigDecimal::class.java)
         return BigDecimal.ZERO
+    }
+
+    @Suppress("ReplaceCallWithBinaryOperator")
+    private fun anyPurpose(): OrderPurpose {
+        Mockito.any(OrderPurpose::class.java)
+        return OrderPurpose.ENTRY
     }
 
     private fun signal(target: BigDecimal): Signal =

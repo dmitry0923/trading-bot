@@ -276,3 +276,58 @@ RI OOS убыточен — исключить из портфеля.
 - Тест: `latestAumResult treats stale cache beyond max age as Unavailable in LIVE`.
 
 Итоговый прогон: 1325 тестов, 0 падений (unit + integrity: ChaosRedisIntegrationTest 5/5).
+
+## P1-8 (исправлено): fencing — lease-токен вместо голой Boolean; P2 (entry halt до reconciliation)
+
+Закрывает 🔴 P1 «Redis TTL + cancellation ≠ fencing» и 🟡 P2 «после LEASE_LOST — block новых ENTRY».
+
+### P1-8 (fence-токен): `runExclusiveFenced` + `LeaseFence`
+- `runExclusive()` не изменил сигнатуру, но теперь делегирует `runExclusiveFenced(name, ttl,
+  failOpenOnError) { fence -> }`. `LeaseFence(name, token, suspend isHeld())` передаётся в
+  callback ТОЛЬКО при реально захваченном/удерживаемом локе (иначе `null`).
+- **`isHeld()` читает живой Redis** (`GET distributed-lock:<name>` == token), а не кэш в памяти:
+  клиент, потерявший lease (watchdog отозвал / другая реплика перезаписала SET NX), ВИДИТ
+  `isHeld() == false` сразу, ещё до/вне кооперативного CancellationException.
+- `OrderExecutionEngine.placeEntryOrder(..., fence: LeaseFence? = null)`:
+  - fence #1 — ДО `reserveEntry` (слот слота не занимаем при протухшей lease);
+  - fence #2 — сразу ПЕРЕД `orderOutboxService.placeOrder`; при потере → `releaseEntry` + abort
+    (`CancellationException`), метрика `"$metricPrefix.entry.lease_lost"`.
+- `DecisionEngine` входу правит `runExclusiveFenced`; фьючерсный/акционный путь через
+  `ExecutionGateway` (SAM, `fence: LeaseFence?` БЕЗ default — default-значения в SAM запрещены).
+- **Picker**: `entryAdmissionMutex` для выбора аккаунта + per-account account-lock (P1-1) остались;
+  fencing — ранняя детерминированная защита поверх БД-адмиссии `reserveEntry` (абсолютная гарантия
+  ≤1 физ. ордер на логический вход).
+
+### P2 (entry halt): `EntryLeaseRecoveryGate`
+- После `LEASE_LOST` (P1-7) критическая секция могла выполниться частично (резервация/outbox/ордер).
+  До завершения reconcile НОВЫЕ ENTRY в пострадавший скоуп блокируются.
+- Новый `@Component EntryLeaseRecoveryGate` (in-JVM ConcurrentHashMap): `mark(scope, cause)` /
+  `isDegraded(scope)` / `recoverAll()`; метрики `entry.lease.recovery_required`/`_completed`.
+- `DecisionEngine` на `LEASE_LOST` → `mark` (вместо простого warn из P1-7); после per-position
+  reconcile `StateReconciliationService`, `TradingBotService`, `FuturesTradingBotService` зовут
+  `recoverAll()`. CLOSE/SL/TP не блокируются — только ENTRY.
+
+### A/B-интеграционный тест (реальный Redis + Postgres)
+`LeaseFencingIntegrationTest` (Testcontainers): инстанс A захватывает лок `position:account:<id>`,
+тест удаляет redis-ключ (имитация потери lease/перезаписи репликой), A продолжает в
+`NonCancellable` → `isHeld()=false` → `placeEntryOrder` = null → `runExclusiveFenced` = `LEASE_LOST`;
+B (новый владелец) входит и открывает ровно одну позицию. Итог: оба не могут создать entry,
+≤1 физический вход на сигнал. Фикстура `TradingAccount` с новой id (FK
+`fk_entry_reservations_account` на `trading_accounts.id`).
+
+### Pre-existing баг (попутно): интеграционные тесты сломаны с 56c1479b
+`placeLimitOrder`/`placeMarketOrder` получили 7-й параметр `purpose` — стабы с 6 матчерами падали с
+`InvalidUseOfMatchersException`. Починены `LeaseFencingIntegrationTest` и
+`FuturesTradingBotServiceIntegrationTest` (7 матчеров + helper `anyPurpose()`); на чистом HEAD
+(до фикса) `FuturesTradingBotServiceIntegrationTest` падал так же.
+
+### Матчеры Mockito в Kotlin
+Inline `Mockito.any(SomeClass::class.java)` для non-null типов → NPE; обязателен helper-паттерн
+`{ Mockito.any(X::class.java); return dummy }` (как `anyString`, `anyBigDecimal`, `anyDirection`,
+`anyLong`, `anyPosition`, `anyPurpose`).
+
+Регрессии: `DistributedLockServiceTest`, `OrderExecutionEngineLeaseFenceTest` (3),
+`DecisionEngineTest` (43), `LeaseFencingIntegrationTest`, `FuturesTradingBotServiceIntegrationTest`,
+`ChaosRedisIntegrationTest`. Полный прогон: **1334 теста**, 0 падений. ktlint — только
+пред-существующие нарушения HEAD (`OrderPurpose.kt`, `RestOrderTransport.kt`, `StockEntryProfileTest.kt:706`,
+`WsOrderTransportTest.kt:348,425`).

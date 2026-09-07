@@ -35,6 +35,16 @@ import java.util.UUID
  *   `false` для входа в позицию (не открывать без лока);
  * - после [LockExecutionResult.LEASE_LOST] автоматический retry запрещён без
  *   предварительного reconciliation — критическая секция могла выполниться частично.
+ *
+ * Fencing (P1-аудит 2026-09-07): `cancel()` критической секции — кооперативная отмена,
+ * необратимая операция (create outbox → отправить ордер на биржу) может продолжиться
+ * после потери lease. Поэтому для необратимых действий [runExclusiveFenced] передаёт
+ * блоку [LeaseFence] — живой маркер владения (token = UUID попытки, GET Redis-ключа
+ * должен вернуть именно его). Перед create outbox/order блок обязан проверить
+ * [LeaseFence.isHeld] и прерваться, если lease потерян. Абсолютную гарантию «1 логический
+ * вход → ≤1 физический ордер» даёт БД-адмиссия ([PositionRepository.reserveEntry],
+ * уникальный слот на (ticker, account)); fence — детерминированная защита от
+ * «ордера из протухшей эры» и защитник слота от 30-минутного зависания.
  */
 @Service
 class DistributedLockService(
@@ -60,6 +70,29 @@ class DistributedLockService(
         FAILED,
     }
 
+    /**
+     * Маркер владения распределённым локом на момент выполнения критической секции.
+     *
+     * Токен уникален на попытку (UUID) — [isHeld] истинно, только если Redis-ключ
+     * `distributed-lock:<name>` всё ещё содержит этот токен. НЕ атомарен с последующим
+     * действием (узкое окно check→act остаётся — его закрывает БД-адмиссия входа);
+     * детерминированно детектирует протухшую lease до необратимой операции.
+     */
+    interface LeaseFence {
+        val name: String
+        val token: String
+
+        suspend fun isHeld(): Boolean
+    }
+
+    private class RedisLeaseFence(
+        override val name: String,
+        override val token: String,
+        private val service: DistributedLockService,
+    ) : LeaseFence {
+        override suspend fun isHeld(): Boolean = service.isLeaseHeld(name, token)
+    }
+
     private data class Lock(
         val name: String,
         val token: String,
@@ -72,9 +105,22 @@ class DistributedLockService(
         ttlSeconds: Long = config.schedulerTtlSeconds,
         failOpenOnError: Boolean = true,
         block: suspend () -> Unit,
+    ): LockExecutionResult = runExclusiveFenced(name, ttlSeconds, failOpenOnError) { _ -> block() }
+
+    /**
+     * Вариант [runExclusive] с [fencing]: блок получает [LeaseFence] (non-null, если
+     * лок реально захвачен; null в disabled/fail-open режимах — fencing не требуется).
+     * Перед каждой НЕОБРАТИМОЙ операцией (create outbox → order) блок обязан проверить
+     * [LeaseFence.isHeld] и прерваться при потере lease.
+     */
+    suspend fun runExclusiveFenced(
+        name: String,
+        ttlSeconds: Long = config.schedulerTtlSeconds,
+        failOpenOnError: Boolean = true,
+        block: suspend (LeaseFence?) -> Unit,
     ): LockExecutionResult {
         if (!config.enabled) {
-            block()
+            block(null)
             return LockExecutionResult.COMPLETED
         }
         val lock =
@@ -85,7 +131,7 @@ class DistributedLockService(
                 meterRegistry.counter(METRIC_ERROR, Tags.of(TAG_NAME, name)).increment()
                 if (failOpenOnError) {
                     logger.warn("Fail-open: running [$name] without lock (Redis unavailable)")
-                    block()
+                    block(null)
                     return LockExecutionResult.COMPLETED
                 }
                 meterRegistry.counter(METRIC_SKIPPED, Tags.of(TAG_NAME, name)).increment()
@@ -96,7 +142,7 @@ class DistributedLockService(
             return LockExecutionResult.NOT_ACQUIRED
         }
         return coroutineScope {
-            val blockJob = async { block() }
+            val blockJob = async { block(RedisLeaseFence(lock.name, lock.token, this@DistributedLockService)) }
             val watchdog =
                 launch {
                     val intervalMs = (ttlSeconds * 1000L) / 3
@@ -136,6 +182,23 @@ class DistributedLockService(
                 }
             }
         }
+    }
+
+    /**
+     * Жива ли lease на момент вызова: Redis-ключ всё ещё содержит [token] этой попытки.
+     * Используется [LeaseFence.isHeld] перед необратимыми действиями критической секции.
+     * internal — для юнит-проверки семантики через мок Redis (тесты в том же модуле).
+     */
+    internal suspend fun isLeaseHeld(
+        name: String,
+        token: String,
+    ): Boolean {
+        val current =
+            reactiveRedisTemplate
+                .opsForValue()
+                .get(KEY_PREFIX + name)
+                .awaitFirstOrNull()
+        return current == token
     }
 
     private suspend fun acquire(

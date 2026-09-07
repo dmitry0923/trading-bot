@@ -39,6 +39,7 @@ import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.MlEntryFilter
+import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
 import com.trading.bot.service.TradingAccountService
@@ -132,6 +133,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             instrumentsConfig,
             netEvGate,
             Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
+            entryLeaseRecoveryGate = EntryLeaseRecoveryGate(meterRegistry),
         )
 
     private val service =
@@ -153,6 +155,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             distributedLockConfig,
             tradingAccountService,
             meterRegistry,
+            EntryLeaseRecoveryGate(meterRegistry),
         )
 
     private val savedPositions = java.util.concurrent.CopyOnWriteArrayList<Position>()
@@ -463,7 +466,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                     PositionDirection.LONG,
                     3,
                     BigDecimal("92000"),
-                ) { orderId, pending, fillPrice, qty ->
+                    buildPosition = { orderId, pending, fillPrice, qty ->
                     Position(
                         ticker = "Si",
                         direction = PositionDirection.LONG,
@@ -476,7 +479,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                         pendingEntry = pending,
                         alorOrderId = orderId,
                     )
-                }
+                })
             }
 
         assertNull(result)

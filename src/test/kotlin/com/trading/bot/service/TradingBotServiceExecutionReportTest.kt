@@ -95,6 +95,7 @@ class TradingBotServiceExecutionReportTest {
                 tradingAccountService,
                 instrumentsConfig,
                 meterRegistry,
+                EntryLeaseRecoveryGate(meterRegistry),
             )
     }
 

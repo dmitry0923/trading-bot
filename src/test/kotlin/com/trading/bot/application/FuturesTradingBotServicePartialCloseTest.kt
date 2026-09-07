@@ -17,6 +17,7 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
 import com.trading.bot.service.TradingAccountService
@@ -86,6 +87,7 @@ class FuturesTradingBotServicePartialCloseTest {
             distributedLockConfig,
             tradingAccountService,
             meterRegistry,
+            EntryLeaseRecoveryGate(meterRegistry),
         )
 
     private fun anyPosition(): Position {

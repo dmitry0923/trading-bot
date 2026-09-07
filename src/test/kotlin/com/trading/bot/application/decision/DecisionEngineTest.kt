@@ -24,6 +24,7 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
@@ -74,6 +75,7 @@ class DecisionEngineTest {
     private val degenerateCaseGuard = Mockito.mock(DegenerateCaseGuard::class.java)
     private val instrumentsConfig = InstrumentsConfig()
     private val netEvGate = PassThroughNetEvGate()
+    private val entryLeaseRecoveryGate = EntryLeaseRecoveryGate(meterRegistry)
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -88,6 +90,7 @@ class DecisionEngineTest {
         gatewayDirection = null
         gatewayPrice = null
         gatewayOpened = null
+        entryLeaseRecoveryGate.recoverAll()
         Mockito.reset(mlEntryFilter)
         Mockito.reset(higherTfTrendFilter)
         Mockito.reset(degenerateCaseGuard)
@@ -109,7 +112,7 @@ class DecisionEngineTest {
     }
 
     private fun gateway(): ExecutionGateway =
-        { _, direction, qty, entryPrice, _, buildPosition ->
+        { _, direction, qty, entryPrice, _, buildPosition, _ ->
             gatewayCalls++
             gatewayQty = qty
             gatewayDirection = direction
@@ -136,6 +139,7 @@ class DecisionEngineTest {
             instrumentsConfig,
             netEvGate,
             Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
+            entryLeaseRecoveryGate,
         )
 
     private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
@@ -165,6 +169,11 @@ class DecisionEngineTest {
             .counter("test.risk.reject", Tags.of("ticker", "Si", "reason", reason))
             .count()
 
+    private fun entryRejectedMetric(reason: String): Double =
+        meterRegistry
+            .counter("test.entry.rejected", Tags.of("ticker", "Si", "reason", reason))
+            .count()
+
     @Test
     fun `no matching profile skips entry`() {
         val profile = FakeEntryProfile(matchesTicker = "SBER")
@@ -174,6 +183,36 @@ class DecisionEngineTest {
 
         assertEquals(0, gatewayCalls)
         assertTrue(profile.buildEntryRequestCalls == 0)
+    }
+
+    @Test
+    fun `entry refused while recovery gate degraded after ticker lease loss`() {
+        entryLeaseRecoveryGate.mark("ticker:Si", "test")
+
+        runBlocking { engine().openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls, "gateway не вызывается пока скоуп ticker:Si в DEGRADED")
+        assertEquals(1.0, entryRejectedMetric("LEASE_RECOVERY_PENDING"), "отказ фиксируется метрикой")
+    }
+
+    @Test
+    fun `entry refused while recovery gate degraded after account lease loss`() {
+        entryLeaseRecoveryGate.mark("account:legacy", "test")
+
+        runBlocking { engine().openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls, "gateway не вызывается пока скоуп account:legacy в DEGRADED")
+        assertEquals(1.0, entryRejectedMetric("LEASE_RECOVERY_PENDING"), "отказ фиксируется метрикой")
+    }
+
+    @Test
+    fun `recovery gate reopens entry scope after reconcile`() {
+        entryLeaseRecoveryGate.mark("ticker:Si", "test")
+        entryLeaseRecoveryGate.recoverAll()
+
+        runBlocking { engine().openPosition(signal(), gateway()) }
+
+        assertEquals(1, gatewayCalls, "после recoverAll вход по тикеру снова разрешён")
     }
 
     @Test

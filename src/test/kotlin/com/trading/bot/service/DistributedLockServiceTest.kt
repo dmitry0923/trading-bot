@@ -7,6 +7,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -180,5 +183,63 @@ class DistributedLockServiceTest {
 
             assertEquals(LockExecutionResult.LEASE_LOST, result)
             assertTrue(cancelled)
+        }
+
+    @Test
+    fun `runExclusiveFenced passes a fence to the block when lock acquired`() =
+        runBlocking {
+            config.enabled = true
+            acquireSucceeds()
+
+            var fenceSeen: DistributedLockService.LeaseFence? = null
+            val result =
+                service.runExclusiveFenced(name = "fenced-entry", ttlSeconds = 30) { fence ->
+                    fenceSeen = fence
+                }
+
+            assertEquals(LockExecutionResult.COMPLETED, result)
+            assertNotNull(fenceSeen, "блок получает non-null LeaseFence при захваченном локе")
+        }
+
+    @Test
+    fun `runExclusiveFenced passes null fence when lock disabled`() =
+        runBlocking {
+            config.enabled = false
+            var fenceSeen: DistributedLockService.LeaseFence? = null
+            val result =
+                service.runExclusiveFenced(name = "disabled-fenced") { fence ->
+                    fenceSeen = fence
+                }
+
+            assertEquals(LockExecutionResult.COMPLETED, result)
+            assertNull(fenceSeen, "без распределённого лока fencing не требуется — fence = null")
+        }
+
+    @Test
+    fun `fence isHeld reflects the redis value for the lock token`() =
+        runBlocking {
+            config.enabled = true
+            acquireSucceeds()
+            var fence: DistributedLockService.LeaseFence? = null
+            val result =
+                service.runExclusiveFenced(name = "fenced-held", ttlSeconds = 30) {
+                    fence = it
+                }
+            assertEquals(LockExecutionResult.COMPLETED, result)
+
+            val lockName = requireNotNull(fence).name
+            val token = requireNotNull(fence).token
+
+            // Redis-ключ содержит токен этой попытки → fence жив.
+            Mockito.`when`(valueOps.get(Mockito.any(String::class.java))).thenReturn(Mono.just(token))
+            assertTrue(service.isLeaseHeld(lockName, token), "GET ключа == token → lease жива")
+
+            // Токен сменился (другая попытка / старое значение) → fence мёртв.
+            Mockito.`when`(valueOps.get(Mockito.any(String::class.java))).thenReturn(Mono.just("other-token"))
+            assertFalse(service.isLeaseHeld(lockName, token), "GET ключа != token → lease потеряна")
+
+            // Ключ исчез → fence мёртв.
+            Mockito.`when`(valueOps.get(Mockito.any(String::class.java))).thenReturn(Mono.empty())
+            assertFalse(service.isLeaseHeld(lockName, token), "GET пуст → lease потеряна")
         }
 }

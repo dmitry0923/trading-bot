@@ -86,6 +86,7 @@ class TradingBotService(
     private val tradingAccountService: TradingAccountService,
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
+    private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -413,6 +414,9 @@ class TradingBotService(
                     } catch (e: Exception) {
                         logger.error(e) { "Stock reconciler error" }
                     }
+                    // После успешного reconcile-прохода снимаем DEGRADED с входов:
+                    // инстанс сверил broker↔DB и может снова открывать позиции вслепую.
+                    entryLeaseRecoveryGate.recoverAll()
                 }
             } finally {
                 reconcileRunning.set(false)

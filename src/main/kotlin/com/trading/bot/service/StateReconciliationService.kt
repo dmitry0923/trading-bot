@@ -78,6 +78,7 @@ class StateReconciliationService(
     private val eventPublisher: TradingEventPublisher,
     private val meterRegistry: MeterRegistry,
     private val tradingAccountService: TradingAccountService,
+    private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -161,6 +162,10 @@ class StateReconciliationService(
         if (halted) {
             eventPublisher.publishTradingHalted(TradingHaltedEvent(reason = "STATE_DESYNC"))
         }
+
+        // После успешной полной сверки снимаем DEGRADED с входов (EntryLeaseRecoveryGate):
+        // broker↔DB сверены — инстанс снова может открывать позиции.
+        entryLeaseRecoveryGate.recoverAll()
 
         meterRegistry
             .timer("alor.reconcile.duration")

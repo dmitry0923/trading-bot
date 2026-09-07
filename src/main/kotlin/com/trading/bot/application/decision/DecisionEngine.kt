@@ -19,6 +19,7 @@ import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
 import com.trading.bot.service.DistributedLockService.LockExecutionResult
+import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
@@ -79,6 +80,7 @@ class DecisionEngine(
     private val instrumentsConfig: InstrumentsConfig,
     private val netEvGate: NetEvGate,
     private val adaptiveRisk: AdaptiveRiskService,
+    private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -120,18 +122,26 @@ class DecisionEngine(
                 }
         val lock = entryLocks.computeIfAbsent(signal.ticker) { Mutex() }
         lock.withLock {
+            if (entryLeaseRecoveryGate.isDegraded("ticker:${signal.ticker}")) {
+                logger.warn { "Entry refused ${signal.ticker}: lease lost earlier — recovery/reconciliation pending" }
+                meterRegistry
+                    .counter("${profile.metricPrefix}.entry.rejected", Tags.of("ticker", signal.ticker, "reason", "LEASE_RECOVERY_PENDING"))
+                    .increment()
+                return
+            }
             val result =
-                distributedLockService.runExclusive(
+                distributedLockService.runExclusiveFenced(
                     name = "position:${signal.ticker}",
                     ttlSeconds = distributedLockConfig.positionOpenTtlSeconds,
                     failOpenOnError = false,
-                ) {
+                ) { _ ->
                     doOpenPosition(signal, profile, gateway)
                 }
             if (result == LockExecutionResult.LEASE_LOST) {
+                entryLeaseRecoveryGate.mark("ticker:${signal.ticker}", "entry-ticker-lease-lost")
                 logger.warn {
                     "Entry lease lost ${signal.ticker}: critical section may have " +
-                        "partially executed — reconciliation required on next cycle"
+                        "partially executed — reconciliation required, new entries on ticker blocked until then"
                 }
             } else if (result != LockExecutionResult.COMPLETED) {
                 logger.info {
@@ -207,11 +217,20 @@ class DecisionEngine(
         val accountKey = accountId?.toString() ?: "legacy"
         val result =
             accountLocks.computeIfAbsent(accountKey) { Mutex() }.withLock {
-                distributedLockService.runExclusive(
+                if (entryLeaseRecoveryGate.isDegraded("account:$accountKey")) {
+                    logger.warn { "Entry refused $ticker: lease lost earlier on account $accountKey — recovery/reconciliation pending" }
+                    meterRegistry
+                        .counter(
+                            "${profile.metricPrefix}.entry.rejected",
+                            Tags.of("ticker", ticker, "reason", "LEASE_RECOVERY_PENDING"),
+                        ).increment()
+                    return
+                }
+                distributedLockService.runExclusiveFenced(
                     name = "position:account:$accountKey",
                     ttlSeconds = distributedLockConfig.positionOpenTtlSeconds,
                     failOpenOnError = false,
-                ) {
+                ) { fence ->
                     doOpenPositionForAccount(
                         signal = signal,
                         profile = profile,
@@ -222,13 +241,15 @@ class DecisionEngine(
                         spec = spec,
                         snapshot = snapshot,
                         accountId = accountId,
+                        fence = fence,
                     )
                 }
             }
         if (result == LockExecutionResult.LEASE_LOST) {
+            entryLeaseRecoveryGate.mark("account:$accountKey", "entry-account-lease-lost")
             logger.warn {
                 "Entry lease lost $ticker on account $accountKey: critical section may " +
-                    "have partially executed — reconciliation required on next cycle"
+                    "have partially executed — reconciliation required, new entries on account blocked until then"
             }
         } else if (result != LockExecutionResult.COMPLETED) {
             logger.info {
@@ -252,8 +273,8 @@ class DecisionEngine(
         spec: InstrumentsConfig.InstrumentSpec,
         snapshot: MarketSnapshot?,
         accountId: Long?,
+        fence: DistributedLockService.LeaseFence?,
     ) {
-
         // F-11 (roadmap 13.25): открытые позиции берутся ТОЛЬКО по выбранному аккаунту —
         // иначе MAX_POSITIONS, корреляционные и портфельные лимиты считались по ПУЛУ всех
         // аккаунтов. accountId = null (legacy) — позиции с account_id = NULL.
@@ -441,9 +462,11 @@ class DecisionEngine(
                 decision.quantity,
                 decision.entryPrice ?: entryPrice,
                 accountId,
-            ) { orderId, pending, fillPrice, qty ->
-                profile.buildPosition(decision, orderId, pending, fillPrice, qty)
-            }
+                buildPosition = { orderId, pending, fillPrice, qty ->
+                    profile.buildPosition(decision, orderId, pending, fillPrice, qty)
+                },
+                fence = fence,
+            )
         if (opened != null) {
             orderBuilder.recordStrategyExecution(decision)
             profile.onOpened(decision, opened)

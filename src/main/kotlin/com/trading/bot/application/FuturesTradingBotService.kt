@@ -20,6 +20,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
 import com.trading.bot.service.TradingAccountService
@@ -77,6 +78,7 @@ class FuturesTradingBotService(
     private val distributedLockConfig: DistributedLockConfig,
     private val tradingAccountService: TradingAccountService,
     private val meterRegistry: MeterRegistry,
+    private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -240,6 +242,9 @@ class FuturesTradingBotService(
                     } catch (e: Exception) {
                         logger.error(e) { "Futures reconciler error" }
                     }
+                    // После успешного reconcile-прохода снимаем DEGRADED с входов
+                    // (EntryLeaseRecoveryGate) — инстанс сверил broker↔DB.
+                    entryLeaseRecoveryGate.recoverAll()
                 }
             } finally {
                 reconcileRunning.set(false)

@@ -50,6 +50,7 @@ class StateReconciliationServiceTest {
             eventPublisher,
             meterRegistry,
             tradingAccountService,
+            EntryLeaseRecoveryGate(meterRegistry),
         )
 
     @BeforeEach

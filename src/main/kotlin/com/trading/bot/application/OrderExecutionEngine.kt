@@ -11,6 +11,7 @@ import com.trading.bot.model.dto.OrderStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.DistributedLockService.LeaseFence
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -177,6 +178,14 @@ class OrderExecutionEngine(
 
     /**
      * Entry: place limit order via outbox with three outcomes.
+     *
+     * Fencing (P1-аудит 2026-09-07): [fence] — маркер живой lease распределённого лока
+     * входа. Проверяется ДВАЖДЫ — перед резервацией слота и непосредственно перед
+     * созданием outbox-строки (необратимое действие). Если lease потеряна, вход
+     * прерывается, резервация (если была) снимается: ордер «из протухшей эры» не
+     * создаётся. Абсолютную гарантию «1 логический вход → ≤1 физический ордер» даёт
+     * уникальный слот [PositionRepository.reserveEntry]; fence — детерминированная
+     * ранняя защита. null — вход вне распределённого лока (disabled/fail-open, тесты).
      */
     suspend fun placeEntryOrder(
         ticker: String,
@@ -185,6 +194,7 @@ class OrderExecutionEngine(
         entryPrice: BigDecimal,
         accountId: Long? = null,
         buildPosition: (orderId: String?, pending: Boolean, fillPrice: BigDecimal, qty: Int) -> Position,
+        fence: LeaseFence? = null,
     ): Position? {
         if (qty <= 0) {
             logger.error { "Entry rejected $ticker: qty=$qty must be positive" }
@@ -192,10 +202,27 @@ class OrderExecutionEngine(
             return null
         }
 
+        // Fence #1: до резервации слота. Lease потеряна — даже слот не занимаем
+        // (иначе чужой (новый) владелец не смог бы открыть позицию 30 минут).
+        if (fence != null && !fence.isHeld()) {
+            logger.warn { "Entry ABORTED $ticker: lease lost before slot reservation (fencing)" }
+            meterRegistry.counter("$metricPrefix.entry.lease_lost", Tags.of("ticker", ticker)).increment()
+            return null
+        }
+
         val reservedId = positionRepo.reserveEntry(ticker, direction, accountId)
         if (reservedId == null) {
             logger.warn { "Duplicate entry blocked $ticker (${direction.name}) — slot already reserved or position OPEN" }
             meterRegistry.counter("$metricPrefix.entry.duplicate", Tags.of("ticker", ticker)).increment()
+            return null
+        }
+
+        // Fence #2: непосредственно перед созданием outbox-строки (необратимое
+        // действие — ордер уйдёт на биржу). Слот, занятый с протухшей lease, снимаем.
+        if (fence != null && !fence.isHeld()) {
+            logger.warn { "Entry ABORTED $ticker: lease lost before outbox (fencing); reservation released" }
+            meterRegistry.counter("$metricPrefix.entry.lease_lost", Tags.of("ticker", ticker)).increment()
+            positionRepo.releaseEntry(ticker, accountId)
             return null
         }
 

@@ -155,9 +155,17 @@ class FuturesEntryProfile(
     ): String? {
         if (size.quantity < 1) return "ZERO_RISK_SIZE"
         val spec = instrumentsConfig.find(ticker)
+        // Фьючерс — забалансовый инструмент: кандидат в портфельные лимиты входит
+        // по марже (GO × qty), а не по полному номиналу контракта. Иначе даже один
+        // контракт Si (номинал 92k) превышал бы 100% gross от SIM AUM (50k).
+        // Акции — полный notional (симметрично StockEntryProfile.postSizingChecks).
         val candidateNotional =
-            spec?.notional(size.quantity, entryPrice)
-                ?: entryPrice.multiply(BigDecimal(size.quantity))
+            if (spec != null && spec.type == "FUTURES") {
+                spec.go.multiply(BigDecimal(size.quantity))
+            } else {
+                spec?.notional(size.quantity, entryPrice)
+                    ?: entryPrice.multiply(BigDecimal(size.quantity))
+            }
         return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions, accountId)) "PORTFOLIO_LIMIT" else null
     }
 

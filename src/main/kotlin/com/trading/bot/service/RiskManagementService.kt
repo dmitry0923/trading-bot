@@ -121,6 +121,14 @@ class RiskManagementService(
 
         fun positionNotional(pos: Position): BigDecimal {
             val spec = instrumentsConfig.find(pos.ticker)
+            // Фьючерс — забалансовый инструмент: экспозиция в портфельных лимитах
+            // считается по марже (GO × qty), а не по полному номиналу контракта
+            // (иначе любой вход Si при депозите ниже номинала контракта вечно
+            // получал Gross/Net DENY). Акции — полный notional spec.notional.
+            // Согласовано с фьючерсным сайзингом по GO (P2-c) и max-margin-usage-percent.
+            if (spec != null && spec.type == "FUTURES") {
+                return spec.go.multiply(BigDecimal(pos.quantity))
+            }
             return spec?.notional(pos.quantity, pos.entryPrice)
                 ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
         }

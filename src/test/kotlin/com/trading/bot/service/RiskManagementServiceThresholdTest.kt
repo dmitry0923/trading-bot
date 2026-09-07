@@ -229,4 +229,21 @@ class RiskManagementServiceThresholdTest {
         assertTrue(blocked)
         assertEquals(1.0, registry.counter("risk.portfolio.aum_unavailable.blocked").count())
     }
+
+    @Test
+    fun `futures exposure is measured by margin not full notional`() {
+        // R1-регрессия: фьючерс — забалансовый инструмент. Кандидат Si (GO 15k, qty 1)
+        // входит по марже 15k за контракт, а не по полному номиналу 92k. При SIM AUM
+        // 50k и gross-лимите 100% вход по GO разрешён (15k < 50k), по номиналу — DENY.
+        val config = RiskConfig().apply { maxGrossExposurePercent = 100.0 }
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
+        val s = service(config = config)
+        val open = emptyList<Position>()
+
+        // margin = 15000 × 1 = 15000 < 50000 (100%) → allowed.
+        assertFalse(s.exceedsPortfolioLimits(BigDecimal("15000"), PositionDirection.LONG, open, null))
+
+        // Тот же Si при полном номинале 92000 превысил бы 100% — был бы заблокирован.
+        assertTrue(s.exceedsPortfolioLimits(BigDecimal("92000"), PositionDirection.LONG, open, null))
+    }
 }

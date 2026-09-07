@@ -370,10 +370,17 @@ LB 0 → Kelly=0 → `ZERO_RISK_SIZE`).
 ### R1 (исправлено): futures pre/post-gates теперь работают
 `FuturesEntryProfile` rаньше возвращал null из pre/postSizingChecks (:104/:146) — фьючерсы обходили
 Gross/Net/корреляцию и концентрацию. Теперь pre = `CORRELATION`/`SECTOR_CORRELATION`, post =
-`ZERO_RISK_SIZE`/`PORTFOLIO_LIMIT`; кандидатный notional через `spec.notional(size.quantity, entryPrice)`;
-переиспользованы `exceedsCorrelationLimit`/`exceedsSectorCorrelationLimit` из акционных гейтов.
-Исключение сохранено: `candidateTicker == "Si"` (фьючерсный хедж не фильтруется). Новые зависимости —
-`AdaptiveRiskService`/`RiskManagementService` (добавлены в конструктор; тесты добиты моками).
+`ZERO_RISK_SIZE`/`PORTFOLIO_LIMIT`; переиспользованы `exceedsCorrelationLimit`/`exceedsSectorCorrelationLimit`
+из акционных гейтов. Исключение сохранено: `candidateTicker == "Si"` (фьючерсный хедж не фильтруется).
+Новые зависимости — `AdaptiveRiskService`/`RiskManagementService` (добавлены в конструктор; тесты добиты моками).
+
+ВНИМАНИЕ (2026-09-07, регрессия после R1): фьючерсная экспозиция в `PORTFOLIO_LIMIT`/Gross/Net
+считается ПО МАРЖЕ (GO × qty), а НЕ по полному номиналу контракта (`RiskManagementService.positionNotional`,
+кандидат в `FuturesEntryProfile.postSizingChecks`). Иначе даже один контракт Si (номинал 92k при SIM
+AUM 50k) вечно получал `PORTFOLIO_LIMIT` — фьючерс это забалансовый инструмент, he занимает депозит на
+сумму номинала; его риск ограничен маржой GO (согласовано с сайзингом по GO и `max-margin-usage-percent`).
+Акции — полный `spec.notional` как раньше. Регрессия: `futures entry creates position with full risk
+fields` (pass), `futures exposure is measured by margin not full notional`.
 
 ### E1 (исправлено): компенсация при фейле между outbox и position
 `OrderExecutionEngine.placeEntryOrder`: try/catch внутри `PlaceOrderResult` после Fence#2; флаг

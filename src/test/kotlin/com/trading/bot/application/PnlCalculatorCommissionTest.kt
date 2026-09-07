@@ -130,4 +130,68 @@ class PnlCalculatorCommissionTest {
         // (12.625 - 12.50) * 1 * 1 = 0.125
         assertEquals(0, pnl.compareTo(BigDecimal("0.125")))
     }
+
+    // ── futures with commission ────────────────────────────────
+
+    private val futuresNoComm = PnlCalculator.futures(pointValue = { BigDecimal("1000.0") })
+
+    private val futuresWithComm =
+        PnlCalculator.futures(
+            pointValue = { BigDecimal("1000.0") },
+            commissionRub = { BigDecimal("1.0") },
+        )
+
+    private fun futuresPos(ticker: String = "CNYRUBF") =
+        Position(
+            id = 3L,
+            ticker = ticker,
+            direction = PositionDirection.LONG,
+            quantity = 3,
+            entryPrice = BigDecimal("12.50"),
+            instrumentType = InstrumentType.FUTURES,
+        )
+
+    @Test
+    fun `futures without commission is pure price delta times pointValue`() {
+        val pnl = futuresNoComm.pnl(futuresPos(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        // (13.00 - 12.50) * 1000 * 3 = 1500
+        assertEquals(0, pnl.compareTo(BigDecimal("1500")))
+    }
+
+    @Test
+    fun `futures LONG TP deducts round-trip commission per contract`() {
+        val pnl = futuresWithComm.pnl(futuresPos(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        // gross = (13.00 - 12.50) * 1000 * 3 = 1500
+        // commission = 1.0 * 3 * 2 = 6
+        assertEquals(0, pnl.compareTo(BigDecimal("1494")))
+    }
+
+    @Test
+    fun `futures SHORT SL loss is deepened by commission`() {
+        val short =
+            Position(
+                id = 4L,
+                ticker = "RI",
+                direction = PositionDirection.SHORT,
+                quantity = 2,
+                entryPrice = BigDecimal("120.00"),
+                instrumentType = InstrumentType.FUTURES,
+            )
+        val pnl = futuresWithComm.pnl(short, BigDecimal("120.00"), BigDecimal("121.00"), BigDecimal(2))
+        // gross = (120.00 - 121.00) * 1000 * 2 = -2000
+        // commission = 1.0 * 2 * 2 = 4
+        assertEquals(0, pnl.compareTo(BigDecimal("-2004")))
+    }
+
+    @Test
+    fun `futures null commission has no deduction`() {
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                commissionRub = { null },
+            )
+        val pnl = calc.pnl(futuresPos(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        // gross only: 1500
+        assertEquals(0, pnl.compareTo(BigDecimal("1500")))
+    }
 }

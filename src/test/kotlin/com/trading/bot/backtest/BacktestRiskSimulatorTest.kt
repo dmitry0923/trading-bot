@@ -243,6 +243,67 @@ class BacktestRiskSimulatorTest {
                 assertFalse(result.allowed)
                 assertEquals("DRAWDOWN_PROTECTION", result.reason)
             }
+
+        @Test
+        fun `rolling drawdown window is relative to simulation time not real now`() =
+            runBlocking {
+                // Время симуляции — далёкое прошлое (относительно реального now()).
+                val simTime = at(-500, 10)
+                val candle = entryCandle(simTime)
+
+                // Сделка-убыток по тикеру OTHER (нет в instruments → lotSize=1, qty 1000 →
+                // pnl = (92-100)*1000 = -8000 = -8% пика). exitTime = simTime - 4 дня — В
+                // 7d-окне ОТ ВРЕМЕНИ СИМУЛЯЦИИ, но в далёком прошлом от реального now().
+                // До фикса rolling считался от LocalDateTime.now() → окно пустое → gate
+                // молчал; теперь window отсчитывается от времени симуляции → срабатывает.
+                // Тикер входа TEST — без истории, Kelly fallback не обнуляется.
+                simulator.recordClose(
+                    "OTHER",
+                    PositionDirection.LONG,
+                    bd("100.00"),
+                    bd("92.00"),
+                    1000,
+                    at(-500 - 5, 10),
+                    at(-500 - 4, 11),
+                    "STOP_LOSS",
+                    BigDecimal.ZERO,
+                    capital,
+                )
+                assertEquals(-8000, simulator.rollingPnl(simTime, 7).toInt())
+                val blocked = checkEntry(candle = candle)
+                assertFalse(blocked.allowed, "expected drawdown block, got allowed")
+                assertEquals("DRAWDOWN_PROTECTION", blocked.reason)
+            }
+
+        @Test
+        fun `rolling loss outside simulation window does not block`() =
+            runBlocking {
+                val simTime = at(-500, 10)
+                val candle = entryCandle(simTime)
+
+                // Та же сделка, но exitTime = simTime - 45 дней → вне 7d-/30d-окон.
+                // От реального now() она в далёком прошлом, как и simTime, — до фикса
+                // между этим и предыдущим тестом не было бы разницы.
+                simulator.recordClose(
+                    "OTHER",
+                    PositionDirection.LONG,
+                    bd("100.00"),
+                    bd("92.00"),
+                    1000,
+                    at(-500 - 50, 10),
+                    at(-500 - 45, 11),
+                    "STOP_LOSS",
+                    BigDecimal.ZERO,
+                    capital,
+                )
+                assertEquals(0, simulator.rollingPnl(simTime, 7).toInt())
+                assertEquals(0, simulator.rollingPnl(simTime, 30).toInt())
+                val result = checkEntry(candle = candle)
+                assertTrue(
+                    result.allowed,
+                    "unexpected block: ${result.reason} (kelly=${result.kellySizeRub} lots=${result.kellySizeLots})",
+                )
+            }
     }
 
     @Nested

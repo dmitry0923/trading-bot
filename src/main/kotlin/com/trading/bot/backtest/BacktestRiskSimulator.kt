@@ -176,7 +176,7 @@ class BacktestRiskSimulator(
         }
 
         // ===== Gate 3: Drawdown protection =====
-        if (isDrawdownBlocking()) {
+        if (isDrawdownBlocking(currentTime)) {
             logger.debug { "Backtest risk: DRAWDOWN_PROTECTION for $ticker" }
             return GateResult(allowed = false, reason = "DRAWDOWN_PROTECTION")
         }
@@ -391,8 +391,13 @@ class BacktestRiskSimulator(
 
     /**
      * Drawdown protection: rolling 7d, 30d, consecutive losses, shadow mode.
+     *
+     * @param currentTime текущее время симуляции (время бара) — для скользящих
+     *        лимитов; НЕ используется реальное LocalDateTime.now(), т.к. оно
+     *        делает rolling-window бессмысленным в бэктесте (паритет с live:
+     *        DrawdownProtectionService считает от своего clock).
      */
-    private fun isDrawdownBlocking(): Boolean {
+    private fun isDrawdownBlocking(currentTime: LocalDateTime): Boolean {
         if (peakEquity <= BigDecimal.ZERO) return false
 
         // Drawdown from peak
@@ -400,8 +405,8 @@ class BacktestRiskSimulator(
         if (drawdownPercent >= riskConfig.drawdownScaleTiers.keys.maxOrNull() ?: 15.0) return true
 
         // Rolling loss limits
-        val rolling7d = tradeHistory.rollingPnl(LocalDateTime.now(), 7)
-        val rolling30d = tradeHistory.rollingPnl(LocalDateTime.now(), 30)
+        val rolling7d = tradeHistory.rollingPnl(currentTime, 7)
+        val rolling30d = tradeHistory.rollingPnl(currentTime, 30)
         val rolling7dLimit =
             peakEquity
                 .multiply(
@@ -657,4 +662,10 @@ class BacktestRiskSimulator(
     fun closedTradeCount(): Int = tradeHistory.totalTrades()
 
     fun maxConsecutiveLosses(): Int = tradeHistory.maxConsecutiveLosses()
+
+    /** Скользящий P&L за [days] дней от [currentTime] (время симуляции). */
+    fun rollingPnl(
+        currentTime: LocalDateTime,
+        days: Int,
+    ): BigDecimal = tradeHistory.rollingPnl(currentTime, days)
 }

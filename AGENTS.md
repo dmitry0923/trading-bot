@@ -331,3 +331,51 @@ Inline `Mockito.any(SomeClass::class.java)` для non-null типов → NPE; 
 `ChaosRedisIntegrationTest`. Полный прогон: **1334 теста**, 0 падений. ktlint — только
 пред-существующие нарушения HEAD (`OrderPurpose.kt`, `RestOrderTransport.kt`, `StockEntryProfileTest.kt:706`,
 `WsOrderTransportTest.kt:348,425`).
+
+## Production-readiness аудит (исправления, 2026-09-07)
+
+Аудит execution/risk/backtest-WFA-MC/DB-recovery (4 параллельных запроса) + верификация в коде.
+Исправлены:
+
+### P0-1 (исправлено): rolling drawdown в бэктесте считался от реального времени
+`BacktestRiskSimulator.isDrawdownBlocking` использовал `LocalDateTime.now()` для 7d/30d rolling P&L —
+в симуляции окно было относительно реального времени, а не времени свечи (окно «застывало» по
+календарю, в ретроспективе почти никогда не срабатывало). Фикс: `isDrawdownBlocking(currentTime)`;
+`rollingPnl(currentTime, days)` — публичный, вызывается с `candle.time` из `checkEntry` (:179).
+Побочно: `analyze(currentTime = now)` в `calculateKellySize` (:450/:616) НЕ баг (days=null → фильтр
+не применяется). Регрессии: `rolling drawdown window is relative to simulation time not real now` и
+`rolling loss outside simulation window does not block` (окно сделки задаётся через чужой тикер
+`OTHER`, чтобы не обнулять Kelly-вход: одна убыточная сделка для тикера входа → winRate=0 → Wilson
+LB 0 → Kelly=0 → `ZERO_RISK_SIZE`).
+
+### R2 (исправлено): futures PnL не вычитал комиссию
+`PnlCalculator.futures` считал только ценовой PnL (`Δprice × pointValue × qty`) — в отличие от
+`lotBased` комиссия не вычиталась, доходность/капитал в live завышались (асимметрия с бэктестом,
+где `computeCommission` участвует в расчётах ). Фикс: `futures(pointValue, commissionRub = { null })` —
+симметрично `lotBased`, вычитает `qty × commissionRub × 2`. `FuturesTradingBotService` прокидывает
+`instrumentsConfig.find(ticker)?.commissionRub`; в `application.yml` фьючерсам задана реалистичная
+комиссия **1.0 ₽/контракт за сторону** (Si, RI, CNYRUBF). null → комиссия 0 (backward compatible,
+дефолт остался без вычета). Регрессии: `PnlCalculatorCommissionTest` (+4 futures-теста).
+
+### Подтверждённые P1/P2 (НЕ тронуты — требуют решения пользователя или дизайн-уточнения)
+- **R1 (P1)**: `FuturesEntryProfile` pre/postSizingChecks возвращают null (:104/:146) — фьючерсы
+  обходят Gross/Net/корреляцию и концентрацию (позиции фьючерсные отдельно от акций). Асимметрия
+  может быть осознанной; решение за пользователем.
+- **E1 (P1)**: `OrderExecutionEngine` reserve→outbox→placeOrder нетранзакционна (:213/:230/:271);
+  фейл между шагами → позиция/ордер без записи, реконсиляция догоняет.
+- **E3 (P1)**: `CloseFillProcessor` реконсиляция (:130-139) — бесконечный цикл без лимита при
+  рассинхроне WS/REST.
+- **B1 (P1)**: `MonteCarloAnalyzer` (:426-429) не понимает futures SL/TP в пунктах (дефолтные 2%/4%);
+  для фьючерсов MC-прогон не репрезентативен (известное ограничение, см. выше про robustness).
+- **B2 (P1)**: `BacktestConfig` фикс. seed 42 — детерминизм только одного рана с одинаковым seed.
+- **D1 (P2)**: `StateReconciliationService.recoverAll()` (:168) вызывается безусловно при
+  reconcile даже когда изменение halted (окно, в котором фьючерсная позиция может открыться на
+  остановленном боте, — близко к нулю).
+- **P2**: `DailyLossCircuitBreaker` halt глобальный (без accountId, :70); `OrderExecutionEngine` WS-fill
+  с avgPrice=null игнорируется (:430, сойдётся через REST); `WsOrderTransport` O(n) корреляция;
+  `OutboxOrderConsumer` runBlocking; `DrawdownProtectionService` @Synchronized; `Dockerfile` runtime от
+  root (оценено P1).
+
+Полный прогон: **1340 тестов**, 0 падений (unit). ktlint — только пред-существующие нарушения HEAD
+(`OrderPurpose.kt`, `RestOrderTransport.kt`, `StockEntryProfileTest.kt:706`,
+`WsOrderTransportTest.kt:348,425`, `FuturesTradingBotServiceEntryPartialFillTest.kt:470-482`).

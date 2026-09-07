@@ -450,7 +450,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                 objectMapper = objectMapper,
                 tradeEventService = tradeEventService,
                 meterRegistry = meterRegistry,
-                pnlCalculator = PnlCalculator.futures { _ -> instrumentsConfig.pointValue("Si") },
+                pnlCalculator = PnlCalculator.futures(pointValue = { _ -> instrumentsConfig.pointValue("Si") }),
                 instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
                 metricPrefix = "futures",
                 onEntryOpened = { eventPublisher.publishPositionOpened(it) },

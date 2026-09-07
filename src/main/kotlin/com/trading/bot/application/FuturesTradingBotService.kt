@@ -100,7 +100,11 @@ class FuturesTradingBotService(
             objectMapper = objectMapper,
             tradeEventService = tradeEventService,
             meterRegistry = meterRegistry,
-            pnlCalculator = PnlCalculator.futures { ticker -> instrumentsConfig.pointValue(ticker) },
+            pnlCalculator =
+                PnlCalculator.futures(
+                    pointValue = { ticker -> instrumentsConfig.pointValue(ticker) },
+                    commissionRub = { ticker -> instrumentsConfig.find(ticker)?.commissionRub },
+                ),
             instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
             metricPrefix = "futures",
             onEntryOpened = { eventPublisher.publishPositionOpened(it) },

@@ -364,6 +364,7 @@ instruments:
       go: "15000"
       leverage: "${leverage.user-leverage}"
       baseAsset: "USD"
+      commissionRub: "1.0"
     - ticker: "RI"
       type: "FUTURES"
       lotSize: 1
@@ -372,6 +373,7 @@ instruments:
       go: "22000"
       leverage: "${leverage.user-leverage}"
       baseAsset: "USD"
+      commissionRub: "1.0"
     - ticker: "CNYRUBF"
       type: "FUTURES"
       lotSize: 1000
@@ -381,6 +383,7 @@ instruments:
       leverage: "${leverage.user-leverage}"
       baseAsset: "CNY"
       quoteAsset: "RUB"
+      commissionRub: "1.0"
     - ticker: "SBER"
       type: "STOCK"
       lotSize: 10

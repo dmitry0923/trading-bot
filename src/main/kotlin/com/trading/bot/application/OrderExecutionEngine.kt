@@ -23,7 +23,7 @@ import java.math.BigDecimal
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
  * - акции/FX: (exit - entry) * qty * lotSize − qty × commissionRub × 2 (qty = число лотов);
- * - фьючерсы: (exit - entry) * pointValue * qty.
+ * - фьючерсы: (exit - entry) * pointValue * qty − qty × commissionRub × 2.
  */
 fun interface PnlCalculator {
     fun pnl(
@@ -59,13 +59,27 @@ fun interface PnlCalculator {
                 pricePnl.subtract(totalCommission)
             }
 
-        fun futures(pointValue: (String) -> BigDecimal): PnlCalculator =
+        /**
+         * futures P&L для фьючерсов: Δprice × pointValue × qty − round-trip commission.
+         *
+         * @param pointValue стоимость 1 пункта цены в RUB (ticker → pointValue)
+         * @param commissionRub комиссия за контракт за сторону в RUB (ticker → commissionRub).
+         *        Вычитается как qty × commissionRub × 2 (вход + выход). null → 0.
+         */
+        fun futures(
+            pointValue: (String) -> BigDecimal,
+            commissionRub: (String) -> BigDecimal? = { null },
+        ): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
                 val pv = pointValue(pos.ticker)
-                when (pos.direction) {
-                    PositionDirection.LONG -> to.subtract(from).multiply(pv).multiply(qty)
-                    PositionDirection.SHORT -> from.subtract(to).multiply(pv).multiply(qty)
-                }
+                val pricePnl =
+                    when (pos.direction) {
+                        PositionDirection.LONG -> to.subtract(from).multiply(pv).multiply(qty)
+                        PositionDirection.SHORT -> from.subtract(to).multiply(pv).multiply(qty)
+                    }
+                val commPerSide = commissionRub(pos.ticker) ?: BigDecimal.ZERO
+                val totalCommission = commPerSide.multiply(qty).multiply(BigDecimal(2))
+                pricePnl.subtract(totalCommission)
             }
     }
 }

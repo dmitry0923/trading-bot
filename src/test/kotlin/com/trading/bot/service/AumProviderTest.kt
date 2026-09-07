@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.anyOrNull
 import java.math.BigDecimal
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Fail-closed AUM (P1): [AumProvider.currentAumChecked] / [latestAumResult] должны
@@ -157,5 +158,35 @@ class AumProviderTest {
         val result = aumProvider.latestAumResult(7L)
 
         assertTrue(result is AumProvider.AumResult.Unavailable)
+    }
+
+    @Test
+    fun `latestAumResult treats stale cache beyond max age as Unavailable in LIVE`() {
+        stubMoney(BigDecimal("200000"))
+        stubOverride(null)
+        runBlocking { aumProvider.currentAumChecked(7L) }
+        backdateCache(7L, ageMs = 6 * 60_000L)
+
+        val result = aumProvider.latestAumResult(7L)
+
+        assertTrue(result is AumProvider.AumResult.Unavailable)
+    }
+
+    /** Устаревает кэш-запись на [ageMs] миллисекунд (симуляция зависшего API). */
+    private fun backdateCache(
+        accountId: Long?,
+        ageMs: Long,
+    ) {
+        @Suppress("UNCHECKED_CAST")
+        val cache =
+            AumProvider::class.java
+                .getDeclaredField("cache")
+                .apply { isAccessible = true }
+                .get(aumProvider) as ConcurrentHashMap<Long, Any>
+        val key = if (accountId == null) -1L else accountId
+        val entry = cache[key] ?: return
+        val updatedAt = entry.javaClass.getDeclaredField("updatedAt")
+        updatedAt.isAccessible = true
+        updatedAt.set(entry, System.currentTimeMillis() - ageMs)
     }
 }

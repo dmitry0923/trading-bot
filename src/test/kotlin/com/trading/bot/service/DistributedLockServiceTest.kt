@@ -1,12 +1,12 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.DistributedLockConfig
+import com.trading.bot.service.DistributedLockService.LockExecutionResult
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -74,7 +74,7 @@ class DistributedLockServiceTest {
             config.enabled = false
             val result = service.runExclusive("test-lock") { blockRuns++ }
 
-            assertTrue(result)
+            assertEquals(LockExecutionResult.COMPLETED, result)
             assertEquals(1, blockRuns)
         }
 
@@ -86,21 +86,21 @@ class DistributedLockServiceTest {
 
             val result = service.runExclusive("test-lock") { blockRuns++ }
 
-            assertTrue(result)
+            assertEquals(LockExecutionResult.COMPLETED, result)
             assertEquals(1, blockRuns)
             Mockito.verify(redis).execute(Mockito.any(RedisScript::class.java), Mockito.anyList(), Mockito.anyString())
         }
     }
 
     @Test
-    fun `contended acquire skips block and returns false`() =
+    fun `contended acquire skips block and returns NOT_ACQUIRED`() =
         runBlocking {
             config.enabled = true
             acquireContended()
 
             val result = service.runExclusive("test-lock") { blockRuns++ }
 
-            assertFalse(result)
+            assertEquals(LockExecutionResult.NOT_ACQUIRED, result)
             assertEquals(0, blockRuns)
         }
 
@@ -112,7 +112,7 @@ class DistributedLockServiceTest {
 
             val result = service.runExclusive("test-lock") { blockRuns++ }
 
-            assertTrue(result)
+            assertEquals(LockExecutionResult.COMPLETED, result)
             assertEquals(1, blockRuns)
         }
 
@@ -125,7 +125,7 @@ class DistributedLockServiceTest {
             val result =
                 service.runExclusive(name = "test-lock", failOpenOnError = false) { blockRuns++ }
 
-            assertFalse(result)
+            assertEquals(LockExecutionResult.FAILED, result)
             assertEquals(0, blockRuns)
         }
 
@@ -153,12 +153,12 @@ class DistributedLockServiceTest {
                     },
                 )
 
-            assertTrue(result)
+            assertEquals(LockExecutionResult.COMPLETED, result)
             assertTrue(completed)
         }
 
     @Test
-    fun `lease loss cancels critical section and returns false`() =
+    fun `lease loss cancels critical section and returns LEASE_LOST`() =
         runBlocking {
             config.enabled = true
             acquireSucceeds()
@@ -178,7 +178,7 @@ class DistributedLockServiceTest {
                     }
                 }
 
-            assertFalse(result)
+            assertEquals(LockExecutionResult.LEASE_LOST, result)
             assertTrue(cancelled)
         }
 }

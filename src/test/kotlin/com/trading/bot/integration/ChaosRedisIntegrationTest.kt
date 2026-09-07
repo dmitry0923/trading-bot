@@ -7,6 +7,7 @@ import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.Strategy
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.DistributedLockService.LockExecutionResult
 import com.trading.bot.service.EmergencyStopService
 import com.trading.bot.service.EmergencyStopSource
 import com.trading.bot.service.RedisCacheService
@@ -14,7 +15,6 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Tag
@@ -217,7 +217,7 @@ class ChaosRedisIntegrationTest {
                 runBlocking {
                     lockService.runExclusive("chaos", failOpenOnError = true) { ran = true }
                 }
-            assertTrue(open, "fail-open: планировщик выполняется без лока при недоступном Redis")
+            assertEquals(LockExecutionResult.COMPLETED, open, "fail-open: планировщик выполняется без лока при недоступном Redis")
             assertTrue(ran, "блок планировщика реально выполнен")
 
             var skipped = true
@@ -225,7 +225,7 @@ class ChaosRedisIntegrationTest {
                 runBlocking {
                     lockService.runExclusive("chaos", failOpenOnError = false) { skipped = false }
                 }
-            assertFalse(closed, "fail-closed: вход не выполняется без лока при недоступном Redis")
+            assertEquals(LockExecutionResult.FAILED, closed, "fail-closed: вход не выполняется без лока при недоступном Redis")
             assertTrue(skipped, "блок входа не выполнен")
 
             val errors = meterRegistry.counter("distributed.lock.error", Tags.of("name", "chaos")).count()

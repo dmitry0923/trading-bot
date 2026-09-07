@@ -253,3 +253,26 @@ RI OOS убыточен — исключить из портфеля.
 (+`unavailable AUM denies exposure check`), `OrderOutboxServiceTest`
 (+`unresolvable account in multi-account mode blocks dispatch`).
 Полный прогон: 1324 тестов, 0 падений.
+
+### P1-7 (исправлено): `runExclusive()` возвращает `LockExecutionResult` вместо `Boolean`
+- `Boolean` был неоднозначен: `false` смешивал «лок не получен» и «lease потерян на ходу».
+  Теперь enum `COMPLETED` / `NOT_ACQUIRED` / `LEASE_LOST` / `FAILED`
+  (`DistributedLockService.LockExecutionResult`, метрики/логика не менялись).
+- **`LEASE_LOST` ≠ `NOT_ACQUIRED`**: после `LEASE_LOST` критическая секция могла выполнить
+  необратимые действия (claim position → create outbox → send order) до отмены watchdog'ом;
+  автоматический retry без reconciliation запрещён. `NOT_ACQUIRED` можно безопасно повторять.
+- `DecisionEngine` (вход): `LEASE_LOST` → `logger.warn` «reconciliation required on next cycle»;
+  `NOT_ACQUIRED`/`FAILED` → info-скип входа как раньше.
+- Отображение: disabled/fail-open → `COMPLETED`; contended → `NOT_ACQUIRED`;
+  Redis error + fail-closed → `FAILED`; block complet → `COMPLETED`; lease loss → `LEASE_LOST`.
+- Регрессии: `DistributedLockServiceTest` переведён на enum (7 кейсов),
+  `ChaosRedisIntegrationTest` (`fail-open` → COMPLETED, `fail-closed` → FAILED).
+
+### P2-в (исправлено): `latestAumResult()` отклоняет устаревший кэш
+- Прежний `latestAumResult` возвращал содержимое кэша без проверки возраста — после падения
+  API exposure-гейты могли полагаться на очень старый AUM (пример: 10:00 → 10:30 равно валиден).
+- Добавлен `AUM_MAX_AGE_MS` = 5 мин (5 × refresh TTL 60с): `now - updatedAt <= AUM_MAX_AGE_MS`
+  обязателен, иначе в LIVE — `AumResult.Unavailable` (DENY). SIM-режим — конфиг-fallback.
+- Тест: `latestAumResult treats stale cache beyond max age as Unavailable in LIVE`.
+
+Итоговый прогон: 1325 тестов, 0 падений (unit + integrity: ChaosRedisIntegrationTest 5/5).

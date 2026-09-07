@@ -165,15 +165,18 @@ class AumProvider(
     /**
      * Fail-closed синхронная версия [latestAum] для exposure-гейтов. В LIVE без
      * кэшированного значения (до первого успешного обновления) — [AumResult.Unavailable].
+     * Кэш старше [AUM_MAX_AGE_MS] реальным AUM не считается — после переставания API
+     * exposure-гейты перестают полагаться на устаревший депозит.
      */
     fun latestAumResult(accountId: Long? = null): AumResult {
         val entry = cache[key(accountId)]
         val now = System.currentTimeMillis()
+        val ageMs = if (entry != null) now - entry.updatedAt else Long.MAX_VALUE
         // updatedAt > 0 = кэш подтверждён РЕАЛЬНЫМ источником (баланс Alor или
         // персональный override). Сид [RiskConfig.maxPositionRub] (updatedAt = 0)
         // реальным AUM не является — в LIVE это ещё недоступные данные.
-        return if (entry != null && entry.updatedAt > 0) {
-            AumResult.Available(entry.aum, now - entry.updatedAt)
+        return if (entry != null && entry.updatedAt > 0 && ageMs <= AUM_MAX_AGE_MS) {
+            AumResult.Available(entry.aum, ageMs)
         } else if (isLive) {
             logger.warn { "No confirmed AUM for accountId=$accountId in LIVE — DENY (fail-closed)" }
             AumResult.Unavailable
@@ -197,5 +200,8 @@ class AumProvider(
 
         /** TTL кэша баланса Alor, мс. 60с = не дёргать API на каждый тик/проверку. */
         private const val CACHE_TTL_MS = 60_000L
+
+        /** Максимальный возраст кэша для exposure-гейтов, мс. 5 мин = 5× refresh TTL. */
+        private const val AUM_MAX_AGE_MS = 5 * 60_000L
     }
 }

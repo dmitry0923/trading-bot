@@ -32,7 +32,9 @@ import java.util.UUID
  *   [runExclusive] просто исполняет блок;
  * - failOpenOnError при сбое самого Redis (не конкуренция): `true` для фоновых
  *   планировщиков (не пропустить reconcile/close из-за недоступного Redis),
- *   `false` для входа в позицию (не открывать без лока).
+ *   `false` для входа в позицию (не открывать без лока);
+ * - после [LockExecutionResult.LEASE_LOST] автоматический retry запрещён без
+ *   предварительного reconciliation — критическая секция могла выполниться частично.
  */
 @Service
 class DistributedLockService(
@@ -41,6 +43,22 @@ class DistributedLockService(
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = LoggerFactory.getLogger(DistributedLockService::class.java)
+
+    /** Результат выполнения защищённого блока. */
+    enum class LockExecutionResult {
+        /** Блок выполнен полностью. */
+        COMPLETED,
+
+        /** Лок не получен (конкуренция или Redis недоступен). Безопасно повторять. */
+        NOT_ACQUIRED,
+
+        /** Лок был получен, но lease потерян до завершения блока.
+         *  Блок мог выполнить необратимые действия — retry без reconciliation запрещён. */
+        LEASE_LOST,
+
+        /** Системная ошибка (Redis недоступен, failOpenOnError=false). */
+        FAILED,
+    }
 
     private data class Lock(
         val name: String,
@@ -54,10 +72,10 @@ class DistributedLockService(
         ttlSeconds: Long = config.schedulerTtlSeconds,
         failOpenOnError: Boolean = true,
         block: suspend () -> Unit,
-    ): Boolean {
+    ): LockExecutionResult {
         if (!config.enabled) {
             block()
-            return true
+            return LockExecutionResult.COMPLETED
         }
         val lock =
             try {
@@ -68,14 +86,14 @@ class DistributedLockService(
                 if (failOpenOnError) {
                     logger.warn("Fail-open: running [$name] without lock (Redis unavailable)")
                     block()
-                    return true
+                    return LockExecutionResult.COMPLETED
                 }
                 meterRegistry.counter(METRIC_SKIPPED, Tags.of(TAG_NAME, name)).increment()
-                return false
+                return LockExecutionResult.FAILED
             }
         if (lock == null) {
             meterRegistry.counter(METRIC_CONTENDED, Tags.of(TAG_NAME, name)).increment()
-            return false
+            return LockExecutionResult.NOT_ACQUIRED
         }
         return coroutineScope {
             val blockJob = async { block() }
@@ -105,10 +123,10 @@ class DistributedLockService(
                 meterRegistry.counter(METRIC_ACQUIRED, Tags.of(TAG_NAME, lock.name)).increment()
                 blockJob.await()
                 watchdog.cancel()
-                true
+                LockExecutionResult.COMPLETED
             } catch (e: CancellationException) {
                 watchdog.cancel()
-                false
+                LockExecutionResult.LEASE_LOST
             } finally {
                 try {
                     release(lock)

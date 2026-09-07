@@ -18,6 +18,7 @@ import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.DistributedLockService.LockExecutionResult
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.TradingAccountService
@@ -119,7 +120,7 @@ class DecisionEngine(
                 }
         val lock = entryLocks.computeIfAbsent(signal.ticker) { Mutex() }
         lock.withLock {
-            val acquired =
+            val result =
                 distributedLockService.runExclusive(
                     name = "position:${signal.ticker}",
                     ttlSeconds = distributedLockConfig.positionOpenTtlSeconds,
@@ -127,7 +128,12 @@ class DecisionEngine(
                 ) {
                     doOpenPosition(signal, profile, gateway)
                 }
-            if (!acquired) {
+            if (result == LockExecutionResult.LEASE_LOST) {
+                logger.warn {
+                    "Entry lease lost ${signal.ticker}: critical section may have " +
+                        "partially executed — reconciliation required on next cycle"
+                }
+            } else if (result != LockExecutionResult.COMPLETED) {
                 logger.info {
                     "Entry skipped ${signal.ticker}: distributed lock not acquired " +
                         "(another instance is opening / Redis unavailable)"
@@ -199,7 +205,7 @@ class DecisionEngine(
         // в тот же аккаунт ждёт и читает СВЕЖИЙ снапшот, поэтому MAX_POSITIONS/сектор/
         // корреляция/Gross-Net/VaR не могут «пройти вдвоём» по устаревшему состоянию.
         val accountKey = accountId?.toString() ?: "legacy"
-        val acquired =
+        val result =
             accountLocks.computeIfAbsent(accountKey) { Mutex() }.withLock {
                 distributedLockService.runExclusive(
                     name = "position:account:$accountKey",
@@ -219,7 +225,12 @@ class DecisionEngine(
                     )
                 }
             }
-        if (!acquired) {
+        if (result == LockExecutionResult.LEASE_LOST) {
+            logger.warn {
+                "Entry lease lost $ticker on account $accountKey: critical section may " +
+                    "have partially executed — reconciliation required on next cycle"
+            }
+        } else if (result != LockExecutionResult.COMPLETED) {
             logger.info {
                 "Entry skipped $ticker: account distributed lock not acquired " +
                     "(another instance opening on account $accountKey / Redis unavailable)"

@@ -264,6 +264,15 @@ class OrderOutboxService(
         // close/sl/tp разрешаются при наличии открытой позиции.
         val purpose = OrderPurpose.from(payload.path("purpose").asString(null)) ?: OrderPurpose.ENTRY
         val portfolio = resolvePortfolio(payload, outbox)
+        if (portfolio == null) {
+            // P1: аккаунт/портфель не резолвятся в multi-account — терминальный BLOCK
+            // (не отправим заявку на неправильный (дефолтный) счёт). Ошибка устранена
+            // на источнике: closePosition/placeEntryOrder передают accountId явно.
+            outboxRepo.markBlocked(id, "ACCOUNT_UNRESOLVABLE: no account in multi-account mode")
+            meterRegistry.counter("outbox.account_unresolvable").increment()
+            logger.warn { "Outbox ${outbox.id} BLOCKED (final): ACCOUNT_UNRESOLVABLE — never retried" }
+            return PlaceOrderResult(id, null, success = false)
+        }
 
         // STATE RECONCILIATION перед любым ПОВТОРНЫМ запросом.
         // (Отмена — отдельный тип: сверка по idempotencyKey ордера к ней не применима.)
@@ -486,7 +495,7 @@ class OrderOutboxService(
     private suspend fun resolvePortfolio(
         payload: tools.jackson.databind.JsonNode,
         outbox: OrderOutbox,
-    ): String {
+    ): String? {
         var accountId = outbox.accountId
         if (accountId == null) {
             val accountNode = payload.path("accountId")
@@ -499,6 +508,17 @@ class OrderOutboxService(
                 } catch (_: Exception) {
                     null
                 }
+        }
+        if (accountId == null && tradingAccountService.hasEnabledAccounts()) {
+            // P1: в multi-account режиме НЕЛЬЗЯ роутить ордер в дефолтный портфель —
+            // это отправило бы заявку на НЕПРАВИЛЬНЫЙ счёт (частично закрытая или
+            // вновь открытая позиция другого аккаунта). fail-closed: null → BLOCK
+            // в [dispatch], ордер никогда не уходит на неверный портфель.
+            logger.warn {
+                "Cannot resolve account for outbox ${outbox.id} (positionId=${outbox.positionId}, " +
+                    "payload accountId absent) in multi-account mode — fail-closed (BLOCK)"
+            }
+            return null
         }
         return tradingAccountService.portfolioOf(accountId)
     }

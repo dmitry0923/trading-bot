@@ -105,7 +105,19 @@ class RiskManagementService(
             }
             return true
         }
-        val deposit = aumProvider.latestAum(accountId)
+        val depositResult = aumProvider.latestAumResult(accountId)
+        if (depositResult is AumProvider.AumResult.Unavailable) {
+            // P1: AUM недоступен в LIVE — депозит не подменяется конфигурационным
+            // (соотношение exposure к реальному балансу неизвестно) → DENY (fail-closed).
+            logger.warn {
+                "Portfolio limit check DENY: AUM unavailable for accountId=$accountId " +
+                    "(candidate=$candidateNotionalRub)"
+            }
+            meterRegistry.counter("risk.portfolio.aum_unavailable.blocked").increment()
+            return true
+        }
+        val deposit =
+            (depositResult as AumProvider.AumResult.Available).value
 
         fun positionNotional(pos: Position): BigDecimal {
             val spec = instrumentsConfig.find(pos.ticker)

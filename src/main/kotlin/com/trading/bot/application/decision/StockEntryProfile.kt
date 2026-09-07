@@ -20,6 +20,7 @@ import com.trading.bot.service.AumProvider
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.RiskManagementService
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -50,6 +51,8 @@ class StockEntryProfile(
     private val aumProvider: AumProvider,
     private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
 ) : EntryProfile {
+    private val logger = KotlinLogging.logger {}
+
     override val instrumentType: InstrumentType = InstrumentType.STOCK
     override val metricPrefix: String = "bot"
     override val riskEngine: RiskEngine = stockRiskEngine
@@ -61,19 +64,28 @@ class StockEntryProfile(
         entryPrice: BigDecimal,
         openPositions: List<Position>,
         accountId: Long?,
-    ): EntryRequest? =
-        EntryRequest(
+    ): EntryRequest? {
+        val aum = aumProvider.currentAumChecked(accountId)
+        if (aum is AumProvider.AumResult.Unavailable) {
+            // P1: AUM недоступен в LIVE — вход блокируется (fail-closed), депозит
+            // не подменяется конфигурационным (иначе Kelly/Gross/Net считались бы
+            // от завышенной базы, когда реальный баланс меньше/неизвестен).
+            logger.warn { "Blocking entry for ${signal.ticker}: AUM unavailable (accountId=$accountId)" }
+            return null
+        }
+        return EntryRequest(
             ticker = signal.ticker,
             action = signal.action,
             entryPrice = entryPrice,
             direction = signal.direction(),
-            portfolioMoney = aumProvider.currentAum(accountId),
+            portfolioMoney = (aum as AumProvider.AumResult.Available).value,
             currentGo = BigDecimal.ZERO,
             atr = candleCache.calculateAtr(signal.ticker, "MINUTE_10", 14),
             openPositions = openPositions,
             accountId = accountId,
             frozenStrategy = liveFrozenStrategyResolver.resolveActive(signal.ticker),
         )
+    }
 
     override suspend fun preSizingChecks(
         ticker: String,

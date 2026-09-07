@@ -2,6 +2,8 @@ package com.trading.bot.service
 
 import com.trading.bot.config.DistributedLockConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -125,5 +127,58 @@ class DistributedLockServiceTest {
 
             assertFalse(result)
             assertEquals(0, blockRuns)
+        }
+
+    @Test
+    fun `renewal keeps lock alive beyond TTL and block completes`() =
+        runBlocking {
+            config.enabled = true
+            acquireSucceeds()
+            // renew вызывает execute(script, keys, token, ttlMs) — vararg `[String, Long]`;
+            // any() матчит оба элемента независимо от типа (anyString() не подходит для Long).
+            Mockito
+                .`when`(redis.execute(Mockito.any(RedisScript::class.java), Mockito.anyList(), Mockito.any(), Mockito.any()))
+                .thenReturn(Flux.just(1L))
+            var completed = false
+
+            // TTL=1s, критическая секция дольше TTL (1.5с). Watchdog продлевает
+            // lease (renew возвращает 1), блок добегает до конца без потери лока.
+            val result =
+                service.runExclusive(
+                    name = "long-lock",
+                    ttlSeconds = 1,
+                    block = {
+                        delay(1500)
+                        completed = true
+                    },
+                )
+
+            assertTrue(result)
+            assertTrue(completed)
+        }
+
+    @Test
+    fun `lease loss cancels critical section and returns false`() =
+        runBlocking {
+            config.enabled = true
+            acquireSucceeds()
+            // renew (vararg [String, Long]) возвращает 0 → lease потерян; release (1 vararg) → 1.
+            Mockito
+                .`when`(redis.execute(Mockito.any(RedisScript::class.java), Mockito.anyList(), Mockito.any(), Mockito.any()))
+                .thenReturn(Flux.just(0L))
+
+            var cancelled = false
+            val result =
+                service.runExclusive(name = "lease-lost", ttlSeconds = 1) {
+                    try {
+                        delay(5000)
+                    } catch (_: CancellationException) {
+                        cancelled = true
+                        throw CancellationException("cancelled by lease watchdog")
+                    }
+                }
+
+            assertFalse(result)
+            assertTrue(cancelled)
         }
 }

@@ -1,10 +1,12 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
@@ -27,15 +29,37 @@ import java.util.concurrent.ConcurrentHashMap
  * Фолбэк (SIMULATION / ошибка API / нулевой баланс): [RiskConfig.maxPositionRub].
  * Синхронные горячие пути ([latestAum]) используют последнее кэшированное
  * значение без сетевых вызовов; асинхронные циклы обновляют кэш через [currentAum].
+ *
+ * P1-аудит (fail-closed для LIVE): [currentAumChecked] / [latestAumResult] возвращают
+ * [AumResult.Unavailable], когда в LIVE-режиме реальный баланс не определён (ошибка API,
+ * null/нулевой баланс, пустой кэш до первого обновления). В SIMULATION-режиме (или при
+ * персональном переопределении аккаунта) недоступность не является критичной — там
+ * используется конфигурационный депозит [RiskConfig.maxPositionRub], как раньше.
+ * Входные/экспозиционные гейты (StockEntryProfile, RiskManagementService) трактуют
+ * [AumResult.Unavailable] как DENY (fail-closed), тогда как legacy-методы [currentAum] /
+ * [latestAum] для отчётов сохраняют старое fail-open поведение.
  */
 @Service
 class AumProvider(
     private val alorFuturesClient: AlorFuturesClient,
     private val riskConfig: RiskConfig,
+    private val tradingConfig: TradingConfig,
     private val tradingAccountService: TradingAccountService,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
+
+    /** Результат определения AUM для fail-closed гейтов входа. */
+    sealed interface AumResult {
+        /** Реальный AUM доступен. [value] — депозит аккаунта, [ageMs] — возраст кэша. */
+        data class Available(
+            val value: BigDecimal,
+            val ageMs: Long,
+        ) : AumResult
+
+        /** AUM не определён (LIVE-ошибка API / null / нулевой баланс / нет кэша). */
+        data object Unavailable : AumResult
+    }
 
     private class CacheEntry(
         @Volatile var aum: BigDecimal,
@@ -90,6 +114,82 @@ class AumProvider(
      * горячих проверок входа). До первого обновления — конфигурационный депозит.
      */
     fun latestAum(accountId: Long? = null): BigDecimal = cache[key(accountId)]?.aum ?: riskConfig.maxPositionRub
+
+    /**
+     * Fail-closed вариант [currentAum] для гейтов входа. При недоступности реального
+     * AUM в LIVE-режиме возвращает [AumResult.Unavailable] (вход блокируется), а не
+     * подменяет депозит конфигурационным [RiskConfig.maxPositionRub]. В SIMULATION
+     * (или при персональном переопределении аккаунта) недоступность не критична —
+     * возвращается конфигурационный депозит как раньше.
+     *
+     * @return [AumResult.Available] с AUM аккаунта, [AumResult.Unavailable] в LIVE
+     *   при сбое API / null / нулевом балансе
+     */
+    suspend fun currentAumChecked(accountId: Long? = null): AumResult {
+        val k = key(accountId)
+        val entry = cache.computeIfAbsent(k) { CacheEntry(riskConfig.maxPositionRub, 0) }
+        val now = System.currentTimeMillis()
+        if (now - entry.updatedAt < CACHE_TTL_MS) {
+            return AumResult.Available(entry.aum, now - entry.updatedAt)
+        }
+        val override = tradingAccountService.aumRubOverrideFor(accountId)
+        if (override != null) {
+            cache[k] = CacheEntry(override, now)
+            return AumResult.Available(override, 0)
+        }
+        return try {
+            val money = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
+            if (money != null && money > BigDecimal.ZERO) {
+                cache[k] = CacheEntry(money, now)
+                MutableGauges.set(
+                    meterRegistry,
+                    "portfolio.aum",
+                    money.toDouble(),
+                    Tags.of("account", accountId?.toString() ?: "default"),
+                )
+                AumResult.Available(money, 0)
+            } else {
+                // null / нулевой баланс: в LIVE это сигнал недоступных данных — fail-closed.
+                logger.warn {
+                    "AUM unavailable for accountId=$accountId (got $money) — " +
+                        if (isLive) "DENY (fail-closed)" else "fallback ${riskConfig.maxPositionRub} (SIM)"
+                }
+                liveOrConfigFallback()
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "AUM fetch failed for accountId=$accountId" }
+            liveOrConfigFallback()
+        }
+    }
+
+    /**
+     * Fail-closed синхронная версия [latestAum] для exposure-гейтов. В LIVE без
+     * кэшированного значения (до первого успешного обновления) — [AumResult.Unavailable].
+     */
+    fun latestAumResult(accountId: Long? = null): AumResult {
+        val entry = cache[key(accountId)]
+        val now = System.currentTimeMillis()
+        // updatedAt > 0 = кэш подтверждён РЕАЛЬНЫМ источником (баланс Alor или
+        // персональный override). Сид [RiskConfig.maxPositionRub] (updatedAt = 0)
+        // реальным AUM не является — в LIVE это ещё недоступные данные.
+        return if (entry != null && entry.updatedAt > 0) {
+            AumResult.Available(entry.aum, now - entry.updatedAt)
+        } else if (isLive) {
+            logger.warn { "No confirmed AUM for accountId=$accountId in LIVE — DENY (fail-closed)" }
+            AumResult.Unavailable
+        } else {
+            AumResult.Available(riskConfig.maxPositionRub, now)
+        }
+    }
+
+    private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
+
+    private fun liveOrConfigFallback(): AumResult =
+        if (isLive) {
+            AumResult.Unavailable
+        } else {
+            AumResult.Available(riskConfig.maxPositionRub, 0)
+        }
 
     companion object {
         /** Ключ кэша legacy single-account (accountId = null). */

@@ -80,7 +80,7 @@ class RiskManagementServiceThresholdTest {
     @Test
     fun `gross exposure exceeded blocks and records metric`() {
         val registry = SimpleMeterRegistry()
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service(registry = registry)
         val open =
             listOf(
@@ -100,7 +100,7 @@ class RiskManagementServiceThresholdTest {
         // Pin gross limit to 150% so boundary test is independent of config defaults.
         // grossBefore = 55k (SHORT), candidate = 20k (LONG) → grossAfter = 75k = 50k × 150%.
         val config = RiskConfig().apply { maxGrossExposurePercent = 150.0 }
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service(config = config)
         val open = listOf(Position(ticker = "A", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("55000")))
 
@@ -118,7 +118,7 @@ class RiskManagementServiceThresholdTest {
                 maxNetExposurePercent = 50.0
             }
         val registry = SimpleMeterRegistry()
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service(config = config, registry = registry)
         val open = listOf(Position(ticker = "A", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal("40000")))
 
@@ -131,7 +131,7 @@ class RiskManagementServiceThresholdTest {
 
     @Test
     fun `net short exposure beyond negative limit blocks`() {
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service()
         val open = listOf(Position(ticker = "A", direction = PositionDirection.SHORT, quantity = 1, entryPrice = BigDecimal("40000")))
 
@@ -140,7 +140,7 @@ class RiskManagementServiceThresholdTest {
 
     @Test
     fun `net exposure within limits is allowed`() {
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service()
         val open = listOf(Position(ticker = "A", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal("30000")))
 
@@ -149,7 +149,7 @@ class RiskManagementServiceThresholdTest {
 
     @Test
     fun `long and short offset each other in net exposure`() {
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service()
         val open =
             listOf(
@@ -162,7 +162,7 @@ class RiskManagementServiceThresholdTest {
 
     @Test
     fun `non-positive candidate notional is allowed`() {
-        Mockito.`when`(aumProvider.latestAum(anyOrNull())).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service()
         val open = emptyList<Position>()
 
@@ -175,7 +175,7 @@ class RiskManagementServiceThresholdTest {
         // P2/P1-регрессия: лимиты exposure считаются от AUM ЯВНО переданного accountId,
         // а не от глобального AUM пула. account AUM 30k → grossAfter 50k > 30k → BLOCK;
         // при глобальном AUM 50k лимит 50k → пропуск (баг).
-        Mockito.`when`(aumProvider.latestAum(5L)).thenReturn(BigDecimal("30000"))
+        Mockito.`when`(aumProvider.latestAumResult(5L)).thenReturn(AumProvider.AumResult.Available(BigDecimal("30000"), 0))
         val s = service()
         val open =
             listOf(
@@ -197,7 +197,7 @@ class RiskManagementServiceThresholdTest {
     fun `positions from another account DENY entry (scope check P1)`() {
         // P1-регрессия: если в openPositions попали позиции НЕ того аккаунта, что
         // передан accountId, — fail-closed DENY (нельзя мерить кандидата B по AUM A).
-        Mockito.`when`(aumProvider.latestAum(5L)).thenReturn(BigDecimal("50000"))
+        Mockito.`when`(aumProvider.latestAumResult(5L)).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service()
         val open =
             listOf(
@@ -213,5 +213,20 @@ class RiskManagementServiceThresholdTest {
         val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open, 5L)
 
         assertTrue(blocked)
+    }
+
+    @Test
+    fun `unavailable AUM denies exposure check (fail-closed P1)`() {
+        // P1-регрессия: в LIVE без реального AUM (ошибка API / нет кэша) лимиты
+        // exposure не считаются от конфигурационного депозита — DENY.
+        val registry = SimpleMeterRegistry()
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Unavailable)
+        val s = service(registry = registry)
+        val open = emptyList<Position>()
+
+        val blocked = s.exceedsPortfolioLimits(BigDecimal("10000"), PositionDirection.LONG, open, null)
+
+        assertTrue(blocked)
+        assertEquals(1.0, registry.counter("risk.portfolio.aum_unavailable.blocked").count())
     }
 }

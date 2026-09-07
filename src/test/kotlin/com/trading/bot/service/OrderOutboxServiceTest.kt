@@ -72,6 +72,7 @@ class OrderOutboxServiceTest {
     fun setUp() {
         runBlocking {
             Mockito.`when`(tradingAccountService.portfolioOf(Mockito.isNull<Long>())).thenReturn(alorConfig.portfolio)
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(false)
         }
     }
 
@@ -1393,6 +1394,48 @@ class OrderOutboxServiceTest {
                 )
         }
         assertEquals(listOf("PORTFOLIO-9"), portfolios)
+    }
+
+    @Test
+    fun `unresolvable account in multi-account mode blocks dispatch`() {
+        // P1: в multi-account режиме ордер с нерезолвимым аккаунтом НЕ уходит на
+        // дефолтный портфель (неправильный счёт) — терминальный BLOCK.
+        val payload =
+            objectMapper.writeValueAsString(
+                mapOf(
+                    "ticker" to "Si",
+                    "side" to "sell",
+                    "qty" to 1,
+                    "price" to "92000",
+                    "type" to "market",
+                    "idempotencyKey" to "no-account",
+                    "positionId" to 99L,
+                    "closeReason" to "SL",
+                ),
+            )
+        val outbox =
+            OrderOutbox(
+                id = UUID.randomUUID(),
+                payloadJson = payload,
+                status = OutboxStatus.FAILED,
+                idempotencyKey = "no-account",
+                retryCount = 0,
+                positionId = 99L,
+            )
+        val blocked = mutableListOf<String>()
+        runBlocking {
+            Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(true)
+            Mockito.`when`(positionRepo.findById(99L)).thenThrow(RuntimeException("position gone"))
+            stubRetryable(listOf(outbox))
+            stubMarkBlockedRecording(blocked)
+
+            service.processPending()
+
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .markBlocked(anyUuid(), Mockito.anyString())
+        }
+        assertTrue(blocked.any { it.contains("ACCOUNT_UNRESOLVABLE") })
     }
 
     @Test

@@ -205,3 +205,51 @@ RI OOS убыточен — исключить из портфеля.
   (см. P2-c); инструментальное ограничение MC `robustness` для фьючерсов (SL/TP пунктами);
   увеличение `position-open-ttl` под медленные сети (entry под account-локом может держать
   Redis-лок дольше TTL — тогда вторая реплика могла бы параллелить вход; окно ограничено).
+
+## P1-аудит (продолжение, 2026-09-07): lease renewal, fail-closed AUM, close accountId
+
+### P1-4 (исправлено): renewable lease DistributedLockService
+Прежний лок пользовался одноразовым `SET NX PX ttl` — TTL задавался с запасом под
+медленные сети, но длинный критический блок (> TTL) мог потерять лок на ходу и
+параллелить вход второй реплики. Фикс в `DistributedLockService.runExclusive`:
+- `coroutineScope { async { block() } + launch { watchdog } }`; watchdog каждые `TTL/3`
+  вызывает `renew(lock, ttlSeconds)` (Lua `RENEW_SCRIPT`: `get==token` → `pexpire ttlMs`).
+- При потере lease (renew вернул 0 / исключение) watchdog отменяет `blockJob` и
+  `runExclusive` возвращает `false`; на освобождение — стандартный `release`.
+- Метрика `distributed.lock.lease.lost`.
+- Важно для тестов: `renew` передаёт varargs `[String token, Long ttlMs]` — сточить
+  в Mockito как `execute(any(RedisScript), anyList(), any(), any())` (два `any()`);
+  `anyString()` Long НЕ матчит.
+
+### P1-5 (исправлено): fail-closed AUM вместо fallback maxPositionRub
+Прежний `AumProvider.currentAum` при недоступном балансе (null/ноль/исключение API)
+молча подставлял конфиг-from `RiskConfig.maxPositionRub` и СЧИТАЛ его «AUM» →
+акция могла пройти exposure-гейты с фантомным депозитом.
+- Новый `AumResult` (`Available(value, ageMs)` / `Unavailable`) + `currentAumChecked`
+  и `latestAumResult`: в LIVE Unavailable → fail-closed.
+- `latestAumResult` требует `updatedAt > 0` = кэш подтверждён реальным источником
+  (баланс Alor или персональный override); СИД кэша (`updatedAt=0, aum=maxPositionRub`)
+  реальным AUM не считается.
+- `StockEntryProfile.buildEntryRequest` при Unavailable возвращает `null` →
+  `DecisionEngine` логирует `PORTFOLIO_DATA_UNAVAILABLE` и НЕ открывает позицию.
+- `RiskManagementService.exceedsPortfolioLimits` при Unavailable → DENY (true) +
+  counter `risk.portfolio.aum_unavailable.blocked`.
+- SIM-режим (`tradingConfig.mode != "LIVE"`) сохраняет конфиг-fallback как раньше.
+- Legacy `currentAum`/`latestAum` (BigDecimal) оставлены для reporting-путей
+  (AdaptiveRiskService, DrawdownProtection, TradingAccountController, RiskExposureService).
+  Futures-путь и раньше fail-closed (`FuturesEntryProfile.buildEntryRequest:80-83`).
+
+### P1-6 (исправлено): accountId в closePosition + нерезолвимый аккаунт
+- `OrderExecutionEngine.closePosition` теперь передаёт в `placeOrder`
+  `accountId = current.accountId` (раньше close шёл в аккаунт по умолчанию).
+- `OrderOutboxService.resolvePortfolio` → `String?`; в multi-account при
+  `accountId == null && hasEnabledAccounts()` возвращает `null` → `dispatch`
+  терминально блокирует сообщение через `markBlocked("ACCOUNT_UNRESOLVABLE: ...")`
+  (НЕ retryable — повторный вход создал бы бесконечный цикл), counter
+  `outbox.account_unresolvable`.
+
+Регрессии покрыты: `DistributedLockServiceTest` (+renewal/lease-loss),
+`AumProviderTest` (10, новый файл), `RiskManagementServiceThresholdTest`
+(+`unavailable AUM denies exposure check`), `OrderOutboxServiceTest`
+(+`unresolvable account in multi-account mode blocks dispatch`).
+Полный прогон: 1324 тестов, 0 падений.

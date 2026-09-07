@@ -355,6 +355,7 @@ class OrderExecutionEngine(
                 positionId = positionId,
                 closeReason = reason.code,
                 purpose = "close",
+                accountId = current.accountId,
             )
         if (!placed.success || placed.alorOrderId == null) {
             if (placed.uncertain) {

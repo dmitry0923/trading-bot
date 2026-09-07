@@ -13,6 +13,7 @@ import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
+import com.trading.bot.backtest.StrategyParameters
 import com.trading.bot.backtest.splitDevHoldout
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
@@ -657,10 +658,28 @@ class ApiController(
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        // B1: standalone robustness обязан верифицировать ЗАМОРОЖЕННУЮ стратегию тикера
+        // (в т.ч. futures SL/TP в пунктах), а не config-дефолты 2%/15% (или 2%/4% legacy).
+        // Без frozen-параметров фьючерсный MC-прогон деградирует до нерепрезентативных
+        // %-стопов и даёт ложный negative — используем points из frozen-стратегии, как WFA.
+        val frozenParams =
+            frozenStrategyStore.current(ticker)?.let { f ->
+                StrategyParameters(
+                    slPercent = f.slPercent ?: 0.0,
+                    tpPercent = f.tpPercent ?: 0.0,
+                    slPoints = f.slPoints,
+                    tpPoints = f.tpPoints,
+                    confidenceThreshold = f.confidenceThreshold,
+                    leverage = f.leverage,
+                    riskPerTradePercent = f.riskPerTradePercent,
+                    futuresMaxContractsPerPosition = f.futuresMaxContractsPerPosition,
+                )
+            }
         val report =
             monteCarloAnalyzer.analyze(
                 ticker,
                 candles,
+                parameters = frozenParams,
                 simulations = effectiveSimulations,
                 seed = effectiveSeed,
                 method = method ?: backtestConfig.mcMethod,

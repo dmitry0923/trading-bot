@@ -358,24 +358,58 @@ LB 0 → Kelly=0 → `ZERO_RISK_SIZE`).
 дефолт остался без вычета). Регрессии: `PnlCalculatorCommissionTest` (+4 futures-теста).
 
 ### Подтверждённые P1/P2 (НЕ тронуты — требуют решения пользователя или дизайн-уточнения)
-- **R1 (P1)**: `FuturesEntryProfile` pre/postSizingChecks возвращают null (:104/:146) — фьючерсы
-  обходят Gross/Net/корреляцию и концентрацию (позиции фьючерсные отдельно от акций). Асимметрия
-  может быть осознанной; решение за пользователем.
-- **E1 (P1)**: `OrderExecutionEngine` reserve→outbox→placeOrder нетранзакционна (:213/:230/:271);
-  фейл между шагами → позиция/ордер без записи, реконсиляция догоняет.
-- **E3 (P1)**: `CloseFillProcessor` реконсиляция (:130-139) — бесконечный цикл без лимита при
-  рассинхроне WS/REST.
-- **B1 (P1)**: `MonteCarloAnalyzer` (:426-429) не понимает futures SL/TP в пунктах (дефолтные 2%/4%);
-  для фьючерсов MC-прогон не репрезентативен (известное ограничение, см. выше про robustness).
-- **B2 (P1)**: `BacktestConfig` фикс. seed 42 — детерминизм только одного рана с одинаковым seed.
-- **D1 (P2)**: `StateReconciliationService.recoverAll()` (:168) вызывается безусловно при
-  reconcile даже когда изменение halted (окно, в котором фьючерсная позиция может открыться на
-  остановленном боте, — близко к нулю).
 - **P2**: `DailyLossCircuitBreaker` halt глобальный (без accountId, :70); `OrderExecutionEngine` WS-fill
   с avgPrice=null игнорируется (:430, сойдётся через REST); `WsOrderTransport` O(n) корреляция;
   `OutboxOrderConsumer` runBlocking; `DrawdownProtectionService` @Synchronized; `Dockerfile` runtime от
   root (оценено P1).
 
-Полный прогон: **1340 тестов**, 0 падений (unit). ktlint — только пред-существующие нарушения HEAD
-(`OrderPurpose.kt`, `RestOrderTransport.kt`, `StockEntryProfileTest.kt:706`,
-`WsOrderTransportTest.kt:348,425`, `FuturesTradingBotServiceEntryPartialFillTest.kt:470-482`).
+## Production-readiness аудит (закрытие всех 7 пунктов, 2026-09-07)
+
+Закрыты оставшиеся R1/E1/E3/B1/B2/D1/P2-c (подтверждённые ранее; про нумерацию см. секцию выше).
+
+### R1 (исправлено): futures pre/post-gates теперь работают
+`FuturesEntryProfile` rаньше возвращал null из pre/postSizingChecks (:104/:146) — фьючерсы обходили
+Gross/Net/корреляцию и концентрацию. Теперь pre = `CORRELATION`/`SECTOR_CORRELATION`, post =
+`ZERO_RISK_SIZE`/`PORTFOLIO_LIMIT`; кандидатный notional через `spec.notional(size.quantity, entryPrice)`;
+переиспользованы `exceedsCorrelationLimit`/`exceedsSectorCorrelationLimit` из акционных гейтов.
+Исключение сохранено: `candidateTicker == "Si"` (фьючерсный хедж не фильтруется). Новые зависимости —
+`AdaptiveRiskService`/`RiskManagementService` (добавлены в конструктор; тесты добиты моками).
+
+### E1 (исправлено): компенсация при фейле между outbox и position
+`OrderExecutionEngine.placeEntryOrder`: try/catch внутри `PlaceOrderResult` после Fence#2; флаг
+`outboxCommitted`; фейл до outbox → `releaseEntry`; фейл после → `buildPosition(orderId, true, ...)` +
+`positionRepo.save` (позиция с pending-входом персистится даже при сбое размещения);
+`CancellationException` пробрасывается; метрика `$metricPrefix.entry.compensated`. Результирующий
+тип — `OrderOutboxService.PlaceOrderResult(outboxId, alorOrderId, success, uncertain)`.
+
+### E3 (исправлено): ограниченная реконсиляция CloseFillProcessor
+`CloseFillProcessor.confirmCloseFill` (UNKNOWN-путь: verifyOrder==null, дельта не подтверждена) до
+этого крутил вечный цикл. Теперь in-memory per-position счётчик последовательных неуспехов; после
+`closeReconcileMaxAttempts` (дефолт 10, настраивается `AlorConfig.closeReconcileMaxAttempts`) эскалация
+в `RECONCILIATION_REQUIRED` (зеркалит `StateReconciliationService.markReconciliationRequired`).
+`<= 0` в конфиге отключает эскалацию (совместимость с моками тестов без конфига). Счётчик сбрасывается
+при любом прогрессе/финализации. Метрика `$metricPrefix.close.unknown_escalated`.
+
+### D1 (исправлено): recoverAll только при активном состоянии
+`StateReconciliationService.reconcile()` — `entryLeaseRecoveryGate.recoverAll()` теперь под
+`if (!halted)`, чтобы DEGRADED-scope не очищались, когда сам reconcile обнаружил STATE_DESYNC
+(окно открытия фьючерсной позиции на остановленном боте закрыто).
+
+### B1 (исправлено): robustness endpoint понимает futures SL/TP в пунктах
+`/backtest/{ticker}/robustness` резолвит замороженную стратегию через
+`frozenStrategyStore.current(ticker)` → строит `StrategyParameters(slPoints/tpPoints/leverage/...)` →
+передаёт в `analyze(parameters = frozenParams)`. MC-прогон по фьючерсу больше не использует дефолтные
+SL 2%/TP 4% (%).
+
+### B2 (исправлено): multi-seed Monte Carlo
+`BacktestConfig.mcSeedCount=5`, `MonteCarloAnalyzer.analyze(seedCount=5)` прогоняет N сидов и агрегирует
+через `MonteCarloResult.mergeWorstCase()` (min доходностей, max вероятностей риска). `seedCount=1` =
+легаси-поведение одного сида.
+
+### P2-c (решено — задокументировать, без изменения кода): акционное плечо x5/x6
+Решение пользователя: **оставить Kelly** как live-сайзер акций (`StockEntryProfile` + `AdaptiveRiskService`);
+калибровочное x5/x6 — параметр бэктест-сайзера, не воспроизводится в live; правки `StockEntryProfile`/Kelly —
+вне скоупа. Обновлены доки (см. P2-c выше).
+
+Полный прогон: **1340 тестов, 0 падений** (unit). ktlint — только пред-существующие нарушения HEAD
+(`OrderPurpose.kt`, `RestOrderTransport.kt`).

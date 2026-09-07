@@ -19,8 +19,10 @@ import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
+import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.LiveFrozenStrategyResolver
+import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradingAccountService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -61,6 +63,8 @@ class FuturesEntryProfile(
     private val candleCache: CandleCacheService,
     private val futuresStopResolver: FuturesStopResolver,
     private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
+    private val adaptiveRisk: AdaptiveRiskService,
+    private val risk: RiskManagementService,
 ) : EntryProfile {
     private val logger = KotlinLogging.logger {}
 
@@ -101,7 +105,12 @@ class FuturesEntryProfile(
     override suspend fun preSizingChecks(
         ticker: String,
         openPositions: List<Position>,
-    ): String? = null
+    ): String? =
+        when {
+            adaptiveRisk.exceedsCorrelationLimit(ticker, openPositions) -> "CORRELATION"
+            adaptiveRisk.exceedsSectorCorrelationLimit(ticker, openPositions) -> "SECTOR_CORRELATION"
+            else -> null
+        }
 
     override suspend fun sizePosition(
         signal: Signal,
@@ -143,7 +152,14 @@ class FuturesEntryProfile(
         size: PositionSizeResult,
         openPositions: List<Position>,
         accountId: Long?,
-    ): String? = null
+    ): String? {
+        if (size.quantity < 1) return "ZERO_RISK_SIZE"
+        val spec = instrumentsConfig.find(ticker)
+        val candidateNotional =
+            spec?.notional(size.quantity, entryPrice)
+                ?: entryPrice.multiply(BigDecimal(size.quantity))
+        return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions, accountId)) "PORTFOLIO_LIMIT" else null
+    }
 
     override fun buildOrderParams(
         ticker: String,

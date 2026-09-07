@@ -165,7 +165,12 @@ class StateReconciliationService(
 
         // После успешной полной сверки снимаем DEGRADED с входов (EntryLeaseRecoveryGate):
         // broker↔DB сверены — инстанс снова может открывать позиции.
-        entryLeaseRecoveryGate.recoverAll()
+        // D1: если сверка сама обнаружила отсройку и перевела бота в halt (`halted=true`),
+        // entri в DEGRADED-скоуп НЕ снимаем — иначе на остановленном боте фьючерсная позиция
+        // может открыться «вслепую» до разрешения отсройки.
+        if (!halted) {
+            entryLeaseRecoveryGate.recoverAll()
+        }
 
         meterRegistry
             .timer("alor.reconcile.duration")

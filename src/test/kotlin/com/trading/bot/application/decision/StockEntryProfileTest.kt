@@ -703,14 +703,15 @@ class StockEntryProfileTest {
 
     // ── helpers ─────────────────────────────────────────────
 
-    private fun makeSignal() = Signal(
-        ticker = "CNYRUB_TOM",
-        action = StrategyAction.BUY,
-        targetPrice = BigDecimal("12.42"),
-        signalStrength = 0.7,
-        reasoning = "test",
-        timeframe = "MINUTE_10",
-        cycleId = "test-cycle",
-        strategyName = "CNYRUB_TOM",
-    )
+    private fun makeSignal() =
+        Signal(
+            ticker = "CNYRUB_TOM",
+            action = StrategyAction.BUY,
+            targetPrice = BigDecimal("12.42"),
+            signalStrength = 0.7,
+            reasoning = "test",
+            timeframe = "MINUTE_10",
+            cycleId = "test-cycle",
+            strategyName = "CNYRUB_TOM",
+        )
 }

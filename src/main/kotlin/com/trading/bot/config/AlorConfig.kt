@@ -47,4 +47,5 @@ class AlorConfig {
     var entryPartialFillCancelAfterMs: Long = 30_000
     var outboxBackoffBaseSeconds: Int = 10
     var outboxBackoffMaxSeconds: Int = 120
+    var closeReconcileMaxAttempts: Int = 10
 }

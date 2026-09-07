@@ -345,9 +345,10 @@ class WsOrderTransportTest {
                     resolver(frozen = null, reducingAllowed = true),
                 )
             awaitFakeSubscribe(isolatedConnection)
-            val result = async {
-                closeTransport.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c1", "P1", OrderPurpose.CLOSE)
-            }
+            val result =
+                async {
+                    closeTransport.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c1", "P1", OrderPurpose.CLOSE)
+                }
             awaitCommandContainingOn(isolatedConnection, "idem-c1")
             isolatedConnection.inbound.send("""{"id":"idem-c1","orderNumber":"99991"}""")
             assertEquals("99991", result.await())

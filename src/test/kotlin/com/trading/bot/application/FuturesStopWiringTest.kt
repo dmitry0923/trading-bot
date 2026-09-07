@@ -18,8 +18,10 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.LiveFrozenStrategyResolver
+import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -92,6 +94,8 @@ class FuturesStopWiringTest {
                 candleCache = candleCache,
                 futuresStopResolver = FuturesStopResolver(),
                 liveFrozenStrategyResolver = Mockito.mock(LiveFrozenStrategyResolver::class.java),
+                adaptiveRisk = Mockito.mock(AdaptiveRiskService::class.java),
+                risk = Mockito.mock(RiskManagementService::class.java),
             )
 
         profile.buildOrderParams(

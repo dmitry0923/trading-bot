@@ -65,6 +65,31 @@ data class MonteCarloResult(
             probabilityOfLoss < 0.25 &&
             probabilityMddExceeds40 < 0.30 &&
             probabilityOfRuin < 0.05
+
+    /**
+     * B2: консервативное объединение двух прогонов — доходность по минимуму,
+     * рисковые вероятности по максимуму. Так `isRobust()` истинно только если
+     * прогон устойчив при ЛЮБОМ из объединяемых seeds.
+     */
+    fun mergeWorstCase(other: MonteCarloResult): MonteCarloResult =
+        MonteCarloResult(
+            simulations = simulations,
+            medianReturn = minOf(medianReturn, other.medianReturn),
+            p5Return = minOf(p5Return, other.p5Return),
+            p95Return = minOf(p95Return, other.p95Return),
+            avgReturn = minOf(avgReturn, other.avgReturn),
+            minReturn = minOf(minReturn, other.minReturn),
+            maxReturn = minOf(maxReturn, other.maxReturn),
+            probabilityOfLoss = maxOf(probabilityOfLoss, other.probabilityOfLoss),
+            probabilityMddExceeds20 = maxOf(probabilityMddExceeds20, other.probabilityMddExceeds20),
+            probabilityMddExceeds30 = maxOf(probabilityMddExceeds30, other.probabilityMddExceeds30),
+            probabilityMddExceeds40 = maxOf(probabilityMddExceeds40, other.probabilityMddExceeds40),
+            probabilityCapitalLossExceeds50 = maxOf(probabilityCapitalLossExceeds50, other.probabilityCapitalLossExceeds50),
+            probabilityCapitalLossExceeds20 = maxOf(probabilityCapitalLossExceeds20, other.probabilityCapitalLossExceeds20),
+            worst1PercentEquity = minOf(worst1PercentEquity, other.worst1PercentEquity),
+            worst5PercentEquity = minOf(worst5PercentEquity, other.worst5PercentEquity),
+            probabilityOfRuin = maxOf(probabilityOfRuin, other.probabilityOfRuin),
+        )
 }
 
 /** Результат одного стресс-сценария исполнения (roadmap 13.7.8). */
@@ -416,6 +441,7 @@ class MonteCarloAnalyzer(
         tpPercent: Double = backtestConfig.tpPercent / 100.0,
         simulations: Int = backtestConfig.monteCarloSimulations,
         seed: Long = backtestConfig.monteCarloSeed,
+        seedCount: Int = backtestConfig.mcSeedCount,
         method: String = backtestConfig.mcMethod,
         avgBlockLength: Double = backtestConfig.mcAvgBlockLength,
         blockLength: Int = backtestConfig.mcBlockLength,
@@ -456,19 +482,29 @@ class MonteCarloAnalyzer(
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
         val periodReturns = BacktestMetrics.periodReturnsFromEquity(baseResult.equityCurve)
-        val monteCarlo =
+        // B2: вывод устойчивости НЕ должен зависеть от одного seed. Прогоняем
+        // [seedCount] независимых seeds с воспроизводимым сдвигом и агрегируем
+        // консервативно (worst-case): риск — по максимуму, доходность — по минимуму.
+        // seedCount=1 — прежнее детерминированное поведение (seed без сдвига).
+        require(seedCount >= 1) { "seedCount must be >= 1" }
+        val singleRun: (Long) -> MonteCarloResult =
             when (method.lowercase()) {
-                "stationary" -> {
-                    MonteCarlo.simulateStationary(periodReturns, initialCapital, simulations, avgBlockLength, seed)
-                }
-
-                "block" -> {
-                    MonteCarlo.simulateBlock(periodReturns, initialCapital, simulations, blockLength, seed)
-                }
-
-                else -> {
-                    MonteCarlo.simulate(periodReturns, initialCapital, simulations, seed)
-                } // "iid" и любие иные
+                "stationary" -> { s -> MonteCarlo.simulateStationary(periodReturns, initialCapital, simulations, avgBlockLength, s) }
+                "block" -> { s -> MonteCarlo.simulateBlock(periodReturns, initialCapital, simulations, blockLength, s) }
+                else -> { s -> MonteCarlo.simulate(periodReturns, initialCapital, simulations, s) } // "iid" и любие иные
+            }
+        val monteCarlo =
+            if (seedCount <= 1) {
+                singleRun(seed)
+            } else {
+                val runs = (0 until seedCount).map { i -> singleRun(seed + i) }
+                runs
+                    .reduce { acc, r -> acc.mergeWorstCase(r) }
+                    .copy(
+                        simulations = simulations,
+                        blockMethod = runs.first().blockMethod,
+                        avgBlockLength = runs.first().avgBlockLength,
+                    )
             }
         val stress =
             scenarios.map { s ->

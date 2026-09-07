@@ -33,14 +33,16 @@ import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.CandleCacheService
 import com.trading.bot.service.DegenerateCaseGuard
 import com.trading.bot.service.DistributedLockService
+import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.LiveFrozenStrategyResolver
 import com.trading.bot.service.MlEntryFilter
-import com.trading.bot.service.EntryLeaseRecoveryGate
 import com.trading.bot.service.OrderOutboxService
+import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.TradeEventService
 import com.trading.bot.service.TradingAccountService
 import io.micrometer.core.instrument.Tags
@@ -114,6 +116,8 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             Mockito.mock(CandleCacheService::class.java),
             FuturesStopResolver(),
             Mockito.mock(LiveFrozenStrategyResolver::class.java),
+            Mockito.mock(AdaptiveRiskService::class.java),
+            Mockito.mock(RiskManagementService::class.java),
         )
     private val decisionEngine =
         DecisionEngine(
@@ -467,19 +471,20 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                     3,
                     BigDecimal("92000"),
                     buildPosition = { orderId, pending, fillPrice, qty ->
-                    Position(
-                        ticker = "Si",
-                        direction = PositionDirection.LONG,
-                        quantity = qty,
-                        entryPrice = fillPrice,
-                        currentPrice = fillPrice,
-                        stopLoss = BigDecimal("91500"),
-                        takeProfit = BigDecimal("93000"),
-                        instrumentType = InstrumentType.FUTURES,
-                        pendingEntry = pending,
-                        alorOrderId = orderId,
-                    )
-                })
+                        Position(
+                            ticker = "Si",
+                            direction = PositionDirection.LONG,
+                            quantity = qty,
+                            entryPrice = fillPrice,
+                            currentPrice = fillPrice,
+                            stopLoss = BigDecimal("91500"),
+                            takeProfit = BigDecimal("93000"),
+                            instrumentType = InstrumentType.FUTURES,
+                            pendingEntry = pending,
+                            alorOrderId = orderId,
+                        )
+                    },
+                )
             }
 
         assertNull(result)

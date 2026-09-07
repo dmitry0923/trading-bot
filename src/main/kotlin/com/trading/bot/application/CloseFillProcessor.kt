@@ -46,6 +46,7 @@ class CloseFillProcessor(
     private val onPositionClosed: (Position) -> Unit,
     private val cancelProtectionOrders: suspend (Position) -> Unit,
     private val attachProtectionOrders: suspend (Position) -> Unit,
+    private val closeReconcileMaxAttempts: Int = 10,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -54,6 +55,17 @@ class CloseFillProcessor(
      * vs REST confirmCloseFill) for the same position.
      */
     val closeFillMutexes = ConcurrentHashMap<Long, Mutex>()
+
+    /**
+     * E3: число подряд идущих «UNKNOWN» реконсиляций закрытия (verifyOrder == null и
+     * position-delta не подтвердила филл). Против бесконечного цикла при рассинхроне
+     * WS/REST (verifyOrder стабильно недоступен/null, а биржа позицию не показала).
+     * После [closeReconcileMaxAttempts] подряд — эскалация в [PositionStatus.RECONCILIATION_REQUIRED]
+     * (ручное вмешательство), что также убирает позицию из фонового reconcile-цикла
+     * (`findByStatus(OPEN)`), терминируя цикл.
+     * Счётчик сбрасывается при любом прогрессе (verifyOrder не-null / филл / закрытие).
+     */
+    private val unknownCloseReconcileCounts = ConcurrentHashMap<Long, Int>()
 
     /**
      * Delta-model close fill for fallback-path (handleRegularStockFill).
@@ -129,16 +141,36 @@ class CloseFillProcessor(
                 )
             if (execution == null) {
                 if (closeConfirmedByPositionDelta(fresh)) {
+                    unknownCloseReconcileCounts.remove(positionId)
                     logger.warn {
                         "Close order $orderId for ${fresh.ticker} confirmed by position delta " +
                             "(exchange position reduced) — finalizing at $expectedPrice"
                     }
                     applyCloseExecution(fresh, fresh.quantity, expectedPrice, reason)
                 } else {
-                    logger.warn { "Close order $orderId for ${fresh.ticker} state UNKNOWN; pending reconciliation" }
+                    val attempts = (unknownCloseReconcileCounts[positionId] ?: 0) + 1
+                    unknownCloseReconcileCounts[positionId] = attempts
+                    if (closeReconcileMaxAttempts > 0 && attempts >= closeReconcileMaxAttempts) {
+                        logger.error {
+                            "Close order $orderId for ${fresh.ticker} UNKNOWN after " +
+                                "$attempts reconcile attempts (max=$closeReconcileMaxAttempts) — " +
+                                "escalating to RECONCILIATION_REQUIRED, manual intervention"
+                        }
+                        unknownCloseReconcileCounts.remove(positionId)
+                        meterRegistry
+                            .counter("$metricPrefix.close.unknown_escalated", Tags.of("ticker", fresh.ticker))
+                            .increment()
+                        markReconciliationRequired(fresh)
+                    } else {
+                        logger.warn {
+                            "Close order $orderId for ${fresh.ticker} state UNKNOWN; " +
+                                "pending reconciliation (attempt $attempts/$closeReconcileMaxAttempts)"
+                        }
+                    }
                 }
                 return
             }
+            unknownCloseReconcileCounts.remove(positionId)
             val avg = execution.avgPrice ?: expectedPrice
             val cumulativeFill = execution.filledQuantity
             val prevApplied = fresh.cumulativeCloseFillQty
@@ -329,6 +361,22 @@ class CloseFillProcessor(
     }
 
     /**
+     * E3: эскалация при персистентном UNKNOWN. Позиция выводится из-под управления ботом
+     * (как [StateReconciliationService.markReconciliationRequired]): снимаются pending-флаги,
+     * статус = RECONCILIATION_REQUIRED, требуется ручное вмешательство.
+     */
+    private suspend fun markReconciliationRequired(pos: Position) {
+        pos.status = PositionStatus.RECONCILIATION_REQUIRED
+        pos.pendingClose = false
+        pos.pendingEntry = false
+        positionRepo.save(pos)
+        logger.warn {
+            "Position ${pos.ticker} (${pos.id}) marked RECONCILIATION_REQUIRED — " +
+                "out of bot control, manual intervention required"
+        }
+    }
+
+    /**
      * Partial fill: P&L for closed part, quantity reduced, remainder re-close.
      *
      * CRITICAL INVARIANT: pendingClose stays TRUE after partial fill.
@@ -405,6 +453,7 @@ class CloseFillProcessor(
         onPositionClosed(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
         closeFillMutexes.remove(positionId)
+        unknownCloseReconcileCounts.remove(positionId)
         meterRegistry.counter("$metricPrefix.position.closed", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
         logger.info { "Closed ${pos.ticker} reason=$reason P&L=$totalPnl" }
     }

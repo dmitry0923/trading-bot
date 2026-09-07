@@ -17,6 +17,7 @@ import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
 
@@ -139,6 +140,7 @@ class OrderExecutionEngine(
                 attachProtectionOrders = { pos ->
                     protection.attachProtectionOrders(pos)
                 },
+                closeReconcileMaxAttempts = alorConfig.closeReconcileMaxAttempts,
             )
         protection =
             ProtectionOrderManager(
@@ -240,55 +242,93 @@ class OrderExecutionEngine(
             return null
         }
 
-        val side = if (direction == PositionDirection.LONG) "buy" else "sell"
-        val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit", accountId = accountId)
-        if (!placed.success || placed.alorOrderId == null) {
-            if (placed.uncertain) {
-                logger.warn { "Entry for $ticker UNCERTAIN (outbox=${placed.outboxId}); position created as pendingEntry" }
-                val pos = buildPosition(null, true, entryPrice, qty).also { it.accountId = accountId }
-                positionRepo.save(pos)
+        // E1 (production-readiness аудит 2026-09-07): reserve→outbox→verify→save
+        // нетранзакционна. Компенсация на непредвиденное исключение:
+        //  - до создания outbox-строки → слот снимаем (ордер не мог уйти);
+        //  - после подтверждённой outbox-записи → сохраняем pendingEntry-позицию,
+        //    чтобы реальный ордер не остался без записи; реконсиляция догонит.
+        // Кооперативную отмену (CancellationException) НЕ перехватываем.
+        var outboxCommitted = false
+        var placedRef: OrderOutboxService.PlaceOrderResult? = null
+        try {
+            val side = if (direction == PositionDirection.LONG) "buy" else "sell"
+            val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit", accountId = accountId)
+            placedRef = placed
+            outboxCommitted = placed.success || placed.uncertain
+            if (!placed.success || placed.alorOrderId == null) {
+                if (placed.uncertain) {
+                    logger.warn { "Entry for $ticker UNCERTAIN (outbox=${placed.outboxId}); position created as pendingEntry" }
+                    val pos = buildPosition(null, true, entryPrice, qty).also { it.accountId = accountId }
+                    positionRepo.save(pos)
+                    meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
+                } else {
+                    logger.error { "Order failed for $ticker" }
+                    positionRepo.releaseEntry(ticker, accountId)
+                    meterRegistry.counter("$metricPrefix.order.failed", Tags.of("ticker", ticker)).increment()
+                }
+                return null
+            }
+
+            val orderId = placed.alorOrderId
+            val execution = alorClient.verifyOrder(orderId, portfolio = portfolioResolver(accountId))
+            if (execution == null) {
+                logger.warn {
+                    "verifyOrder UNKNOWN for $ticker (order=$orderId) — entry kept as pendingEntry until confirmed"
+                }
+                val unknownPos = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
+                positionRepo.save(unknownPos)
                 meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
+                return null
+            }
+            val fillPrice = execution.avgPrice ?: entryPrice
+            val filledQty = execution.filledQuantity.takeIf { it in 1 until qty }
+
+            if (filledQty != null) {
+                logger.warn {
+                    "PARTIAL entry $ticker: filled=$filledQty of $qty (order=$orderId) — " +
+                        "pendingEntry until remainder cancelled/filled"
+                }
+                val partialPos = buildPosition(orderId, true, fillPrice, filledQty).also { it.accountId = accountId }
+                positionRepo.save(partialPos)
+                meterRegistry.counter("$metricPrefix.entry.partial", Tags.of("ticker", ticker)).increment()
+                return null
+            }
+
+            val pos = buildPosition(orderId, false, fillPrice, qty).also { it.accountId = accountId }
+            val savedPos = positionRepo.save(pos)
+            tradeEventService.recordPositionOpened(savedPos)
+            onEntryOpened(savedPos)
+            protection.attachProtectionOrders(savedPos)
+            meterRegistry.counter("$metricPrefix.position.opened", Tags.of("ticker", ticker, "direction", direction.name)).increment()
+            logger.info { "Opened $ticker ${direction.name} $qty @ $fillPrice" }
+            return savedPos
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // E1-компенсация: исключение в середине критической секции.
+            if (outboxCommitted) {
+                // Ордер мог уйти на биржу — сохраняем pendingEntry, слот не снимаем
+                // (реконсиляция согласует реальное состояние ордера).
+                logger.error(e) { "Entry EXCEPTION for $ticker after outbox commit — saving pendingEntry (E1 reconciliation)" }
+                meterRegistry.counter("$metricPrefix.entry.compensated", Tags.of("ticker", ticker, "stage", "after_outbox")).increment()
+                try {
+                    val orderId = placedRef?.alorOrderId
+                    val pending = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
+                    positionRepo.save(pending)
+                } catch (e2: Exception) {
+                    logger.error(e2) { "Failed to persist pendingEntry compensation for $ticker — slot left for reconciliation" }
+                }
             } else {
-                logger.error { "Order failed for $ticker" }
-                positionRepo.releaseEntry(ticker, accountId)
-                meterRegistry.counter("$metricPrefix.order.failed", Tags.of("ticker", ticker)).increment()
+                logger.error(e) { "Entry EXCEPTION for $ticker before outbox commit — releasing slot" }
+                meterRegistry.counter("$metricPrefix.entry.compensated", Tags.of("ticker", ticker, "stage", "before_outbox")).increment()
+                try {
+                    positionRepo.releaseEntry(ticker, accountId)
+                } catch (e2: Exception) {
+                    logger.error(e2) { "Failed to release entry slot for $ticker — reconciliation required" }
+                }
             }
             return null
         }
-
-        val orderId = placed.alorOrderId
-        val execution = alorClient.verifyOrder(orderId, portfolio = portfolioResolver(accountId))
-        if (execution == null) {
-            logger.warn {
-                "verifyOrder UNKNOWN for $ticker (order=$orderId) — entry kept as pendingEntry until confirmed"
-            }
-            val unknownPos = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
-            positionRepo.save(unknownPos)
-            meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
-            return null
-        }
-        val fillPrice = execution.avgPrice ?: entryPrice
-        val filledQty = execution.filledQuantity.takeIf { it in 1 until qty }
-
-        if (filledQty != null) {
-            logger.warn {
-                "PARTIAL entry $ticker: filled=$filledQty of $qty (order=$orderId) — " +
-                    "pendingEntry until remainder cancelled/filled"
-            }
-            val partialPos = buildPosition(orderId, true, fillPrice, filledQty).also { it.accountId = accountId }
-            positionRepo.save(partialPos)
-            meterRegistry.counter("$metricPrefix.entry.partial", Tags.of("ticker", ticker)).increment()
-            return null
-        }
-
-        val pos = buildPosition(orderId, false, fillPrice, qty).also { it.accountId = accountId }
-        val savedPos = positionRepo.save(pos)
-        tradeEventService.recordPositionOpened(savedPos)
-        onEntryOpened(savedPos)
-        protection.attachProtectionOrders(savedPos)
-        meterRegistry.counter("$metricPrefix.position.opened", Tags.of("ticker", ticker, "direction", direction.name)).increment()
-        logger.info { "Opened $ticker ${direction.name} $qty @ $fillPrice" }
-        return savedPos
     }
 
     // ═══════════════════════════ CLOSE ═══════════════════════════════════

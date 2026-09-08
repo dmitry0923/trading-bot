@@ -66,16 +66,24 @@ class TradingConfig {
     var signalMaxAgeMs: Long = 15_000
 
     /**
-     * Максимальное отклонение текущей цены от цены сигнала (в %, |new/target - 1|),
-     * при котором сигнал ещё исполняется. Защита от исполнения по цене, сильно
-     * ушедшей от уровня, на котором стратегия приняла решение (stale-decision risk).
-     * 1.0 = допускается движение ≤ 1% от цены сигнала.
+     * Максимальное отклонение текущей цены от цены сигнала для исполнения.
+     * Отклонение ограничено ТРЕМЯ гейтами, берётся минимум (самый строгий):
+     *   1. [signalMaxDeviationAtrFraction] × ATR(14) — волатильный инструмент даёт
+     *      большую допустимую дистанцию, спокойный — узкую;
+     *   2. [signalMaxDeviationTicks] × priceStep — фиксированная дистанция в тиках цены;
+     *   3. [signalMaxDeviationPercentCap] % от targetPrice — абсолютный потолок в %.
+     * Защита от исполнения по цене, сильно ушедшей от уровня, на котором стратегия
+     * приняла решение (stale-decision risk). Любое превышение минимума — отклонение.
      */
-    var signalMaxPriceDeviationPercent: Double = 1.0
+    var signalMaxDeviationTicks: Int = 5
+    var signalMaxDeviationAtrFraction: Double = 0.25
+    var signalMaxDeviationPercentCap: Double = 1.0
 
     /**
      * Максимальный спред (ask-bid)/mid в %, при котором сигнал исполняется.
-     * Широкий спред после долгого LLM-вызова — отклонение сигнала. 2.0 = ≤ 2%.
+     * 0.1 = нормальный гейт: спред ≤ 0.1% от mid. Жёсткий потолок — 0.5%
+     * (см. [com.trading.bot.service.StrategyService.MAX_SPREAD_CAP_PERCENT]):
+     * даже при ошибочно завышенном конфиге спред > 0.5% никогда не допускается.
      */
-    var signalMaxSpreadPercent: Double = 2.0
+    var signalMaxSpreadPercent: Double = 0.1
 }

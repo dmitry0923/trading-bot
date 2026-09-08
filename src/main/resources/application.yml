@@ -293,6 +293,14 @@ trading:
   market-data-max-age-ms: ${MARKET_DATA_MAX_AGE_MS:15000}
   candle-stale-buffer-ms: ${CANDLE_STALE_BUFFER_MS:120000}
   obi-entry-threshold: ${OBI_ENTRY_THRESHOLD:0.5}
+  # P1-аудит: бюджет LLM-советника + свежесть executable-сигнала после advisor
+  advisor-budget-ms: ${ADVISOR_BUDGET_MS:1000}
+  signal-max-age-ms: ${SIGNAL_MAX_AGE_MS:15000}
+  signal-max-deviation-ticks: ${SIGNAL_MAX_DEVIATION_TICKS:5}
+  signal-max-deviation-atr-fraction: ${SIGNAL_MAX_DEVIATION_ATR_FRACTION:0.25}
+  signal-max-deviation-percent-cap: ${SIGNAL_MAX_DEVIATION_PERCENT_CAP:1.0}
+  # Нормальный гейт спреда = 0.1%; жёсткий потолок 0.5% зашит в коде (не конфигурируется)
+  signal-max-spread-percent: ${SIGNAL_MAX_SPREAD_PERCENT:0.1}
 
 # Distributed lock (мульти-реплика): включить при запуске нескольких инстансов бота.
 # В single-instance (по умолчанию) лок не используется, Redis не требуется.
@@ -549,6 +557,10 @@ risk:
   # ENV-переопределение: RISK_MAXMARGINUSAGEPERCENT=<...>. > производит перекалибровку.
   max-margin-usage-percent: ${RISK_MAXMARGINUSAGEPERCENT:60.0}
   max-contracts-per-position: 2
+  # P0-аудит: max возраст ГО/свободного остатка для сайзинга (fail-closed по устаревшим)
+  max-go-age-ms: ${RISK_MAX_GO_AGE_MS:30000}
+  # P1-аудит: стресс-запас маржинального гейта (ГО кандидата × множитель)
+  stressed-margin-multiplier: ${RISK_STRESSED_MARGIN_MULTIPLIER:1.5}
   trading-hours-start: "10:00"
   trading-hours-end: "18:30"
   # Multi-Tier Drawdown Protection (% от AUM)

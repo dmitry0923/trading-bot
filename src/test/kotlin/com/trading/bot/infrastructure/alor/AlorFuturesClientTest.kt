@@ -2,6 +2,7 @@ package com.trading.bot.infrastructure.alor
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
@@ -22,7 +23,7 @@ class AlorFuturesClientTest {
     private fun client(mode: String = "SIMULATION"): AlorFuturesClient {
         val tradingConfig = TradingConfig().apply { this.mode = mode }
         val alorConfig = AlorConfig()
-        return AlorFuturesClient(alorConfig, tradingConfig, ObjectMapper(), instrumentsConfig, meterRegistry)
+        return AlorFuturesClient(alorConfig, tradingConfig, ObjectMapper(), instrumentsConfig, meterRegistry, RiskConfig())
     }
 
     @Test

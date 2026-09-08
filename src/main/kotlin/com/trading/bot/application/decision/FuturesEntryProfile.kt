@@ -153,22 +153,29 @@ class FuturesEntryProfile(
     ): String? {
         val ticker = request.ticker
         if (size.quantity < 1) return "ZERO_RISK_SIZE"
-        val spec = instrumentsConfig.find(ticker)
+        val spec = instrumentsConfig.find(ticker) ?: return "INSTRUMENT_SPEC_MISSING"
         // P0-аудит (разделение exposure и margin): портфельные лимиты Gross/Net
         // считаются по РЕАЛЬНОЙ рыночной экспозиции (market notional = цена ×
         // lotSize × qty), а НЕ по ГО. GO — залог, а не directional exposure;
         // заменять notional на GO нельзя (занижает ценовой риск). Требуемая маржа
         // контролируется отдельным гейтом [RiskManagementService.exceedsMarginUtilization]
         // по фактическому ГО (size.marginRequired = actual currentGo × qty из сайзера).
-        val marketNotional =
-            spec?.notional(size.quantity, request.entryPrice)
-                ?: request.entryPrice.multiply(BigDecimal(size.quantity))
+        //
+        // Отсутствие InstrumentSpec для фьючерса — FAIL-CLOSED (INSTRUMENT_SPEC_MISSING):
+        // fallback price × qty математически НЕВЕРЕН для фьючерса (забывает lotSize,
+        // для CNYRUBF дал бы 12.8 ₽ вместо 12 800 ₽ на контракт) и занизил бы Gross/Net
+        // риск-гейт до ложного прохода. Не найдено — вход блокируется, а не продолжается.
+        val marketNotional = spec.notional(size.quantity, request.entryPrice)
 
         // Маржинальная загрузка: существующие фьючерсные позиции по ГО + кандидат
         // (actual currentGo × qty) против maxMarginUsagePercent% от депозита аккаунта.
+        // P1-аудит (stressed margin): ГО кандидата оценивается С ЗАПАСОМ 1.5x —
+        // запас на рост/пересчёт ГО после открытия. Вход на пределе лимита запрещён
+        // (малейшее повышение ГО → превышение лимита и риск margin call).
         val existingMargin = openPositions.sumOf { risk.marginOfPosition(it) }
-        val candidateMargin = size.marginRequired
-        if (risk.exceedsMarginUtilization(request.portfolioMoney, existingMargin, candidateMargin)) {
+        val stressedCandidateMargin =
+            size.marginRequired.multiply(BigDecimal(riskConfig.stressedMarginMultiplier))
+        if (risk.exceedsMarginUtilization(request.portfolioMoney, existingMargin, stressedCandidateMargin)) {
             return "PORTFOLIO_MARGIN_LIMIT"
         }
 

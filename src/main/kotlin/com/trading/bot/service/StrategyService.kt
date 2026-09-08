@@ -7,6 +7,7 @@ import com.trading.bot.application.strategy.DiscretionaryStrategy
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.MoexClient
 import com.trading.bot.config.DistributedLockConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.PerTickerRegime
@@ -77,6 +78,7 @@ class StrategyService(
     private val adaptiveRisk: AdaptiveRiskService,
     private val redis: ReactiveRedisCacheService,
     private val candleCache: CandleCacheService,
+    private val instrumentsConfig: InstrumentsConfig,
     private val strategyRepo: StrategyRepository,
     private val candleRepo: CandleRepository,
     private val eventPublisher: TradingEventPublisher,
@@ -466,8 +468,15 @@ class StrategyService(
      * сигнального уровня / спред расшириться. Этот метод повторно запрашивает
      * свежий снапшот и проверяет:
      *  - возраст исходного снапшота (базы сигнала) <= [TradingConfig.signalMaxAgeMs];
-     *  - отклонение свежей цены от сигнальной (targetPrice) <= [TradingConfig.signalMaxPriceDeviationPercent];
-     *  - спред (ask-bid)/mid <= [TradingConfig.signalMaxSpreadPercent] (если bid/ask есть).
+     *  - отклонение свежей цены от сигнальной (targetPrice) <= допустимого минимума:
+     *    min([TradingConfig.signalMaxDeviationAtrFraction]×ATR,
+     *        [TradingConfig.signalMaxDeviationTicks]×priceStep,
+     *        [TradingConfig.signalMaxDeviationPercentCap]% от target);
+     *  - спред (ask-bid)/mid <= min([TradingConfig.signalMaxSpreadPercent],
+     *    MAX_SPREAD_CAP_PERCENT) (если bid/ask есть).
+     *
+     * Любая нехватка входа (нет InstrumentSpec / цена <= 0) — fail-closed: сигнал
+     * отклоняется, если для гейта не хватает данных для однозначного прохода.
      *
      * При HOLD-решении входа нет — свежесть не критична (true). Не соответствует —
      * сигнал снимается в HOLD до публикации (повторная защита — fresh snapshot в
@@ -497,23 +506,18 @@ class StrategyService(
         val freshPrice = fresh.currentPrice
         val target = decision.targetPrice
         if (target > BigDecimal.ZERO && freshPrice > BigDecimal.ZERO) {
-            val deviationPct =
-                freshPrice
-                    .subtract(target)
-                    .abs()
-                    .divide(target, 6, RoundingMode.HALF_UP)
-                    .multiply(BigDecimal("100"))
-                    .toDouble()
-            if (deviationPct > tradingConfig.signalMaxPriceDeviationPercent) {
+            val deviation = freshPrice.subtract(target).abs()
+            val allowed = maxAllowedDeviation(ticker, target)
+            if (deviation > allowed) {
                 logger.warn {
-                    "Signal stale after advisor: price $freshPrice deviated ${String.format("%.2f", deviationPct)}% " +
-                        "from target $target for $ticker (max=${tradingConfig.signalMaxPriceDeviationPercent}%)"
+                    "Signal stale after advisor: price $freshPrice deviated ${deviation.toPlainString()} " +
+                        "from target $target (max allowed $allowed) for $ticker"
                 }
                 return false
             }
         }
 
-        // 3. Спред не шире лимита.
+        // 3. Спред не шире лимита (норма + жёсткий потолок).
         val bid = fresh.bid
         val ask = fresh.ask
         if (bid != null && ask != null && bid > BigDecimal.ZERO && ask >= bid) {
@@ -524,16 +528,51 @@ class StrategyService(
                         .subtract(bid)
                         .divide(mid, 8, RoundingMode.HALF_UP)
                         .multiply(BigDecimal("100"))
-                if (spreadPct.toDouble() > tradingConfig.signalMaxSpreadPercent) {
+                val spreadLimitPct = minOf(tradingConfig.signalMaxSpreadPercent, MAX_SPREAD_CAP_PERCENT)
+                if (spreadPct.toDouble() > spreadLimitPct) {
                     logger.warn {
                         "Signal stale after advisor: spread ${String.format("%.2f", spreadPct.toDouble())}% " +
-                            "> ${tradingConfig.signalMaxSpreadPercent}% for $ticker"
+                            "> $spreadLimitPct% (cap $MAX_SPREAD_CAP_PERCENT%) for $ticker"
                     }
                     return false
                 }
             }
         }
         return true
+    }
+
+    /**
+     * Допустимое отклонение цены исполнения от цены сигнала (в единицах цены) —
+     * минимум трёх гейтов (P1-аудит, решение пользователя):
+     *  1. ATR-гейт: [TradingConfig.signalMaxDeviationAtrFraction] × ATR(14) по MINUTE_10;
+     *  2. tick-гейт: [TradingConfig.signalMaxDeviationTicks] × priceStep;
+     *  3. %-кап: [TradingConfig.signalMaxDeviationPercentCap]% от targetPrice.
+     *
+     * Отсутствие данных для гейта НЕ расширяет допустимое окно — учитываются только
+     * доступные гейты. %-кап присутствует всегда (target > 0), поэтому допуск всегда
+     * конечен и строго положителен.
+     */
+    private fun maxAllowedDeviation(
+        ticker: String,
+        target: BigDecimal,
+    ): BigDecimal {
+        val spec = instrumentsConfig.find(ticker)
+        val allowedCandidates =
+            buildList {
+                val atr = candleCache.calculateAtr(ticker, "MINUTE_10", riskConfig.futuresAtrStopPeriod)
+                if (atr != null && atr > BigDecimal.ZERO) {
+                    add(atr.multiply(BigDecimal(tradingConfig.signalMaxDeviationAtrFraction)))
+                }
+                if (spec != null) {
+                    add(spec.priceStep.multiply(BigDecimal(tradingConfig.signalMaxDeviationTicks)))
+                }
+                add(
+                    target
+                        .multiply(BigDecimal(tradingConfig.signalMaxDeviationPercentCap))
+                        .divide(BigDecimal("100"), 8, RoundingMode.HALF_UP),
+                )
+            }
+        return allowedCandidates.minOrNull() ?: BigDecimal.ZERO
     }
 
     /**
@@ -606,6 +645,13 @@ class StrategyService(
 
     private companion object {
         private val MOSCOW_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
+
+        /**
+         * Жёсткий потолок спреда, % от mid (P1-аудит): даже при ошибочно завышенном
+         * [TradingConfig.signalMaxSpreadPercent] спред выше 0.5% никогда не допускается.
+         * Эффективный лимит = min(конфиг, этот потолок).
+         */
+        const val MAX_SPREAD_CAP_PERCENT: Double = 0.5
     }
 
     /** Параллельно загруженные входные данные тикера для стратегического этапа. */

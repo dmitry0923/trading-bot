@@ -440,3 +440,46 @@ SL 2%/TP 4% (%).
 Сопутствующее (см. «Закрытие ktlint-остатков»): интеграционные стабы `InvestorClearingIntegrationTest`
 и `RabbitMqTransportIntegrationTest` получили 7-й матчер `anyPurpose()` (закрытие pre-existing
 `InvalidUseOfMatchersException` от 56c1479b). Полный `integrationTest`: **100 тестов, 0 падений, 1 skipped**.
+
+## P0/P1-аудит входного конвейера (закрытие, 2026-09-08): fresh GO/balance, unstressed margin, signal freshness
+
+Закрыты оставшиеся пункты аудита «production-readiness» (решения пользователя от
+предыдущей сессии реализованы в коде).
+
+### P0-1 (исправлено): fail-closed InstrumentSpec для фьючерса
+`FuturesEntryProfile.postSizingChecks`: `val spec = instrumentsConfig.find(ticker) ?: return "INSTRUMENT_SPEC_MISSING"`.
+Прежний fallback `price × qty` математически НЕВЕРЕН для фьючерса (забывает `lotSize`;
+для CNYRUBF дал бы 12.8 ₽ вместо 12 800 ₽ на контракт) и занижал Gross/Net риск-гейт до
+ложного прохода. Не найдено — вход БЛОКИРУЕТСЯ. Регрессия: `missing instrument spec blocks
+entry fail-closed` (new `FuturesEntryProfilePostSizingTest`).
+
+### P0-2 (исправлено): fresh GO/balance в LIVE (TTL + fail-closed)
+`AlorFuturesClient` кэширует ГО и свободные средства per-ticker/per-portfolio с TTL
+`RiskConfig.maxGoAgeMs = 30000` (30 c). В пределах TTL — ответ из кэша без повторного
+запроса; по истечении — перезапрос API; при недоступности API и УСТАРЕВШЕМ кэше — `null`
+(fail-closed, паритет EXEC-005): сайзинг по старому ГО/балансу запрещён. Тесты на реальном
+локальном HTTP (`AlorFuturesClientFreshnessTest`): cache-within-TTL (1 hit), refetch-after-TTL
+(2 hits), API-down + stale → null, portfolio-money fail-closed.
+
+### P1 (исправлено): stressed margin на маржинальном гейте
+`RiskConfig.stressedMarginMultiplier = 1.5`; `FuturesEntryProfile.postSizingChecks` вызывает
+`exceedsMarginUtilization` с `size.marginRequired × 1.5`. Вход на пределе лимита запрещён —
+запас на рост/пересчёт ГО после открытия (риск margin call). Регрессия: `margin gate receives
+candidate GO times stressed margin multiplier`.
+
+### P1 (исправлено): signal freshness — min(0.25×ATR, 5 ticks, 1% cap) + спред 0.1%/0.5%
+`StrategyService.isSignalFresh` / `maxAllowedDeviation`:
+- отклонение цены от target ограничено МИНИМУМОМ трёх гейтов: `signalMaxDeviationAtrFraction`
+  (0.25) × ATR(14, MINUTE_10), `signalMaxDeviationTicks` (5) × priceStep,
+  `signalMaxDeviationPercentCap` (1.0)% от target. Заменяет прежний единый %-гейт
+  `signalMaxPriceDeviationPercent` (удалён);
+- спред: нормальный гейт `signalMaxSpreadPercent` понижен 2.0% → **0.1%**, жёсткий потолок
+  `maxOf` не участвует — в коде `min(config, MAX_SPREAD_CAP_PERCENT = 0.5)`: даже при ошибочно
+  завышенном конфиге спред > 0.5% никогда не допускается.
+- `StrategyService` получил зависимость `InstrumentsConfig` (priceStep). Конфиг вынесен в
+  `application.yml` с env-override (`SIGNAL_MAX_DEVIATION_*`, `SIGNAL_MAX_SPREAD_PERCENT`,
+  `RISK_MAX_GO_AGE_MS`, `RISK_STRESSED_MARGIN_MULTIPLIER`).
+
+Полный прогон: **1351 тест, 0 падений** (unit; новые — `FuturesEntryProfilePostSizingTest`,
+`AlorFuturesClientFreshnessTest`); `integrationTest`: **100 тестов, 0 падений, 1 skipped**;
+`./gradlew ktlintCheck` (обе source set) — **exit 0**.

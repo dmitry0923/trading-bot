@@ -1,6 +1,7 @@
 package com.trading.bot.application.decision
 
 import com.trading.bot.application.OrderBuilder
+import com.trading.bot.application.funding.FundingSnapshotService
 import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.config.InstrumentsConfig
@@ -9,6 +10,7 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.toFuturesAtrStopPolicy
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
+import com.trading.bot.domain.risk.FuturesRiskSnapshot
 import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PositionSizeResult
@@ -29,6 +31,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.LocalDateTime
 
 /**
  * Профиль входа для фьючерсов (Si).
@@ -65,6 +68,7 @@ class FuturesEntryProfile(
     private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
     private val adaptiveRisk: AdaptiveRiskService,
     private val risk: RiskManagementService,
+    private val fundingSnapshotService: FundingSnapshotService,
 ) : EntryProfile {
     private val logger = KotlinLogging.logger {}
 
@@ -80,8 +84,16 @@ class FuturesEntryProfile(
         openPositions: List<Position>,
         accountId: Long?,
     ): EntryRequest? {
-        val currentGo = alorFuturesClient.getFuturesGO(signal.ticker)
-        val portfolioMoney = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
+        // P1-аудит (снапшот): свободные средства, ГО кандидата (side-specific long/short,
+        // P0) и ГО уже открытых фьючерсных позиций снимаются в ОДИН координатный момент
+        // (FuturesRiskSnapshot) — сайзинг и маржинальный гейт не мешают разрозненные
+        // запросы T0 ≠ T0+Δ.
+        val portfolioMoney =
+            alorFuturesClient.getPortfolioMoney(
+                tradingAccountService.portfolioOf(accountId),
+            )
+        val direction = signal.direction()
+        val currentGo = alorFuturesClient.getFuturesGO(signal.ticker, direction)
         if (portfolioMoney == null || currentGo == null) {
             logger.warn {
                 "Portfolio data unavailable for accountId=$accountId (money=$portfolioMoney, go=$currentGo), " +
@@ -89,16 +101,41 @@ class FuturesEntryProfile(
             }
             return null
         }
+        val openFuturesGoPerTicker = mutableMapOf<String, BigDecimal>()
+        for (pos in openPositions) {
+            if (!instrumentsConfig.isFutures(pos.ticker) || openFuturesGoPerTicker.containsKey(pos.ticker)) continue
+            val go = alorFuturesClient.getFuturesGO(pos.ticker, pos.direction)
+            if (go == null) {
+                logger.warn {
+                    "Open position GO unavailable for ${pos.ticker} (accountId=$accountId) — " +
+                        "blocking entry (fresh snapshot, fail-closed)"
+                }
+                return null
+            }
+            openFuturesGoPerTicker[pos.ticker] = go
+        }
+        val snapshot =
+            FuturesRiskSnapshot(
+                takenAt = LocalDateTime.now(),
+                accountId = accountId,
+                portfolioMoney = portfolioMoney,
+                candidateGo = currentGo,
+                openFuturesGoPerTicker = openFuturesGoPerTicker,
+            )
+        // До входа обновляем funding-снапшот тикера для P&L: MOEX при наличии,
+        // иначе provisional CONFIG fallback (метрика funding.live.provider_unavailable).
+        fundingSnapshotService.refresh(signal.ticker)
         return EntryRequest(
             ticker = signal.ticker,
             action = signal.action,
             entryPrice = entryPrice,
-            direction = signal.direction(),
-            portfolioMoney = portfolioMoney,
-            currentGo = currentGo,
+            direction = direction,
+            portfolioMoney = snapshot.portfolioMoney,
+            currentGo = snapshot.candidateGo,
             openPositions = openPositions,
             accountId = accountId,
             frozenStrategy = liveFrozenStrategyResolver.resolveActive(signal.ticker),
+            futuresRiskSnapshot = snapshot,
         )
     }
 
@@ -170,15 +207,18 @@ class FuturesEntryProfile(
         // Маржинальная загрузка: существующие фьючерсные позиции по ГО + кандидат
         // (actual currentGo × qty) против maxMarginUsagePercent% от депозита аккаунта.
         // Источник ГО существующих позиций — [RiskManagementService.freshMarginOfPositions]
-        // (ПРИОРИТЕТ: персистенное marginUsed, иначе живой GET_GO с TTL-кэшем; статический
-        // spec.go в LIVE НЕ используется — для CNYRUBF 850 ₽ против ~1 000-2 700 ₽ на MOEX).
-        // Недоступность фактического ГО существующих позиций (API down + устаревший кэш,
-        // marginUsed не записан) → fail-closed MARGIN_DATA_UNAVAILABLE: загрузка неизвестна,
-        // вход блокируется (парity P0-2/EXEC-005).
+        // из ЕДИНОГО риск-снапшота входа (request.futuresRiskSnapshot, P1): ГО открытых
+        // позиций и кандидата сняты в один момент. Живой GO с TTL-кэшем, персистенное
+        // marginUsed и статический spec.go в LIVE НЕ используются (CNYRUBF: marginUsed
+        // застывает на моменте открытия, spec.go 850 ₽ против ~1 000-2 700 ₽ на MOEX).
+        // Недоступность ГО существующих позиций (позиция вне снапшота / API down +
+        // устаревший кэш) → fail-closed MARGIN_DATA_UNAVAILABLE: загрузка неизвестна,
+        // вход блокируется (паритет P0-2/EXEC-005).
         // P1-аудит (stressed margin): ГО кандидата оценивается С ЗАПАСОМ 1.5x —
         // запас на рост/пересчёт ГО после открытия. Вход на пределе лимита запрещён
         // (малейшее повышение ГО → превышение лимита и риск margin call).
-        val existingMargin = risk.freshMarginOfPositions(openPositions) ?: return "PORTFOLIO_MARGIN_DATA_UNAVAILABLE"
+        val snapshotMap = request.futuresRiskSnapshot?.openFuturesGoPerTicker
+        val existingMargin = risk.freshMarginOfPositions(openPositions, snapshotMap) ?: return "PORTFOLIO_MARGIN_DATA_UNAVAILABLE"
         val stressedCandidateMargin =
             size.marginRequired.multiply(BigDecimal(riskConfig.stressedMarginMultiplier))
         if (risk.exceedsMarginUtilization(request.portfolioMoney, existingMargin, stressedCandidateMargin)) {

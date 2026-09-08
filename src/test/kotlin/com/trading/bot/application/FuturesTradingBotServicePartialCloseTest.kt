@@ -88,6 +88,7 @@ class FuturesTradingBotServicePartialCloseTest {
             tradingAccountService,
             meterRegistry,
             EntryLeaseRecoveryGate(meterRegistry),
+            Mockito.mock(com.trading.bot.application.funding.FundingSnapshotService::class.java),
         )
 
     private fun anyPosition(): Position {

@@ -212,50 +212,41 @@ class RiskManagementService(
     }
 
     /**
-     * Требуемое ГО одной открытой фьючерсной позиции (руб). Приоритет — персистенное
-     * [Position.marginUsed] (фактическое при открытии, ГО × qty), fallback — статический
-     * spec.go × qty.
-     *
-     * НЕ используется в LIVE-маржинальном гейте входа — там [freshMarginOfPositions]:
-     * статический spec.go в LIVE — НЕ авторитет (GET_MOEX current GO отличается от
-     * конфиг-оценки; для CNYRUBF 850 ₽ против ~1 000-2 700 ₽ на MOEX). Метод сохранён
-     * для SIM/тест-фикстур и легаси-вызовов.
-     */
-    fun marginOfPosition(pos: Position): BigDecimal {
-        val spec = instrumentsConfig.find(pos.ticker)
-        if (spec != null && spec.type == "FUTURES") {
-            return pos.marginUsed ?: spec.go.multiply(BigDecimal(pos.quantity))
-        }
-        return BigDecimal.ZERO
-    }
-
-    /**
      * Требуемое ГО ВСЕХ открытых фьючерсных позиций для маржинального гейта (P0/P1-аудит):
      *
-     * - персистенное [Position.marginUsed] (зафиксировано при открытии из актуального ГО);
-     * - при ОТСУТСТВИИ marginUsed — АКТУАЛЬНОЕ ГО из [AlorFuturesClient.getFuturesGO]
-     *   (с TTL-кэшем 30с), НЕ статический spec.go: в LIVE конфиг-go устарел относительно
-     *   биржи (CNYRUBF: 850 vs ~1 000-2 700 ₽ фактических на MOEX);
-     * - если GO недоступно (API недоступен и кэш устарел) — return null (fail-closed,
+     * - LIVE-приоритет — ТОЛЬКО АКТУАЛЬНОЕ ГО из [AlorFuturesClient.getFuturesGO]
+     *   (side-specific, с TTL-кэшем 30с). Статический spec.go и персистенный
+     *   [Position.marginUsed] (ГО на момент ОТКРЫТИЯ) в LIVE-адмиссии НЕ используются:
+     *   ГО CNYRUBF меняется в течение дня (напр. 850 → ~1 026 → ~2 665 ₽ на MOEX),
+     *   историческое/конфиг значение занижало бы маржинальную загрузку. marginUsed
+     *   остаётся для исторического P&L/аудита.
+     * - при недоступности GO (API недоступен и кэш устарел) — return null (fail-closed,
      *   паритет P0-2/EXEC-005): маржинальная загрузка неизвестна → вход блокируется.
      *
      * В SIM-режиме [AlorFuturesClient] возвращает конфиг-GO — поведение идентично
      * прежнему fallback (spec.go), тесты/симуляция не меняются.
      *
+     * @param precomputedGoPerTicker ГО (за 1 контракт) открытых futures-позиций из ЕДИНОГО
+     *   риск-снапшота входа ([com.trading.bot.domain.risk.FuturesRiskSnapshot]): кандидат
+     *   и существующие позиции считаются по одному координатному моменту (P1). Позиция вне
+     *   карты = данные неполны → fail-closed (null). null → живой запрос GO заново.
      * @return суммарное ГО futures-позиций аккаунта или null при недоступности данных
      */
-    suspend fun freshMarginOfPositions(openPositions: List<Position>): BigDecimal? {
+    suspend fun freshMarginOfPositions(
+        openPositions: List<Position>,
+        precomputedGoPerTicker: Map<String, BigDecimal>? = null,
+    ): BigDecimal? {
         var total = BigDecimal.ZERO
         for (pos in openPositions) {
             val spec = instrumentsConfig.find(pos.ticker)
             if (spec == null || spec.type != "FUTURES") continue
-            val margin =
-                pos.marginUsed
-                    ?: alorFuturesClient
-                        .getFuturesGO(pos.ticker)
-                        ?.multiply(BigDecimal(pos.quantity))
-                    ?: return null
-            total = total.add(margin)
+            val go =
+                if (precomputedGoPerTicker != null) {
+                    precomputedGoPerTicker[pos.ticker] ?: return null
+                } else {
+                    alorFuturesClient.getFuturesGO(pos.ticker, pos.direction) ?: return null
+                }
+            total = total.add(go.multiply(BigDecimal(pos.quantity)))
         }
         return total
     }

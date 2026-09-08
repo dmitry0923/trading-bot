@@ -540,3 +540,52 @@ backtest-калибровка CNYRUBF продолжала использова�
 Итоговый прогон: **1363 теста, 0 падений** (unit; +12: FundingCostsTest 9, PnlCalculatorCommissionTest 3,
 FuturesEntryProfilePostSizingTest 1, минус правки); `integrationTest`: **100 тестов, 0 падений, 1 skipped**;
 `./gradlew ktlintCheck` (обе source set) — **exit 0**.
+
+## P0/P1-аудит издержек/funding + LIVE-маржинальный гейт (закрытие 2-го аудита, 2026-09-08)
+
+Закрыты пункты второго аудита пользователя (вердикт 8.6/10, NO-GO до P0). Коммит `futures-margin-funding-audit`.
+
+### P0-1/P0-2 (исправлено): live side-specific GO в адмиссии
+- `AlorFuturesClient.getFuturesGO(ticker, direction)` — **side-specific**: `FuturesGo(long?, short?, fetchedAtMs)`
+  кэшируется парой; SHORT → `short.initialMargin`, иначе → `long.initialMargin` (`forDirection`, top-level
+  internal extension). Отсутствие маржи ЗАПРАШЕННОЙ стороны → `null` (fail-closed, без cross-side подстановки).
+- `RiskManagementService.freshMarginOfPositions(openPositions, precomputedGoPerTicker: Map<String,BigDecimal>? = null)`
+  — ТОЛЬКО живое ГО (side-specific) с TTL 30с; `marginUsed` и статический spec.go (850 ₽) в LIVE-адмиссии
+  НЕ используются (marginUsed застывает на моменте открытия). `marginOfPosition()` УДАЛЁН (P1-6: опасный
+  статический fallback, в prod-пути не использовался; тесты портированы на fresh-margin).
+- Значения CNYRUBF в `application.yml` помечены SIM/fallback-только; nightly `go` не пере-кэшируется между парой.
+
+### P1-4 (исправлено): единый риск-снапшот входа
+`FuturesRiskSnapshot(takenAt, accountId, portfolioMoney, candidateGo, openFuturesGoPerTicker)` в `domain/risk`;
+nullable-поле `futuresRiskSnapshot` в `EntryRequest`. `FuturesEntryProfile.buildEntryRequest` снимает деньги+ГО
+кандидата (по стороне)+ГО всех открытых futures-тикеров в ОДИН момент; `postSizingChecks` передаёт карту ГО в
+`freshMarginOfPositions` (позиция вне снапшота → fail-closed `PORTFOLIO_MARGIN_DATA_UNAVAILABLE`).
+
+### P0-3 (исправлено): динамический funding через FundingProvider
+Новый пакет `application/funding/`:
+- `FundingSnapshot(ticker, rawValue, unit, valueRubPerContractPerClearing, source, timestamp)`,
+  `FundingSource {CONFIG, MOEX}`, `FundingUnit {RAW_UNKNOWN, RUB_PER_CONTRACT_PER_CLEARING}`;
+- `FundingConfig` (prefix `funding`, env): `moex-url` (шаблон `{ticker}`, пустой → источник выключен),
+  `moex-column` (LATESTFUNDING), `moex-lot-multiplier` (1000), `moex-ttl-ms` (5 мин), `request-timeout-ms`;
+- `MoexFundingProvider` (ISS columns/data, `raw × lotMultiplier` → RUB/контракт/клиринг),
+  `ConfiguredFundingProvider` (config-значение; SIM/backtest/fallback), `FundingSnapshotService`
+  (кэш; `refresh(ticker)` suspend на входе; `value(ticker)` sync для P&L; метрики
+  `funding.live.provider_unavailable`, `funding.live.snapshot_stale_config_fallback`).
+- `FuturesTradingBotService` P&L-lambda → `fundingSnapshotService.value(ticker)`; backtest остаётся на config.
+- FundingCosts (клиринг 18:45 МСК, будни) — без изменений; праздничный календарь MOEX не моделируется (P1, открыт).
+
+### P1-5 (исправлено): slippage в live-риск-бюджете сайзинга
+`FuturesPositionSizer`: `slippagePerSide = max(entryPrice × slippageBps/10000 × pointValue, priceStep × pointValue)`
+(минимум 1 тик), только при `entryPrice != null && slippageBps > 0`; `effectiveRiskPerContract = loss + комиссия×2 + slippage×2`.
+
+### Docs
+`docs/15` (§15.1-15.6): side-specific GO, снапшот входа, `marginPerContract = ПОЛНОЕ ГО` (убрано `go/leverage`,
+`maxByMargin = 35`), liq-buffer `GO/pointValue = 0.85`, риск-бюджет с slippage, funding-источник.
+`docs/16`: `go`/funding помечены SIM/fallback, маржинальный гейт — live-first + снапшот, funding — MOEX-провайдер
+(provisional, сверка перед LIVE).
+
+Итоговый прогон: **1384 теста, 0 падений, 1 skipped** (unit; +21 к 1363: MoexFundingProviderTest 7,
+FundingSnapshotServiceTest 4, AlorFuturesClientTest side-кейсы, AlorFuturesClientFreshnessTest side/missing-side,
+RiskManagementServiceThresholdTest fresh-margin 4, FuturesPositionSizerTest slippage 2,
+FuturesEntryProfilePostSizingTest snapshоt-map); `integrationTest`: **100 тестов, 0 падений, 1 skipped**;
+`./gradlew ktlintCheck` (обе source set) — **exit 0**.

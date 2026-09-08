@@ -41,7 +41,7 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
 | `priceStepCost` | 1.0 ₽ | спецификация контракта |
 | `pointValue` (priceStepCost / priceStep) | 1000 ₽ | производная |
 | notional 1 контракта (цене 12.8) | ~12 800 ₽ | производная = цена × lotSize |
-| `go` (конфиг) | 850 ₽ | **provisional**, для SIM/бэктеста; в LIVE берётся `GET /risk` |
+| `go` (конфиг) | 850 ₽ | **SIM/fallback только**; в LIVE ГО — side-specific `Initial Margin Long/Short` с `GET /risk` (см. 16.3) |
 | `leverage` | ${leverage.user-leverage} = 2.0 | информационное поле фьючерсной позиции |
 | `max-margin-usage-percent` | 60 (demo/live), 90 (backtest) | потолок маржи на аккаунт |
 | `max-contracts-per-position` | **1** (live) | жёсткий потолок контрактов на вход |
@@ -54,7 +54,7 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
 | `exchangeFeeRub` | 0.5 ₽/контракт/сторона | **provisional** — сверяется по выпискам MOEX |
 | `totalCommissionPerLotSide` | 1.5 ₽/контракт/сторона | производная |
 | `slippageBps` | 1.0 bp (0.01%) на сторону | **provisional** |
-| `fundingRubPerContractPerDay` | 0.5 ₽/контракт/клиринг | **provisional** — сверяется по MOEX (лот 1000 CNY) |
+| `fundingRubPerContractPerDay` | 0.5 ₽/контракт/клиринг | **provisional fallback (SIM/бэктест)**; в LIVE — динамическая величина MOEX через `FundingSnapshotService` (`funding.moex-url`; см. 16.3) |
 
 ### Funding (CNYRUBF)
 
@@ -63,6 +63,11 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
   с учётом выходных (без клирингов) и московского времени.
 - Встраивание: `PnlCalculator.futures` (live) и `BacktestEngine.closePosition` (бэктест) вычитают
   `fundingPerClearing × qty × clearings`. Значение отключено (`null`), если funding не задан.
+- **LIVE-источник (P0)**: перед входом `FuturesEntryProfile` вызывает `FundingSnapshotService.refresh(ticker)`
+  — MOEX-снапшот (`funding.moex-url`, столбец `funding.moex-column`, конвертация `raw × funding.moex-lot-multiplier`
+  = лот 1000 CNY → RUB/контракт/клиринг) с TTL `funding.moex-ttl-ms`. Недоступность MOEX → **явный** provisional
+  CONFIG-fallback с метрикой `funding.live.provider_unavailable`; устаревший MOEX-снапшот (> TTL) → fallback с
+  метрикой `funding.live.snapshot_stale_config_fallback`. Параметры источника — **provisional**, сверяются по MOEX (лот 1000 CNY).
 
 ### Отличие от Si/акций
 
@@ -75,13 +80,19 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
 
 - Код: `src/main/kotlin/com/trading/bot/config/InstrumentsConfig.kt`
   (defaults для тестов + `validateSpecs()`), `application.yml` → `instruments.instruments` (live-значения).
-- P&L/funding: `PnlCalculator.futures` (OrderExecutionEngine), `FundingCosts`, `BacktestEngine.closePosition`.
-- Маржинальный гейт: `RiskManagementService.freshMarginOfPositions` — фактическое ГО открытых позиций
-  (marginUsed → живой GET_GO с TTL 30с; недоступность → fail-closed `PORTFOLIO_MARGIN_DATA_UNAVAILABLE`).
+- P&L/funding: `PnlCalculator.futures` (OrderExecutionEngine), `FundingCosts`, `BacktestEngine.closePosition`;
+  LIVE funding — `FundingSnapshotService` (`application/funding/`: `FundingConfig`, `ConfiguredFundingProvider`,
+  `MoexFundingProvider`, `FundingSnapshotService`).
+- Маржинальный гейт: `RiskManagementService.freshMarginOfPositions` — ГО открытых позиций из ЕДИНОГО
+  риск-снапшота входа (`FuturesRiskSnapshot`, P1): side-specific живой `GET_GO` (long/short `initialMargin`,
+  TTL 30с); `marginUsed` и статический spec.go в LIVE НЕ используются (устаревшие). Недоступность/позиция вне
+  снапшота → fail-closed `PORTFOLIO_MARGIN_DATA_UNAVAILABLE`.
 
 ## 16.4. Подлежит сверке перед LIVE
 
 1. Фактическая комиссия Alor по счёту (брокерская) и клиринговая по выпискам MOEX (биржа) для CNYRUBF;
-2. Величина funding (RUB/контракт/день) по данным MOEX и фактическим выплатам;
-3. Фактическое начальное и уровни риска ГО (влияют на `freshMarginOfPositions` и сайзинг);
-4. Реалистичное проскальзывание CNYRUBF на минутных барах (для калибровки `slippageBps`).
+2. Величина funding (RUB/контракт/день) по данным MOEX и фактическим выплатам; **настроить и проверить
+   `funding.moex-url`/столбец/множитель** (LIVE-источник, иначе работает CONFIG-fallback);
+3. Фактическое начальное и уровни риска ГО (влияют на `freshMarginOfPositions` и сайзинг) — **long и short**;
+4. Реалистичное проскальзывание CNYRUBF на минутных барах (для калибровки `slippageBps`; slippage теперь
+   входит в live-риск-бюджет сайзинга `FuturesPositionSizer`, см. P1-5).

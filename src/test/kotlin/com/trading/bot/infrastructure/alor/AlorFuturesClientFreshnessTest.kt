@@ -6,6 +6,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.model.PositionDirection
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -85,6 +86,47 @@ class AlorFuturesClientFreshnessTest {
 
             assertNull(second, "stale cache must NOT be reused when API is down (fail-closed)")
             assertEquals(2, ctx.goHits.get())
+        } finally {
+            ctx.server.stop(0)
+        }
+    }
+
+    @Test
+    fun `live GO is side-specific long vs short`() {
+        val ctx =
+            liveServer(
+                goBody = """{"long": {"initialMargin": "850"}, "short": {"initialMargin": "900"}}""",
+                summariesBody = """{"moneyAmount": "50000"}""",
+                maxGoAgeMs = 5000,
+            )
+        try {
+            val longGo = runBlocking { ctx.client.getFuturesGO("CNYRUBF", PositionDirection.LONG) }
+            val shortGo = runBlocking { ctx.client.getFuturesGO("CNYRUBF", PositionDirection.SHORT) }
+
+            assertEquals(0, BigDecimal("850").compareTo(longGo!!))
+            assertEquals(0, BigDecimal("900").compareTo(shortGo!!))
+            assertEquals(1, ctx.goHits.get(), "both sides served from one cached pair")
+        } finally {
+            ctx.server.stop(0)
+        }
+    }
+
+    @Test
+    fun `live GO with missing requested side returns null fail-closed`() {
+        // /risk ответил только long.initialMargin — SHORT-вход не может сайзиться
+        // от ГО другой стороны (или от устаревшей пары): null → вход блокируется.
+        val ctx =
+            liveServer(
+                goBody = """{"long": {"initialMargin": "850"}}""",
+                summariesBody = """{"moneyAmount": "50000"}""",
+                maxGoAgeMs = 5000,
+            )
+        try {
+            val longGo = runBlocking { ctx.client.getFuturesGO("CNYRUBF", PositionDirection.LONG) }
+            val shortGo = runBlocking { ctx.client.getFuturesGO("CNYRUBF", PositionDirection.SHORT) }
+
+            assertEquals(0, BigDecimal("850").compareTo(longGo!!))
+            assertNull(shortGo, "missing side margin must NOT fall back to the other side in LIVE")
         } finally {
             ctx.server.stop(0)
         }

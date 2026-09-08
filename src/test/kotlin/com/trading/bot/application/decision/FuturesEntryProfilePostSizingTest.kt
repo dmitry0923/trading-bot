@@ -1,6 +1,7 @@
 package com.trading.bot.application.decision
 
 import com.trading.bot.application.OrderBuilder
+import com.trading.bot.application.funding.FundingSnapshotService
 import com.trading.bot.application.risk.FuturesPositionSizer
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.config.InstrumentsConfig
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * P0/P1-аудит FuturesEntryProfile.postSizingChecks:
@@ -51,6 +53,7 @@ class FuturesEntryProfilePostSizingTest {
             liveFrozenStrategyResolver = Mockito.mock(LiveFrozenStrategyResolver::class.java),
             adaptiveRisk = Mockito.mock(AdaptiveRiskService::class.java),
             risk = risk,
+            fundingSnapshotService = Mockito.mock(FundingSnapshotService::class.java),
         )
 
     private fun request(ticker: String): EntryRequest =
@@ -116,7 +119,7 @@ class FuturesEntryProfilePostSizingTest {
                 }
             // ГО существующих позиций известно (0 — позиций нет): гарантирует проход к гейту.
             runBlocking {
-                Mockito.`when`(risk.freshMarginOfPositions(anyList())).thenReturn(BigDecimal.ZERO)
+                Mockito.`when`(risk.freshMarginOfPositions(anyList(), anyGoMap())).thenReturn(BigDecimal.ZERO)
             }
             val profile = profile(risk)
 
@@ -135,7 +138,7 @@ class FuturesEntryProfilePostSizingTest {
             // Данные о ГО существующих позиций недоступны (API down + устаревший кэш /
             // marginUsed не записан) → вход блокируется до вызова маржинального гейта.
             runBlocking {
-                Mockito.`when`(risk.freshMarginOfPositions(anyList())).thenReturn(null)
+                Mockito.`when`(risk.freshMarginOfPositions(anyList(), anyGoMap())).thenReturn(null)
             }
 
             val result = profile(risk).postSizingChecks(request("CNYRUBF"), PositionDirection.LONG, size(BigDecimal("850")), emptyList())
@@ -144,10 +147,53 @@ class FuturesEntryProfilePostSizingTest {
             Mockito.verify(risk, Mockito.never()).exceedsMarginUtilization(anyBigDecimal(), anyBigDecimal(), anyBigDecimal())
         }
 
+    @Test
+    fun `snapshot GO map is passed to freshMarginOfPositions as precomputed data`() =
+        runBlocking {
+            val risk = Mockito.mock(RiskManagementService::class.java)
+            val captured = AtomicReference<Map<String, BigDecimal>?>()
+            runBlocking {
+                Mockito
+                    .`when`(risk.freshMarginOfPositions(anyList(), anyGoMap()))
+                    .thenAnswer { inv ->
+                        captured.set(inv.getArgument(1))
+                        BigDecimal.ZERO
+                    }
+            }
+            Mockito
+                .`when`(risk.exceedsMarginUtilization(anyBigDecimal(), anyBigDecimal(), anyBigDecimal()))
+                .thenReturn(false)
+            val profile = profile(risk)
+            val req =
+                request("CNYRUBF").copy(
+                    futuresRiskSnapshot =
+                        com.trading.bot.domain.risk.FuturesRiskSnapshot(
+                            takenAt = java.time.LocalDateTime.now(),
+                            accountId = 1L,
+                            portfolioMoney = BigDecimal("100000"),
+                            candidateGo = BigDecimal("850"),
+                            openFuturesGoPerTicker = mapOf("CNYRUBF" to BigDecimal("850")),
+                        ),
+                )
+
+            val result = profile.postSizingChecks(req, PositionDirection.LONG, size(BigDecimal("850")), emptyList())
+
+            assertNull(result)
+            // Снапшот МАРЖИНАЛЬНОГО гейта приходит из снапшота входа (P1-снапшот),
+            // а не перезапрашивается заново.
+            assertEquals(mapOf("CNYRUBF" to BigDecimal("850")), captured.get())
+        }
+
     @Suppress("UNCHECKED_CAST")
     private fun anyList(): List<com.trading.bot.model.entity.Position> {
         Mockito.any(List::class.java)
         return emptyList()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun anyGoMap(): Map<String, BigDecimal>? {
+        Mockito.nullable(Map::class.java)
+        return emptyMap()
     }
 
     private fun anyBigDecimal(): BigDecimal {

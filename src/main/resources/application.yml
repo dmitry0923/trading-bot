@@ -387,7 +387,7 @@ instruments:
       lotSize: 1000
       priceStep: "0.001"
       priceStepCost: "1.0"
-      go: "850"
+      go: "850" # SIM/fallback только; в LIVE — side-specific InitialMargin Long/Short с MOEX (P0)
       leverage: "${leverage.user-leverage}"
       baseAsset: "CNY"
       quoteAsset: "RUB"
@@ -395,7 +395,9 @@ instruments:
       brokerCommissionRub: "1.0"
       exchangeFeeRub: "0.5"
       slippageBps: "1.0"
-      # Funding CNYRUBF: provisional, RUB/контракт/клиринг (18:45 МСК); сверяется по MOEX.
+      # Funding CNYRUBF (P0): '0.5' — ПРОVISIONAL, используется ТОЛЬКО в SIM/backtest и как
+      # аварийный fallback в LIVE (метрика funding.live.provider_unavailable), пока не настроен
+      # LIVE-источник funding.moex-url. RUB/контракт/клиринг (18:45 МСК); сверяется по MOEX.
       fundingRubPerContractPerDay: "0.5"
     - ticker: "SBER"
       type: "STOCK"
@@ -649,3 +651,16 @@ lockbox:
   secret-id: ${LOCKBOX_SECRET_ID:}
   iam-token: ${LOCKBOX_IAM_TOKEN:}
   sa-key-json: ${LOCKBOX_SA_KEY_JSON:}
+
+# LIVE-funding (P0): динамическая величина MOEX для фьючерсного funding в P&L.
+# moex-url — шаблон ISS-эндпоинта, плейсхолдер {ticker} = эффективный тикер
+# инструмента (alorTicker ?? ticker). ПУСТОЙ → MOEX-источник выключен; используется
+# fixing fundingRubPerContractPerDay из instruments (SIM/backtest/fallback с метрикой
+# funding.live.provider_unavailable). Эндпоинт/столбец/множитель — PROVISIONAL,
+# сверяются с фактическими данными MOEX ДО LIVE (docs/16).
+funding:
+  moex-url: ${FUNDING_MOEX_URL:}
+  moex-column: ${FUNDING_MOEX_COLUMN:LATESTFUNDING}
+  moex-lot-multiplier: ${FUNDING_MOEX_LOT_MULTIPLIER:1000}
+  moex-ttl-ms: ${FUNDING_MOEX_TTL_MS:300000}
+  request-timeout-ms: ${FUNDING_REQUEST_TIMEOUT_MS:10000}

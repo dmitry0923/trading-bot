@@ -1,6 +1,7 @@
 package com.trading.bot.application
 
 import com.trading.bot.application.decision.DecisionEngine
+import com.trading.bot.application.funding.FundingSnapshotService
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.AlorConfig
@@ -79,6 +80,7 @@ class FuturesTradingBotService(
     private val tradingAccountService: TradingAccountService,
     private val meterRegistry: MeterRegistry,
     private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
+    private val fundingSnapshotService: FundingSnapshotService,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -104,7 +106,7 @@ class FuturesTradingBotService(
                 PnlCalculator.futures(
                     pointValue = { ticker -> instrumentsConfig.pointValue(ticker) },
                     commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
-                    fundingRubPerContractPerDay = { ticker -> instrumentsConfig.find(ticker)?.fundingRubPerContractPerDay },
+                    fundingRubPerContractPerDay = { ticker -> fundingSnapshotService.value(ticker) },
                 ),
             instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
             metricPrefix = "futures",

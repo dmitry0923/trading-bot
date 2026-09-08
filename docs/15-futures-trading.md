@@ -22,18 +22,19 @@
 | `lotSize` | `1000` | 1 контракт = 1000 CNY |
 | `priceStep` | `0.001` | минимальный шаг цены |
 | `priceStepCost` | `1.0` ₽ | стоимость минимального шага |
-| `go` | `850` ₽ | конфиг-ГО (для SIM; в LIVE — фактическое `GET /risk`, кэш TTL 30 c) |
+| `go` | `850` ₽ | конфиг-ГО (SIM/fallback только; в LIVE — side-specific `GET /risk`, кэш TTL 30 c) |
 | `leverage` | `${leverage.user-leverage}` = `2.0` | плечо из `LeverageConfig` (информационное) |
 | `baseAsset` / `quoteAsset` | `CNY` / `RUB` | пара |
 | `brokerCommissionRub` / `exchangeFeeRub` | `1.0` / `0.5` ₽ | сплит комиссии за контракт/сторону |
-| `slippageBps` | `1.0` | проскальзывание, базисных пунктов (бэктест) |
-| `fundingRubPerContractPerDay` | `0.5` ₽ | funding за контракт за клиринг (18:45 МСК) |
+| `slippageBps` | `1.0` | проскальзывание, базисных пунктов (бэктест + live-риск-бюджет) |
+| `fundingRubPerContractPerDay` | `0.5` ₽ | funding за контракт за клиринг (18:45 МСК); SIM/fallback, LIVE — `FundingSnapshotService` (MOEX) |
 
 **Производные величины** (вычисляются, не задаются вручную):
 
 - `pointValue = priceStepCost / priceStep = 1 / 0.001 = 1000 ₽` — стоимость 1.0 цены.
   Размер контракта: 1000 CNY × курс (≈ 12 800 ₽ при цене 12.8).
-- `marginPerContract = go / leverage = 850 / 2 = 425 ₽` в SIM; в LIVE — фактическое ГО × qty.
+- `marginPerContract = currentGo` — **ПОЛНОЕ ГО биржи** (850 ₽ в SIM; в LIVE — фактическое ГО по стороне
+  позиции; плечо НЕ делит маржу — брокер требует GO независимо от выбранного leverage).
 - P&L фьючерса: `(close − entry) × qty × pointValue − комиссия round-trip − funding`
   (`PnlCalculator.futures`; комиссия = `totalCommissionPerLotSide × qty × 2`,
   funding = `fundingPerClearing × qty × число пережитых клирингов`, см. `FundingCosts`).
@@ -55,17 +56,20 @@
 
 1. Risk-first guardrails (`FuturesRiskEngine.validateEntry` → `FuturesEntryProfile.postSizingChecks`).
 2. `entryPrice = alorClient.getLastPrice(ticker) ?: targetPrice`.
-3. `currentGo = alorFuturesClient.getFuturesGO(ticker)`; `portfolioMoney = alorFuturesClient.getPortfolioMoney()`
-   (LIVE: TTL-кэш 30 c, fail-closed по устаревшим данным — см. 15.6).
-4. Сайзинг `FuturesPositionSizer.calculateContracts(...)` (пределы маржи/риска/`max-contracts-per-position`).
-5. Маржинальный гейт `PORTFOLIO_MARGIN_LIMIT` по **живому** ГО существующих позиций
-   (`RiskManagementService.freshMarginOfPositions`; статический spec.go в LIVE НЕ используется,
-   недоступность ГО открытых позиций → fail-closed `PORTFOLIO_MARGIN_DATA_UNAVAILABLE`).
-6. `orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit")` — через Outbox.
-7. `alorClient.verifyOrder(placed.alorOrderId)` — фактическая цена (в SIMULATION `null` → entryPrice).
-8. Сохранение `Position` с futures-полями: `instrumentType=FUTURES`, `leverage`, `goPerContract`,
-   `marginUsed`, `liquidationPrice`, `variationMargin`, `stopLossPoints`, `alorOrderId`.
-9. `eventPublisher.publishPositionOpened(pos)`, метрика `futures.position.opened`.
+3. Единый риск-снапшот входа (`FuturesRiskSnapshot`, P1): `currentGo = getFuturesGO(ticker, direction)` **по
+   стороне** (long/short `initialMargin`, SHORT → short, LONG → long), `portfolioMoney = getPortfolioMoney()`,
+   плюс ГО всех открытых фьючерсных позиций — в ОДИН момент (LIVE: TTL-кэш 30 c, fail-closed — см. 15.6).
+4. `FundingSnapshotService.refresh(ticker)` — актуализация LIVE-funding (MOEX; fallback CONFIG, см. docs/16).
+5. Сайзинг `FuturesPositionSizer.calculateContracts(...)` (пределы маржи/риска/`max-contracts-per-position`).
+6. Маржинальный гейт `PORTFOLIO_MARGIN_LIMIT` по ГО из **риск-снапшота** (`freshMarginOfPositions(snapshot)`);
+   `marginUsed`/статический spec.go в LIVE НЕ используются (устаревшие), позиция вне снапшота → fail-closed
+   `PORTFOLIO_MARGIN_DATA_UNAVAILABLE`.
+7. `orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit")` — через Outbox.
+8. `alorClient.verifyOrder(placed.alorOrderId)` — фактическая цена (в SIMULATION `null` → entryPrice).
+9. Сохранение `Position` с futures-полями: `instrumentType=FUTURES`, `leverage`, `goPerContract`,
+   `marginUsed` (на момент открытия, для истории/аудита), `liquidationPrice`, `variationMargin`,
+   `stopLossPoints`, `alorOrderId`.
+10. `eventPublisher.publishPositionOpened(pos)`, метрика `futures.position.opened`.
 
 **Поток мониторинга** (`monitorOpenPositions`, каждый `PriceChangedEvent` по фьючерсу):
 
@@ -91,18 +95,19 @@
 
 | # | Шаг | Формула | CNYRUBF (50k, GO 850, стоп 150) |
 |---|---|---|---|
-| 1 | маржа на контракт | `marginPerContract = go / leverage` | 425 ₽ |
+| 1 | маржа на контракт | `marginPerContract = currentGo` (ПОЛНОЕ ГО биржи; плечо НЕ уменьшает) | 850 ₽ |
 | 2 | риск на сделку | `riskAmount = portfolio × riskPerTradePercent / 100` | 500 ₽ (1%) |
 | 3 | убыток на стопе | `lossPerContract = stopLossPoints × priceStepCost` | 150 ₽ (150 × 1) |
-| 4 | лимит по риску | `maxByRisk = floor(riskAmount / lossPerContract)` | 3 |
+| 3b | издержки в риске | `effectiveRisk = loss + комиссия×2 + slippage×2` | 150 + 3 + ≤2 = 155 ₽ (1 контракт, slippage 1 bp ≈ 1 ₽/сторона) |
+| 4 | лимит по риску | `maxByRisk = floor(riskAmount / effectiveRisk)` | 3 |
 | 5 | маржинальный бюджет | `marginBudget = portfolio × maxMarginUsagePercent / 100` | 30 000 ₽ (60% demo/live) |
-| 6 | лимит по марже | `maxByMargin = floor(marginBudget / marginPerContract)` | 70 |
+| 6 | лимит по марже | `maxByMargin = floor(marginBudget / marginPerContract)` | 35 |
 | 7 | итог | `qty = min(maxByRisk, maxByMargin, maxContractsPerPosition)` | **1** (потолок 1 в live) |
 
 При `qty < 1` вход запрещён с причиной `ZERO_RISK_SIZE` / `INSUFFICIENT_MARGIN`.
 
 **Ликвидационная цена** (симуляция):
-`pointValue = 1000`; `bufferPrice = marginPerContract × leverage / pointValue = (425 × 2) / 1000 = 0.85 ₽`
+`pointValue = 1000`; `bufferPrice = marginPerContract / pointValue = 850 / 1000 = 0.85 ₽`
 (движение, при котором теряется вся маржа контракта).
 
 - LONG: `liq = entry − 0.85` (при entry 12.80 → 11.95)
@@ -185,13 +190,15 @@ snapshot по дате (МСК), сброс при смене календарн
 
 | Метод | Endpoint (LIVE) | Fallback (SIMULATION / сбой) |
 |---|---|---|
-| `getFuturesGO(ticker)` | `GET /md/v2/Securities/{exchange}/{ticker}/risk` → `long.initialMargin` | `instruments.*.go` (CNYRUBF 850 ₽) |
+| `getFuturesGO(ticker, direction)` | `GET /md/v2/Securities/{exchange}/{ticker}/risk` → **side-specific** `long.initialMargin`/`short.initialMargin` (SHORT → short, иначе long); отсутствие/недоступность запрошенной стороны → `null` (fail-closed, без cross-side подстановки) | `instruments.*.go` (CNYRUBF 850 ₽), SIM только |
 | `getPortfolioMoney()` | `GET /md/v2/Clients/{portfolio}/summaries` → `moneyAmount` / `money` | 50 000 ₽ |
 
 - В `TRADING_MODE=SIMULATION` все вызовы возвращают конфиг-значения без сетевых запросов.
-- **LIVE (P0-2)**: GO и свободные средства кэшируются с TTL `risk.max-go-age-ms = 30 000` (per-ticker/
-  per-portfolio). При недоступности API и действующем кэше — ответ из кэша; по истечении — перезапрос;
-  API down + устаревший кэш → `null` (fail-closed): сайзинг по старому ГО/балансу запрещён.
+- **LIVE (P0)**: пара GO (long/short) и свободные средства кэшируются с TTL `risk.max-go-age-ms = 30 000`
+  (per-ticker/per-portfolio). При недоступности API и действующем кэше — ответ из кэша; по истечении —
+  перезапрос; API down + устаревший кэш → `null` (fail-closed): сайзинг по старому ГО/балансу запрещён.
+- **P1 (единый снапшот)**: деньги, ГО кандидата (по стороне) и ГО открытых позиций снимаются в один
+  координатный момент `FuturesRiskSnapshot` — маржинальный гейт не мешает запросы T0 ≠ T0+Δ.
 - LIVE-режим требует `ALOR_TOKEN`; SIMULATION — нет.
 
 ## 15.7. БД и Liquibase

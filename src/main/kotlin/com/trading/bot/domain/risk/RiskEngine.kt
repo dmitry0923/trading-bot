@@ -32,6 +32,12 @@ data class EntryRequest(
     val accountId: Long? = null,
     val maxOpenPositions: Int? = null,
     val frozenStrategy: FrozenStrategy? = null,
+    /**
+     * Единый риск-снапшот фьючерсного входа (P1-аудит); для акций — null.
+     * См. [FuturesRiskSnapshot] — координатный момент для средств/ГО кандидата/ГО
+     * уже открытых позиций (маржинальный гейт входа).
+     */
+    val futuresRiskSnapshot: FuturesRiskSnapshot? = null,
 )
 
 /**

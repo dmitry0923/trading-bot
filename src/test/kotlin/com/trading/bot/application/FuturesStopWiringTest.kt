@@ -96,6 +96,7 @@ class FuturesStopWiringTest {
                 liveFrozenStrategyResolver = Mockito.mock(LiveFrozenStrategyResolver::class.java),
                 adaptiveRisk = Mockito.mock(AdaptiveRiskService::class.java),
                 risk = Mockito.mock(RiskManagementService::class.java),
+                fundingSnapshotService = Mockito.mock(com.trading.bot.application.funding.FundingSnapshotService::class.java),
             )
 
         profile.buildOrderParams(

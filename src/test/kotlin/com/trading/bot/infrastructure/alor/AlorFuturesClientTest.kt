@@ -4,6 +4,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.model.PositionDirection
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -79,15 +80,34 @@ class AlorFuturesClientTest {
         }
 
     @Test
-    fun `futures go parsed from long initialMargin`() {
+    fun `futures go parsed as long and short pair`() {
         val go = client().parseFuturesGo("""{"long": {"initialMargin": "12500"}, "short": {"initialMargin": "13000"}}""")
 
-        assertEquals(0, BigDecimal("12500").compareTo(go!!))
+        assertEquals(0, BigDecimal("12500").compareTo(go!!.long!!))
+        assertEquals(0, BigDecimal("13000").compareTo(go.short!!))
+    }
+
+    @Test
+    fun `go forDirection picks short for SHORT and long otherwise`() {
+        val go = client().parseFuturesGo("""{"long": {"initialMargin": "12500"}, "short": {"initialMargin": "13000"}}""")
+
+        assertEquals(0, BigDecimal("13000").compareTo(go!!.forDirection(PositionDirection.SHORT)))
+        assertEquals(0, BigDecimal("12500").compareTo(go.forDirection(PositionDirection.LONG)))
+        assertEquals(0, BigDecimal("12500").compareTo(go.forDirection(null)))
+    }
+
+    @Test
+    fun `futures go missing requested side yields null side`() {
+        // LONG-маржа отсутствует (например, инструмент short-only/неверный парсер)
+        val go = client().parseFuturesGo("""{"long": {}, "short": {"initialMargin": "13000"}}""")
+
+        assertEquals(null, go!!.long)
+        assertEquals(0, BigDecimal("13000").compareTo(go.short!!))
     }
 
     @Test
     fun `futures go missing initialMargin yields null`() {
-        val go = client().parseFuturesGo("""{"long": {}, "short": {"initialMargin": "13000"}}""")
+        val go = client().parseFuturesGo("""{"long": {}, "short": {}}""")
 
         assertEquals(null, go)
     }
@@ -98,6 +118,16 @@ class AlorFuturesClientTest {
 
         assertEquals(null, go)
     }
+
+    @Test
+    fun `simulation returns config GO regardless of direction without REST call`() =
+        runBlocking {
+            val longGo = client().getFuturesGO("Si", PositionDirection.LONG)
+            val shortGo = client().getFuturesGO("Si", PositionDirection.SHORT)
+
+            assertEquals(0, BigDecimal("15000").compareTo(longGo!!))
+            assertEquals(0, BigDecimal("15000").compareTo(shortGo!!))
+        }
 
     @Test
     fun `point value derived from price step and cost`() {

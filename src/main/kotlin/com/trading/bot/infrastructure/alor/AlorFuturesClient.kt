@@ -5,6 +5,7 @@ import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.infrastructure.metrics.MutableGauges
+import com.trading.bot.model.PositionDirection
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -19,9 +20,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Расширение Alor REST-клиента для фьючерсов.
  *
- * - getFuturesGO(ticker): текущее гарантийное обеспечение через
- *   GET /md/v2/Securities/MOEX/{ticker}/risk
- *   Fallback: instruments.*.go из конфига, если API недоступен.
+ * - getFuturesGO(ticker, direction): текущее гарантийное обеспечение через
+ *   GET /md/v2/Securities/MOEX/{ticker}/risk. P0-аудит: GO выбирается ПО СТОРОНЕ
+ *   позиции (long.initialMargin для LONG, short.initialMargin для SHORT), а не
+ *   всегда long. Fallback: instruments.*.go из конфига, только в SIMULATION.
  * - getPortfolioMoney(): свободные средства портфеля.
  *   SIMULATION: 50 000 ₽ (депозит по умолчанию).
  *   LIVE: реальный баланс, null при ошибке API / отсутствии поля — нельзя
@@ -54,29 +56,53 @@ class AlorFuturesClient(
         val fetchedAtMs: Long,
     )
 
-    private val goCache = ConcurrentHashMap<String, TimedValue>()
+    /**
+     * Пара ГО (long/short) для одного тикера из /risk. Одиночный ответ API содержит
+     * маржу для обеих сторон — кэшируется парой, выбор по направлению позиции.
+     */
+    internal data class FuturesGo(
+        val long: BigDecimal?,
+        val short: BigDecimal?,
+        val fetchedAtMs: Long,
+    )
+
+    private val goCache = ConcurrentHashMap<String, FuturesGo>()
     private val moneyCache = ConcurrentHashMap<String, TimedValue>()
 
-    private fun fresh(
+    private fun freshGo(
+        go: FuturesGo?,
+        nowMs: Long,
+    ): Boolean = go != null && nowMs - go.fetchedAtMs <= riskConfig.maxGoAgeMs
+
+    private fun freshTimed(
         timed: TimedValue?,
         nowMs: Long,
     ): Boolean = timed != null && nowMs - timed.fetchedAtMs <= riskConfig.maxGoAgeMs
 
     /**
-     * Текущее GO фьючерса.
+     * Текущее GO фьючерса по направлению позиции (P0-аудит: long/short-specific).
      *
-     * @return конфиг-GO в SIMULATION; реальное GO в LIVE; null в LIVE при ошибке
-     *   API (и устаревшем кэше) или отсутствии поля initialMargin (P1: нельзя
-     *   сайзить от устаревшего конфиг-GO — вход блокируется, как при недоступном
-     *   капитале EXEC-005).
+     * @param ticker тикер инструмента
+     * @param direction направление позиции/входа; null = LONG (легаси-семантика)
+     * @return конфиг-GO в SIMULATION; реальное ГО в LIVE; null в LIVE при ошибке API
+     *   (и устаревшем кэше), отсутствии поля initialMargin или отсутствии маржи ЗАПРАШЕННОЙ
+     *   стороны (fail-closed: нельзя сайзить от другого-сторонного/устаревшего ГО).
      */
-    suspend fun getFuturesGO(ticker: String): BigDecimal? {
+    suspend fun getFuturesGO(
+        ticker: String,
+        direction: PositionDirection? = null,
+    ): BigDecimal? {
         val configGo = instrumentsConfig.find(ticker)?.go ?: BigDecimal("15000")
         if (!isLive) return configGo
 
         val now = System.currentTimeMillis()
         val cached = goCache[ticker]
-        if (fresh(cached, now)) return cached!!.value
+        if (freshGo(cached, now)) {
+            return cached!!.forDirection(direction) ?: run {
+                logger.warn { "getFuturesGO: side margin missing in cache for $ticker direction=$direction" }
+                null
+            }
+        }
 
         return try {
             val raw: String =
@@ -95,10 +121,20 @@ class AlorFuturesClient(
                 return null
             }
 
-            goCache[ticker] = TimedValue(go, System.currentTimeMillis())
-            MutableGauges.set(meterRegistry, "futures.go", go.toDouble(), Tags.of("ticker", ticker))
-            logger.info { "Futures GO for $ticker = $go ₽" }
-            go
+            goCache[ticker] = go
+            val side = go.forDirection(direction)
+            if (side == null) {
+                logger.warn { "getFuturesGO: side margin missing for $ticker direction=$direction (no cross-side fallback in LIVE)" }
+                return null
+            }
+            MutableGauges.set(
+                meterRegistry,
+                "futures.go",
+                side.toDouble(),
+                Tags.of("ticker", ticker, "side", direction?.name ?: "LONG"),
+            )
+            logger.info { "Futures GO for $ticker (${direction?.name ?: "LONG"}) = $side ₽" }
+            side
         } catch (e: Exception) {
             // Устаревший кэш в LIVE НЕ переиспользуется: вход блокируется (fail-closed).
             logger.warn(e) { "getFuturesGO failed for $ticker (no config fallback in LIVE, stale cache rejected)" }
@@ -106,18 +142,28 @@ class AlorFuturesClient(
         }
     }
 
-    /** Разбор GO из /md/v2/Securities/{exchange}/{ticker}/risk. null при отсутствии поля. */
-    internal fun parseFuturesGo(raw: String): BigDecimal? =
+    /**
+     * Разбор ГО из /md/v2/Securities/{exchange}/{ticker}/risk в пару long/short.
+     * null при отсутствии initialMargin для ОБЕИХ сторон.
+     */
+    internal fun parseFuturesGo(raw: String): FuturesGo? =
         runCatching {
             val j = objectMapper.readTree(raw)
-            val initialMargin =
+            val long =
                 j
                     .path("long")
                     .path("initialMargin")
                     .asString()
-            initialMargin
-                .takeIf { it.isNotBlank() }
-                ?.toBigDecimalOrNull()
+                    .takeIf { it.isNotBlank() }
+                    ?.toBigDecimalOrNull()
+            val short =
+                j
+                    .path("short")
+                    .path("initialMargin")
+                    .asString()
+                    .takeIf { it.isNotBlank() }
+                    ?.toBigDecimalOrNull()
+            if (long == null && short == null) null else FuturesGo(long, short, System.currentTimeMillis())
         }.getOrNull()
 
     /**
@@ -132,7 +178,7 @@ class AlorFuturesClient(
 
         val now = System.currentTimeMillis()
         val cached = moneyCache[portfolio]
-        if (fresh(cached, now)) return cached!!.value
+        if (freshTimed(cached, now)) return cached!!.value
 
         return try {
             val raw: String =
@@ -170,3 +216,10 @@ class AlorFuturesClient(
                 ?: j.path("money").asString().toBigDecimalOrNull()
         }.getOrNull()
 }
+
+/** Выбор GO по направлению позиции: SHORT → short, иначе (в т.ч. null) → long. */
+internal fun AlorFuturesClient.FuturesGo.forDirection(direction: PositionDirection?): BigDecimal? =
+    when (direction) {
+        PositionDirection.SHORT -> short
+        else -> long
+    }

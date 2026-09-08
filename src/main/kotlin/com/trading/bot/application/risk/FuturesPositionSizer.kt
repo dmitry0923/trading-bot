@@ -27,7 +27,9 @@ import java.math.RoundingMode
  *      привести к оверсайзингу.
  *   2. riskAmount          = portfolioMoney * riskPerTradePercent / 100 = 50000 * 1% = 500 ₽
  *   3. lossPerContract     = stopLossPoints * priceStepCost = 50 * 10 = 500 ₽
- *   4. maxContractsByRisk  = riskAmount / lossPerContract = 500 / 500 = 1
+ *   3b. slippagePerSide     = max(entryPrice × slippageBps/10000, 1 tick) × pointValue
+ *       (только если entryPrice задан и slippageBps > 0)
+ *   4. maxContractsByRisk  = riskAmount / (lossPerContract + комиссия×2 + slippage×2)
  *   5. marginBudget        = portfolioMoney * maxMarginUsagePercent / 100 = 50000 * 30% = 15000 ₽
  *   6. maxContractsByMargin= marginBudget / marginPerContract = 15000 / 15000 = 1
  *   7. finalQty            = floor(min(maxContractsByRisk, maxContractsByMargin, maxContractsPerPosition))
@@ -115,8 +117,35 @@ class FuturesPositionSizer(
         //     Сплит broker/exchange — через totalCommissionPerLotSide() (единый вход издержек).
         val commissionPerContract = instrument.totalCommissionPerLotSide()
 
-        // 4. Максимум контрактов по риску (с учётом комиссии)
-        val effectiveRiskPerContract = lossPerContract.add(commissionPerContract.multiply(BigDecimal(2)))
+        // 3c. Ожидаемое проскальзывание (P1-5, паритет с бэктестом, где slippageBps
+        //     участвует в executionFill): включается в риск-бюджет симметрично комиссии
+        //     (вход + выход). Базово — из дроби от цены (slippageBps/10000 × price × pointValue),
+        //     но НЕ меньше стоимости 1 тика (priceStep × pointValue) — на неликвидном/тихом
+        //     рынке дешёвый расчётный slippage невозможен. Без entryPrice (хедж-сайзинг и пр.)
+        //     — 0, как и без настройки slippageBps.
+        val slippagePerSide =
+            if (entryPrice != null) {
+                val bps = instrument.slippageBps
+                if (bps != null && bps.signum() > 0) {
+                    val pointValue = instrument.priceStepCost.divide(instrument.priceStep, 8, RoundingMode.HALF_UP)
+                    val bpsValue =
+                        entryPrice
+                            .multiply(bps)
+                            .divide(BigDecimal("10000"), 8, RoundingMode.HALF_UP)
+                            .multiply(pointValue)
+                    maxOf(bpsValue, instrument.priceStep.multiply(pointValue))
+                } else {
+                    BigDecimal.ZERO
+                }
+            } else {
+                BigDecimal.ZERO
+            }
+
+        // 4. Максимум контрактов по риску (с учётом комиссии и проскальзывания)
+        val effectiveRiskPerContract =
+            lossPerContract
+                .add(commissionPerContract.multiply(BigDecimal(2)))
+                .add(slippagePerSide.multiply(BigDecimal(2)))
         val maxContractsByRisk =
             riskAmount
                 .divide(effectiveRiskPerContract, 4, RoundingMode.DOWN)

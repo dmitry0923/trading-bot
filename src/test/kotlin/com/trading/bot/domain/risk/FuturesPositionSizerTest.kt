@@ -292,31 +292,99 @@ class FuturesPositionSizerTest {
     }
 
     @Test
-    fun `max contracts override caps quantity`() {
-        val withoutCap =
-            sizer.calculateContracts(
-                ticker = "Si",
-                portfolioMoney = BigDecimal("200000"),
-                stopLossPoints = 10,
-                currentGo = BigDecimal("15000"),
-                entryPrice = BigDecimal("70"),
-                direction = PositionDirection.LONG,
-                riskPerTradePercent = 8.0,
-                maxContractsPerPosition = 100,
+    fun `slippage reduces max contracts by risk`() {
+        // P1-5: slippage (вход+выход) включается в риск-бюджет. CNYRUBF: pointValue 1000,
+        // stop 150 пунктов = 150 ₽, slippage 10 bps = 0.1% × notional 12 800 ₽ = 12.8 ₽/сторона.
+        // Без slippage: 500/150 = 3; со slippage: 500/(150 + 12.8×2) = floor(500/175.6) = 2.
+        val noSlipInstrument =
+            InstrumentsConfig().apply {
+                instruments =
+                    mutableListOf(
+                        InstrumentsConfig.InstrumentSpec(
+                            ticker = "CNYRUBF",
+                            type = "FUTURES",
+                            lotSize = 1000,
+                            priceStep = BigDecimal("0.001"),
+                            priceStepCost = BigDecimal("1.0"),
+                            go = BigDecimal("850"),
+                            leverage = BigDecimal("1.0"),
+                            baseAsset = "CNY",
+                        ),
+                    )
+            }
+        val slipInstrument =
+            InstrumentsConfig().apply {
+                instruments =
+                    mutableListOf(
+                        noSlipInstrument.find("CNYRUBF")!!.copy(slippageBps = BigDecimal("10.0")),
+                    )
+            }
+        val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
+        val without =
+            FuturesPositionSizer(riskConfig2, noSlipInstrument).calculateContracts(
+                "CNYRUBF",
+                BigDecimal("50000"),
+                150,
+                BigDecimal("850"),
+                BigDecimal("12.80"),
+                PositionDirection.LONG,
+                1.0,
+                100,
             )
-        assert(withoutCap.quantity > 1)
+        assertEquals(3, without.quantity)
 
-        val capped =
-            sizer.calculateContracts(
-                ticker = "Si",
-                portfolioMoney = BigDecimal("200000"),
-                stopLossPoints = 10,
-                currentGo = BigDecimal("15000"),
-                entryPrice = BigDecimal("70"),
-                direction = PositionDirection.LONG,
-                riskPerTradePercent = 8.0,
-                maxContractsPerPosition = 3,
+        val withSlippage =
+            FuturesPositionSizer(riskConfig2, slipInstrument).calculateContracts(
+                "CNYRUBF",
+                BigDecimal("50000"),
+                150,
+                BigDecimal("850"),
+                BigDecimal("12.80"),
+                PositionDirection.LONG,
+                1.0,
+                100,
             )
-        assertEquals(3, capped.quantity)
+        assertEquals(2, withSlippage.quantity)
+    }
+
+    @Test
+    fun `slippage is floored at one tick value`() {
+        // P1-5: floor slippage = 1 тик контракта (точность не дешевле шага цены),
+        // pointValue для CNYRUBF = 1000 → тик = 0.001 × 1000 = 1 ₽/сторона.
+        // stop 500 пунктов = 500 ₽/контракт; риск 500 ₽.
+        // С точным (дешёвым) slippage 0.0001 bps ≈ 0 ₽ → 1 контракт (риск 500/500).
+        // С floor в 1 тик × 2 = 2 ₽ → 500/502 → floor = 0 контрактов (ZERO_RISK_SIZE):
+        // тик-ограничение реально влияет на решение у границы.
+        val instrument =
+            InstrumentsConfig().apply {
+                instruments =
+                    mutableListOf(
+                        InstrumentsConfig.InstrumentSpec(
+                            ticker = "CNYRUBF",
+                            type = "FUTURES",
+                            lotSize = 1000,
+                            priceStep = BigDecimal("0.001"),
+                            priceStepCost = BigDecimal("1.0"),
+                            go = BigDecimal("850"),
+                            leverage = BigDecimal("1.0"),
+                            baseAsset = "CNY",
+                            slippageBps = BigDecimal("0.0001"),
+                        ),
+                    )
+            }
+        val riskConfig2 = RiskConfig().apply { maxContractsPerPosition = 100 }
+        val result =
+            FuturesPositionSizer(riskConfig2, instrument).calculateContracts(
+                "CNYRUBF",
+                BigDecimal("50000"),
+                500,
+                BigDecimal("850"),
+                BigDecimal("12.80"),
+                PositionDirection.LONG,
+                1.0,
+                100,
+            )
+
+        assertEquals(0, result.quantity)
     }
 }

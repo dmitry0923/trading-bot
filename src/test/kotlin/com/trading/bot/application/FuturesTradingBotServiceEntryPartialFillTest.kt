@@ -118,6 +118,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             Mockito.mock(LiveFrozenStrategyResolver::class.java),
             Mockito.mock(AdaptiveRiskService::class.java),
             Mockito.mock(RiskManagementService::class.java),
+            Mockito.mock(com.trading.bot.application.funding.FundingSnapshotService::class.java),
         )
     private val decisionEngine =
         DecisionEngine(
@@ -160,6 +161,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             tradingAccountService,
             meterRegistry,
             EntryLeaseRecoveryGate(meterRegistry),
+            Mockito.mock(com.trading.bot.application.funding.FundingSnapshotService::class.java),
         )
 
     private val savedPositions = java.util.concurrent.CopyOnWriteArrayList<Position>()
@@ -299,7 +301,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
                 .`when`(alorClient.getLastPrice(Mockito.anyString()))
                 .thenReturn(BigDecimal("92000"))
             Mockito
-                .`when`(alorFuturesClient.getFuturesGO(Mockito.anyString()))
+                .`when`(alorFuturesClient.getFuturesGO(Mockito.anyString(), anyDirection()))
                 .thenReturn(BigDecimal("1000"))
             Mockito
                 .`when`(alorFuturesClient.getPortfolioMoney(Mockito.anyString()))

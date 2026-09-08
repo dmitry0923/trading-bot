@@ -5,8 +5,10 @@ import com.trading.bot.config.RiskConfig
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -279,39 +281,120 @@ class RiskManagementServiceThresholdTest {
     }
 
     @Test
-    fun `marginOfPosition returns marginUsed for futures and zero for stocks`() {
+    fun `freshMarginOfPositions uses live GO per ticker not historical marginUsed`() {
+        // P0-аудит: в LIVE-адмиссии ГО открытых позиций берётся ТОЛЬКО актуальное
+        // (live getFuturesGO, side-specific), а не marginUsed, застывший на моменте
+        // открытия (маржинальная загрузка по старым ГО занижала риск).
         val config = RiskConfig()
         Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
-        val s = service(config = config)
-
-        val futuresWithMargin =
+        val alor = Mockito.mock(com.trading.bot.infrastructure.alor.AlorFuturesClient::class.java)
+        val s =
+            RiskManagementService(
+                config,
+                InstrumentsConfig(),
+                Mockito.mock(DrawdownProtectionService::class.java),
+                SimpleMeterRegistry(),
+                aumProvider,
+                alor,
+            )
+        val pos =
             Position(
                 ticker = "CNYRUBF",
                 direction = PositionDirection.LONG,
                 quantity = 2,
+                entryPrice = BigDecimal("12.787"),
+                marginUsed = BigDecimal("500"), // старое ГО при открытии — НЕ авторитет
+            )
+        runBlocking {
+            Mockito
+                .`when`(alor.getFuturesGO(Mockito.anyString(), Mockito.nullable(PositionDirection::class.java)))
+                .thenReturn(BigDecimal("1000"))
+        }
+
+        val total = runBlocking { s.freshMarginOfPositions(mutableListOf(pos)) }
+
+        // live ГО 1000 (а НЕ marginUsed 500) × qty 2 = 2000.
+        assertEquals(0, BigDecimal("2000").compareTo(total))
+    }
+
+    @Test
+    fun `freshMarginOfPositions returns null when live GO unavailable fail-closed`() {
+        // API down + устаревший кэш → ГО неизвестно → return null → вход блокируется.
+        val alor = Mockito.mock(com.trading.bot.infrastructure.alor.AlorFuturesClient::class.java)
+        val s =
+            RiskManagementService(
+                RiskConfig(),
+                InstrumentsConfig(),
+                Mockito.mock(DrawdownProtectionService::class.java),
+                SimpleMeterRegistry(),
+                aumProvider,
+                alor,
+            )
+        val pos =
+            Position(
+                ticker = "CNYRUBF",
+                direction = PositionDirection.LONG,
+                quantity = 1,
                 entryPrice = BigDecimal("12.787"),
                 marginUsed = BigDecimal("2000"),
             )
-        assertEquals(BigDecimal("2000"), s.marginOfPosition(futuresWithMargin))
+        runBlocking {
+            Mockito
+                .`when`(alor.getFuturesGO(Mockito.anyString(), Mockito.nullable(PositionDirection::class.java)))
+                .thenReturn(null)
+        }
 
-        val futuresFallbackStaticGo =
+        assertNull(runBlocking { s.freshMarginOfPositions(mutableListOf(pos)) })
+    }
+
+    @Test
+    fun `freshMarginOfPositions uses precomputed snapshot map in one coordinate moment`() {
+        // P1: при входе существующие/кандидат считаются по ЕДИНОМУ риск-снапшоту —
+        // без снапшота freshMargin делает запросы заново, с картой — из неё.
+        val alor = Mockito.mock(com.trading.bot.infrastructure.alor.AlorFuturesClient::class.java)
+        val s =
+            RiskManagementService(
+                RiskConfig(),
+                InstrumentsConfig(),
+                Mockito.mock(DrawdownProtectionService::class.java),
+                SimpleMeterRegistry(),
+                aumProvider,
+                alor,
+            )
+        val pos =
             Position(
                 ticker = "CNYRUBF",
                 direction = PositionDirection.LONG,
                 quantity = 2,
                 entryPrice = BigDecimal("12.787"),
-                marginUsed = null,
             )
-        // fallback = статический spec.go (850) × qty 2 = 1700.
-        assertEquals(BigDecimal("1700"), s.marginOfPosition(futuresFallbackStaticGo))
 
-        val stock =
+        val total = runBlocking { s.freshMarginOfPositions(mutableListOf(pos), mapOf("CNYRUBF" to BigDecimal("850"))) }
+
+        assertEquals(0, BigDecimal("1700").compareTo(total))
+    }
+
+    @Test
+    fun `freshMarginOfPositions with snapshot map missing a ticker returns null fail-closed`() {
+        // Позиция, которой нет в снапшоте, — данные неполны: загрузка неизвестна → null.
+        val alor = Mockito.mock(com.trading.bot.infrastructure.alor.AlorFuturesClient::class.java)
+        val s =
+            RiskManagementService(
+                RiskConfig(),
+                InstrumentsConfig(),
+                Mockito.mock(DrawdownProtectionService::class.java),
+                SimpleMeterRegistry(),
+                aumProvider,
+                alor,
+            )
+        val pos =
             Position(
-                ticker = "SBER",
+                ticker = "CNYRUBF",
                 direction = PositionDirection.LONG,
                 quantity = 1,
-                entryPrice = BigDecimal("300"),
+                entryPrice = BigDecimal("12.787"),
             )
-        assertEquals(BigDecimal.ZERO, s.marginOfPosition(stock))
+
+        assertNull(runBlocking { s.freshMarginOfPositions(mutableListOf(pos), emptyMap()) })
     }
 }

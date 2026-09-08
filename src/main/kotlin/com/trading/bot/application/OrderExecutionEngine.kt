@@ -20,6 +20,7 @@ import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
+import java.time.LocalDateTime
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
@@ -61,15 +62,21 @@ fun interface PnlCalculator {
             }
 
         /**
-         * futures P&L для фьючерсов: Δprice × pointValue × qty − round-trip commission.
+         * futures P&L для фьючерсов:
+         * Δprice × pointValue × qty − round-trip commission − funding.
          *
          * @param pointValue стоимость 1 пункта цены в RUB (ticker → pointValue)
          * @param commissionRub комиссия за контракт за сторону в RUB (ticker → commissionRub).
          *        Вычитается как qty × commissionRub × 2 (вход + выход). null → 0.
+         * @param fundingRubPerContractPerDay funding за 1 контракт за 1 клиринг
+         *        (ticker → funding). Вычитается как funding × qty × число клирингов,
+         *        которые позиция пережила между [Position.openedAt] и закрытием.
+         *        null → 0 (инструмент без funding, e.g. Si/RI).
          */
         fun futures(
             pointValue: (String) -> BigDecimal,
             commissionRub: (String) -> BigDecimal? = { null },
+            fundingRubPerContractPerDay: (String) -> BigDecimal? = { null },
         ): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
                 val pv = pointValue(pos.ticker)
@@ -80,7 +87,17 @@ fun interface PnlCalculator {
                     }
                 val commPerSide = commissionRub(pos.ticker) ?: BigDecimal.ZERO
                 val totalCommission = commPerSide.multiply(qty).multiply(BigDecimal(2))
-                pricePnl.subtract(totalCommission)
+                val clearings =
+                    FundingCosts.clearingsCrossed(
+                        pos.openedAt,
+                        pos.closedAt ?: LocalDateTime.now(),
+                    )
+                val funding =
+                    fundingRubPerContractPerDay(pos.ticker)
+                        ?.takeIf { it > BigDecimal.ZERO }
+                        ?.let { it.multiply(qty).multiply(BigDecimal(clearings)) }
+                        ?: BigDecimal.ZERO
+                pricePnl.subtract(totalCommission).subtract(funding)
             }
     }
 }

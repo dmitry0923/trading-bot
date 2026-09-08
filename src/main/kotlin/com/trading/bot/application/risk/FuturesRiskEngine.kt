@@ -27,8 +27,9 @@ import java.math.RoundingMode
  * [com.trading.bot.domain.risk.PositionSizer] (FuturesPositionSizer), параметры
  * заявки собирает OrderBuilder.
  *
- * Депозит 50 000 ₽. Дневной лимит убытка = maxDailyLossPercent% AUM
- * (risk.max-daily-loss-percent). Максимум 1 открытая позиция.
+ * Депозит 50 000 ₽. Дневной лимит убытка = ЭФФЕКТИВНО min(2% AUM, 5 000 ₽)
+ * (risk.max-daily-loss-percent / risk.max-daily-loss-rub; см. note о «10% = 5 000 ₽»
+ * в RiskConfig). Максимум 1 открытая позиция.
  * Плечо 2x (LeverageConfig).
  *
  * Порядок проверок перед входом (все обязательны):

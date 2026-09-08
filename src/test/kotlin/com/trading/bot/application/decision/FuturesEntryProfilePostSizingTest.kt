@@ -29,7 +29,8 @@ import java.math.BigDecimal
  * P0/P1-аудит FuturesEntryProfile.postSizingChecks:
  * - отсутствующий InstrumentSpec — FAIL-CLOSED (INSTRUMENT_SPEC_MISSING), а не fallback
  *   price × qty (математически неверен для фьючерса: забывает lotSize);
- * - маржинальный гейт вызывается СО СТРЕСС-ЗАПАСОМ: candidate × stressedMarginMultiplier.
+ * - маржинальный гейт вызывается СО СТРЕСС-ЗАПАСОМ: candidate × stressedMarginMultiplier;
+ * - недоступность фактического ГО открытых позиций — FAIL-CLOSED (PORTFOLIO_MARGIN_DATA_UNAVAILABLE).
  */
 class FuturesEntryProfilePostSizingTest {
     private val instrumentsConfig = InstrumentsConfig()
@@ -113,6 +114,10 @@ class FuturesEntryProfilePostSizingTest {
                     captured += inv.getArgument<BigDecimal>(2)
                     false
                 }
+            // ГО существующих позиций известно (0 — позиций нет): гарантирует проход к гейту.
+            runBlocking {
+                Mockito.`when`(risk.freshMarginOfPositions(anyList())).thenReturn(BigDecimal.ZERO)
+            }
             val profile = profile(risk)
 
             val result = profile.postSizingChecks(request("CNYRUBF"), PositionDirection.LONG, size(BigDecimal("850")), emptyList())
@@ -122,6 +127,28 @@ class FuturesEntryProfilePostSizingTest {
             assertEquals(1, captured.size)
             assertEquals(0, BigDecimal("1275").compareTo(captured.single()))
         }
+
+    @Test
+    fun `unavailable margin data of open positions blocks entry fail-closed`() =
+        runBlocking {
+            val risk = Mockito.mock(RiskManagementService::class.java)
+            // Данные о ГО существующих позиций недоступны (API down + устаревший кэш /
+            // marginUsed не записан) → вход блокируется до вызова маржинального гейта.
+            runBlocking {
+                Mockito.`when`(risk.freshMarginOfPositions(anyList())).thenReturn(null)
+            }
+
+            val result = profile(risk).postSizingChecks(request("CNYRUBF"), PositionDirection.LONG, size(BigDecimal("850")), emptyList())
+
+            assertEquals("PORTFOLIO_MARGIN_DATA_UNAVAILABLE", result)
+            Mockito.verify(risk, Mockito.never()).exceedsMarginUtilization(anyBigDecimal(), anyBigDecimal(), anyBigDecimal())
+        }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun anyList(): List<com.trading.bot.model.entity.Position> {
+        Mockito.any(List::class.java)
+        return emptyList()
+    }
 
     private fun anyBigDecimal(): BigDecimal {
         Mockito.any(BigDecimal::class.java)

@@ -112,7 +112,8 @@ class FuturesPositionSizer(
 
         // 3b. Комиссия за лот (если задана): round-trip cost вычитается из бюджета риска,
         //     чтобы не превысить лимит потерь с учётом транзакционных издержек.
-        val commissionPerContract = instrument.commissionRub ?: BigDecimal.ZERO
+        //     Сплит broker/exchange — через totalCommissionPerLotSide() (единый вход издержек).
+        val commissionPerContract = instrument.totalCommissionPerLotSide()
 
         // 4. Максимум контрактов по риску (с учётом комиссии)
         val effectiveRiskPerContract = lossPerContract.add(commissionPerContract.multiply(BigDecimal(2)))

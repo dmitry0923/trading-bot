@@ -232,7 +232,7 @@ risk:
   trading-hours-end: "18:30"         # ... до 18:30 (Москва)
   max-consecutive-losses: 3          # 3 убытка подряд = пауза до следующего дня
   shadow-mode-enabled: true
-  max-daily-loss-percent: 10.0
+  max-daily-loss-percent: 2.0   # дневной стоп: % от AUM (эффективный лимит = min(%×AUM, max-daily-loss-rub))
   max-rolling-loss-7d-percent: 15.0
   max-rolling-loss-30d-percent: 25.0
   max-contracts-per-position: 1      # максимум 1 фьючерсный контракт на позицию

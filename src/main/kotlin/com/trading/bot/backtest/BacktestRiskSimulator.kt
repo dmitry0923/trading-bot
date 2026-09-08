@@ -522,7 +522,7 @@ class BacktestRiskSimulator(
 
         // 6. Risk cap: loss at stop must not exceed riskPerTradePercent% of cash
         val effectiveSl = spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent) ?: riskConfig.defaultStopLossPercent
-        val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
+        val commissionPerLot = spec?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
         val useAtr = atr != null && atr > BigDecimal.ZERO && riskConfig.atrSlMultiplier > BigDecimal.ZERO
         val slDistance =
             if (useAtr) {

@@ -166,6 +166,10 @@ class InstrumentsConfig {
                 leverage = BigDecimal("1.0"),
                 baseAsset = "CNY",
                 quoteAsset = "RUB",
+                brokerCommissionRub = BigDecimal("1.0"),
+                exchangeFeeRub = BigDecimal("0.5"),
+                slippageBps = BigDecimal("1.0"),
+                fundingRubPerContractPerDay = BigDecimal("0.5"),
             ),
             InstrumentSpec(
                 ticker = "CNYRUB_TOM",
@@ -222,6 +226,18 @@ class InstrumentsConfig {
             spec.commissionRub?.let {
                 require(it >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: commissionRub must be >= 0, got $it" }
             }
+            spec.brokerCommissionRub?.let {
+                require(it >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: brokerCommissionRub must be >= 0, got $it" }
+            }
+            spec.exchangeFeeRub?.let {
+                require(it >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: exchangeFeeRub must be >= 0, got $it" }
+            }
+            spec.slippageBps?.let {
+                require(it >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: slippageBps must be >= 0, got $it" }
+            }
+            spec.fundingRubPerContractPerDay?.let {
+                require(it >= BigDecimal.ZERO) { "Instrument ${spec.ticker}: fundingRubPerContractPerDay must be >= 0, got $it" }
+            }
         }
     }
 
@@ -247,21 +263,61 @@ class InstrumentsConfig {
         /** Per-instrument max gap % — overrides RiskConfig.maxGapPercent when non-null. */
         var maxGapPercent: BigDecimal? = null,
         /**
-         * Per-side commission in RUB for one lot. Used by risk sizing (×2 for round-trip)
-         * and realized P&L via PnlCalculator.
+         * СУММАРНАЯ (легаси) комиссия за лот/контракт за сторону в RUB — используется
+         * как fallback, когда [brokerCommissionRub] не задан. Удерживается для
+         * обратной совместимости (профили/тесты/не-фьючерсные инструменты).
          *
-         * Alor tariff research (CNYRUB_TOM, ~12,500 RUB notional per lot):
+         * Ранее — provisional-оценка по тарифу Alor (CNYRUB_TOM ~12 500 ₽/лот):
          *   - "Профессионал" (0.04%): 5.00 RUB/side
          *   - "Валютный" (0.05%):     6.25 RUB/side
          *   - "Единый" (0.1%):        12.50 RUB/side
          *
-         * Value of 10.0 is a provisional estimate and must be verified against the
-         * actual Alor account tariff before LIVE deployment. At 12.50 RUB/side the
-         * current value underestimates commission, which can overstate expected P&L
-         * and inflate position sizing.
+         * Значения должны быть сверены с фактическим тарифом Alor ДО LIVE.
          */
         var commissionRub: BigDecimal? = null,
+        /**
+         * Брокерская комиссия за 1 контракт/лот за сторону (RUB). Первая компонента
+         * сплита издержек (P1-аудит): [totalCommissionPerLotSide] = broker + exchange.
+         * Provisional — сверяется по фактическому тарифу Alor (CNYRUBF ≈ 1 ₽/контракт).
+         */
+        var brokerCommissionRub: BigDecimal? = null,
+        /**
+         * Биржевой сбор МосБиржи (клиринговая комиссия) за 1 контракт/лот за сторону
+         * (RUB). Вторая компонента сплита издержек. Provisional — сверяется по
+         * фактическим выпискам (CNYRUBF ≈ 0.5 ₽/контракт).
+         */
+        var exchangeFeeRub: BigDecimal? = null,
+        /**
+         * Проскальзывание исполнения, базисных пунктов (1 bp = 1/10000 цены) на
+         * сторону. Используется бэктест-симуляцией исполнения ([SlippageModel]).
+         * null = legacy (тики для фьючерсов / 0.1% для акций).
+         */
+        var slippageBps: BigDecimal? = null,
+        /**
+         * Фьючерсный funding (CNYRUBF): RUB за 1 контракт за каждый клиринг (торговый
+         * день) удержания позиции. null = funding не учитывается. Значение начисляется
+         * только за клиринги, которые позиция пережила (см. [FundingCosts]).
+         *
+         * Provisional: сверяется по данным MOEX (для CNYRUBF требуется учёт лота
+         * 1000 CNY) и фактическим выплатам на счёте.
+         */
+        var fundingRubPerContractPerDay: BigDecimal? = null,
     ) {
+        /**
+         * Суммарная комиссия за 1 лот/контракт за сторону (RUB): брокерская +
+         * биржевой сбор; при отсутствии сплита — легаси [commissionRub]; 0, если
+         * не задано ничего. Единый вход издержек для сайзинга (×2 = round-trip),
+         * realised P&L (live) и бэктест-симуляции.
+         */
+        fun totalCommissionPerLotSide(): BigDecimal =
+            brokerCommissionRub
+                ?.let { broker -> broker.add(exchangeFeeRub ?: BigDecimal.ZERO) }
+                ?: commissionRub
+                ?: BigDecimal.ZERO
+
+        /** Funding за 1 контракт за 1 начисление (клиринг); 0, если не задан. */
+        fun fundingPerClearing(): BigDecimal = fundingRubPerContractPerDay ?: BigDecimal.ZERO
+
         /** Effective SL%: per-instrument override or global default. */
         fun effectiveSlPercent(globalDefault: BigDecimal): BigDecimal = slPercent ?: globalDefault
 

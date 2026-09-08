@@ -391,7 +391,12 @@ instruments:
       leverage: "${leverage.user-leverage}"
       baseAsset: "CNY"
       quoteAsset: "RUB"
-      commissionRub: "1.0"
+      # Сплит издержек (P1-аудит): totalCommissionPerLotSide = broker + exchange = 1.5 ₽/контракт/сторона.
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+      # Funding CNYRUBF: provisional, RUB/контракт/клиринг (18:45 МСК); сверяется по MOEX.
+      fundingRubPerContractPerDay: "0.5"
     - ticker: "SBER"
       type: "STOCK"
       lotSize: 10
@@ -556,7 +561,9 @@ risk:
   # Калибровка фьючерсов выполняется при 90% (для backtest-only, 2026-08); demo/live = 60%.
   # ENV-переопределение: RISK_MAXMARGINUSAGEPERCENT=<...>. > производит перекалибровку.
   max-margin-usage-percent: ${RISK_MAXMARGINUSAGEPERCENT:60.0}
-  max-contracts-per-position: 2
+  # Фьючерсная калибровка CNYRUBF использует maxC до 100 — но для ПЕРВОГО live-выхода
+  # бот работает строго с 1-контрактным потолком (риск-консерватизм, см. AGENTS.md).
+  max-contracts-per-position: ${RISK_MAXCONTRACTSPERPOSITION:1}
   # P0-аудит: max возраст ГО/свободного остатка для сайзинга (fail-closed по устаревшим)
   max-go-age-ms: ${RISK_MAX_GO_AGE_MS:30000}
   # P1-аудит: стресс-запас маржинального гейта (ГО кандидата × множитель)

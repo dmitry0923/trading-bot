@@ -194,4 +194,51 @@ class PnlCalculatorCommissionTest {
         // gross only: 1500
         assertEquals(0, pnl.compareTo(BigDecimal("1500")))
     }
+
+    // ── futures with funding ──────────────────────────────────────────────
+
+    private val futuresWithFunding =
+        PnlCalculator.futures(
+            pointValue = { BigDecimal("1000.0") },
+            commissionRub = { BigDecimal("1.0") },
+            fundingRubPerContractPerDay = { BigDecimal("0.5") },
+        )
+
+    private fun futuresPosCrossedClearing(): Position =
+        futuresPos().apply {
+            openedAt = java.time.LocalDateTime.of(2026, 9, 8, 10, 0) // вт, до клиринга 18:45
+            closedAt = java.time.LocalDateTime.of(2026, 9, 9, 17, 0) // ср, до клиринга 18:45 → ровно 1 клиринг (вт)
+        }
+
+    private fun futuresPosIntraday(): Position =
+        futuresPos().apply {
+            openedAt = java.time.LocalDateTime.of(2026, 9, 8, 10, 0)
+            closedAt = java.time.LocalDateTime.of(2026, 9, 8, 12, 0)
+        }
+
+    @Test
+    fun `futures funding is deducted per clearing crossed`() {
+        val pnl = futuresWithFunding.pnl(futuresPosCrossedClearing(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        // gross = 1500; commission = 6; funding = 0.5 * 3 qty * 1 clearing = 1.5
+        assertEquals(0, pnl.compareTo(BigDecimal("1492.5")))
+    }
+
+    @Test
+    fun `intraday futures pays no funding`() {
+        val pnl = futuresWithFunding.pnl(futuresPosIntraday(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        // gross 1500 - commission 6 - funding 0 (внутридневная, клиринга не пережила)
+        assertEquals(0, pnl.compareTo(BigDecimal("1494")))
+    }
+
+    @Test
+    fun `futures funding absent (null) has no deduction`() {
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                commissionRub = { BigDecimal("1.0") },
+                fundingRubPerContractPerDay = { null },
+            )
+        val pnl = calc.pnl(futuresPosCrossedClearing(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        assertEquals(0, pnl.compareTo(BigDecimal("1494")))
+    }
 }

@@ -34,6 +34,7 @@ class RiskManagementServiceThresholdTest {
             Mockito.mock(DrawdownProtectionService::class.java),
             registry,
             aumProvider,
+            Mockito.mock(com.trading.bot.infrastructure.alor.AlorFuturesClient::class.java),
         )
 
     @Test

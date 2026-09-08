@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.infrastructure.alor.AlorFuturesClient
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -34,6 +35,7 @@ class RiskManagementService(
     private val drawdownProtection: DrawdownProtectionService,
     private val meterRegistry: MeterRegistry,
     private val aumProvider: AumProvider,
+    private val alorFuturesClient: AlorFuturesClient,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -211,8 +213,13 @@ class RiskManagementService(
 
     /**
      * Требуемое ГО одной открытой фьючерсной позиции (руб). Приоритет — персистенное
-     * [Position.marginUsed] (фактическое при открытии), fallback — статический spec.go × qty
-     * (SIM/тест-фикстура, НЕ live-авторитет).
+     * [Position.marginUsed] (фактическое при открытии, ГО × qty), fallback — статический
+     * spec.go × qty.
+     *
+     * НЕ используется в LIVE-маржинальном гейте входа — там [freshMarginOfPositions]:
+     * статический spec.go в LIVE — НЕ авторитет (GET_MOEX current GO отличается от
+     * конфиг-оценки; для CNYRUBF 850 ₽ против ~1 000-2 700 ₽ на MOEX). Метод сохранён
+     * для SIM/тест-фикстур и легаси-вызовов.
      */
     fun marginOfPosition(pos: Position): BigDecimal {
         val spec = instrumentsConfig.find(pos.ticker)
@@ -220,6 +227,37 @@ class RiskManagementService(
             return pos.marginUsed ?: spec.go.multiply(BigDecimal(pos.quantity))
         }
         return BigDecimal.ZERO
+    }
+
+    /**
+     * Требуемое ГО ВСЕХ открытых фьючерсных позиций для маржинального гейта (P0/P1-аудит):
+     *
+     * - персистенное [Position.marginUsed] (зафиксировано при открытии из актуального ГО);
+     * - при ОТСУТСТВИИ marginUsed — АКТУАЛЬНОЕ ГО из [AlorFuturesClient.getFuturesGO]
+     *   (с TTL-кэшем 30с), НЕ статический spec.go: в LIVE конфиг-go устарел относительно
+     *   биржи (CNYRUBF: 850 vs ~1 000-2 700 ₽ фактических на MOEX);
+     * - если GO недоступно (API недоступен и кэш устарел) — return null (fail-closed,
+     *   паритет P0-2/EXEC-005): маржинальная загрузка неизвестна → вход блокируется.
+     *
+     * В SIM-режиме [AlorFuturesClient] возвращает конфиг-GO — поведение идентично
+     * прежнему fallback (spec.go), тесты/симуляция не меняются.
+     *
+     * @return суммарное ГО futures-позиций аккаунта или null при недоступности данных
+     */
+    suspend fun freshMarginOfPositions(openPositions: List<Position>): BigDecimal? {
+        var total = BigDecimal.ZERO
+        for (pos in openPositions) {
+            val spec = instrumentsConfig.find(pos.ticker)
+            if (spec == null || spec.type != "FUTURES") continue
+            val margin =
+                pos.marginUsed
+                    ?: alorFuturesClient
+                        .getFuturesGO(pos.ticker)
+                        ?.multiply(BigDecimal(pos.quantity))
+                    ?: return null
+            total = total.add(margin)
+        }
+        return total
     }
 
     /**

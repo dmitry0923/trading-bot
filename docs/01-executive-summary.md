@@ -34,7 +34,7 @@
 |---|---|---|
 | Ожидаемая доходность (gross) | не заявлена | Бот в SIMULATION/боевом режиме; метрики накапливаются в `positions.pnl` |
 | Максимальный риск на 1 позицию | 50 000 ₽ | `risk.max-position-rub` |
-| Дневной лимит убытка | 5 000 ₽ | `risk.max-daily-loss-rub`, при достижении — глобальный HOLD |
+| Дневной лимит убытка | min(2% AUM, 5 000 ₽) → 1 000 ₽ при AUM 50k | `risk.max-daily-loss-rub`/`max-daily-loss-percent`, при достижении — глобальный HOLD |
 | Максимум одновременных позиций | 3 | `risk.max-open-positions` в `application.yml` (дефолт `RiskConfig` — консервативный 1) |
 | Стоп-лосс по умолчанию | 2% от входа | `risk.default-stop-loss-percent` |
 | Тейк-профит по умолчанию | 4% от входа | `risk.default-take-profit-percent` |

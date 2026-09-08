@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.FundingCosts
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
@@ -89,6 +90,7 @@ class BacktestEngine(
         val takeProfit: BigDecimal?,
         val entryBars: Int,
         val liquidationPrice: BigDecimal? = null,
+        val entryTime: LocalDateTime? = null,
     )
 
     /** Результат определения размера позиции: кол-во и (для фьючерсов) liq-цена. */
@@ -600,10 +602,10 @@ class BacktestEngine(
         commissionMultiplier: Double = 1.0,
     ): BigDecimal {
         val spec = instrumentsConfig.find(ticker)
-        val fixedPerLot = spec?.commissionRub
-        if (fixedPerLot != null && fixedPerLot > BigDecimal.ZERO) {
+        val fixedPerLot = spec?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
+        if (fixedPerLot > BigDecimal.ZERO) {
             if (quantity < 1) {
-                val lotSize = spec.lotSize.coerceAtLeast(1)
+                val lotSize = spec?.lotSize?.coerceAtLeast(1) ?: 1
                 return SimulatedExecution.commissionOn(price, quantity * lotSize, commissionRate(commissionMultiplier))
             }
             return SimulatedExecution.commissionFixed(
@@ -634,7 +636,21 @@ class BacktestEngine(
         candle: Candle? = null,
     ): SimulatedExecution.Fill =
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
-            SimulatedExecution.tickFill(reference, isBuy, slippageTicks(slippageMultiplier), instrument.priceStep)
+            val bps = instrument.slippageBps
+            if (bps != null && bps > BigDecimal.ZERO) {
+                // SlippageModel: отраслевая конфигурация в bps (1 bp = 1/10000 цены);
+                // консервативно — не меньше legacy-сдвига в 1 тик.
+                val bpsSlip =
+                    reference
+                        .multiply(bps)
+                        .multiply(BigDecimal(slippageMultiplier))
+                        .divide(BigDecimal("10000"), 8, RoundingMode.HALF_UP)
+                val tickSlip = instrument.priceStep.multiply(BigDecimal(slippageTicks(slippageMultiplier)))
+                val slip = if (bpsSlip > tickSlip) bpsSlip else tickSlip
+                SimulatedExecution.Fill(if (isBuy) reference.add(slip) else reference.subtract(slip))
+            } else {
+                SimulatedExecution.tickFill(reference, isBuy, slippageTicks(slippageMultiplier), instrument.priceStep)
+            }
         } else if (backtestConfig.realisticExecution && candle != null) {
             val halfSpread = SimulatedExecution.estimateHalfSpread(candle, reference)
             SimulatedExecution.realisticFill(reference, isBuy, halfSpread)
@@ -748,6 +764,7 @@ class BacktestEngine(
             takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent, tpPoints),
             entryBars = bar,
             liquidationPrice = sized.liquidationPrice,
+            entryTime = candle?.time,
         )
     }
 
@@ -822,7 +839,7 @@ class BacktestEngine(
         val effectiveSl =
             instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
                 ?: riskConfig.defaultStopLossPercent
-        val commissionPerLot = instrument?.commissionRub ?: BigDecimal.ZERO
+        val commissionPerLot = instrument?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
         val effectiveRiskPercent = riskPerTradePercentOverride ?: riskConfig.riskPerTradePercent.toDouble()
         val riskAmount =
             leveragedCash
@@ -958,12 +975,27 @@ class BacktestEngine(
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
                 PositionDirection.SHORT -> pos.entryPrice.subtract(fill.price)
             }.multiply(profitMultiplierPerLot(ticker, instrument)).multiply(BigDecimal(pos.quantity))
-        val pnl = gross.subtract(commissionEntry).subtract(commissionExit)
+        // Funding (CNYRUBF): вычитается за каждый клиринг, который позиция пережила
+        // между открытием и закрытием (паритет live PnlCalculator.futures).
+        val funding =
+            if (instrument != null && instrumentsConfig.isFutures(ticker) &&
+                pos.entryTime != null && candle != null &&
+                instrument.fundingPerClearing() > BigDecimal.ZERO
+            ) {
+                val clearings = FundingCosts.clearingsCrossed(pos.entryTime, candle.time)
+                instrument.fundingPerClearing().multiply(
+                    BigDecimal(pos.quantity).multiply(BigDecimal(clearings)),
+                )
+            } else {
+                BigDecimal.ZERO
+            }
+        val pnl = gross.subtract(commissionEntry).subtract(commissionExit).subtract(funding)
 
         tradeReturns.add(pnl.toDouble())
         tradeHoldBars.add((closeBar - pos.entryBars).coerceAtLeast(0))
-        // Комиссия входа уже списана при открытии; здесь добавляется gross за вычетом комиссии выхода
-        val newCash = cash.add(gross).subtract(commissionExit)
+        // Комиссия входа уже списана при открытии; здесь добавляется gross за вычетом
+        // комиссии выхода и funding.
+        val newCash = cash.add(gross).subtract(commissionExit).subtract(funding)
         logger.debug { "Backtest close $ticker $reason pnl=$pnl" }
         return newCash
     }

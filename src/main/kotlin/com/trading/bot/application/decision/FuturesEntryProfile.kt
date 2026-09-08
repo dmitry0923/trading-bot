@@ -169,10 +169,16 @@ class FuturesEntryProfile(
 
         // Маржинальная загрузка: существующие фьючерсные позиции по ГО + кандидат
         // (actual currentGo × qty) против maxMarginUsagePercent% от депозита аккаунта.
+        // Источник ГО существующих позиций — [RiskManagementService.freshMarginOfPositions]
+        // (ПРИОРИТЕТ: персистенное marginUsed, иначе живой GET_GO с TTL-кэшем; статический
+        // spec.go в LIVE НЕ используется — для CNYRUBF 850 ₽ против ~1 000-2 700 ₽ на MOEX).
+        // Недоступность фактического ГО существующих позиций (API down + устаревший кэш,
+        // marginUsed не записан) → fail-closed MARGIN_DATA_UNAVAILABLE: загрузка неизвестна,
+        // вход блокируется (парity P0-2/EXEC-005).
         // P1-аудит (stressed margin): ГО кандидата оценивается С ЗАПАСОМ 1.5x —
         // запас на рост/пересчёт ГО после открытия. Вход на пределе лимита запрещён
         // (малейшее повышение ГО → превышение лимита и риск margin call).
-        val existingMargin = openPositions.sumOf { risk.marginOfPosition(it) }
+        val existingMargin = risk.freshMarginOfPositions(openPositions) ?: return "PORTFOLIO_MARGIN_DATA_UNAVAILABLE"
         val stressedCandidateMargin =
             size.marginRequired.multiply(BigDecimal(riskConfig.stressedMarginMultiplier))
         if (risk.exceedsMarginUtilization(request.portfolioMoney, existingMargin, stressedCandidateMargin)) {

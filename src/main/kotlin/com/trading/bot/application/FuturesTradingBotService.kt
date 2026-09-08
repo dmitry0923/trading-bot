@@ -103,7 +103,8 @@ class FuturesTradingBotService(
             pnlCalculator =
                 PnlCalculator.futures(
                     pointValue = { ticker -> instrumentsConfig.pointValue(ticker) },
-                    commissionRub = { ticker -> instrumentsConfig.find(ticker)?.commissionRub },
+                    commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
+                    fundingRubPerContractPerDay = { ticker -> instrumentsConfig.find(ticker)?.fundingRubPerContractPerDay },
                 ),
             instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
             metricPrefix = "futures",

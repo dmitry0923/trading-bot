@@ -25,6 +25,7 @@ class RiskManagementServiceDailyPnLTest {
             drawdownProtection,
             SimpleMeterRegistry(),
             Mockito.mock(AumProvider::class.java),
+            Mockito.mock(com.trading.bot.infrastructure.alor.AlorFuturesClient::class.java),
         )
 
     @Test

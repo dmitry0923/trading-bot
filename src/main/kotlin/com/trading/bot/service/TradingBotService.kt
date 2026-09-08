@@ -96,7 +96,7 @@ class TradingBotService(
     private val pnlCalculator: PnlCalculator =
         PnlCalculator.lotBased(
             lotSize = { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L },
-            commissionRub = { ticker -> instrumentsConfig.find(ticker)?.commissionRub },
+            commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
         )
 
     @PreDestroy

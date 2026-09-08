@@ -483,3 +483,60 @@ candidate GO times stressed margin multiplier`.
 Полный прогон: **1351 тест, 0 падений** (unit; новые — `FuturesEntryProfilePostSizingTest`,
 `AlorFuturesClientFreshnessTest`); `integrationTest`: **100 тестов, 0 падений, 1 skipped**;
 `./gradlew ktlintCheck` (обе source set) — **exit 0**.
+
+## Аудит издержек/funding + LIVE-маржинальный гейт (закрытие, 2026-09-08)
+
+Закрыты 6 пунктов аудита пользователя (роботные прогоны 2026-09-07/08). Коммит `futures-cost-audit`.
+
+### 1 (исправлено): LIVE-маржинальный гейт без spec.go fallback
+`RiskManagementService.freshMarginOfPositions(openPositions)` — фактическое ГО открытых фьючерсных
+позиций: приоритет персистенного `marginUsed`, иначе ЖИВОЙ `getFuturesGO(ticker)×qty` (TTL-кэш 30с);
+недоступность (API down + устаревший кэш + нет marginUsed) → **null**; `FuturesEntryProfile.postSizingChecks`
+→ fail-closed `PORTFOLIO_MARGIN_DATA_UNAVAILABLE` (до вызова маржинального гейта). Статический spec.go
+(850 ₽ CNYRUBF против 1 000–2 700 ₽ фактических MOEX) в LIVE НЕ авторитет; `marginOfPosition` сохранён
+для SIM/тест-фикстур. Регрессии: `RiskManagementServiceThresholdTest`/`DailyPnLTest` (новый параметр
+`AlorFuturesClient`), `FuturesEntryProfilePostSizingTest` (стаб `freshMarginOfPositions(anyList())` +
+`unavailable margin data of open positions blocks entry fail-closed`).
+
+### 2 (исправлено): funding CNYRUBF — first-class компонент P&L
+- Новый `object FundingCosts` — число пережитых клирингов: дни, где `openedAt < clearing(18:45 МСК) < closedAt`;
+  выходные без клирингов; внутридневная позиция — 0; открытие/закрытие строго на границе клиринга НЕ считаются.
+- `InstrumentsSpec.fundingRubPerContractPerDay` (RUB/контракт/клиринг; null → отключено) + `fundingPerClearing()`.
+- `PnlCalculator.futures(..., fundingRubPerContractPerDay={null})` вычитает `funding × qty × clearings`
+  (live; прокинуто из `FuturesTradingBotService` по `instrumentsConfig`); `BacktestEngine.closePosition`
+  — то же для бэктеста (`PositionSim.entryTime` из `candle.time`). Регрессии: `FundingCostsTest` (9),
+  `PnlCalculatorCommissionTest` (+3 funding-кейса).
+
+### 3 (исправлено): реальный сплит издержек broker/exchange + slippage
+`InstrumentSpec`: `brokerCommissionRub` + `exchangeFeeRub` (сумма = `totalCommissionPerLotSide()`; fallback —
+легаси `commissionRub`), `slippageBps`. Все call-site у переведены на единый вход:
+`FuturesPositionSizer`, `StockEntryProfile`, `BacktestRiskSimulator`, `BacktestEngine.computeCommission`,
+`PnlCalculator` (FuturesTradingBotService/TradingBotService). `BacktestEngine.executionFill` для futures —
+проскальзывание `slippageBps×price` (HALF_UP, 8 знаков), но не меньше 1 тика. CNYRUBF: broker 1.0 +
+exchange 0.5 = 1.5 ₽/контракт/сторона, slippage 1.0 bp, funding 0.5 ₽/клиринг — **provisional,
+сверяются с выписками до LIVE** (docs/16). `InstrumentsConfig.validateSpecs()` валидирует новые поля (≥0).
+
+### 4 (исправлено): docs Si → CNYRUBF
+`docs/15-futures-trading.md` переписан под CNYRUBF (все числовые примеры: GO 850, SL 150→12.65, TP 1200→14.00,
+liq-buffer 0.85 ₽, daily limit = min(2% AUM, 5k)=1 000 ₽, max-contracts=1); добавлен **`docs/16-instrument-specifications.md`**
+(model издержек/funding, CNYRUBF specs, источники истины, «подлежит сверке перед LIVE»).
+e2e smoke переведён на CNYRUBF (JSON сигнал + ожидаемая позиция).
+
+### 5 (исправлено): daily-loss «5 000 ₽ vs 10%» — синхронизированы доки/комментарии
+Код УЖЕ реализовал `min(maxDailyLossPercent×AUM, maxDailyLossRub)` (= 1 000 ₽ на 50k); устаревшие
+«10% = 5 000 ₽» указывали на абсолютный потолок. Обновлены: `RiskConfig` KDoc, `FuturesRiskEngine` KDoc,
+`docs/01` (лимит → min(2% AUM, 5k)), `docs/CONFIGURATION.md` (`max-daily-loss-percent: 10.0` → `2.0`),
+`docs/15` (§15.4, таб. guardrails, диагностика). Легаси DailyLossCircuitBreaker для фьючерсов — см. P2.
+
+### 6 (исправлено): max-contracts-per-position 2 → 1 для первого LIVE
+`application.yml`: `max-contracts-per-position: ${RISK_MAXCONTRACTSPERPOSITION:1}` (env-overridable;
+backtest-калибровка CNYRUBF продолжала использовать maxC до 100 через `futuresMaxContractsPerPosition` frozen-стратегии).
+
+### ktlint
+`function-signature`/`chain-method-continuation` (многострочные цепочки: первый сегмент без dot mid-line —
+через промежуточные val), `indent` для аннотаций по колонке 4, `final-newline` — файлы писать с конечным `\n`
+(Read/Edit предпочтительнее здесь-строк PowerShell из-за кодировки).
+
+Итоговый прогон: **1363 теста, 0 падений** (unit; +12: FundingCostsTest 9, PnlCalculatorCommissionTest 3,
+FuturesEntryProfilePostSizingTest 1, минус правки); `integrationTest`: **100 тестов, 0 падений, 1 skipped**;
+`./gradlew ktlintCheck` (обе source set) — **exit 0**.

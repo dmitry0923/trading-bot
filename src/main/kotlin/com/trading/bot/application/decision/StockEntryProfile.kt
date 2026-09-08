@@ -136,7 +136,7 @@ class StockEntryProfile(
             frozenSlPercent
                 ?: spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
                 ?: riskConfig.defaultStopLossPercent
-        val commissionPerLot = spec?.commissionRub ?: BigDecimal.ZERO
+        val commissionPerLot = spec?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
         val useAtr =
             frozenSlPercent == null &&
                 request.atr != null && request.atr > BigDecimal.ZERO &&

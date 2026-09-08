@@ -121,14 +121,13 @@ class RiskManagementService(
 
         fun positionNotional(pos: Position): BigDecimal {
             val spec = instrumentsConfig.find(pos.ticker)
-            // Фьючерс — забалансовый инструмент: экспозиция в портфельных лимитах
-            // считается по марже (GO × qty), а не по полному номиналу контракта
-            // (иначе любой вход Si при депозите ниже номинала контракта вечно
-            // получал Gross/Net DENY). Акции — полный notional spec.notional.
-            // Согласовано с фьючерсным сайзингом по GO (P2-c) и max-margin-usage-percent.
-            if (spec != null && spec.type == "FUTURES") {
-                return spec.go.multiply(BigDecimal(pos.quantity))
-            }
+            // Портфельные лимиты Gross/Net Exposure считаются по РЕАЛЬНОЙ рыночной
+            // экспозиции (market notional = цена × lotSize × qty) для ВСЕХ
+            // инструментов, включая фьючерсы (P0-аудит). GO — это маржа (залог),
+            // а не directional exposure: замена notional на ГО занижала реальный
+            // ценовой риск позиции. Требуемая маржа (GO × qty) учитывается отдельным
+            // маржинальным гейтом [maxMarginUsagePercent] (risk.portfolio.margin_usage),
+            // см. [exceedsMarginUtilization].
             return spec?.notional(pos.quantity, pos.entryPrice)
                 ?: pos.entryPrice.multiply(BigDecimal(pos.quantity))
         }
@@ -171,6 +170,56 @@ class RiskManagementService(
             return true
         }
         return false
+    }
+
+    /**
+     * Маржинальный гейт (P0-аудит): сумма требуемого гарантийного обеспечения (ГО)
+     * ВСЕХ позиций фьючерсов + кандидата не должна превысить
+     * [RiskConfig.maxMarginUsagePercent]% от депозита.
+     *
+     * В отличие от [exceedsPortfolioLimits] (который оперирует РЫНОЧНОЙ экспозицией
+     * для Gross/Net), этот гейт контролирует ЗАЛОГОВУЮ загрузку: сколько депозита
+     * реально связано маржой. Он независим от directional exposure и отдельно
+     * ограничивает mandarin capacity (вероятность margin call / ликвидный резерв).
+     *
+     * @param deposit AUM-база лимита (депозит аккаунта кандидата)
+     * @param existingMarginRub суммарное ГО уже открытых фьючерсных позиций аккаунта
+     * @param candidateMarginRub требуемое ГО кандидата (actual GO × qty)
+     * @return true, если суммарная маржинальная загрузка превысит лимит
+     */
+    fun exceedsMarginUtilization(
+        deposit: BigDecimal,
+        existingMarginRub: BigDecimal,
+        candidateMarginRub: BigDecimal,
+    ): Boolean {
+        if (deposit <= BigDecimal.ZERO || candidateMarginRub <= BigDecimal.ZERO) return false
+        val totalMargin = existingMarginRub.add(candidateMarginRub)
+        val limit =
+            deposit
+                .multiply(BigDecimal(riskConfig.maxMarginUsagePercent))
+                .divide(BigDecimal("100"), 2, RoundingMode.HALF_UP)
+        if (totalMargin > limit) {
+            logger.warn {
+                "Margin utilization limit: $totalMargin (existing=$existingMarginRub + candidate=$candidateMarginRub) > " +
+                    "$limit (${riskConfig.maxMarginUsagePercent}% of deposit)"
+            }
+            meterRegistry.counter("risk.portfolio.margin_utilization.blocked").increment()
+            return true
+        }
+        return false
+    }
+
+    /**
+     * Требуемое ГО одной открытой фьючерсной позиции (руб). Приоритет — персистенное
+     * [Position.marginUsed] (фактическое при открытии), fallback — статический spec.go × qty
+     * (SIM/тест-фикстура, НЕ live-авторитет).
+     */
+    fun marginOfPosition(pos: Position): BigDecimal {
+        val spec = instrumentsConfig.find(pos.ticker)
+        if (spec != null && spec.type == "FUTURES") {
+            return pos.marginUsed ?: spec.go.multiply(BigDecimal(pos.quantity))
+        }
+        return BigDecimal.ZERO
     }
 
     /**

@@ -39,3 +39,13 @@ security:
     secret: test-jwt-secret-key-0123456789abcdef0123456789abcdef
     access-ttl-minutes: 15
     refresh-ttl-days: 30
+
+# P0-аудит: портфельные лимиты Gross/Net оперируют РЫНОЧНОЙ экспозицией
+# (market notional = цена × lotSize × qty), а НЕ маржой (ГО). Для тестовых
+# фьючерсных симуляций (Si ~92k номинала при SIM-депо 50k) лимиты подняты,
+# чтобы pipeline-механика (вход/SL/TP/ликвидация) проходила риск-гейты.
+# LIVE-конфигурация (application.yml) остаётся 100% — фокус на CNYRUBF,
+# чей номинал (12.8k–25.6k) укладывается в 100% AUM.
+risk:
+  max-gross-exposure-percent: 200.0
+  max-net-exposure-percent: 200.0

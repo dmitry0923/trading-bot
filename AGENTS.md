@@ -317,9 +317,11 @@ B (новый владелец) входит и открывает ровно о
 
 ### Pre-existing баг (попутно): интеграционные тесты сломаны с 56c1479b
 `placeLimitOrder`/`placeMarketOrder` получили 7-й параметр `purpose` — стабы с 6 матчерами падали с
-`InvalidUseOfMatchersException`. Починены `LeaseFencingIntegrationTest` и
-`FuturesTradingBotServiceIntegrationTest` (7 матчеров + helper `anyPurpose()`); на чистом HEAD
-(до фикса) `FuturesTradingBotServiceIntegrationTest` падал так же.
+`InvalidUseOfMatchersException`. **Закрыто 2026-09-08**: починены ВСЕ интеграционные суиты добавлением
+7-го матчера + helper `anyPurpose()`:
+- `LeaseFencingIntegrationTest`, `FuturesTradingBotServiceIntegrationTest` (раньше);
+- `InvestorClearingIntegrationTest` (:95, :312), `RabbitMqTransportIntegrationTest` (:86, :120) (сейчас).
+Полный `integrationTest`: **100 тестов, 0 падений, 1 skipped**.
 
 ### Матчеры Mockito в Kotlin
 Inline `Mockito.any(SomeClass::class.java)` для non-null типов → NPE; обязателен helper-паттерн
@@ -328,9 +330,9 @@ Inline `Mockito.any(SomeClass::class.java)` для non-null типов → NPE; 
 
 Регрессии: `DistributedLockServiceTest`, `OrderExecutionEngineLeaseFenceTest` (3),
 `DecisionEngineTest` (43), `LeaseFencingIntegrationTest`, `FuturesTradingBotServiceIntegrationTest`,
-`ChaosRedisIntegrationTest`. Полный прогон: **1334 теста**, 0 падений. ktlint — только
+`ChaosRedisIntegrationTest`. Полный прогон: **1334 теста**, 0 падений. На тот момент ktlint-остатки —
 пред-существующие нарушения HEAD (`OrderPurpose.kt`, `RestOrderTransport.kt`, `StockEntryProfileTest.kt:706`,
-`WsOrderTransportTest.kt:348,425`).
+`WsOrderTransportTest.kt:348,425`) — закрыты отдельно (см. ниже).
 
 ## Production-readiness аудит (исправления, 2026-09-07)
 
@@ -418,5 +420,23 @@ SL 2%/TP 4% (%).
 калибровочное x5/x6 — параметр бэктест-сайзера, не воспроизводится в live; правки `StockEntryProfile`/Kelly —
 вне скоупа. Обновлены доки (см. P2-c выше).
 
-Полный прогон: **1340 тестов, 0 падений** (unit). ktlint — только пред-существующие нарушения HEAD
-(`OrderPurpose.kt`, `RestOrderTransport.kt`).
+Полный прогон: **1340 тестов, 0 падений** (unit). ktlint — чист (пред-существующие нарушения
+`OrderPurpose.kt`, `RestOrderTransport.kt`, `StockEntryProfileTest.kt:706`, `WsOrderTransportTest.kt:348,425`
+закрыты 2026-09-08, см. «Закрытие ktlint-остатков» ниже).
+
+### Закрытие ktlint-остатков (2026-09-08)
+Все ранее зафиксированные пред-существующие ktlint-нарушения HEAD закрыты; `./gradlew ktlintCheck`
+(обе source set) — **exit 0**.
+
+- `OrderPurpose.kt` — формат enum приведён к стилю проекта (`CloseReason.kt`):
+  параметр `val code: String,` на отдельных строках с trailing comma, entries с trailing comma,
+  `;` на отдельной строке перед `companion object`, конечный `\n`.
+- `RestOrderTransport.kt` — починен сломанный KDoc-отступ у `denyIfNotLiveApproved`
+  (`/**` был на 0, `*`-строки на 5 пробелов; стало `/**`+`*` на 4). Сломанный KDoc «съедал»
+  следующую сигнатуру → цепочка `function-signature`-ошибок (:78-80).
+- `StockEntryProfileTest.kt`/`WsOrderTransportTest.kt` — unit/test source set чист
+  (`ktlintTestSourceSetCheck` exit 0).
+
+Сопутствующее (см. «Закрытие ktlint-остатков»): интеграционные стабы `InvestorClearingIntegrationTest`
+и `RabbitMqTransportIntegrationTest` получили 7-й матчер `anyPurpose()` (закрытие pre-existing
+`InvalidUseOfMatchersException` от 56c1479b). Полный `integrationTest`: **100 тестов, 0 падений, 1 skipped**.

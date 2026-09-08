@@ -13,7 +13,9 @@ package com.trading.bot.client
  * build SHA бот обязан остаться способным выйти из открытой позиции (P1-a):
  * отказать в risk-reducing ордере опаснее, чем исполнить его.
  */
-enum class OrderPurpose(val code: String) {
+enum class OrderPurpose(
+    val code: String,
+) {
     /** Открытие/наращивание позиции — требует полного LIVE-approval. */
     ENTRY("entry"),
 
@@ -24,7 +26,8 @@ enum class OrderPurpose(val code: String) {
     SL("sl"),
 
     /** Размещение/замена биржевой take-profit заявки открытой позиции. */
-    TP("tp");
+    TP("tp"),
+    ;
 
     companion object {
         /** Значение из payload outbox ("entry"/"close"/"sl"/"tp"); null — неизвестно (трактуется как [ENTRY]). */

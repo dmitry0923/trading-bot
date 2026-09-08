@@ -146,27 +146,33 @@ class FuturesEntryProfile(
     }
 
     override suspend fun postSizingChecks(
-        ticker: String,
+        request: EntryRequest,
         direction: PositionDirection,
-        entryPrice: BigDecimal,
         size: PositionSizeResult,
         openPositions: List<Position>,
-        accountId: Long?,
     ): String? {
+        val ticker = request.ticker
         if (size.quantity < 1) return "ZERO_RISK_SIZE"
         val spec = instrumentsConfig.find(ticker)
-        // Фьючерс — забалансовый инструмент: кандидат в портфельные лимиты входит
-        // по марже (GO × qty), а не по полному номиналу контракта. Иначе даже один
-        // контракт Si (номинал 92k) превышал бы 100% gross от SIM AUM (50k).
-        // Акции — полный notional (симметрично StockEntryProfile.postSizingChecks).
-        val candidateNotional =
-            if (spec != null && spec.type == "FUTURES") {
-                spec.go.multiply(BigDecimal(size.quantity))
-            } else {
-                spec?.notional(size.quantity, entryPrice)
-                    ?: entryPrice.multiply(BigDecimal(size.quantity))
-            }
-        return if (risk.exceedsPortfolioLimits(candidateNotional, direction, openPositions, accountId)) "PORTFOLIO_LIMIT" else null
+        // P0-аудит (разделение exposure и margin): портфельные лимиты Gross/Net
+        // считаются по РЕАЛЬНОЙ рыночной экспозиции (market notional = цена ×
+        // lotSize × qty), а НЕ по ГО. GO — залог, а не directional exposure;
+        // заменять notional на GO нельзя (занижает ценовой риск). Требуемая маржа
+        // контролируется отдельным гейтом [RiskManagementService.exceedsMarginUtilization]
+        // по фактическому ГО (size.marginRequired = actual currentGo × qty из сайзера).
+        val marketNotional =
+            spec?.notional(size.quantity, request.entryPrice)
+                ?: request.entryPrice.multiply(BigDecimal(size.quantity))
+
+        // Маржинальная загрузка: существующие фьючерсные позиции по ГО + кандидат
+        // (actual currentGo × qty) против maxMarginUsagePercent% от депозита аккаунта.
+        val existingMargin = openPositions.sumOf { risk.marginOfPosition(it) }
+        val candidateMargin = size.marginRequired
+        if (risk.exceedsMarginUtilization(request.portfolioMoney, existingMargin, candidateMargin)) {
+            return "PORTFOLIO_MARGIN_LIMIT"
+        }
+
+        return if (risk.exceedsPortfolioLimits(marketNotional, direction, openPositions, request.accountId)) "PORTFOLIO_LIMIT" else null
     }
 
     override fun buildOrderParams(

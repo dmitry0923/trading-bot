@@ -42,6 +42,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
@@ -351,7 +352,24 @@ class StrategyService(
         // или с non-finite силой (NaN из LLM-советника) -> HOLD. Раньше
         // `coerceAtLeast` раздувал слабые сигналы до порога — гейт не блокировал
         // ничего, а сила сигнала в истории/Kelly-сайзинге была фальшивой.
-        val gated = StrategyDecision.gatedByConfidence(decision, snapshot.currentPrice, gateConf)
+        val staleDecision = !isSignalFresh(ticker, decision, snapshot)
+        if (staleDecision) {
+            // P1-аудит (stale-decision после LLM): пока LLM-советник отвечал, рыночные
+            // данные могли устареть / цена уйти от сигнального уровня / спред расшириться.
+            // Исполнять такой сигнал «в старую цену» нельзя — снимаем в HOLD. Повторная
+            // (свежая) проверка цены/спреда/возраста происходит и в DecisionEngine
+            // (MarketDataGate + fresh snapshot на входе), здесь — на уровне публикации.
+            logger.warn {
+                "Stale signal rejected $ticker/$timeframe after advisor (LLM latency) — decision ${decision.action} -> HOLD"
+            }
+            meterRegistry.counter("strategy.signal_stale", Tags.of("ticker", ticker)).increment()
+        }
+        val gated =
+            if (staleDecision) {
+                StrategyDecision.hold(snapshot.currentPrice, "STALE_AFTER_ADVISOR")
+            } else {
+                StrategyDecision.gatedByConfidence(decision, snapshot.currentPrice, gateConf)
+            }
         if (gated.action == StrategyAction.HOLD && decision.action != StrategyAction.HOLD) {
             meterRegistry.counter("strategy.low_confidence", Tags.of("ticker", ticker)).increment()
             logger.info { "Holding $ticker/$timeframe — decision below confidence threshold $gateConf" }
@@ -439,6 +457,83 @@ class StrategyService(
             "Strategy $ticker/$timeframe: ${gated.action} @ ${gated.targetPrice} " +
                 "via ${result.winnerId} (adaptive conf=$adaptiveConf, regime=${regime?.describe() ?: "n/a"}, advisor=${advisorVerdict.verdict})"
         }
+    }
+
+    /**
+     * P1-аудит (stale-decision после LLM): свежесть executable-сигнала.
+     *
+     * Пока LLM-советник отвечал, рыночные данные могли устареть / цена уйти от
+     * сигнального уровня / спред расшириться. Этот метод повторно запрашивает
+     * свежий снапшот и проверяет:
+     *  - возраст исходного снапшота (базы сигнала) <= [TradingConfig.signalMaxAgeMs];
+     *  - отклонение свежей цены от сигнальной (targetPrice) <= [TradingConfig.signalMaxPriceDeviationPercent];
+     *  - спред (ask-bid)/mid <= [TradingConfig.signalMaxSpreadPercent] (если bid/ask есть).
+     *
+     * При HOLD-решении входа нет — свежесть не критична (true). Не соответствует —
+     * сигнал снимается в HOLD до публикации (повторная защита — fresh snapshot в
+     * DecisionEngine на входе).
+     */
+    private suspend fun isSignalFresh(
+        ticker: String,
+        decision: StrategyDecision,
+        snapshot: MarketSnapshot,
+    ): Boolean {
+        if (decision.action == StrategyAction.HOLD) return true
+
+        // 1. Возраст снапшота, на котором строился сигнал.
+        val ageMs = Duration.between(snapshot.timestamp, Instant.now()).toMillis()
+        if (ageMs > tradingConfig.signalMaxAgeMs) {
+            logger.debug { "Signal stale: snapshot age ${ageMs}ms > ${tradingConfig.signalMaxAgeMs}ms for $ticker" }
+            return false
+        }
+
+        // 2. Свежий снапшот для проверки цены/спреда.
+        val fresh =
+            alorClient.getMarketSnapshot(ticker)
+                ?: run {
+                    logger.warn { "Signal freshness: no fresh snapshot for $ticker after advisor" }
+                    return false
+                }
+        val freshPrice = fresh.currentPrice
+        val target = decision.targetPrice
+        if (target > BigDecimal.ZERO && freshPrice > BigDecimal.ZERO) {
+            val deviationPct =
+                freshPrice
+                    .subtract(target)
+                    .abs()
+                    .divide(target, 6, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal("100"))
+                    .toDouble()
+            if (deviationPct > tradingConfig.signalMaxPriceDeviationPercent) {
+                logger.warn {
+                    "Signal stale after advisor: price $freshPrice deviated ${String.format("%.2f", deviationPct)}% " +
+                        "from target $target for $ticker (max=${tradingConfig.signalMaxPriceDeviationPercent}%)"
+                }
+                return false
+            }
+        }
+
+        // 3. Спред не шире лимита.
+        val bid = fresh.bid
+        val ask = fresh.ask
+        if (bid != null && ask != null && bid > BigDecimal.ZERO && ask >= bid) {
+            val mid = bid.add(ask).divide(BigDecimal("2"), 8, RoundingMode.HALF_UP)
+            if (mid > BigDecimal.ZERO) {
+                val spreadPct =
+                    ask
+                        .subtract(bid)
+                        .divide(mid, 8, RoundingMode.HALF_UP)
+                        .multiply(BigDecimal("100"))
+                if (spreadPct.toDouble() > tradingConfig.signalMaxSpreadPercent) {
+                    logger.warn {
+                        "Signal stale after advisor: spread ${String.format("%.2f", spreadPct.toDouble())}% " +
+                            "> ${tradingConfig.signalMaxSpreadPercent}% for $ticker"
+                    }
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     /**

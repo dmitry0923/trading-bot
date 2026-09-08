@@ -3,6 +3,7 @@ package com.trading.bot.integration
 import com.trading.bot.application.TradingBlockReason
 import com.trading.bot.application.TradingGate
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderPurpose
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
@@ -98,6 +99,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyBoolean(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-close-${System.nanoTime()}")
             Mockito
@@ -314,6 +316,7 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                         Mockito.anyString(),
                         Mockito.anyString(),
                         Mockito.anyBoolean(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-si-${System.nanoTime()}")
         }
@@ -371,5 +374,11 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
                 ),
             )
         }
+    }
+
+    @Suppress("ReplaceCallWithBinaryOperator")
+    private fun anyPurpose(): OrderPurpose {
+        Mockito.any(OrderPurpose::class.java)
+        return OrderPurpose.ENTRY
     }
 }

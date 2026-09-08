@@ -231,19 +231,86 @@ class RiskManagementServiceThresholdTest {
     }
 
     @Test
-    fun `futures exposure is measured by margin not full notional`() {
-        // R1-регрессия: фьючерс — забалансовый инструмент. Кандидат Si (GO 15k, qty 1)
-        // входит по марже 15k за контракт, а не по полному номиналу 92k. При SIM AUM
-        // 50k и gross-лимите 100% вход по GO разрешён (15k < 50k), по номиналу — DENY.
+    fun `futures market exposure is measured by market notional in portfolio gates`() {
+        // P0-аудит: портфельные лимиты GROSS/NET оперируют РЫНОЧНОЙ экспозицией
+        // (market notional), а не ГО. Кандидат Si со значение 15k (внутри 100%-лимита
+        // от AUM 50k) — ALLOW, полный номинал/большая экспозиция 92k — DENY.
         val config = RiskConfig().apply { maxGrossExposurePercent = 100.0 }
         Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
         val s = service(config = config)
         val open = emptyList<Position>()
 
-        // margin = 15000 × 1 = 15000 < 50000 (100%) → allowed.
+        // market exposure 15000 < 50000 (100%) → allowed.
         assertFalse(s.exceedsPortfolioLimits(BigDecimal("15000"), PositionDirection.LONG, open, null))
 
-        // Тот же Si при полном номинале 92000 превысил бы 100% — был бы заблокирован.
+        // market exposure 92000 > 50000 (100%) → DENY.
         assertTrue(s.exceedsPortfolioLimits(BigDecimal("92000"), PositionDirection.LONG, open, null))
+    }
+
+    @Test
+    fun `margin utilization gate blocks when GO exceeds margin budget`() {
+        // P0-аудит: ОТДЕЛЬНЫЙ маржинальный гейт контролирует залоговую загрузку
+        // (GO × qty) против maxMarginUsagePercent% от депозита. Не зависит от
+        // directional/market exposure.
+        val registry = SimpleMeterRegistry()
+        val config = RiskConfig().apply { maxMarginUsagePercent = 60.0 }
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
+        val s = service(config = config, registry = registry)
+
+        // существующие фьючерсы 0, кандидат GO 30k → 60% от 50k = 30k → на границе → allowed.
+        assertFalse(s.exceedsMarginUtilization(BigDecimal("50000"), BigDecimal.ZERO, BigDecimal("30000")))
+        // кандидат GO 31k при существующих 0 → 31k > 30k (60%) → BLOCK.
+        assertTrue(s.exceedsMarginUtilization(BigDecimal("50000"), BigDecimal.ZERO, BigDecimal("31000")))
+        assertEquals(1.0, registry.counter("risk.portfolio.margin_utilization.blocked").count())
+    }
+
+    @Test
+    fun `margin utilization gate accounts for existing open futures margin`() {
+        val registry = SimpleMeterRegistry()
+        val config = RiskConfig().apply { maxMarginUsagePercent = 60.0 }
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
+        val s = service(config = config, registry = registry)
+
+        // существующие фьючерсы уже держат 25k ГО; кандидат 10k → сумма 35k > 30k (60% 50k) → BLOCK.
+        assertTrue(s.exceedsMarginUtilization(BigDecimal("50000"), BigDecimal("25000"), BigDecimal("10000")))
+        // существующие 20k + кандидат 10k = 30k → на границе → allowed.
+        assertFalse(s.exceedsMarginUtilization(BigDecimal("50000"), BigDecimal("20000"), BigDecimal("10000")))
+    }
+
+    @Test
+    fun `marginOfPosition returns marginUsed for futures and zero for stocks`() {
+        val config = RiskConfig()
+        Mockito.`when`(aumProvider.latestAumResult(anyOrNull())).thenReturn(AumProvider.AumResult.Available(BigDecimal("50000"), 0))
+        val s = service(config = config)
+
+        val futuresWithMargin =
+            Position(
+                ticker = "CNYRUBF",
+                direction = PositionDirection.LONG,
+                quantity = 2,
+                entryPrice = BigDecimal("12.787"),
+                marginUsed = BigDecimal("2000"),
+            )
+        assertEquals(BigDecimal("2000"), s.marginOfPosition(futuresWithMargin))
+
+        val futuresFallbackStaticGo =
+            Position(
+                ticker = "CNYRUBF",
+                direction = PositionDirection.LONG,
+                quantity = 2,
+                entryPrice = BigDecimal("12.787"),
+                marginUsed = null,
+            )
+        // fallback = статический spec.go (850) × qty 2 = 1700.
+        assertEquals(BigDecimal("1700"), s.marginOfPosition(futuresFallbackStaticGo))
+
+        val stock =
+            Position(
+                ticker = "SBER",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("300"),
+            )
+        assertEquals(BigDecimal.ZERO, s.marginOfPosition(stock))
     }
 }

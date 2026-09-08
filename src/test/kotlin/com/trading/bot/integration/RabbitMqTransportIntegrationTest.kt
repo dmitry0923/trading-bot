@@ -1,6 +1,7 @@
 package com.trading.bot.integration
 
 import com.trading.bot.client.AlorClient
+import com.trading.bot.client.OrderPurpose
 import com.trading.bot.config.OutboxRabbitProperties
 import com.trading.bot.model.entity.OrderOutbox
 import com.trading.bot.model.entity.OutboxStatus
@@ -89,6 +90,7 @@ class RabbitMqTransportIntegrationTest : AbstractTestContainerTest() {
                         anyBigDecimal(),
                         Mockito.anyString(),
                         Mockito.anyString(),
+                        anyPurpose(),
                     ),
                 ).thenReturn("ord-rabbit-int")
         }
@@ -122,6 +124,7 @@ class RabbitMqTransportIntegrationTest : AbstractTestContainerTest() {
                     anyBigDecimal(),
                     Mockito.anyString(),
                     Mockito.anyString(),
+                    anyPurpose(),
                 )
         }
     }
@@ -162,6 +165,12 @@ class RabbitMqTransportIntegrationTest : AbstractTestContainerTest() {
     private fun anyBigDecimal(): BigDecimal {
         Mockito.any(BigDecimal::class.java)
         return BigDecimal.ZERO
+    }
+
+    @Suppress("ReplaceCallWithBinaryOperator")
+    private fun anyPurpose(): OrderPurpose {
+        Mockito.any(OrderPurpose::class.java)
+        return OrderPurpose.ENTRY
     }
 
     private fun payload(

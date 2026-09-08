@@ -334,7 +334,7 @@ class DecisionEngine(
         // Сайзинг (Kelly для акций, маржа/риск для фьючерсов).
         val size = profile.sizePosition(signal, entryPrice, request)
 
-        profile.postSizingChecks(ticker, direction, entryPrice, size, openPositions, accountId)?.let { reason ->
+        profile.postSizingChecks(request, direction, size, openPositions)?.let { reason ->
             logger.warn { "Post-sizing filter reject $ticker: $reason" }
             meterRegistry
                 .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", reason))

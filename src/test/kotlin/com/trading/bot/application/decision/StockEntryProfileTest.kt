@@ -55,6 +55,18 @@ class StockEntryProfileTest {
             liveFrozenStrategyResolver = mock<LiveFrozenStrategyResolver>(),
         )
 
+    private fun request(): EntryRequest =
+        EntryRequest(
+            ticker = "CNYRUB_TOM",
+            action = StrategyAction.BUY,
+            entryPrice = BigDecimal("12.42"),
+            direction = PositionDirection.LONG,
+            portfolioMoney = BigDecimal("50000"),
+            currentGo = BigDecimal.ZERO,
+            atr = null,
+            openPositions = emptyList(),
+        )
+
     // ── matches ─────────────────────────────────────────────
 
     @Test
@@ -538,12 +550,10 @@ class StockEntryProfileTest {
             val size = PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, null)
             val result =
                 profile.postSizingChecks(
-                    "CNYRUB_TOM",
+                    request(),
                     PositionDirection.LONG,
-                    BigDecimal("12.42"),
                     size,
                     emptyList(),
-                    null,
                 )
             assertEquals("ZERO_RISK_SIZE", result)
         }
@@ -555,12 +565,10 @@ class StockEntryProfileTest {
             whenever(risk.exceedsPortfolioLimits(any(), any(), any(), any())).thenReturn(false)
             val result =
                 profile.postSizingChecks(
-                    "CNYRUB_TOM",
+                    request().copy(accountId = 5L),
                     PositionDirection.LONG,
-                    BigDecimal("12.42"),
                     size,
                     emptyList(),
-                    5L,
                 )
             assertNull(result)
         }
@@ -572,12 +580,10 @@ class StockEntryProfileTest {
             whenever(risk.exceedsPortfolioLimits(any(), any(), any(), any())).thenReturn(true)
             val result =
                 profile.postSizingChecks(
-                    "CNYRUB_TOM",
+                    request().copy(accountId = 5L),
                     PositionDirection.LONG,
-                    BigDecimal("12.42"),
                     size,
                     emptyList(),
-                    5L,
                 )
             assertEquals("PORTFOLIO_LIMIT", result)
         }

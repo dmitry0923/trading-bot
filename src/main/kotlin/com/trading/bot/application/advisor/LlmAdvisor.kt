@@ -1,5 +1,6 @@
 package com.trading.bot.application.advisor
 
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.advisor.AdvisorRiskLevel
 import com.trading.bot.domain.advisor.AdvisorVerdict
 import com.trading.bot.domain.advisor.AdvisorVerdictType
@@ -14,6 +15,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import org.springframework.stereotype.Component
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
@@ -47,6 +49,7 @@ class LlmAdvisor(
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    private val tradingConfig: TradingConfig,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -110,18 +113,33 @@ class LlmAdvisor(
                 )
 
             val prompt = promptRegistry.getTemplate("advisor", version)
+            // P1-аудит: жёсткий дедлайн LLM-советника ([TradingConfig.advisorBudgetMs]).
+            // Если LLM задержался — советник возвращает NEUTRAL (fail-open), сигнал
+            // идёт без поправки. LLM НИКОГДА не должен добавлять латентность в
+            // order-execution correctness: решение — по детерминированной стратегии,
+            // советник — параллельный фильтр с бюджетом ~1 сек.
             val resp =
-                llmClient.complete(
-                    agent = "advisor",
-                    ticker = context.ticker,
-                    prompt = prompt,
-                    variables = variables,
-                    fingerprint = fingerprint,
-                    temperature = 0.1,
-                )
+                try {
+                    withTimeout(tradingConfig.advisorBudgetMs) {
+                        llmClient.complete(
+                            agent = "advisor",
+                            ticker = context.ticker,
+                            prompt = prompt,
+                            variables = variables,
+                            fingerprint = fingerprint,
+                            temperature = 0.1,
+                        )
+                    }
+                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                    logger.warn(e) { "Advisor LLM timed out after ${tradingConfig.advisorBudgetMs}ms on ${context.ticker} -> NEUTRAL" }
+                    meterRegistry.counter("advisor.timeout", Tags.of("ticker", context.ticker)).increment()
+                    null
+                }
 
             val verdict =
-                if (resp.isFallback) {
+                if (resp == null) {
+                    AdvisorVerdict.fallback("ADVISOR_TIMEOUT")
+                } else if (resp.isFallback) {
                     logger.info { "LLM unavailable for advisory on ${context.ticker}, signal proceeds unchanged" }
                     AdvisorVerdict.fallback("LLM_UNAVAILABLE")
                 } else {
@@ -134,7 +152,16 @@ class LlmAdvisor(
                     }
                 }
 
-            logAndReturn(verdict, context.ticker, context.cycleId, start, resp.content, resp.tokensUsed, resp.fromCache, resp.storageKey)
+            logAndReturn(
+                verdict,
+                context.ticker,
+                context.cycleId,
+                start,
+                resp?.content ?: "(timeout)",
+                resp?.tokensUsed ?: 0,
+                resp?.fromCache ?: false,
+                resp?.storageKey,
+            )
         }
 
     /**

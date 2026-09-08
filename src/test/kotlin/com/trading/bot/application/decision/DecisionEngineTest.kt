@@ -645,12 +645,10 @@ class DecisionEngineTest {
         ): PositionSizeResult = size
 
         override suspend fun postSizingChecks(
-            ticker: String,
+            request: EntryRequest,
             direction: PositionDirection,
-            entryPrice: BigDecimal,
             size: PositionSizeResult,
             openPositions: List<Position>,
-            accountId: Long?,
         ): String? = postSizingReason
 
         override fun buildOrderParams(

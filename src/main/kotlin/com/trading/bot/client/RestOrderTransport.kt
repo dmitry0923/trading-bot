@@ -62,7 +62,7 @@ class RestOrderTransport(
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
-/**
+    /**
      * Execution interlock (P1): в LIVE-режиме реальный ордер уходит на биржу ТОЛЬКО
      * для тикера, чей runtime-фrintprиnt стратегии совпадает с одобренным
      * DeploymentGate (per-ticker approval + strategy fingerprint). Несоответствие —

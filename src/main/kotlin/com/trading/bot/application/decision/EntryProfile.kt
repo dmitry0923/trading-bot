@@ -90,12 +90,10 @@ interface EntryProfile {
      *   вызывающая сторона обязана такой же accountId проставить в openPositions (P1-аудит).
      */
     suspend fun postSizingChecks(
-        ticker: String,
+        request: EntryRequest,
         direction: PositionDirection,
-        entryPrice: BigDecimal,
         size: PositionSizeResult,
         openPositions: List<Position>,
-        accountId: Long?,
     ): String?
 
     /** Сборка параметров заявки из размера и данных входа. */

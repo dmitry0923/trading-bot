@@ -240,7 +240,19 @@ class CloseFillProcessor(
                     return true
                 }
                 fresh.cumulativeCloseFillQty = report.cumulativeFilledQty
-                applyCloseExecution(fresh, delta, report.avgPrice!!, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
+                val closePrice =
+                    report.avgPrice
+                        ?: run {
+                            meterRegistry
+                                .counter("$metricPrefix.close.price_estimated", Tags.of("ticker", fresh.ticker))
+                                .increment()
+                            logger.warn {
+                                "Close fill without avgPrice for ${fresh.ticker}: P&L estimated at " +
+                                    "mark-to-market price (currentPrice/entryPrice fallback)"
+                            }
+                            fresh.currentPrice ?: fresh.entryPrice
+                        }
+                applyCloseExecution(fresh, delta, closePrice, fresh.closeReason ?: CloseReason.EXECUTION_FILL)
             }
             return true
         }

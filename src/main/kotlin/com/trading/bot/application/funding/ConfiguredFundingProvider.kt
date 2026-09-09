@@ -3,7 +3,10 @@ package com.trading.bot.application.funding
 import com.trading.bot.config.InstrumentsConfig
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * CONFIG-источник funding: фиксированное
@@ -17,17 +20,18 @@ import java.time.LocalDateTime
 @Component
 class ConfiguredFundingProvider(
     private val instrumentsConfig: InstrumentsConfig,
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) : FundingProvider {
     override suspend fun currentSnapshot(ticker: String): FundingSnapshot {
         val value = instrumentsConfig.find(ticker)?.fundingPerClearing() ?: BigDecimal.ZERO
         return FundingSnapshot(
             ticker = ticker,
-            clearingDate = java.time.LocalDate.now(),
+            clearingDate = LocalDate.now(clock),
             rawValue = value,
             unit = FundingUnit.RUB_PER_CONTRACT_PER_CLEARING,
             valueRubPerContractPerClearing = value,
             source = FundingSource.CONFIG,
-            timestamp = LocalDateTime.now(),
+            timestamp = LocalDateTime.now(clock),
         )
     }
 

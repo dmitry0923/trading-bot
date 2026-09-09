@@ -9,9 +9,11 @@ import org.springframework.web.reactive.function.client.WebClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * LIVE-источник funding из MOEX ISS: запрашивает [FundingConfig.moexUrl] (плейсхолдер
@@ -33,6 +35,7 @@ class MoexFundingProvider(
     private val fundingConfig: FundingConfig,
     private val instrumentsConfig: InstrumentsConfig,
     private val objectMapper: ObjectMapper,
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) : FundingProvider {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -61,12 +64,12 @@ class MoexFundingProvider(
             }
             FundingSnapshot(
                 ticker = ticker,
-                clearingDate = LocalDate.now(),
+                clearingDate = LocalDate.now(clock),
                 rawValue = rawValue,
                 unit = FundingUnit.RAW_UNKNOWN,
                 valueRubPerContractPerClearing = rawValue.multiply(fundingConfig.moexLotMultiplier),
                 source = FundingSource.MOEX,
-                timestamp = LocalDateTime.now(),
+                timestamp = LocalDateTime.now(clock),
             )
         } catch (e: Exception) {
             logger.warn(e) { "Funding (MOEX) fetch failed for $ticker" }

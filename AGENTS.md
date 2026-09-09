@@ -87,9 +87,17 @@
 - LLM: p95 > 1 s warning (`LLMHighLatency`), p99 > 3 s (`LLMSleeping`) — `llm_latency_seconds`;
 - LIVE-guard blocking: `entry.rejected{reason=LIVE_TICKER_NOT_ALLOWED}` и др.
 
-## Калибровки (production-референс)
+## Калибровки (research-референс; НЕ production-настройки)
+
+> Все параметры этого раздела — результат research-бэктестов и в LIVE **не воспроизводятся**
+> напрямую: live-сайзинг управляется `AdaptiveRiskService` (Kelly, `RiskConfig`/`application.yml`),
+> лимиты/риск-кэпсы — разделом «Актуальные параметры (production, 2026-09)» выше. Каждая таблица
+> ниже помечена, что именно является research-параметром бэктест-сайзера.
 
 ### Акции (365д, x5, SL=2%/TP=15%, conf=0.6)
+
+**Research-параметры** (x5/leverage, SL/TP %, conf) — только параметры бэктест-сайзера, в live
+заменяются Kelly+ATR-стопами.
 
 | Ticker | Return | PF | WR | MDD | Trades |
 |--------|--------|----|----|-----|--------|
@@ -111,6 +119,9 @@
 
 Для фьючерсов панельные SL%/TP%/leverage не работают — действуют `riskPerTradePercent`,
 `futuresMaxContractsPerPosition`, `slPoints`, `tpPoints` (SL/TP в пунктах цены). Калибровка 2026-08:
+
+**Research-параметры** (risk 11%, maxC 33) — параметры бэктест-сайзера; в live действуют
+`max-contracts-per-position=1` и Kelly/`RiskConfig` (см. «Актуальные параметры» выше).
 
 | Ticker | Параметры | Return | PF | WR | MDD | Trades |
 |--------|-----------|--------|----|----|-----|--------|
@@ -220,6 +231,7 @@
 | 2026-09-08 | Издержки/funding 1 (`futures-cost-audit`) | LIVE-маржа без spec.go fallback; `FundingCosts`; сплит broker/exchange+slippage; docs 15/16; daily-loss docs; maxC 1 | 1363 |
 | 2026-09-08 | Издержки/funding 2 (`futures-margin-funding-audit`) | side-specific GO; риск-снапшот; `FundingProvider` (MOEX); slippage в риск-бюджете | 1384 |
 | 2026-09-09 | CNYRUBF 365д донакачка + gate (`research-wfa-cnyrubf`) | retention 90д → 730д; WFA/holdout/MC на 365д; фикс бага `passed` в `DeploymentGate`; фикс YAML `db.changelog-master`; скрипт `research_wfa_cnyrubf.ps1` | RESEARCH_ONLY |
+| 2026-09-09 | P0-1 + код-P1 по аудиту `8b4ebd67` | P0-1 `report.avgPrice!!` → mark-to-market fallback + метрика `close.price_estimated` (регресс-тесты); P1 Clock `Europe/Moscow` в funding-провайдерах; `README_PRODUCTION_ARCHITECTURE.md` (дисклеймер RESEARCH_ONLY); research/production разделение в AGENTS.md | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).

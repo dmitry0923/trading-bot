@@ -5,6 +5,7 @@ import com.trading.bot.application.OrderBuilder
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.PortfolioRiskEngine
 import com.trading.bot.domain.risk.PortfolioRiskRequest
 import com.trading.bot.domain.risk.RiskVerdict
@@ -70,6 +71,7 @@ class DecisionEngine(
     private val portfolioRiskEngine: PortfolioRiskEngine,
     private val positionRepo: PositionRepository,
     private val meterRegistry: MeterRegistry,
+    private val tradingConfig: TradingConfig,
     private val profiles: List<EntryProfile>,
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
@@ -114,6 +116,9 @@ class DecisionEngine(
         gateway: ExecutionGateway,
     ) {
         if (signal.action != StrategyAction.BUY && signal.action != StrategyAction.SELL) return
+        if (!isLiveTickerAllowed(signal.ticker)) {
+            return
+        }
         val profile =
             profiles.firstOrNull { it.matches(signal.ticker) }
                 ?: run {
@@ -475,6 +480,28 @@ class DecisionEngine(
                     "sl=${decision.stopLoss} tp=${decision.takeProfit}"
             }
         }
+    }
+
+    /**
+     * LIVE-guard (P0): в режиме LIVE вход разрешён ТОЛЬКО для тикеров из
+     * [TradingConfig.liveTickersAllowlist] (fail-closed). Пустой список в LIVE =
+     * запрещены ВСЕ входы (нет конфигурационной ошибки «разрешено всё»).
+     * Не одобренные/не в списке тикеры отклоняются ДО взятия локов и любых
+     * риск-проверок. В SIMULATION-режиме гейт не влияет.
+     */
+    private fun isLiveTickerAllowed(ticker: String): Boolean {
+        if (tradingConfig.mode != "LIVE") return true
+        if (ticker in tradingConfig.liveTickersAllowlist) return true
+        logger.error {
+            "LIVE ENTRY BLOCKED for $ticker — ticker not in liveTickersAllowlist " +
+                "${tradingConfig.liveTickersAllowlist} (LIVE-guard, fail-closed)"
+        }
+        meterRegistry
+            .counter(
+                "entry.rejected",
+                Tags.of("ticker", ticker, "reason", "LIVE_TICKER_NOT_ALLOWED"),
+            ).increment()
+        return false
     }
 
     /**

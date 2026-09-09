@@ -10,6 +10,7 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
@@ -22,7 +23,8 @@ import java.time.LocalDateTime
  * RUB/контракт).
  *
  * Недоступность (пустой URL / ошибка API / отсутствие столбца / невалидное число) →
- * null → [FundingSnapshotService] переходит на provisional CONFIG fallback (метрика).
+ * null → [FundingSnapshotService] помечает клиринги за сегодня как FUNDING_UNKNOWN
+ * (метрика `funding.live.provider_unavailable`); в LIVE CONFIG не подставляется.
  * Эндпоинт/поле/множитель — PROVISIONAL, сверяются с фактическими данными MOEX ДО LIVE
  * (docs/16).
  */
@@ -59,6 +61,7 @@ class MoexFundingProvider(
             }
             FundingSnapshot(
                 ticker = ticker,
+                clearingDate = LocalDate.now(),
                 rawValue = rawValue,
                 unit = FundingUnit.RAW_UNKNOWN,
                 valueRubPerContractPerClearing = rawValue.multiply(fundingConfig.moexLotMultiplier),

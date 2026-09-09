@@ -10,6 +10,7 @@ import com.trading.bot.model.PositionDirection
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.ObjectMapper
@@ -43,6 +44,45 @@ class AlorFuturesClientFreshnessTest {
             assertEquals(0, BigDecimal("850").compareTo(first!!))
             assertEquals(0, BigDecimal("850").compareTo(second!!))
             assertEquals(1, ctx.goHits.get(), "second call within TTL must not hit the API")
+        } finally {
+            ctx.server.stop(0)
+        }
+    }
+
+    @Test
+    fun `live GO publishes cache age metric for monitoring`() {
+        val ctx =
+            liveServer(
+                goBody = """{"long": {"initialMargin": "850"}}""",
+                summariesBody = """{"moneyAmount": "50000"}""",
+                maxGoAgeMs = 80,
+            )
+        try {
+            runBlocking { ctx.client.getFuturesGO("CNYRUBF") }
+
+            val freshAge =
+                ctx.meterRegistry
+                    .find("futures.go_cache_age_ms")
+                    .tags("fresh", "true")
+                    .gauges()
+                    .firstOrNull()
+            assertEquals(0.0, freshAge?.value() ?: -1.0, 0.0, "fresh GO cache age must be 0ms")
+
+            Thread.sleep(150)
+            // после TTL кэш устарел, но не феился (сервер жив) — следующий вызов обновит (age 0).
+            runBlocking { ctx.client.getFuturesGO("CNYRUBF") }
+
+            Thread.sleep(150)
+            ctx.fail.set(true)
+            runBlocking { ctx.client.getFuturesGO("CNYRUBF") }
+
+            val staleAge =
+                ctx.meterRegistry
+                    .find("futures.go_cache_age_ms")
+                    .tags("fresh", "false")
+                    .gauges()
+                    .firstOrNull()
+            assertNotNull(staleAge, "stale (API-down) path must publish cache age with fresh=false")
         } finally {
             ctx.server.stop(0)
         }
@@ -157,6 +197,7 @@ class AlorFuturesClientFreshnessTest {
         val server: HttpServer,
         val goHits: AtomicInteger,
         val fail: AtomicBoolean,
+        val meterRegistry: SimpleMeterRegistry,
         val client: AlorFuturesClient,
     )
 
@@ -192,9 +233,10 @@ class AlorFuturesClientFreshnessTest {
                 portfolio = "P1"
             }
         val riskConfig = RiskConfig().apply { this.maxGoAgeMs = maxGoAgeMs }
+        val meterRegistry = SimpleMeterRegistry()
         val client =
-            AlorFuturesClient(alorConfig, tradingConfig, ObjectMapper(), instrumentsConfig, SimpleMeterRegistry(), riskConfig)
-        return Ctx(server, goHits, fail, client)
+            AlorFuturesClient(alorConfig, tradingConfig, ObjectMapper(), instrumentsConfig, meterRegistry, riskConfig)
+        return Ctx(server, goHits, fail, meterRegistry, client)
     }
 
     private fun respond(

@@ -20,6 +20,7 @@ import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
@@ -68,15 +69,22 @@ fun interface PnlCalculator {
          * @param pointValue стоимость 1 пункта цены в RUB (ticker → pointValue)
          * @param commissionRub комиссия за контракт за сторону в RUB (ticker → commissionRub).
          *        Вычитается как qty × commissionRub × 2 (вход + выход). null → 0.
-         * @param fundingRubPerContractPerDay funding за 1 контракт за 1 клиринг
-         *        (ticker → funding). Вычитается как funding × qty × число клирингов,
-         *        которые позиция пережила между [Position.openedAt] и закрытием.
-         *        null → 0 (инструмент без funding, e.g. Si/RI).
+         * @param fundingPerClearing TOTAL funding за 1 контракт за ВСЕ пережитые
+         *        [Position.openedAt]-…-[Position.closedAt] клиринги
+         *        (ticker, List<LocalDate> → RUB). Ожидается СУММА per-clearing
+         *        значений (пересчитывается через [FundingCosts.clearingDates]);
+         *        в SIM/backtest — config-ставка × число клирингов. Вычитается как
+         *        funding × qty. null → 0 (инструмент без funding, e.g. Si/RI).
+         * @param onFundingUnknown колбэк, вызываемый когда [fundingPerClearing] вернул
+         *        null при непустом списке клирингов — LIVE FUNDING_UNKNOWN (MOEX
+         *        недоступен на часть клирингов): P&L посчитан без авторитетного
+         *        funding, сделка помечается funding-uncertain ([Position.fundingUnknown]).
          */
         fun futures(
             pointValue: (String) -> BigDecimal,
             commissionRub: (String) -> BigDecimal? = { null },
-            fundingRubPerContractPerDay: (String) -> BigDecimal? = { null },
+            fundingPerClearing: (String, List<LocalDate>) -> BigDecimal? = { _, _ -> null },
+            onFundingUnknown: (Position) -> Unit = {},
         ): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
                 val pv = pointValue(pos.ticker)
@@ -88,14 +96,16 @@ fun interface PnlCalculator {
                 val commPerSide = commissionRub(pos.ticker) ?: BigDecimal.ZERO
                 val totalCommission = commPerSide.multiply(qty).multiply(BigDecimal(2))
                 val clearings =
-                    FundingCosts.clearingsCrossed(
+                    FundingCosts.clearingDates(
                         pos.openedAt,
                         pos.closedAt ?: LocalDateTime.now(),
                     )
+                val fundingTotal = fundingPerClearing(pos.ticker, clearings)
+                if (fundingTotal == null && clearings.isNotEmpty()) onFundingUnknown(pos)
                 val funding =
-                    fundingRubPerContractPerDay(pos.ticker)
+                    fundingTotal
                         ?.takeIf { it > BigDecimal.ZERO }
-                        ?.let { it.multiply(qty).multiply(BigDecimal(clearings)) }
+                        ?.multiply(qty)
                         ?: BigDecimal.ZERO
                 pricePnl.subtract(totalCommission).subtract(funding)
             }

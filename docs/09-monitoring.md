@@ -170,6 +170,20 @@ histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[5m])) by (le))
 | `outbox.sent` | Counter | `type` | успешно отправленные |
 | `outbox.failed` | Counter | `type` | упавшие |
 
+#### LIVE-guard / данные (вход)
+
+| Метрика | Тип | Labels | Описание |
+|---|---|---|---|
+| `market.data.age_ms` | Gauge | `ticker` | возраст последней котировки (гейт 15 s, fail-closed) |
+| `market.data.spread_percent` | Gauge | `ticker` | спред % (гейт 0.1%, cap 0.5%) |
+| `futures.go_cache_age_ms` | Gauge | `ticker, side, fresh` | возраст кэша ГО (TTL 30 s, сайзинг fail-closed) |
+| `futures.balance_cache_age_ms` | Gauge | `portfolio` | возраст кэша свободных средств (TTL 30 s) |
+| `funding.live.provider_unavailable` | Counter | `ticker` | MOEX funding недоступен (LIVE) |
+| `funding.live.snapshot_stale_config_fallback` | Counter | `ticker` | снапшот устарел — маскируется CONFIG-значением (не в LIVE P&L) |
+| `futures.go` | Gauge | `ticker, side` | ГО стороны (long/short) |
+| `futures.portfolio.money` | Gauge | `portfolio` | свободные средства |
+| `entry.rejected` | Counter | `ticker, reason` | причины отклонения входа (включая `LIVE_TICKER_NOT_ALLOWED`, `PORTFOLIO_MARGIN_DATA_UNAVAILABLE`) |
+
 #### Slippage
 
 | Метрика | Тип | Labels | Описание |
@@ -283,13 +297,27 @@ Dashboard «Trading Bot - A/B Experiment» (uid `experiment-ab`) автомат�
 
 | Alert | PromQL |
 |---|---|
-| `LLMLatencySpike` | p95(`llm_latency_seconds`) > 20 s за 15 мин |
+| `LLMHighLatency` | p95(`llm_latency_seconds`) > 1 s за 5 мин (advisor-бюджет ~1 s) |
+| `LLMSleeping` | p95(`llm_latency_seconds`) > 3 s за 5 мин |
 | `LLMCacheMissHigh` | cache hit rate < 30% за 30 мин |
 | `HighSlippage` | `increase(trade_slippage_rub_total[1h]) > 1000` |
 | `WsReconnectLoop` | `increase(alor_ws_reconnect_total[1h]) > 10` |
 | `TradingPaused` | `sum(strategy_pause) > 0` за 1ч |
 | `PositionRiskExposure` | открытых позиций >= 80% от max-open-positions |
 | `ConsecutiveLosses` | `feedback` статистика: maxConsecutiveLosses >= 4 |
+| `HighSpread` | `market.data.spread_percent > 0.1` (гейт входа, warning) |
+| `MarketDataStale` | `market.data.age_ms > 10000` (warning, гейт 15 s) |
+| `FuturesGoCacheAge` | `futures.go_cache_age_ms > 20000` (warning, TTL 30 s) |
+| `FuturesBalanceCacheAge` | `futures.balance_cache_age_ms > 20000` (warning, TTL 30 s) |
+| `OpiBlockingEntries` | `entry.rejected` по причине OP_* (> N за 5 мин) — чрезмерные блокировки данных |
+
+### Критические (спред/cap, синхронизированы с гейтами)
+
+| Alert | PromQL |
+|---|---|
+| `SpreadCapExceeded` | `market.data.spread_percent > 0.5` (жёсткий cap — никогда не допустим в LIVE) |
+| `MarketDataBlocked` | `market.data.age_ms > 15000` (гейт входа fail-closed) |
+| `FuturesMarginStale` | `futures.go_cache_age_ms > 30000` (maxGoAgeMs — сайзинг fail-closed) |
 
 ### Каналы доставки
 
@@ -527,11 +555,14 @@ docker run -p 9090:9090 -v $PWD/prometheus.yml:/etc/prometheus/prometheus.yml pr
 | SLO | Цель | Измеритель |
 |---|---|---|
 | Аптайм | 99.5% | `up` + alert BotDown |
-| Латентность LLM p95 | < 20 c | `llm_latency_seconds` |
+| Латентность LLM p95 | < 1 c (advisor-бюджет) | `llm_latency_seconds` |
 | Cache hit rate | > 60% | PromQL раздела 9.1 |
 | Доля fallback | < 5% вызовов | `llm_fallback_activated_total / llm_tokens_used_total` |
 | WS-доставка | 0 «вечных» разрывов | `alor_ws_disconnected_total` |
 | Потеря событий | 0 | `event_published` vs `event_handled` |
+| Свежесть market data | ≤ 15 c (гейт входа) | `market.data.age_ms` |
+| Свежесть ГО/баланса (LIVE) | ≤ 30 c (fail-closed) | `futures.go_cache_age_ms` / `futures.balance_cache_age_ms` |
+| Спред | ≤ 0.1% (гейт входа), cap 0.5% | `market.data.spread_percent` |
 
 ## 9.9. Чеклист запуска мониторинга
 
@@ -542,3 +573,5 @@ docker run -p 9090:9090 -v $PWD/prometheus.yml:/etc/prometheus/prometheus.yml pr
 - [ ] Тест алерта `DailyLossLimitReached` (временно `max-daily-loss-rub=0`)
 - [ ] Проверены PromQL из раздела 9.1 (нет NaN/пустых серий)
 - [ ] `GET /api/v1/risk/daily-pnl` в мониторинге как текстовый probe
+- [ ] LIVE-guard: алерт `SpreadCapExceeded` / `MarketDataBlocked` / `FuturesMarginStale`
+      активны (пороги синхронизированы с гейтами — prometheus-alerting-rules.yml)

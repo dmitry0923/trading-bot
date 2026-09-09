@@ -201,7 +201,7 @@ class PnlCalculatorCommissionTest {
         PnlCalculator.futures(
             pointValue = { BigDecimal("1000.0") },
             commissionRub = { BigDecimal("1.0") },
-            fundingRubPerContractPerDay = { BigDecimal("0.5") },
+            fundingPerClearing = { _, clearings -> BigDecimal("0.5").multiply(BigDecimal(clearings.size)) },
         )
 
     private fun futuresPosCrossedClearing(): Position =
@@ -231,14 +231,34 @@ class PnlCalculatorCommissionTest {
     }
 
     @Test
-    fun `futures funding absent (null) has no deduction`() {
+    fun `funding zero means no funding instrument and no unknown flag`() {
+        var unknownFired = false
         val calc =
             PnlCalculator.futures(
                 pointValue = { BigDecimal("1000.0") },
                 commissionRub = { BigDecimal("1.0") },
-                fundingRubPerContractPerDay = { null },
+                fundingPerClearing = { _, _ -> BigDecimal.ZERO },
+                onFundingUnknown = { unknownFired = true },
             )
         val pnl = calc.pnl(futuresPosCrossedClearing(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
         assertEquals(0, pnl.compareTo(BigDecimal("1494")))
+        // Si/RI: funding=0 — это «инструмент без funding», НЕ FUNDING_UNKNOWN.
+        assertEquals(false, unknownFired)
+    }
+
+    @Test
+    fun `funding null on crossed clearings fires funding unknown marker`() {
+        var unknownFired = false
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                commissionRub = { BigDecimal("1.0") },
+                fundingPerClearing = { _, _ -> null },
+                onFundingUnknown = { unknownFired = true },
+            )
+        val pnl = calc.pnl(futuresPosCrossedClearing(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        // P&L без funding deduction, но сделка помечается funding-uncertain.
+        assertEquals(0, pnl.compareTo(BigDecimal("1494")))
+        assertEquals(true, unknownFired)
     }
 }

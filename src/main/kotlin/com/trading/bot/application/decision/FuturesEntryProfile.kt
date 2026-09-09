@@ -122,8 +122,9 @@ class FuturesEntryProfile(
                 candidateGo = currentGo,
                 openFuturesGoPerTicker = openFuturesGoPerTicker,
             )
-        // До входа обновляем funding-снапшот тикера для P&L: MOEX при наличии,
-        // иначе provisional CONFIG fallback (метрика funding.live.provider_unavailable).
+        // До входа обновляем funding-снапшот тикера для P&L: MOEX при наличии;
+        // в LIVE при недоступности MOEX клиринг помечается FUNDING_UNKNOWN
+        // (метрика funding.live.provider_unavailable), CONFIG не подставляется.
         fundingSnapshotService.refresh(signal.ticker)
         return EntryRequest(
             ticker = signal.ticker,

@@ -62,6 +62,7 @@ class PositionRepository(
             closedAt = row.get("closed_at", LocalDateTime::class.java),
             cycleId = row.get("cycle_id", String::class.java),
             accountId = row.get("account_id", Long::class.javaObjectType),
+            fundingUnknown = row.get("funding_unknown", Boolean::class.javaObjectType) ?: false,
         )
 
     suspend fun findByStatus(status: PositionStatus): List<Position> {
@@ -389,6 +390,29 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /**
+     * Маркер FUNDING_UNKNOWN (P0/P1-аудит funding): LIVE-снапшот MOEX на один из
+     * пережитых позицией клирингов отсутствовал → P&L посчитан без авторитетного
+     * funding. Флаг пишется отдельным UPDATE (не через [transitionToClosed]) —
+     * сигнатура закрытия стабильна для 15+ call-site'ов.
+     */
+    suspend fun setFundingUnknown(
+        id: Long,
+        fundingUnknown: Boolean,
+    ) {
+        val sql =
+            """
+            UPDATE positions SET funding_unknown = :fundingUnknown
+            WHERE id = :id
+            """.trimIndent()
+        databaseClient
+            .sql(sql)
+            .bind("id", id)
+            .bind("fundingUnknown", fundingUnknown)
+            .then()
+            .awaitSingleOrNull()
+    }
+
     suspend fun findClosedSince(since: LocalDateTime): List<Position> {
         val sql = "SELECT * FROM positions WHERE status != 'OPEN' AND closed_at >= :since ORDER BY closed_at DESC"
         return databaseClient
@@ -554,6 +578,7 @@ class PositionRepository(
             .bindOrNull("closedAt", position.closedAt)
             .bindOrNull("cycleId", position.cycleId)
             .bindOrNull("accountId", position.accountId)
+            .bind("fundingUnknown", position.fundingUnknown)
 
     private suspend fun insert(position: Position): Position {
         val sql =
@@ -564,14 +589,14 @@ class PositionRepository(
                 alor_order_id, close_order_id, sl_order_id, tp_order_id, sl_order_price, tp_order_price,
                 sl_pending_replace, tp_pending_replace, sl_cancel_pending, tp_cancel_pending,
                 close_cancel_pending, pending_close, pending_entry, realized_pnl, close_reason,
-                cumulative_close_fill_qty, opened_at, closed_at, cycle_id, account_id)
+                cumulative_close_fill_qty, opened_at, closed_at, cycle_id, account_id, funding_unknown)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
                 :alorOrderId, :closeOrderId, :slOrderId, :tpOrderId, :slOrderPrice, :tpOrderPrice,
                 :slPendingReplace, :tpPendingReplace, :slCancelPending, :tpCancelPending,
                 :closeCancelPending, :pendingClose, :pendingEntry, :realizedPnl, :closeReason,
-                :cumulativeCloseFillQty, :openedAt, :closedAt, :cycleId, :accountId)
+                :cumulativeCloseFillQty, :openedAt, :closedAt, :cycleId, :accountId, :fundingUnknown)
             RETURNING id
             """.trimIndent()
         val id =
@@ -603,7 +628,7 @@ class PositionRepository(
                 pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
                 close_reason = :closeReason, cumulative_close_fill_qty = :cumulativeCloseFillQty,
                 opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId,
-                account_id = :accountId
+                account_id = :accountId, funding_unknown = :fundingUnknown
             WHERE id = :id
             """.trimIndent()
         databaseClient

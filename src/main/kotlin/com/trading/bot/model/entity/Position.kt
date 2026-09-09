@@ -82,4 +82,5 @@ data class Position(
     var closedAt: LocalDateTime? = null,
     var cycleId: String? = null,
     var accountId: Long? = null,
+    var fundingUnknown: Boolean = false,
 )

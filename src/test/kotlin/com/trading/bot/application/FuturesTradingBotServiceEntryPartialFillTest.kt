@@ -11,6 +11,7 @@ import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.LeverageConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.FuturesStopResolver
@@ -128,6 +129,7 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             portfolioRiskEngine,
             positionRepo,
             meterRegistry,
+            TradingConfig().apply { mode = "SIMULATION" },
             listOf(futuresEntryProfile),
             distributedLockService,
             distributedLockConfig,

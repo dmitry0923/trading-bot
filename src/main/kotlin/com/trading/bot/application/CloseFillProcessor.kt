@@ -441,6 +441,13 @@ class CloseFillProcessor(
             logger.warn { "Finalize skip ${pos.ticker}: position already closed by another path" }
             return
         }
+        if (pos.fundingUnknown) {
+            positionRepo.setFundingUnknown(positionId, true)
+            logger.warn {
+                "FUNDING_UNKNOWN persisted on ${pos.ticker} close: P&L=$totalPnl computed " +
+                    "without authoritative per-clearing funding (MOEX unavailable)"
+            }
+        }
         pos.status = targetStatus
         pos.closedAt = java.time.LocalDateTime.now()
         pos.closePrice = closePrice

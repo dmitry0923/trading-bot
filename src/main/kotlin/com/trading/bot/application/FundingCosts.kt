@@ -1,20 +1,20 @@
 package com.trading.bot.application
 
 import java.time.DayOfWeek
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 
 /**
- * Модель фьючерсного funding (CNYRUBF) — количество клирингов, которые пережила
- * позиция, как база для вычитания funding из P&L сделки.
+ * Модель фьючерсного funding (CNYRUBF) — моменты начисления funding между
+ * открытием и закрытием позиции, как база для вычитания funding из P&L сделки.
  *
  * MOEX публикует funding по валютному фьючерсу CNYRUBF как ежедневную величину
  * за контракт (с учётом лота 1000 CNY); начисление/списание происходит на
- * клиринге. Точное значение величины funding — конфигурационный параметр
- * [com.trading.bot.config.InstrumentsConfig.InstrumentSpec.fundingRubPerContractPerDay]
- * (provisional, сверяется по данным MOEX/выпискам). Здесь — только МОМЕНТЫ
- * начисления: количество клирингов, которые позиция пережила между открытием
- * и закрытием.
+ * клиринге. Конкретное значение funding за КАЖДЫЙ клиринг — из снапшотов
+ * [com.trading.bot.application.funding.FundingSnapshotService] (LIVE — MOEX,
+ * SIM/backtest — конфигурационный параметр). Здесь — только МОМЕНТЫ начисления:
+ * даты клирингов, которые позиция пережила между открытием и закрытием.
  *
  * Модель (консервативный оцен-подход к стоимости удержания):
  *  - клиринг/начисление funding — в 18:45 МСК (основной клиринг FORTS);
@@ -32,28 +32,37 @@ object FundingCosts {
     private val CLEARING_TIME: LocalTime = LocalTime.of(18, 45)
 
     /**
-     * Количество клирингов, через которые позиция держалась: дни d, для которых
-     * открытие было до клиринга дня d, а закрытие — после.
+     * Даты клирингов, которые позиция пережила: дни d, для которых открытие было
+     * до клиринга дня d, а закрытие — после. Упорядочены по возрастанию.
      *
      * @param openedAt момент открытия позиции (локальное время МСК)
      * @param closedAt момент закрытия позиции (локальное время МСК)
-     * @return число начислений funding (0 для внутридневной позиции)
+     * @return список дат начислений funding (пуст для внутридневной позиции)
      */
-    fun clearingsCrossed(
+    fun clearingDates(
         openedAt: LocalDateTime,
         closedAt: LocalDateTime,
-    ): Int {
-        if (closedAt <= openedAt) return 0
-        var count = 0
+    ): List<LocalDate> {
+        if (closedAt <= openedAt) return emptyList()
+        val result = ArrayList<LocalDate>()
         var day = openedAt.toLocalDate()
         val last = closedAt.toLocalDate()
         while (!day.isAfter(last)) {
             if (day.dayOfWeek != DayOfWeek.SATURDAY && day.dayOfWeek != DayOfWeek.SUNDAY) {
                 val clearing = day.atTime(CLEARING_TIME)
-                if (openedAt.isBefore(clearing) && closedAt.isAfter(clearing)) count++
+                if (openedAt.isBefore(clearing) && closedAt.isAfter(clearing)) result.add(day)
             }
             day = day.plusDays(1)
         }
-        return count
+        return result
     }
+
+    /**
+     * Количество клирингов, через которые позиция держалась (0 для внутридневной
+     * позиции). Эквивалент размеру [clearingDates].
+     */
+    fun clearingsCrossed(
+        openedAt: LocalDateTime,
+        closedAt: LocalDateTime,
+    ): Int = clearingDates(openedAt, closedAt).size
 }

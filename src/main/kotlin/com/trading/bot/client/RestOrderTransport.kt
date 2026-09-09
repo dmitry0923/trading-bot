@@ -79,6 +79,16 @@ class RestOrderTransport(
         purpose: OrderPurpose,
     ) {
         if (!isLive) return
+        if (purpose == OrderPurpose.ENTRY && ticker !in tradingConfig.liveTickersAllowlist) {
+            logger.error {
+                "LIVE ENTRY BLOCKED for $ticker — ticker not in liveTickersAllowlist " +
+                    "${tradingConfig.liveTickersAllowlist} (LIVE-guard, fail-closed)"
+            }
+            meterRegistry.counter("alor.order.blocked", Tags.of("reason", "LIVE_TICKER_NOT_ALLOWED", "ticker", ticker)).increment()
+            throw OrderInterlockDeniedException(
+                "LIVE order BLOCKED for $ticker — ticker not in liveTickersAllowlist (LIVE-guard, final, not retryable)",
+            )
+        }
         if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return
         logger.error {
             "LIVE order BLOCKED for $ticker (purpose=$purpose) — ticker not approved and no open position (execution interlock)"

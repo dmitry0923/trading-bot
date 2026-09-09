@@ -266,20 +266,12 @@ resilience4j:
 
 trading:
   mode: ${TRADING_MODE:SIMULATION}
-  tickers:
-    - Si
-    - RI
-    - CNYRUBF
-    - SBER
-    - GAZP
-    - LKOH
-    - VTBR
-    - ROSN
-    - NVTK
-    - PLZL
-    - MGNT
-    - TATN
-    - CNYRUB_TOM
+  # LIVE-guard (P0): в LIVE-режиме вход разрешён ТОЛЬКО этим тикерам (fail-closed —
+  # пустой список = запрещены все входы). В SIMULATION не влияет.
+  live-tickers-allowlist: ${LIVE_TICKERS_ALLOWLIST:CNYRUBF}
+  # Полный SIM-список. В LIVE-деплое CI форсит TRADING_TICKERS=CNYRUBF
+  # (одно значение — только CNYRUBF, см. job deploy-live в ci.yml).
+  tickers: ${TRADING_TICKERS:Si,RI,CNYRUBF,SBER,GAZP,LKOH,VTBR,ROSN,NVTK,PLZL,MGNT,TATN,CNYRUB_TOM}
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
   monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}

@@ -46,6 +46,39 @@ class AlorFuturesClient(
     private val riskConfig: RiskConfig,
 ) {
     private val logger = KotlinLogging.logger {}
+
+    /**
+     * Публикует возраст кэша GO (мс) для мониторинга freshness (P0-аудит).
+     * [riskConfig.maxGoAgeMs] = 30 с — алерты Prometheus настроены на 20/30 с:
+     * `futures.go_cache_age_ms`. При [fresh]=false значение сохраняется отдельной
+     * gauge-меткой, чтобы алерт оставался сигнальным (старый кэш ≠ свежий ответ).
+     */
+    internal fun publishGoCacheAge(
+        ticker: String,
+        direction: PositionDirection?,
+        ageMs: Long,
+        fresh: Boolean,
+    ) {
+        MutableGauges.set(
+            meterRegistry,
+            "futures.go_cache_age_ms",
+            ageMs.toDouble(),
+            Tags.of("ticker", ticker, "side", direction?.name ?: "LONG", "fresh", fresh.toString()),
+        )
+    }
+
+    private fun publishBalanceCacheAge(
+        portfolio: String,
+        ageMs: Long,
+    ) {
+        MutableGauges.set(
+            meterRegistry,
+            "futures.balance_cache_age_ms",
+            ageMs.toDouble(),
+            Tags.of("portfolio", portfolio),
+        )
+    }
+
     private val webClient = WebClient.create()
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
@@ -98,8 +131,10 @@ class AlorFuturesClient(
         val now = System.currentTimeMillis()
         val cached = goCache[ticker]
         if (freshGo(cached, now)) {
-            return cached!!.forDirection(direction) ?: run {
+            publishGoCacheAge(ticker, direction, now - cached!!.fetchedAtMs, fresh = true)
+            return cached.forDirection(direction) ?: run {
                 logger.warn { "getFuturesGO: side margin missing in cache for $ticker direction=$direction" }
+                publishGoCacheAge(ticker, direction, now - cached.fetchedAtMs, fresh = false)
                 null
             }
         }
@@ -125,8 +160,10 @@ class AlorFuturesClient(
             val side = go.forDirection(direction)
             if (side == null) {
                 logger.warn { "getFuturesGO: side margin missing for $ticker direction=$direction (no cross-side fallback in LIVE)" }
+                publishGoCacheAge(ticker, direction, now - go.fetchedAtMs, fresh = false)
                 return null
             }
+            publishGoCacheAge(ticker, direction, 0, fresh = true)
             MutableGauges.set(
                 meterRegistry,
                 "futures.go",
@@ -138,6 +175,8 @@ class AlorFuturesClient(
         } catch (e: Exception) {
             // Устаревший кэш в LIVE НЕ переиспользуется: вход блокируется (fail-closed).
             logger.warn(e) { "getFuturesGO failed for $ticker (no config fallback in LIVE, stale cache rejected)" }
+            val staleAge = goCache[ticker]?.let { now - it.fetchedAtMs }
+            if (staleAge != null) publishGoCacheAge(ticker, direction, staleAge, fresh = false)
             null
         }
     }
@@ -178,7 +217,10 @@ class AlorFuturesClient(
 
         val now = System.currentTimeMillis()
         val cached = moneyCache[portfolio]
-        if (freshTimed(cached, now)) return cached!!.value
+        if (freshTimed(cached, now)) {
+            publishBalanceCacheAge(portfolio, now - cached!!.fetchedAtMs)
+            return cached.value
+        }
 
         return try {
             val raw: String =
@@ -198,12 +240,15 @@ class AlorFuturesClient(
             }
 
             moneyCache[portfolio] = TimedValue(money, System.currentTimeMillis())
+            publishBalanceCacheAge(portfolio, 0)
             MutableGauges.set(meterRegistry, "futures.portfolio.money", money.toDouble())
             logger.info { "Portfolio money = $money ₽" }
             money
         } catch (e: Exception) {
             // Устаревший кэш в LIVE НЕ переиспользуется: вход блокируется (fail-closed).
             logger.warn(e) { "getPortfolioMoney failed (no fallback in LIVE, stale cache rejected)" }
+            val staleAge = moneyCache[portfolio]?.let { now - it.fetchedAtMs }
+            if (staleAge != null) publishBalanceCacheAge(portfolio, staleAge)
             null
         }
     }

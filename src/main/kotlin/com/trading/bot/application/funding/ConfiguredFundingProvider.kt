@@ -9,9 +9,10 @@ import java.time.LocalDateTime
  * CONFIG-источник funding: фиксированное
  * [InstrumentsConfig.InstrumentSpec.fundingRubPerContractPerDay].
  *
- * Единственный источник в SIM/backtest; в LIVE — только явный fallback, когда MOEX
- * недоступен (метрика `funding.live.provider_unavailable`) — никогда не «тихий»
- * авторитет. См. [FundingSnapshotService].
+ * Единственный источник в SIM/backtest; в LIVE НЕ используется как авторитет
+ * (см. [FundingSnapshotService]: MOEX недоступен → FUNDING_UNKNOWN, метрика
+ * `funding.live.provider_unavailable`, никакой «тихой» подстановки 0.5). Здесь
+ * `value(ticker)` — синхронная SIM/backtest-ставка для расчёта P&L.
  */
 @Component
 class ConfiguredFundingProvider(
@@ -21,6 +22,7 @@ class ConfiguredFundingProvider(
         val value = instrumentsConfig.find(ticker)?.fundingPerClearing() ?: BigDecimal.ZERO
         return FundingSnapshot(
             ticker = ticker,
+            clearingDate = java.time.LocalDate.now(),
             rawValue = value,
             unit = FundingUnit.RUB_PER_CONTRACT_PER_CLEARING,
             valueRubPerContractPerClearing = value,

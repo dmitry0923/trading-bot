@@ -5,6 +5,7 @@ import com.trading.bot.application.OrderBuilder
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
 import com.trading.bot.domain.risk.PortfolioRiskEngine
@@ -76,6 +77,7 @@ class DecisionEngineTest {
     private val instrumentsConfig = InstrumentsConfig()
     private val netEvGate = PassThroughNetEvGate()
     private val entryLeaseRecoveryGate = EntryLeaseRecoveryGate(meterRegistry)
+    private val tradingConfig = TradingConfig().apply { mode = "SIMULATION" }
 
     private var gatewayCalls = 0
     private var gatewayQty: Int = -1
@@ -121,7 +123,10 @@ class DecisionEngineTest {
             gatewayOpened
         }
 
-    private fun engine(profile: FakeEntryProfile = FakeEntryProfile()): DecisionEngine =
+    private fun engine(
+        profile: FakeEntryProfile = FakeEntryProfile(),
+        config: TradingConfig = tradingConfig,
+    ): DecisionEngine =
         DecisionEngine(
             marketDataGate,
             alorClient,
@@ -129,6 +134,7 @@ class DecisionEngineTest {
             portfolioRiskEngine,
             positionRepo,
             meterRegistry,
+            config,
             listOf(profile),
             distributedLockService,
             distributedLockConfig,
@@ -142,9 +148,12 @@ class DecisionEngineTest {
             entryLeaseRecoveryGate,
         )
 
-    private fun signal(action: StrategyAction = StrategyAction.BUY): Signal =
+    private fun signal(
+        action: StrategyAction = StrategyAction.BUY,
+        ticker: String = "Si",
+    ): Signal =
         Signal(
-            ticker = "Si",
+            ticker = ticker,
             action = action,
             targetPrice = BigDecimal("101"),
             signalStrength = 0.8,
@@ -229,6 +238,51 @@ class DecisionEngineTest {
                 .counter("test.entry.rejected", Tags.of("ticker", "Si", "reason", "STALE_DATA"))
                 .count(),
         )
+    }
+
+    @Test
+    fun `live mode blocks entry for ticker outside allowlist`() {
+        val liveConfig =
+            TradingConfig().apply {
+                mode = "LIVE"
+            }
+        assertTrue(liveConfig.liveTickersAllowlist == listOf("CNYRUBF"))
+
+        runBlocking { engine(profile = FakeEntryProfile(), config = liveConfig).openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(
+            1.0,
+            meterRegistry
+                .counter("entry.rejected", Tags.of("ticker", "Si", "reason", "LIVE_TICKER_NOT_ALLOWED"))
+                .count(),
+        )
+    }
+
+    @Test
+    fun `live mode with empty allowlist blocks all entries fail-closed`() {
+        val liveConfig =
+            TradingConfig().apply {
+                mode = "LIVE"
+                liveTickersAllowlist = emptyList()
+            }
+
+        runBlocking { engine(profile = FakeEntryProfile(), config = liveConfig).openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+    }
+
+    @Test
+    fun `simulation mode ignores live allowlist`() {
+        val simConfig =
+            TradingConfig().apply {
+                mode = "SIMULATION"
+                liveTickersAllowlist = listOf("SBER")
+            }
+
+        runBlocking { engine(profile = FakeEntryProfile(), config = simConfig).openPosition(signal(), gateway()) }
+
+        assertEquals(1, gatewayCalls, "SIMULATION не ограничивает тикеры, allowlist только для LIVE")
     }
 
     @Test

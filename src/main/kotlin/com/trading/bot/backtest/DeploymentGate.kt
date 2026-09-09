@@ -216,20 +216,19 @@ object DeploymentGate {
 
         val holdout = criteria.holdout
         val holdoutPassed =
-            holdout?.passed ==
-                true.also { ok ->
-                    list +=
-                        DeploymentCheck(
-                            key = "holdout",
-                            label = "Финальный holdout",
-                            passed = ok,
-                            detail =
-                                holdout?.let {
-                                    "holdoutReturn=${fmt(it.holdout.totalReturn)} " +
-                                        "trades=${it.holdout.totalTrades} passable=${it.holdout.isPassable()}"
-                                } ?: "not run",
-                        )
-                }
+            (holdout?.passed == true).also { ok ->
+                list +=
+                    DeploymentCheck(
+                        key = "holdout",
+                        label = "Финальный holdout",
+                        passed = ok,
+                        detail =
+                            holdout?.let {
+                                "holdoutReturn=${fmt(it.holdout.totalReturn)} " +
+                                    "trades=${it.holdout.totalTrades} passable=${it.holdout.isPassable()}"
+                            } ?: "not run",
+                    )
+            }
         val holdoutSampleOk =
             (holdout?.holdout?.totalTrades ?: 0) >= criteria.requiredHoldoutTrades
         list +=
@@ -242,20 +241,19 @@ object DeploymentGate {
 
         val robustness = criteria.robustness
         val robustnessPassed =
-            robustness?.isRobust() ==
-                true.also { ok ->
-                    list +=
-                        DeploymentCheck(
-                            key = "robustness",
-                            label = "Monte Carlo + stress",
-                            passed = ok,
-                            detail =
-                                robustness?.let {
-                                    "mcRobust=${it.monteCarlo.isRobust()} p5=${fmt(it.monteCarlo.p5Return)} " +
-                                        "pLoss=${fmt(it.monteCarlo.probabilityOfLoss)} stressFailed=${it.stress.count { s -> !s.passable }}"
-                                } ?: "not run",
-                        )
-                }
+            (robustness?.isRobust() == true).also { ok ->
+                list +=
+                    DeploymentCheck(
+                        key = "robustness",
+                        label = "Monte Carlo + stress",
+                        passed = ok,
+                        detail =
+                            robustness?.let {
+                                "mcRobust=${it.monteCarlo.isRobust()} p5=${fmt(it.monteCarlo.p5Return)} " +
+                                    "pLoss=${fmt(it.monteCarlo.probabilityOfLoss)} stressFailed=${it.stress.count { s -> !s.passable }}"
+                            } ?: "not run",
+                    )
+            }
 
         return CheckBundle(
             list = list,

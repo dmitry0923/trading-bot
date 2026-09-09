@@ -8,20 +8,33 @@ import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
 import java.time.Duration
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentSkipListMap
 
 /**
- * Единая точка доступа к funding для P&L (P0-аудит).
+ * Единая точка доступа к funding для P&L (P0-аудит) — per-clearing модель.
  *
- * - LIVE: отдаёт MOEX-снапшот ([MoexFundingProvider]) с TTL [FundingConfig.moexTtlMs];
- *   при недоступности MOEX — provisional CONFIG fallback с метрикой
- *   `funding.live.provider_unavailable` (никогда «тихо»).
- * - SIM/backtest: CONFIG напрямую (фиксированное значение корректно для симуляции).
+ * Снапшоты хранятся СЕРИЕЙ по дате клиринга ([FundingSnapshot.clearingDate]):
+ * для каждого пережитого клиринга P&L позиции использует ЗНАЧЕНИЕ ИМЕННО ЭТОГО
+ * клиринга (сумму по [FundingCosts.clearingDates]), а не «текущее значение ×
+ * число клирингов». Серия пополняется при входе ([refresh]) и каждый день, пока
+ * позиция открыта (повторный [refresh] в стратегическом цикле).
  *
- * Снапшоты обновляются при входе (см.
- * [com.trading.bot.application.decision.FuturesEntryProfile.buildEntryRequest]);
- * синхронный [value] используется из горячего пути P&L без сетевых вызовов.
+ * Политика источника:
+ * - LIVE: авторитет только MOEX. Если MOEX недоступен (или на дату клиринга нет
+ *   авторитетного снапшота) — [fundingForClearings] возвращает null
+ *   (FUNDING_UNKNOWN) с ERROR-логом и метрикой `funding.live.clearing_unknown`;
+ *   CONFIG-значение в LIVE НЕ подставляется (никакого «тихого 0.5»). P&L такой
+ *   сделки вычислен без авторитетного funding (0 за неизвестные клиринги) —
+ *   сделка помечается как funding-uncertain на стороне вызывающего контура.
+ * - SIM/backtest: CONFIG напрямую (фиксированное значение за каждый клиринг
+ *   корректно для симуляции).
+ *
+ * [refresh] не делает сетевой запрос, если на сегодняшнюю дату клиринга уже есть
+ * свежий MOEX-снапшот (TTL [FundingConfig.moexTtlMs]) — серия накапливает ровно
+ * одно значение на дату, без холостых вызовов MOEX на каждый бот-цикл.
  */
 @Component
 class FundingSnapshotService(
@@ -32,43 +45,82 @@ class FundingSnapshotService(
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
-    private val cache = ConcurrentHashMap<String, FundingSnapshot>()
+    private val series = ConcurrentHashMap<String, ConcurrentSkipListMap<LocalDate, FundingSnapshot>>()
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
     /**
-     * Обновляет funding-снапшот тикера (вызывается на входе фьючерсной позиции,
-     * suspend-контекст). LIVE: MOEX при наличии, иначе CONFIG fallback + метрика.
+     * Обновляет funding-серию тикера (вызывается на входе фьючерсной позиции и в
+     * стратегическом цикле, suspend-контекст). В LIVE MOEX-снапшот записывается в
+     * серию под сегодняшней датой клиринга; недоступность MOEX — ERROR + метрика,
+     * серия не пополняется (CONFIG не используется).
+     *
+     * Сетевой вызов пропускается, если последний ПОЛУЧЕННЫЙ снапшот тикера —
+     * свежий MOEX (возраст <= [FundingConfig.moexTtlMs]): на один день накапливается
+     * одно значение, без холостых вызовов MOEX на каждый бот-цикл. На новый день
+     * возраст предыдущего снапшота > TTL → повторный запрос, значение попадает под
+     * новую дату клиринга.
      */
     suspend fun refresh(ticker: String) {
+        val latest = series[ticker]?.lastEntry()?.value
+        val freshMoex =
+            latest != null &&
+                latest.source == FundingSource.MOEX &&
+                Duration.between(latest.timestamp, LocalDateTime.now()).toMillis() <= fundingConfig.moexTtlMs
+        if (freshMoex) return
+
         if (isLive) {
             val live = moexFunding.currentSnapshot(ticker)
             if (live != null) {
-                cache[ticker] = live
+                series.computeIfAbsent(ticker) { ConcurrentSkipListMap() }[live.clearingDate] = live
                 return
             }
             meterRegistry.counter("funding.live.provider_unavailable", Tags.of("ticker", ticker)).increment()
-            logger.warn { "Funding (MOEX) unavailable for $ticker in LIVE — provisional config fallback" }
+            logger.error {
+                "Funding (MOEX) unavailable for $ticker in LIVE — per-clearing funding for today UNKNOWN, " +
+                    "P&L of crossing trades will be marked uncertain"
+            }
+            return
         }
-        cache[ticker] = configuredFunding.currentSnapshot(ticker)
+        val config = configuredFunding.currentSnapshot(ticker)
+        series.computeIfAbsent(ticker) { ConcurrentSkipListMap() }[config.clearingDate] = config
     }
 
     /**
-     * Funding за 1 контракт за 1 клиринг (RUB) для P&L (синхронно, без сетевых вызовов).
-     * Устаревший MOEX-снапшот (старше [FundingConfig.moexTtlMs]) авторитетом не считается —
-     * provisional CONFIG fallback + метрика `funding.live.snapshot_stale_config_fallback`.
+     * TOTAL funding за 1 контракт по всем пережитым [clearings] (RUB) для P&L
+     * (синхронно, без сетевых вызовов). Сумма значений ЗА КАЖДЫЙ клиринг.
+     *
+     * @return сумма per-clearing значений; null = FUNDING_UNKNOWN (LIVE: хотя бы
+     *   на один клиринг нет авторитетного MOEX-снапшота — CONFIG не подставляется,
+     *   ERROR/метрика). В SIM/backtest никогда null (фиксированная ставка).
      */
-    fun value(ticker: String): BigDecimal {
-        val snapshot = cache[ticker]
-        val ageMs =
-            snapshot
-                ?.timestamp
-                ?.let { Duration.between(it, LocalDateTime.now()).toMillis() }
-                ?: Long.MAX_VALUE
-        if (snapshot != null && snapshot.source == FundingSource.MOEX && ageMs > fundingConfig.moexTtlMs) {
-            meterRegistry.counter("funding.live.snapshot_stale_config_fallback", Tags.of("ticker", ticker)).increment()
-            return configuredFunding.value(ticker)
+    fun fundingForClearings(
+        ticker: String,
+        clearings: List<LocalDate>,
+    ): BigDecimal? {
+        if (clearings.isEmpty()) return BigDecimal.ZERO
+        val configured = configuredFunding.value(ticker)
+        if (configured <= BigDecimal.ZERO) return BigDecimal.ZERO
+        if (!isLive) return configured.multiply(BigDecimal(clearings.size))
+        val tickerSeries = series[ticker].orEmpty()
+        val missing = mutableListOf<LocalDate>()
+        var total = BigDecimal.ZERO
+        for (clearing in clearings) {
+            val snapshot = tickerSeries[clearing]
+            if (snapshot == null || snapshot.source != FundingSource.MOEX) {
+                missing.add(clearing)
+            } else {
+                total = total.add(snapshot.valueRubPerContractPerClearing)
+            }
         }
-        return snapshot?.valueRubPerContractPerClearing ?: configuredFunding.value(ticker)
+        if (missing.isNotEmpty()) {
+            meterRegistry.counter("funding.live.clearing_unknown", Tags.of("ticker", ticker)).increment()
+            logger.error {
+                "FUNDING_UNKNOWN $ticker clearings=$missing — no authoritative MOEX snapshot; " +
+                    "P&L расчёт без funding deduction (marked uncertain)"
+            }
+            return null
+        }
+        return total
     }
 }

@@ -32,6 +32,16 @@ import org.springframework.stereotype.Component
 @ConfigurationProperties(prefix = "trading")
 class TradingConfig {
     var mode: String = "SIMULATION"
+
+    /**
+     * Позиция-база только LIVE (LIVE-guard P0): список тикеров, которым разрешён
+     * РЕАЛЬНЫЙ вход в [mode] == "LIVE". Любой тикер вне списка в LIVE-режиме
+     * блокируется входом (fail-closed), даже если он есть в [tickers] и одобрен
+     * DeploymentGate. Пустой список в LIVE = ВСЕ входы запрещены (fail-closed —
+     * нет конфигурационной ошибки «разрешено всё»). В SIMULATION не влияет.
+     * Для первого LIVE-выхода — только CNYRUBF (калибровка).
+     */
+    var liveTickersAllowlist: List<String> = listOf("CNYRUBF")
     var tickers: List<String> = listOf("Si", "SBER", "GAZP", "LKOH", "VTBR", "ROSN", "NVTK", "PLZL", "MGNT", "TATN", "CNYRUB_TOM")
     var botIntervalMs: Long = 300000
     var strategyIntervalMs: Long = 600000

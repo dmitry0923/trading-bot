@@ -43,25 +43,48 @@ groups:
 
   - name: trading_bot_warning
     rules:
-      # HighSpread: спред > 2% (для CNY_RUB — критично)
+      # HighSpread: спред > 0.1% (LIVE-гейт signal-max-spread-percent = 0.1%).
+      # Спред > 0.5% — жёсткий потолок (cap) — аварийная пауза, не warning.
       - alert: HighSpread
-        expr: market_data_spread_percent > 2.0
+        expr: market.data.spread_percent > 0.1
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Abnormally wide spread on {{ $labels.ticker }}"
-          description: "Spread is {{ $value | printf \"%.3f\" }}% which exceeds 2% threshold."
+          summary: "Wide spread on {{ $labels.ticker }}"
+          description: "Spread is {{ $value | printf \"%.3f\" }}% which exceeds 0.1% live gate (cap 0.5%)."
 
-      # LLMHighLatency: LLM p95 > 20s
+      # SpreadCapExceeded: спред превысил жёсткий потолок 0.5% (вход в таких
+      # условиях невозможен — сигналы блокируются; ожидается 0).
+      - alert: SpreadCapExceeded
+        expr: market.data.spread_percent > 0.5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Spread cap (0.5%) exceeded on {{ $labels.ticker }}"
+          description: "Spread is {{ $value | printf \"%.3f\" }}% — entries blocked (degenerate case / no liquidity)."
+
+      # LLMHighLatency: LLM p95 > advisor-budget (1000 ms). Бюджет — жёсткий
+      # дедлайн советника; латентность выше него → советник NEUTRAL (fail-open).
       - alert: LLMHighLatency
-        expr: histogram_quantile(0.95, rate(llm_latency_seconds_bucket[5m])) > 20
+        expr: histogram_quantile(0.95, rate(llm_latency_seconds_bucket[5m])) > 1
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "LLM latency p95 is {{ $value | printf \"%.1f\" }}s"
-          description: "LLM response latency exceeds 20s SLO target."
+          summary: "LLM latency p95 is {{ $value | printf \"%.2f\" }}s"
+          description: "LLM response latency exceeds advisor budget (1s). Advisor returns NEUTRAL while slow."
+
+      # LLMSleeping: LLM p99 > 3s — деградация LLM-сервиса (не успевает в цикл).
+      - alert: LLMSleeping
+        expr: histogram_quantile(0.99, rate(llm_latency_seconds_bucket[5m])) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM latency p99 is {{ $value | printf \"%.2f\" }}s"
+          description: "LLM p99 above 3s — advisory layer degraded; signals still deterministic."
 
       # WsReconnectLoop: много реконнектов
       - alert: WsReconnectLoop
@@ -93,15 +116,58 @@ groups:
           summary: "OBI frequently blocking entries on {{ $labels.ticker }}"
           description: "OBI opposition rejection rate is {{ $value | printf \"%.3f\" }}/s."
 
-      # MarketDataStale: нет свежих данных > 2 минут
+      # MarketDataStale: нет свежих данных > 15 с (LIVE-гейт market-data-max-age-ms).
+      # 10 с — предупреждение, 15 с — порог блокировки входа.
       - alert: MarketDataStale
-        expr: market_data_age_ms > 120000
+        expr: market.data.age_ms > 10000
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "Market data stale for {{ $labels.ticker }}"
-          description: "Last data age is {{ $value | printf \"%.0f\" }}ms (> 2 minutes)."
+          description: "Last data age is {{ $value | printf \"%.0f\" }}ms (entries blocked at >15s)."
+
+      # MarketDataBlocked: свежесть упала за гейт (15 с) — входы по тикеру блокируются.
+      - alert: MarketDataBlocked
+        expr: market.data.age_ms > 15000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Market data stale beyond gate for {{ $labels.ticker }}"
+          description: "Data age {{ $value | printf \"%.0f\" }}ms > 15s gate — entries blocked (STALE_DATA)."
+
+      # FuturesGoCacheAge: возраст кэша ГО > 30 с (LIVE safety: вход fail-closed
+      # при устаревшем кэше). 20 с — предупреждение, 30 с — критично.
+      - alert: FuturesGoCacheAge
+        expr: futures.go_cache_age_ms > 20000
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Futures GO cache aging for {{ $labels.ticker }}"
+          description: "GO cache age {{ $value | printf \"%.0f\" }}ms (> 20s; fail-closed at 30s live gate)."
+
+      # FuturesMarginStale: ГО-кэш старше гейта 30 с — вход по тикеру в LIVE
+      # будет отклонён (getFuturesGO возвращает null).
+      - alert: FuturesMarginStale
+        expr: futures.go_cache_age_ms > 30000
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Futures GO cache stale beyond gate for {{ $labels.ticker }}"
+          description: "GO cache age {{ $value | printf \"%.0f\" }}ms > 30s — futures entries fail-closed (PORTFOLIO_MARGIN_DATA_UNAVAILABLE)."
+
+      # FuturesBalanceCacheAge: возраст кэша баланса (портфельные деньги) > 30 с.
+      - alert: FuturesBalanceCacheAge
+        expr: futures.balance_cache_age_ms > 20000
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Futures balance cache aging for {{ $labels.portfolio }}"
+          description: "Balance cache age {{ $value | printf \"%.0f\" }}ms (> 20s; fail-closed at 30s)."
 
       # TradingPaused: тикер на паузе
       - alert: TradingPaused

@@ -8,13 +8,16 @@ import java.math.BigDecimal
  * Конфигурация LIVE-funding (prefix = "funding").
  *
  * CNYRUBF funding — ДИНАМИЧЕСКАЯ величина биржи (MOEX); фиксированное
- * [InstrumentsConfig.InstrumentSpec.fundingRubPerContractPerDay] пригодно только для
- * SIM/backtest и как аварийный fallback (метрика `funding.live.provider_unavailable`).
+ * [InstrumentsConfig.InstrumentSpec.fundingRubPerContractPerDay] пригодно только
+ * для SIM/backtest. В LIVE при недоступности MOEX клиринг помечается
+ * FUNDING_UNKNOWN (метрика `funding.live.provider_unavailable`) — CONFIG НЕ
+ * подставляется (никакого «тихого 0.5»).
  *
  * LIVE-источник — MOEX ISS (или любой источник, отдающий ISS-таблицу columns/data):
  * - [moexUrl] — URL-шаблон; плейсхолдер `{ticker}` заменяется на тикер инструмента.
- *   Пустой → MOEX-источник выключен (вход НЕ блокируется, используется config-fallback
- *   с метрикой — funding не является триггером отказа ордера).
+ *   Пустой → MOEX-источник выключен (в LIVE все пережитые клиринги = FUNDING_UNKNOWN —
+ *   funding не является триггером отказа ордера, но P&L сделок по такому инструменту
+ *   без авторитетного funding помечается funding-uncertain).
  * - [moexColumn] — имя столбца funding в таблице источника.
  * - [moexLotMultiplier] — конвертация raw-значения → RUB/контракт/клиринг (CNYRUBF:
  *   публикуемая ставка × lot 1000 CNY). Все эндпоинт/поле/множитель — PROVISIONAL,

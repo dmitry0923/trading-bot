@@ -165,6 +165,31 @@ class DeploymentGateTest {
     fun `failing holdout - paper only`() {
         val decision = DeploymentGate.decide(criteria(holdout = holdout(passable = false)))
         assertEquals(DeploymentStatus.PAPER_ALLOWED, decision.status)
+        assertTrue(decision.checks.first { it.key == "holdout" }.passed == false)
+    }
+
+    @Test
+    fun `non-robust monte carlo - paper only and reported failed`() {
+        val mc =
+            strongBacktest().let {
+                val report =
+                    robustReport().copy(
+                        monteCarlo =
+                            MonteCarloResult(
+                                simulations = 1000,
+                                medianReturn = 0.05,
+                                p5Return = -0.08,
+                                p95Return = 0.15,
+                                avgReturn = 0.05,
+                                minReturn = -0.15,
+                                maxReturn = 0.20,
+                                probabilityOfLoss = 0.40,
+                            ),
+                    )
+                DeploymentGate.decide(criteria(robustness = report))
+            }
+        assertEquals(DeploymentStatus.PAPER_ALLOWED, mc.status)
+        assertTrue(mc.checks.first { it.key == "robustness" }.passed == false)
     }
 
     @Test

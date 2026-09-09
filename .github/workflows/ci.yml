@@ -4,6 +4,21 @@ on:
   push:
   pull_request:
     branches: [ main ]
+  # Ручной LIVE-деплой (P0, LIVE-guard): запускается ТОЛЬКО вручную через
+  # Actions UI / gh CLI и проходит через GitHub Environment "live" с
+  # required reviewers (настраивается в Settings → Environments) + подпись
+  # вручную значением LIVE_CONFIRM. Автодеплой на main — ТОЛЬКО SIMULATION;
+  # переключатель в LIVE на автопушке НЕ возможен (см. job deploy-sim).
+  workflow_dispatch:
+    inputs:
+      deploy_live:
+        description: "Deploy LIVE (CNYRUBF only). GitHub Environment 'live' защищает от неоправданного запуска."
+        type: boolean
+        default: false
+      live_confirmation:
+        description: "Подтверждение запуска LIVE-деплоя (ввести: LIVE_CONFIRM)"
+        type: string
+        required: false
 
 jobs:
   backend:
@@ -91,17 +106,22 @@ jobs:
       - name: TypeScript build
         run: npm run build
 
-  # Автодеплой на прод в Yandex Cloud.
-  # Запускается ТОЛЬКО после успешного прохождения backend+frontend (needs)
-  # и только при push (мерже) в main/master.
-  deploy:
-    name: Deploy to Yandex Cloud
+  # Автодеплой SIM-сборки (P0, LIVE-guard): запускается ТОЛЬКО после успешного
+  # backend+frontend (needs) и только при push (мерже) в main/master.
+  # Жёстко форсирует SIMULATION: даже если в GitHub-секретах лежит TRADING_MODE=LIVE,
+  # на автопушке в main бот НЕ поедет в LIVE (live-флаг переопределяется).
+  # LIVE-деплой — отдельный job deploy-live (вручную, с required reviewers).
+  deploy-sim:
+    name: Deploy SIM to Yandex Cloud
     needs: [backend, frontend]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     env:
       REGISTRY: cr.yandex/${{ secrets.YC_REGISTRY_ID }}
       TAG: ${{ github.sha }}
+      # LIVE-guard: на автопушке в main бот всегда SIMULATION. Значение нигде
+      # не переопределяется (из секрета TRADING_MODE не читается).
+      DEPLOY_MODE: SIMULATION
     steps:
       - uses: actions/checkout@v4
 
@@ -150,14 +170,13 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          # Явно передаём REGISTRY/TAG в удалённую оболочку, иначе
-          # $REGISTRY/$TAG на VM будут пустыми и compose упадёт.
-          envs: REGISTRY,TAG
+          envs: REGISTRY,TAG,DEPLOY_MODE
           script: |
             set -e
             cd /opt/trading-bot
 
-            # runtime-секреты пишем в .env (compose подхватит автоматически)
+            # runtime-секреты пишем в .env (compose подхватит автоматически).
+            # TRADING_MODE жёстко = DEPLOY_MODE (SIMULATION), НЕ из секрета.
             cat > .env <<'EOF'
             REGISTRY=${{ env.REGISTRY }}
             TAG=${{ env.TAG }}
@@ -165,7 +184,92 @@ jobs:
             ALOR_REFRESH_TOKEN=${{ secrets.ALOR_REFRESH_TOKEN }}
             LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
             LLM_API_KEY=${{ secrets.LLM_API_KEY }}
-            TRADING_MODE=${{ secrets.TRADING_MODE }}
+            TRADING_MODE=${{ env.DEPLOY_MODE }}
+            AUTH_USER=${{ secrets.AUTH_USER }}
+            AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
+            ANALYTICS_USER=${{ secrets.ANALYTICS_USER }}
+            ANALYTICS_PASSWORD=${{ secrets.ANALYTICS_PASSWORD }}
+            EOF
+
+            echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            docker image prune -f
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+  # LIVE-деплой (P0, LIVE-guard): ТОЛЬКО вручную (workflow_dispatch) и ТОЛЬКО
+  # через GitHub Environment "live" с required reviewers. Форсирует:
+  #   - TRADING_MODE=LIVE;
+  #   - TRADING_TICKERS и LIVE_TICKERS_ALLOWLIST = CNYRUBF (только один тикер);
+  #   - подпись подтверждения live_confirmation == "LIVE_CONFIRM" (защита от
+  #     ложных trigger'ов). image/tag те же, что собрал deploy-sim на том же SHA.
+  # Настройка репозитория: Settings → Environments → "live" → Required reviewers.
+  deploy-live:
+    name: Deploy LIVE (manual approval)
+    needs: [backend, frontend]
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.deploy_live == 'true' &&
+      github.event.inputs.live_confirmation == 'LIVE_CONFIRM' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: live
+      # при недоступности env или не-одобренных reviewers job не стартует
+      url: https://${{ secrets.VM_HOST }}
+    env:
+      REGISTRY: cr.yandex/${{ secrets.YC_REGISTRY_ID }}
+      TAG: ${{ github.sha }}
+      # LIVE-форсинг: единственный разрешённый тикер — CNYRUBF.
+      DEPLOY_MODE: LIVE
+      DEPLOY_TICKERS: CNYRUBF
+      DEPLOY_ALLOWLIST: CNYRUBF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "$HOME/yandex-cloud/bin" >> $GITHUB_PATH
+
+      - name: Authenticate to Yandex Cloud
+        run: |
+          echo "${{ secrets.YC_SA_JSON }}" > /tmp/sa.json
+          yc config profile create bot
+          yc config set service-account-key /tmp/sa.json
+          yc config set folder-id ${{ secrets.YC_FOLDER_ID }}
+          yc container registry configure-docker
+
+      - name: Copy compose files to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml"
+          target: /opt/trading-bot
+
+      - name: Deploy LIVE via SSH
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          envs: REGISTRY,TAG,DEPLOY_MODE,DEPLOY_TICKERS,DEPLOY_ALLOWLIST
+          script: |
+            set -e
+            cd /opt/trading-bot
+
+            cat > .env <<'EOF'
+            REGISTRY=${{ env.REGISTRY }}
+            TAG=${{ env.TAG }}
+            ALOR_TOKEN=${{ secrets.ALOR_TOKEN }}
+            ALOR_REFRESH_TOKEN=${{ secrets.ALOR_REFRESH_TOKEN }}
+            LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
+            LLM_API_KEY=${{ secrets.LLM_API_KEY }}
+            TRADING_MODE=${{ env.DEPLOY_MODE }}
+            TRADING_TICKERS=${{ env.DEPLOY_TICKERS }}
+            LIVE_TICKERS_ALLOWLIST=${{ env.DEPLOY_ALLOWLIST }}
             AUTH_USER=${{ secrets.AUTH_USER }}
             AUTH_PASSWORD=${{ secrets.AUTH_PASSWORD }}
             ANALYTICS_USER=${{ secrets.ANALYTICS_USER }}

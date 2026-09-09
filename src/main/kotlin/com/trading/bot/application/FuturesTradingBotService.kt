@@ -38,6 +38,7 @@ import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
+import java.math.BigDecimal
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -106,7 +107,8 @@ class FuturesTradingBotService(
                 PnlCalculator.futures(
                     pointValue = { ticker -> instrumentsConfig.pointValue(ticker) },
                     commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
-                    fundingRubPerContractPerDay = { ticker -> fundingSnapshotService.value(ticker) },
+                    fundingPerClearing = { ticker, clearings -> fundingSnapshotService.fundingForClearings(ticker, clearings) },
+                    onFundingUnknown = { pos -> pos.fundingUnknown = true },
                 ),
             instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
             metricPrefix = "futures",
@@ -241,6 +243,12 @@ class FuturesTradingBotService(
                             try {
                                 TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
                                 TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
+                                // per-clearing funding: пополняем серию снапшотов по дате клиринга,
+                                // пока позиция открыта (на даты, пережитые позицией, LIVE нужен
+                                // авторитетный MOEX-снапшот).
+                                if (instrumentsConfig.find(pos.ticker)?.fundingPerClearing()?.let { it > BigDecimal.ZERO } == true) {
+                                    fundingSnapshotService.refresh(pos.ticker)
+                                }
                                 engine.reconcilePosition(pos)
                             } catch (e: Exception) {
                                 logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }

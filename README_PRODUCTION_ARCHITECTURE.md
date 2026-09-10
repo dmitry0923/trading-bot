@@ -1,4 +1,10 @@
-# MMVB AI Trading Bot v2 — Self-Learning (Production Ready)
+# MMVB AI Trading Bot v2 — Architecture (Production-Grade Platform)
+
+> **Статус стратегии: RESEARCH_ONLY.** Платформа (ордерная архитектура, риск-контур,
+> LIVE-guard) — production-grade (по аудиту ~90–92%), но торговая стратегия CNYRUBF
+> **не одобрена для LIVE/PAPER** (валидация 2026-09-09, полная история 365д: WFA OOS
+> убыточен, consistency 0.5, сделок 20 < 100). Бот работает в research-режиме
+> paper; LIVE-входы блокируются `LIVE_TICKERS_ALLOWLIST` (fail-closed).
 
 ## Что нового в v2
 

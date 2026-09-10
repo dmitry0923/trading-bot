@@ -17,8 +17,11 @@ import java.nio.charset.StandardCharsets
 /**
  * P0-аудит (funding): MoexFundingProvider извлекает значение funding из ISS-ответа
  * (таблица columns/data) и конвертирует raw-значение во вход P&L
- * (RUB/контракт/клиринг, CNYRUBF: × 1000 CNY). Отсутствие столбца/невалидные данные
- * /недоступность API → null (fallen switch на CONFIG fallback в FundingSnapshotService).
+ * (RUB/контракт/клиринг, CNYRUBF: SWAPRATE за 1 CNY × лот 1000). Верификация по
+ * реальным данным MOEX (2026-09-08..10): поле `LATESTFUNDING` в MOEX ISS НЕ
+ * существует — ставка публикуется как столбец `SWAPRATE` («Фандинг, руб.»,
+ * значения 0.00278 / 0.00256). Отсутствие столбца/невалидные данные/недоступность
+ * API → null (fallen switch на CONFIG fallback в FundingSnapshotService).
  */
 class MoexFundingProviderTest {
     private val instrumentsConfig =
@@ -39,12 +42,14 @@ class MoexFundingProviderTest {
         }
 
     @Test
-    fun `parses funding from ISS columns data block`() {
+    fun `parses funding from ISS marketdata block`() {
         val provider = provider()
+        // Реальный ISS-ответ: несколько блоков, SWAPRATE в marketdata (securities — первый).
         val body =
-            """{"issdata": {"columns": ["LATESTFUNDING", "TS"], "data": [["0.00279", "2026-09-01 18:45:00"]]}}"""
+            """{"securities": {"columns": ["SECID", "LOTVOLUME"], "data": [["CNYRUBF", 1000]]},
+                "marketdata": {"columns": ["SECID", "SWAPRATE", "TRADEDATE"], "data": [["CNYRUBF", "0.00279", "2026-09-08"]]}}"""
 
-        val parsed = provider.parseFundingValue(body, "LATESTFUNDING")
+        val parsed = provider.parseFundingValue(body, "SWAPRATE")
 
         assertEquals(0, BigDecimal("0.00279").compareTo(parsed!!))
     }
@@ -52,17 +57,17 @@ class MoexFundingProviderTest {
     @Test
     fun `missing column yields null`() {
         val provider = provider()
-        val body = """{"issdata": {"columns": ["TS"], "data": [["2026-09-01 18:45:00"]]}}"""
+        val body = """{"marketdata": {"columns": ["TS"], "data": [["2026-09-01 18:45:00"]]}}"""
 
-        assertNull(provider.parseFundingValue(body, "LATESTFUNDING"))
+        assertNull(provider.parseFundingValue(body, "SWAPRATE"))
     }
 
     @Test
     fun `non numeric funding yields null`() {
         val provider = provider()
-        val body = """{"issdata": {"columns": ["LATESTFUNDING"], "data": [["n/a"]]}}"""
+        val body = """{"marketdata": {"columns": ["SWAPRATE"], "data": [["n/a"]]}}"""
 
-        assertNull(provider.parseFundingValue(body, "LATESTFUNDING"))
+        assertNull(provider.parseFundingValue(body, "SWAPRATE"))
     }
 
     @Test
@@ -70,13 +75,13 @@ class MoexFundingProviderTest {
         val provider = provider()
         val body = """{"ok": true}"""
 
-        assertNull(provider.parseFundingValue(body, "LATESTFUNDING"))
+        assertNull(provider.parseFundingValue(body, "SWAPRATE"))
     }
 
     @Test
-    fun `live snapshot converts raw funding by lot multiplier`() =
+    fun `live snapshot converts raw swaprate by lot multiplier`() =
         runBlocking {
-            val server = liveServer("""{"issdata": {"columns": ["LATESTFUNDING"], "data": [["0.00279"]]}}""")
+            val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["CNYRUBF", "0.00279"]]}}""")
             try {
                 val fundingConfig = FundingConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
@@ -86,7 +91,8 @@ class MoexFundingProviderTest {
 
                 assertNotNull(snapshot)
                 assertEquals(FundingSource.MOEX, snapshot!!.source)
-                // 0.00279 (raw, единица источника) × 1000 (лычи CNYRUBF) = 2.79 ₽/контракт/клиринг
+                assertEquals(FundingUnit.RUB_PER_BASE_ASSET_UNIT, snapshot.unit)
+                // 0.00279 (SWAPRATE, RUB за 1 CNY) × 1000 (лот CNYRUBF) = 2.79 ₽/контракт/клиринг
                 assertEquals(0, BigDecimal("2.79").compareTo(snapshot.valueRubPerContractPerClearing))
             } finally {
                 server.stop(0)
@@ -96,7 +102,7 @@ class MoexFundingProviderTest {
     @Test
     fun `live API down yields null`() =
         runBlocking {
-            val server = liveServer("""{"issdata": {"columns": ["LATESTFUNDING"], "data": [["0.00279"]]}}""")
+            val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["CNYRUBF", "0.00279"]]}}""")
             try {
                 val fundingConfig = FundingConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"

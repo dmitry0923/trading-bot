@@ -17,18 +17,17 @@ import java.time.ZoneId
 
 /**
  * LIVE-источник funding из MOEX ISS: запрашивает [FundingConfig.moexUrl] (плейсхолдер
- * `{ticker}`) и извлекает значение funding из столбца [FundingConfig.moexColumn]
- * (таблица `columns`/`data` стандартного ISS-ответа).
+ * `{ticker}`) и извлекает значение funding из столбца [FundingConfig.moexColumn].
+ * Для perpetual-фьючерсов MOEX столбец — `SWAPRATE` («Фандинг, руб.», RUB за 1
+ * единицу базового актива; подтверждено по реальным данным CNYRUBF 2026-09-08..10).
  *
- * Значение на выходе — raw (в единицах источника); конвертация в RUB/контракт/клиринг —
- * [FundingConfig.moexLotMultiplier] (CNYRUBF: публикуемая ставка × 1000 CNY =
- * RUB/контракт).
+ * Значение на выходе — raw (RUB за 1 единицу базового актива, [FundingUnit.RUB_PER_BASE_ASSET_UNIT]);
+ * конвертация в RUB/контракт/клиринг — [FundingConfig.moexLotMultiplier] (CNYRUBF:
+ * ставка × лот 1000 CNY = RUB/контракт).
  *
  * Недоступность (пустой URL / ошибка API / отсутствие столбца / невалидное число) →
  * null → [FundingSnapshotService] помечает клиринги за сегодня как FUNDING_UNKNOWN
  * (метрика `funding.live.provider_unavailable`); в LIVE CONFIG не подставляется.
- * Эндпоинт/поле/множитель — PROVISIONAL, сверяются с фактическими данными MOEX ДО LIVE
- * (docs/16).
  */
 @Component
 class MoexFundingProvider(
@@ -66,7 +65,7 @@ class MoexFundingProvider(
                 ticker = ticker,
                 clearingDate = LocalDate.now(clock),
                 rawValue = rawValue,
-                unit = FundingUnit.RAW_UNKNOWN,
+                unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
                 valueRubPerContractPerClearing = rawValue.multiply(fundingConfig.moexLotMultiplier),
                 source = FundingSource.MOEX,
                 timestamp = LocalDateTime.now(clock),
@@ -78,18 +77,19 @@ class MoexFundingProvider(
     }
 
     /**
-     * Извлекает значение funding из ISS-ответа: первый блок с `columns`/`data`,
-     * столбец [column], первая строка таблицы.
+     * Извлекает значение funding из ISS-ответа. Несколько блоков (`securities`,
+     * `marketdata`, ...) — ищется ПЕРВЫЙ блок, содержащий столбец [column]
+     * (в реальном MOEX ISS `SWAPRATE` находится в блоке `marketdata`), из него
+     * берётся значение первой строки.
      */
     internal fun parseFundingValue(
         raw: String,
         column: String,
     ): BigDecimal? {
         val root = objectMapper.readTree(raw)
-        val block = firstBlockWithColumnsAndData(root) ?: return null
+        val block = firstBlockWithColumn(root, column) ?: return null
         val columns = block.path("columns").toList().map { it.asString() }
         val idx = columns.indexOf(column)
-        if (idx < 0) return null
         val firstRow = block.path("data").path(0)
         if (firstRow.isMissingNode || firstRow.isEmpty) return null
         val node = firstRow.get(idx)
@@ -97,11 +97,19 @@ class MoexFundingProvider(
         return node.asString().toBigDecimalOrNull()
     }
 
-    private fun firstBlockWithColumnsAndData(root: JsonNode): JsonNode? {
+    private fun firstBlockWithColumn(
+        root: JsonNode,
+        column: String,
+    ): JsonNode? {
         val properties = root.properties()
         for (property in properties) {
             val block = property.value
-            if (block.has("columns") && block.has("data") && block.path("data").isArray) return block
+            val columns =
+                block
+                    .path("columns")
+                    .toList()
+                    .map { it.asString() }
+            if (columns.contains(column) && block.path("data").isArray) return block
         }
         return null
     }

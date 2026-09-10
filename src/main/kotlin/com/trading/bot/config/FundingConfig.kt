@@ -18,16 +18,18 @@ import java.math.BigDecimal
  *   Пустой → MOEX-источник выключен (в LIVE все пережитые клиринги = FUNDING_UNKNOWN —
  *   funding не является триггером отказа ордера, но P&L сделок по такому инструменту
  *   без авторитетного funding помечается funding-uncertain).
- * - [moexColumn] — имя столбца funding в таблице источника.
+ * - [moexColumn] — имя столбца funding в таблице источника. Для perpetual-фьючерсов
+ *   MOEX — `SWAPRATE` (RUB за 1 единицу базового актива; подтверждено по реальным
+ *   данным CNYRUBF 2026-09-08..10: 0.00278 / 0.00256)
+ *   — `LATESTFUNDING` в MOEX ISS НЕ существует (верифицировано 2026-09-10).
  * - [moexLotMultiplier] — конвертация raw-значения → RUB/контракт/клиринг (CNYRUBF:
- *   публикуемая ставка × lot 1000 CNY). Все эндпоинт/поле/множитель — PROVISIONAL,
- *   должны быть сверены с фактическими данными MOEX ДО LIVE (docs/16).
+ *   ставка за 1 CNY × лот 1000).
  */
 @Component
 @ConfigurationProperties(prefix = "funding")
 class FundingConfig {
     var moexUrl: String? = null
-    var moexColumn: String = "LATESTFUNDING"
+    var moexColumn: String = "SWAPRATE"
     var moexLotMultiplier: BigDecimal = BigDecimal("1000")
     var moexTtlMs: Long = 5 * 60_000L
     var requestTimeoutMs: Long = 10_000L

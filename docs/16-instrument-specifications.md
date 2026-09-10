@@ -65,9 +65,12 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
   `fundingPerClearing × qty × clearings`. Значение отключено (`null`), если funding не задан.
 - **LIVE-источник (P0)**: перед входом `FuturesEntryProfile` вызывает `FundingSnapshotService.refresh(ticker)`
   — MOEX-снапшот (`funding.moex-url`, столбец `funding.moex-column`, конвертация `raw × funding.moex-lot-multiplier`
-  = лот 1000 CNY → RUB/контракт/клиринг) с TTL `funding.moex-ttl-ms`. Недоступность MOEX → **явный** provisional
-  CONFIG-fallback с метрикой `funding.live.provider_unavailable`; устаревший MOEX-снапшот (> TTL) → fallback с
-  метрикой `funding.live.snapshot_stale_config_fallback`. Параметры источника — **provisional**, сверяются по MOEX (лот 1000 CNY).
+  = лот 1000 CNY → RUB/контракт/клиринг) с TTL `funding.moex-ttl-ms`. Поле funding — **`SWAPRATE`**
+  (MOEX ISS, «Фандинг, руб.», RUB за 1 единицу базового актива; подтверждено по реальным данным
+  CNYRUBF 2026-09-08..10: 0.00278 / 0.00256 — `LATESTFUNDING` в MOEX ISS НЕ существует, верифицировано 2026-09-10).
+  Недоступность MOEX → **явный** provisional CONFIG-fallback с метрикой `funding.live.provider_unavailable`;
+  устаревший MOEX-снапшот (> TTL) → fallback с метрикой `funding.live.snapshot_stale_config_fallback`.
+  Множитель: лот 1000 CNY.
 
 ### Отличие от Si/акций
 

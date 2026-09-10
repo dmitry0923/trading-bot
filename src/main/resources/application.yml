@@ -648,11 +648,12 @@ lockbox:
 # moex-url — шаблон ISS-эндпоинта, плейсхолдер {ticker} = эффективный тикер
 # инструмента (alorTicker ?? ticker). ПУСТОЙ → MOEX-источник выключен; используется
 # fixing fundingRubPerContractPerDay из instruments (SIM/backtest/fallback с метрикой
-# funding.live.provider_unavailable). Эндпоинт/столбец/множитель — PROVISIONAL,
-# сверяются с фактическими данными MOEX ДО LIVE (docs/16).
+# funding.live.provider_unavailable). Поле funding — SWAPRATE (RUB за 1 единицу
+# базового актива; подтверждено по реальным данным CNYRUBF 2026-09-08..10);
+# LATESTFUNDING в MOEX ISS НЕ существует (верифицировано 2026-09-10).
 funding:
   moex-url: ${FUNDING_MOEX_URL:}
-  moex-column: ${FUNDING_MOEX_COLUMN:LATESTFUNDING}
+  moex-column: ${FUNDING_MOEX_COLUMN:SWAPRATE}
   moex-lot-multiplier: ${FUNDING_MOEX_LOT_MULTIPLIER:1000}
   moex-ttl-ms: ${FUNDING_MOEX_TTL_MS:300000}
   request-timeout-ms: ${FUNDING_REQUEST_TIMEOUT_MS:10000}

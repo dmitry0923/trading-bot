@@ -66,8 +66,10 @@
 
 - CNYRUBF: broker **1.0** + exchange **0.5** = 1.5 ₽/контракт/сторона, slippage **1.0 bp**,
   funding **0.5 ₽/клиринг**.
-- Funding — **per-clearing динамический** (P1, 2026-09-09): MOEX ISS `LATESTFUNDING` × 1000 →
-  RUB/контракт/клиринг (TTL 5 мин); недоступность MOEX в LIVE → сделка помечается
+- Funding — **per-clearing динамический** (P1, 2026-09-09; P0-верификация 2026-09-10): MOEX ISS
+  **`SWAPRATE`** («Фандинг, руб.», RUB за 1 ед. базового актива; CNYRUBF: 0.00278/0.00256) × 1000 →
+  RUB/контракт/клиринг (TTL 5 мин); `LATESTFUNDING` в MOEX ISS **НЕ существует** (поле заменено).
+  Недоступность MOEX в LIVE → сделка помечается
   `Position.fundingUnknown=true` (колонка `funding_unknown`), CONFIG-value НЕ подставляется.
   Конфиг (`funding.*`) — SIM/backtest/fallback только.
 - Клиринг 18:45 МСК, будни; открытие/закрытие на границе клиринга НЕ считаются; внутридневная позиция = 0.

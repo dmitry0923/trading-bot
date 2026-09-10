@@ -387,9 +387,10 @@ instruments:
       brokerCommissionRub: "1.0"
       exchangeFeeRub: "0.5"
       slippageBps: "1.0"
-      # Funding CNYRUBF (P0): '0.5' — ПРОVISIONAL, используется ТОЛЬКО в SIM/backtest и как
-      # аварийный fallback в LIVE (метрика funding.live.provider_unavailable), пока не настроен
-      # LIVE-источник funding.moex-url. RUB/контракт/клиринг (18:45 МСК); сверяется по MOEX.
+      # Funding CNYRUBF (P0): '0.5' — ПРОVISIONAL, используется ТОЛЬКО в SIM/backtest
+      # (метрика funding.live.provider_unavailable не применима). В LIVE CONFIG НЕ
+      # подставляется как fallback: MOEX недоступен → клиринг FUNDING_UNKNOWN
+      # (FundingSnapshotService). RUB/контракт/клиринг (18:45 МСК); сверяется по MOEX.
       fundingRubPerContractPerDay: "0.5"
     - ticker: "SBER"
       type: "STOCK"

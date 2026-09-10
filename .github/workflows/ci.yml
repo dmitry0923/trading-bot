@@ -252,6 +252,17 @@ jobs:
           source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml"
           target: /opt/trading-bot
 
+      - name: Verify LIVE images exist
+        run: |
+          for IMAGE in "$REGISTRY/trading-bot-app:$TAG" "$REGISTRY/trading-bot-frontend:$TAG"; do
+            echo "Checking $IMAGE"
+            docker manifest inspect "$IMAGE" >/dev/null || {
+              echo "LIVE image $IMAGE does not exist in registry."
+              echo "Build it first by pushing this SHA to main (deploy-sim job)."
+              exit 1
+            }
+          done
+
       - name: Deploy LIVE via SSH
         uses: appleboy/ssh-action@v1.2.5
         with:

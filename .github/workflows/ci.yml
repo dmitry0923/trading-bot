@@ -22,7 +22,7 @@ on:
 
 jobs:
   backend:
-    name: Backend (Gradle test + ktlint + coverage)
+    name: Backend (Gradle test + integration + ktlint + coverage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +48,9 @@ jobs:
 
       - name: Compile and run tests
         run: ./gradlew test --no-daemon
+
+      - name: Integration tests (Testcontainers)
+        run: ./gradlew integrationTest --no-daemon
 
       - name: Coverage verification (Kover)
         run: ./gradlew koverVerify --no-daemon

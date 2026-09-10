@@ -67,7 +67,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/trading/stat
 ### 10.0.4. Pipeline деплоя (`.github/workflows/ci.yml`)
 
 ```
-push / PR → [backend: ktlint + test + koverVerify] + [frontend: npm build]
+push / PR → [backend: ktlint + test + integrationTest (Testcontainers) + koverVerify] + [frontend: npm build]
         ↓ (needs: оба прошли)
 push в main/master → [deploy]: сборка образов → push в YCR → SSH на VM →
         docker compose pull && up -d

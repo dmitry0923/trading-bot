@@ -15,8 +15,12 @@ enum class FundingSource {
 
 /** Единица raw-значения funding, которое вернул источник. */
 enum class FundingUnit {
-    /** Сырое значение в единицах источника (scale уточняется per instrument pre-LIVE). */
-    RAW_UNKNOWN,
+    /**
+     * RUB за 1 единицу базового актива (MOEX ISS `SWAPRATE` для perpetual: ставка
+     * финансирования CNYRUBF публикуется как RUB за 1 CNY). Конвертация в
+     * RUB/контракт/клиринг — умножением на лот ([FundingConfig.moexLotMultiplier]).
+     */
+    RUB_PER_BASE_ASSET_UNIT,
 
     /** RUB за 1 контракт за 1 клиринг — канон для P&L. */
     RUB_PER_CONTRACT_PER_CLEARING,

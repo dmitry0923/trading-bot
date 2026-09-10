@@ -7,9 +7,11 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentSkipListMap
 
@@ -43,6 +45,7 @@ class FundingSnapshotService(
     private val configuredFunding: ConfiguredFundingProvider,
     private val moexFunding: MoexFundingProvider,
     private val meterRegistry: MeterRegistry,
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = KotlinLogging.logger {}
     private val series = ConcurrentHashMap<String, ConcurrentSkipListMap<LocalDate, FundingSnapshot>>()
@@ -66,7 +69,7 @@ class FundingSnapshotService(
         val freshMoex =
             latest != null &&
                 latest.source == FundingSource.MOEX &&
-                Duration.between(latest.timestamp, LocalDateTime.now()).toMillis() <= fundingConfig.moexTtlMs
+                Duration.between(latest.timestamp, LocalDateTime.now(clock)).toMillis() <= fundingConfig.moexTtlMs
         if (freshMoex) return
 
         if (isLive) {

@@ -11,8 +11,11 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * P1-аудит (funding per-clearing): серия снапшотов по дате клиринга; P&L вычитает
@@ -32,7 +35,7 @@ class FundingSnapshotServiceTest {
                         ticker = "CNYRUBF",
                         clearingDate = LocalDate.of(2026, 9, 8),
                         rawValue = BigDecimal("0.00279"),
-                        unit = FundingUnit.RAW_UNKNOWN,
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
                         valueRubPerContractPerClearing = BigDecimal("2.79"),
                         source = FundingSource.MOEX,
                         timestamp = LocalDateTime.now(),
@@ -80,7 +83,7 @@ class FundingSnapshotServiceTest {
                         ticker = "CNYRUBF",
                         clearingDate = LocalDate.of(2026, 9, 8),
                         rawValue = BigDecimal("0.00279"),
-                        unit = FundingUnit.RAW_UNKNOWN,
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
                         valueRubPerContractPerClearing = BigDecimal("2.79"),
                         source = FundingSource.MOEX,
                         timestamp = LocalDateTime.now(),
@@ -157,7 +160,7 @@ class FundingSnapshotServiceTest {
                         ticker = "CNYRUBF",
                         clearingDate = LocalDate.of(2026, 9, 8),
                         rawValue = BigDecimal("0.00279"),
-                        unit = FundingUnit.RAW_UNKNOWN,
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
                         valueRubPerContractPerClearing = BigDecimal("2.79"),
                         source = FundingSource.MOEX,
                         timestamp = LocalDateTime.now(),
@@ -172,11 +175,81 @@ class FundingSnapshotServiceTest {
             assertNotNull(service.fundingForClearings("CNYRUBF", listOf(LocalDate.of(2026, 9, 8))))
         }
 
+    @Test
+    fun `TTL freshness is evaluated on Europe-Moscow clock`() =
+        runBlocking {
+            // Фиксируем "сейчас" в MSK: 2026-09-10 12:00:00. Снапшот из прошлого клиринга
+            // (11:59 MSK) — свежий (< moexTtlMs=5min) → refresh НЕ обращается к MOEX.
+            val fixedClock = Clock.fixed(Instant.parse("2026-09-10T09:00:00Z"), ZoneId.of("Europe/Moscow"))
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            Mockito
+                .`when`(moex.currentSnapshot("CNYRUBF"))
+                .thenReturn(
+                    FundingSnapshot(
+                        ticker = "CNYRUBF",
+                        clearingDate = LocalDate.of(2026, 9, 10),
+                        rawValue = BigDecimal("0.00279"),
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
+                        valueRubPerContractPerClearing = BigDecimal("2.79"),
+                        source = FundingSource.MOEX,
+                        timestamp = LocalDateTime.of(2026, 9, 10, 11, 59),
+                    ),
+                )
+            val registry = SimpleMeterRegistry()
+            val service =
+                service(
+                    mode = "LIVE",
+                    moex = moex,
+                    configValue = BigDecimal("0.5"),
+                    registry = registry,
+                    clock = fixedClock,
+                )
+
+            service.refresh("CNYRUBF") // первый вызов — сетевой
+            service.refresh("CNYRUBF") // 11:59 MSK vs 12:00 MSK: 1 мин < 5 мин → без повторного вызова
+            Mockito.verify(moex, Mockito.times(1)).currentSnapshot("CNYRUBF")
+        }
+
+    @Test
+    fun `stale snapshot older than TTL on Moscow clock triggers re-fetch`() =
+        runBlocking {
+            // "Сейчас" 12:00 MSK, снапшот 11:50 MSK (10 мин назад > 5 мин TTL) → повторный вызов.
+            val fixedClock = Clock.fixed(Instant.parse("2026-09-10T09:00:00Z"), ZoneId.of("Europe/Moscow"))
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            Mockito
+                .`when`(moex.currentSnapshot("CNYRUBF"))
+                .thenReturn(
+                    FundingSnapshot(
+                        ticker = "CNYRUBF",
+                        clearingDate = LocalDate.of(2026, 9, 10),
+                        rawValue = BigDecimal("0.00279"),
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
+                        valueRubPerContractPerClearing = BigDecimal("2.79"),
+                        source = FundingSource.MOEX,
+                        timestamp = LocalDateTime.of(2026, 9, 10, 11, 50),
+                    ),
+                )
+            val registry = SimpleMeterRegistry()
+            val service =
+                service(
+                    mode = "LIVE",
+                    moex = moex,
+                    configValue = BigDecimal("0.5"),
+                    registry = registry,
+                    clock = fixedClock,
+                )
+
+            service.refresh("CNYRUBF")
+            service.refresh("CNYRUBF")
+            Mockito.verify(moex, Mockito.times(2)).currentSnapshot("CNYRUBF")
+        }
+
     private fun service(
         mode: String,
         moex: MoexFundingProvider,
         configValue: BigDecimal,
         registry: SimpleMeterRegistry,
+        clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
     ): FundingSnapshotService {
         val tradingConfig = TradingConfig().apply { this.mode = mode }
         val instrumentsConfig =
@@ -213,6 +286,7 @@ class FundingSnapshotServiceTest {
             configuredFunding = ConfiguredFundingProvider(instrumentsConfig),
             moexFunding = moex,
             meterRegistry = registry,
+            clock = clock,
         )
     }
 }

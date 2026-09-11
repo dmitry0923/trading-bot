@@ -52,7 +52,7 @@ data class HoldoutValidation(
  */
 @Component
 class FinalHoldoutValidator(
-    private val backtestValidator: BacktestValidator,
+    private val walkForwardAnalyzer: WalkForwardAnalyzer,
     private val backtestEngine: BacktestEngine,
     private val buildIdentity: BuildIdentity,
     private val fingerprintProvider: LiveStrategyFingerprintProvider,
@@ -91,19 +91,22 @@ class FinalHoldoutValidator(
                     LiveStrategyBacktestSignalGenerator(adaptiveConfidenceThreshold = it)
                 }
 
-        // Walk-forward выполняется ТОЛЬКО на данных до holdout-границы.
+        // Walk-forward выполняется ТОЛЬКО на данных до holdout-границы, через
+        // canonical WalkForwardAnalyzer (тот же код, что у /validate).
         val walkForward =
-            backtestValidator.validate(
+            walkForwardAnalyzer.run(
                 ticker,
                 wfaCandles,
-                folds = folds,
-                expanding = expanding,
-                initialCapital = initialCapital,
-                minBarsForSignal = minBarsForSignal,
-                leverage = leverage,
-                riskPerTradePercent = riskPerTradePercent,
-                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
-                signalGeneratorOverride = effectiveOverride,
+                WfaConfig(
+                    folds = folds,
+                    expanding = expanding,
+                    initialCapital = initialCapital,
+                    minBarsForSignal = minBarsForSignal,
+                    leverage = leverage,
+                    riskPerTradePercent = riskPerTradePercent,
+                    futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                    signalGeneratorOverride = effectiveOverride,
+                ),
             )
 
         // Параметры фиксируются по последнему выбранному фолдом кандидату.

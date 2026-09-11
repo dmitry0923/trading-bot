@@ -2,7 +2,6 @@ package com.trading.bot.controller
 
 import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
-import com.trading.bot.backtest.BacktestValidator
 import com.trading.bot.backtest.DeploymentCriteria
 import com.trading.bot.backtest.DeploymentGate
 import com.trading.bot.backtest.DeploymentStatus
@@ -14,6 +13,8 @@ import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
 import com.trading.bot.backtest.StrategyParameters
+import com.trading.bot.backtest.WalkForwardAnalyzer
+import com.trading.bot.backtest.WfaConfig
 import com.trading.bot.backtest.splitDevHoldout
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
@@ -112,7 +113,7 @@ class ApiController(
     private val adjustmentRepository: StrategyAdjustmentRepository,
     private val tradeEventRepository: TradeEventRepository,
     private val backtestEngine: BacktestEngine,
-    private val backtestValidator: BacktestValidator,
+    private val walkForwardAnalyzer: WalkForwardAnalyzer,
     private val monteCarloAnalyzer: MonteCarloAnalyzer,
     private val finalHoldoutValidator: FinalHoldoutValidator,
     private val backtestResultRepository: BacktestResultRepository,
@@ -596,14 +597,16 @@ class ApiController(
                 null
             }
         val result =
-            backtestValidator.validate(
+            walkForwardAnalyzer.run(
                 ticker,
                 candles,
-                folds = folds,
-                leverage = leverage ?: 1.0,
-                riskPerTradePercent = riskPerTradePercent,
-                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
-                signalGeneratorOverride = signalGeneratorOverride,
+                WfaConfig(
+                    folds = folds,
+                    leverage = leverage ?: 1.0,
+                    riskPerTradePercent = riskPerTradePercent,
+                    futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                    signalGeneratorOverride = signalGeneratorOverride,
+                ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
         return mapOf(

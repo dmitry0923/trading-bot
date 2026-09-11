@@ -59,7 +59,7 @@ class FinalHoldoutValidatorTest {
 
     @Test
     fun `division cuts candles at the holdout boundary`() {
-        val validator = Mockito.mock(BacktestValidator::class.java)
+        val analyzer = Mockito.mock(WalkForwardAnalyzer::class.java)
         val engine = mock<BacktestEngine> {}
 
         // Валидатор на WFA-части (первые 80% из 300 свечей = 240) возвращает
@@ -78,20 +78,7 @@ class FinalHoldoutValidatorTest {
         val wfResult = ValidationResult(wfFolds, wfaAggregate)
 
         runBlocking {
-            whenever(
-                validator.validate(
-                    eq("SBER"),
-                    any(),
-                    eq(4),
-                    eq(true),
-                    any(),
-                    anyInt(),
-                    eq(1.0),
-                    anyOrNull(),
-                    anyOrNull(),
-                    anyOrNull(),
-                ),
-            ).thenReturn(wfResult)
+            whenever(analyzer.run(eq("SBER"), any(), any())).thenReturn(wfResult)
         }
 
         val holdoutCandidate = strongResult(250)
@@ -117,7 +104,7 @@ class FinalHoldoutValidatorTest {
             ).thenReturn(holdoutCandidate)
         }
 
-        val validatorUnderTest = FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider())
+        val validatorUnderTest = FinalHoldoutValidator(analyzer, engine, buildIdentity(), fingerprintProvider())
         val result = runBlocking { validatorUnderTest.validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
 
         // Holdout окно = последние 20% от 300 = 60 свечей.
@@ -130,7 +117,7 @@ class FinalHoldoutValidatorTest {
 
     @Test
     fun `params are fixed from last walk forward fold`() {
-        val validator = Mockito.mock(BacktestValidator::class.java)
+        val analyzer = Mockito.mock(WalkForwardAnalyzer::class.java)
         val engine = mock<BacktestEngine> {}
         val wfaAggregate = strongResult(120)
         val wfFolds =
@@ -146,7 +133,7 @@ class FinalHoldoutValidatorTest {
         val wfResult = ValidationResult(wfFolds, wfaAggregate)
         runBlocking {
             whenever(
-                validator.validate(eq("SBER"), any(), anyInt(), any(), any(), anyInt(), any(), anyOrNull(), anyOrNull(), anyOrNull()),
+                analyzer.run(eq("SBER"), any(), any()),
             ).thenReturn(wfResult)
             whenever(
                 engine.simulate(
@@ -168,7 +155,7 @@ class FinalHoldoutValidatorTest {
                 ),
             ).thenReturn(strongResult(40))
         }
-        val validatorUnderTest = FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider())
+        val validatorUnderTest = FinalHoldoutValidator(analyzer, engine, buildIdentity(), fingerprintProvider())
         val result = runBlocking { validatorUnderTest.validate("SBER", List(300) { mockCandle(it) }, holdoutFraction = 0.2) }
         assertEquals(0.03, result.paramsUsed.slPercent)
         assertEquals(0.06, result.paramsUsed.tpPercent)
@@ -176,7 +163,7 @@ class FinalHoldoutValidatorTest {
 
     @Test
     fun `failing holdout result is not passed`() {
-        val validator = Mockito.mock(BacktestValidator::class.java)
+        val analyzer = Mockito.mock(WalkForwardAnalyzer::class.java)
         val engine = mock<BacktestEngine> {}
         val wfaAggregate = strongResult(120)
         val wfFolds =
@@ -193,7 +180,7 @@ class FinalHoldoutValidatorTest {
             )
         runBlocking {
             whenever(
-                validator.validate(eq("SBER"), any(), anyInt(), any(), any(), anyInt(), any(), anyOrNull(), anyOrNull(), anyOrNull()),
+                analyzer.run(eq("SBER"), any(), any()),
             ).thenReturn(wfResult)
             whenever(
                 engine.simulate(
@@ -217,7 +204,7 @@ class FinalHoldoutValidatorTest {
         }
         val result =
             runBlocking {
-                FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider()).validate(
+                FinalHoldoutValidator(analyzer, engine, buildIdentity(), fingerprintProvider()).validate(
                     "SBER",
                     List(300) {
                         mockCandle(it)
@@ -231,9 +218,9 @@ class FinalHoldoutValidatorTest {
 
     @Test
     fun `invalid holdout fraction rejected`() {
-        val validator = Mockito.mock(BacktestValidator::class.java)
+        val analyzer = Mockito.mock(WalkForwardAnalyzer::class.java)
         val engine = mock<BacktestEngine> {}
-        val validatorUnderTest = FinalHoldoutValidator(validator, engine, buildIdentity(), fingerprintProvider())
+        val validatorUnderTest = FinalHoldoutValidator(analyzer, engine, buildIdentity(), fingerprintProvider())
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking { validatorUnderTest.validate("SBER", List(100) { mockCandle(it) }, holdoutFraction = 0.0) }
         }

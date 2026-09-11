@@ -99,8 +99,27 @@ class BacktestValidator(
     private val backtestEngine: BacktestEngine,
     private val backtestConfig: BacktestConfig = BacktestConfig(),
     private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
-) {
+) : WalkForwardAnalyzer {
     private val logger = KotlinLogging.logger {}
+
+    /** Canonical WFA entrypoint: /validate и DeploymentGate идут через него. */
+    override suspend fun run(
+        ticker: String,
+        candles: List<Candle>,
+        config: WfaConfig,
+    ): ValidationResult =
+        validate(
+            ticker = ticker,
+            candles = candles,
+            folds = config.folds,
+            expanding = config.expanding,
+            initialCapital = config.initialCapital,
+            minBarsForSignal = config.minBarsForSignal,
+            leverage = config.leverage,
+            riskPerTradePercent = config.riskPerTradePercent,
+            futuresMaxContractsPerPosition = config.futuresMaxContractsPerPosition,
+            signalGeneratorOverride = config.signalGeneratorOverride,
+        )
 
     /**
      * Сетка параметров для in-sample настройки акций: пары (SL%, TP%).

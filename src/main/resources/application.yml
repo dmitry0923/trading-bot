@@ -123,6 +123,18 @@ llm:
   queue-concurrency: 2
   delta-prompts-enabled: ${LLM_DELTA_PROMPTS_ENABLED:false}
 
+# Новости по эмитентам для фундаментального агента (Agent-2).
+# LIVE-источник — платная подписка (rg.ru API); baseUrl — шаблон с плейсхолдерами
+# {ticker} и {hours}. По умолчанию отключён: фундаментальный анализ идёт по макро.
+# Недоступность/401 → пустой список (fail-open, NEUTRAL-база), не блокирует анализ.
+news:
+  enabled: ${NEWS_ENABLED:false}
+  base-url: ${NEWS_BASE_URL:}
+  api-key: ${NEWS_API_KEY:}
+  max-items: 5
+  timeout-ms: 5000
+  ttl-minutes: 15
+
 trace-storage:
   enabled: ${TRACE_STORAGE_ENABLED:false}
   endpoint: ${MINIO_ENDPOINT:http://localhost:9000}

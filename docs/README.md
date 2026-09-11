@@ -35,6 +35,8 @@
 | 13. Roadmap | `13-roadmap.md` | Текущее состояние и план v2.1–v2.4 |
 | 14. Приложения | `14-appendices.md` | Глоссарий, тикеры, .env, docker-compose, kubectl |
 | 15. Фьючерсный контур (Si) | `15-futures-trading.md` | FuturesTradingBotService, риск-движок, ликвидация, daily loss limit, e2e |
+| 16. Спецификации инструментов | `16-instrument-specifications.md` | GO, point value, комиссии, funding по фьючерсам/акциям |
+| 17. LLM как источник сигнала (ADR) | `17-llm-signal-source.md` | Переход от «LLM advisory-only» к «строго LLM»: флаги, IssuerDataProvider, rg.ru |
 
 ## Как пользоваться
 

@@ -238,3 +238,31 @@
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
+
+## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
+
+- Требование пользователя «решения принимает строго LLM» **сейчас НЕ выполняется**:
+  `StrategyRunner.kt:52` исключает `AdvisoryOnlyStrategy` из конкуренции за сигнал
+  (C-001); `DiscretionaryStrategy` (полная LLM-цепочка) — только advisory/A-B;
+  `LlmAdvisor` меняет уверенность (−0.30..+0.15) и VETO лишь при CRITICAL; направление
+  всегда за детерминированными стратегиями.
+- Дизайн зафиксирован в `docs/17-llm-signal-source.md` (ADR). Ключевые флаги
+  (research, дефолт off): `trading.llm-signal-source` (LLM участвует в конкурентном
+  выборе сигнала), `trading.llm-signal-only` (только LLM), shadow-режим — логировать
+  победителя без исполнения. Роль `LlmAdvisor` сохраняется как fail-safe слой.
+- Новостной источник — **rg.ru** (проверка 2026-09-11): публичный доступ закрыт
+  CAPTCHA `qauth` (все GET → 401, RSS в браузере). **Решение пользователя (2026-09-11):
+  в LIVE будет платная подписка rg.ru** — под неё `RgRuNewsProvider` РЕАЛИЗОВАН
+  (`infrastructure/news/`, конфиг `news.*`: enabled/base-url/`{ticker}`/`{hours}`/api-key/
+  max-items=5/timeout-ms=5000/ttl-minutes=15, Redis-кэш, fail-closed, метрики). Тесты
+  `RgRuNewsProviderTest` + `FundamentalAnalysisAgentNewsTest` (сценарии хорошая/плохая
+  новость, 401, disabled, невалидный JSON) — зелёные; test+integrationTest+ktlintCheck пройдены.
+  Интерфейс `IssuerDataProvider.newsFor(ticker, hours)` и интеграция в
+  `FundamentalAnalysisAgent` (переменная `issuerNews`, fingerprint только стабильные
+  поля) — в коде. Без подписки (`news.enabled=false`) провайдер молча возвращает пустой
+  список — NEUTRAL-база, ничего не ломается.
+- Бэктест «строго LLM»: профиль `backtest` + `bt.agent.enabled=true` +
+  `bt.agent.live-strategies=false` (сейчас default `live-strategies=true`, LLM не гоняется).
+- Блокер валидации: **`LLM_API_KEY` в `.env` отсутствует** → все LLM-агенты на
+  детерминированных fallback (smoke-only до появления ключа).
+- `docs/03-llm-pipeline.md` описывает текущие 6 агентов и не менялся для этого дизайна.

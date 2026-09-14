@@ -1,6 +1,9 @@
 package com.trading.bot.agent
 
+import com.trading.bot.infrastructure.llm.DefaultJsonSchemaValidator
 import com.trading.bot.infrastructure.llm.Guardrails
+import com.trading.bot.infrastructure.llm.JsonSchemaValidator
+import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -38,6 +41,7 @@ class StrategyAgent(
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    private val jsonSchemaValidator: JsonSchemaValidator = DefaultJsonSchemaValidator(objectMapper),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -138,13 +142,30 @@ class StrategyAgent(
             )
         }
 
+        // P0/review: структурная валидация ответа до парсинга — невалидная схема → HOLD
+        // (fail-closed), а не «парсинг-дефолт». Сначала убираем fenced-json обёртку.
+        val cleaned =
+            resp.content
+                .replace("```json", "")
+                .replace("```", "")
+                .trim()
+        if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.STRATEGY_DECISION)) {
+            logger.warn { "Strategy LLM response failed schema validation for $ticker" }
+            meterRegistry.counter("llm.schema.rejected", Tags.of("agent", "strategy", "ticker", ticker)).increment()
+            return logAndReturn(
+                hold(snapshot.currentPrice, "Schema rejected"),
+                ticker,
+                cycleId,
+                start,
+                resp.content,
+                isCached = resp.fromCache,
+                tokensUsed = resp.tokensUsed,
+                storageKey = resp.storageKey,
+            )
+        }
+
         val draft =
             try {
-                val cleaned =
-                    resp.content
-                        .replace("```json", "")
-                        .replace("```", "")
-                        .trim()
                 val j = objectMapper.readTree(cleaned)
                 val action =
                     StrategyAction.entries.firstOrNull {

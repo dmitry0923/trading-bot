@@ -73,15 +73,48 @@ object LlmResponseSchemas {
               "enum": ["BUY", "SELL", "HOLD"]
             },
             "targetPrice": {
+              "oneOf": [
+                { "type": "number", "minimum": 0.0 },
+                { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" }
+              ]
+            },
+            "signalStrength": {
               "type": "number",
               "minimum": 0.0
+            },
+            "reasoning": {
+              "type": "string"
+            }
+          }
+        }
+        """.trimIndent()
+
+    /**
+     * Отчёт контрариан-агента (Agent-4): isValid + riskLevel + critique + signalStrength.
+     * Применяется [com.trading.bot.agent.ContrarianAgent] до парсинга; несоответствие
+     * схеме — fail-closed (isValid=false, riskLevel=CRITICAL).
+     */
+    val CHALLENGE_REPORT: String =
+        // language=json
+        """
+        {
+          "type": "object",
+          "required": ["isValid", "riskLevel", "signalStrength", "critique"],
+          "additionalProperties": false,
+          "properties": {
+            "isValid": {
+              "type": "boolean"
+            },
+            "riskLevel": {
+              "type": "string",
+              "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
             },
             "signalStrength": {
               "type": "number",
               "minimum": 0.0,
               "maximum": 1.0
             },
-            "reasoning": {
+            "critique": {
               "type": "string"
             }
           }

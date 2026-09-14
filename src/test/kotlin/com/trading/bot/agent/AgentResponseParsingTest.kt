@@ -369,7 +369,7 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `strategy agent handles malformed json with hold and error metric`() {
+    fun `strategy agent handles malformed json via schema rejection`() {
         val llm = StubLlmClient(listOf(LlmResponse(content = "definitely-not-json")))
 
         val draft = runBlocking { stratAgent(llm).formulate("SBER", techReport, fundReport, snapshot, "c1") }
@@ -378,7 +378,8 @@ class AgentResponseParsingTest {
         assertEquals(
             1.0,
             stratMeter
-                .find("strategy.agent.parse.error")
+                .find("llm.schema.rejected")
+                .tag("agent", "strategy")
                 .tag("ticker", "SBER")
                 .counter()!!
                 .count(),
@@ -445,7 +446,41 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `contrarian agent parses challenge and sanitizes risk level`() {
+    fun `contrarian agent parses schema-valid challenge`() {
+        val llm =
+            StubLlmClient(
+                listOf(
+                    LlmResponse(
+                        content =
+                            """{"isValid":false,"riskLevel":"HIGH","critique":"risky","signalStrength":0.9}""",
+                    ),
+                ),
+            )
+
+        val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
+
+        assertEquals(false, report.isValid)
+        assertEquals("HIGH", report.riskLevel)
+        assertEquals("risky", report.critique)
+        assertEquals(0.9, report.signalStrength)
+        assertEquals(true, report.llmAvailable)
+    }
+
+    @Test
+    fun `contrarian agent rejects invalid response fail-closed`() {
+        val llm = StubLlmClient(listOf(LlmResponse(content = "{bad")))
+
+        val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
+
+        assertEquals(false, report.isValid)
+        assertEquals("CRITICAL", report.riskLevel)
+        assertEquals(0.0, report.signalStrength)
+        assertEquals(false, report.llmAvailable)
+    }
+
+    @Test
+    fun `contrarian agent rejects out-of-enum risk level via schema fail-closed`() {
+        // "EXTREME" не входит в enum схемы (LOW|MEDIUM|HIGH|CRITICAL) → fail-closed CRITICAL.
         val llm =
             StubLlmClient(
                 listOf(
@@ -459,32 +494,22 @@ class AgentResponseParsingTest {
         val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
 
         assertEquals(false, report.isValid)
-        assertEquals("LOW", report.riskLevel)
-        assertEquals("risky", report.critique)
-        assertEquals(0.9, report.signalStrength)
+        assertEquals("CRITICAL", report.riskLevel)
+        assertEquals(0.0, report.signalStrength)
+        assertEquals(false, report.llmAvailable)
     }
 
     @Test
-    fun `contrarian agent allows trade on parse error`() {
-        val llm = StubLlmClient(listOf(LlmResponse(content = "{bad")))
-
-        val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
-
-        assertEquals(true, report.isValid)
-        assertEquals("LOW", report.riskLevel)
-        assertEquals("Parse error", report.critique)
-        assertEquals(0.5, report.signalStrength)
-    }
-
-    @Test
-    fun `contrarian agent allows trade when llm unavailable`() {
+    fun `contrarian agent blocks trade when llm unavailable fail-closed`() {
         val llm = StubLlmClient(listOf(LlmResponse.fallback("TIMEOUT")))
 
         val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
 
-        assertEquals(true, report.isValid)
-        assertEquals("LOW", report.riskLevel)
-        assertEquals(0.5, report.signalStrength)
+        assertEquals(false, report.isValid)
+        assertEquals("CRITICAL", report.riskLevel)
+        assertEquals("LLM unavailable", report.critique)
+        assertEquals(0.0, report.signalStrength)
+        assertEquals(false, report.llmAvailable)
     }
 
     // ===== ArbitratorAgent =====
@@ -591,7 +616,7 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `arbitrator holds on malformed json and records error metric`() {
+    fun `arbitrator holds on malformed json via schema rejection`() {
         val llm = StubLlmClient(listOf(LlmResponse(content = "!!!not-json!!!")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
@@ -602,7 +627,14 @@ class AgentResponseParsingTest {
             runBlocking { arbAgent(llm, guardrails).adjudicate(buyDraft, lowRiskChallenge, techReport, fundReport, snapshot, "c1") }
 
         assertEquals(StrategyAction.HOLD, decision.action)
-        assertEquals(1.0, arbMeter.find("agent.arbitrator.parse.error").counter()!!.count())
+        assertEquals(
+            1.0,
+            arbMeter
+                .find("llm.schema.rejected")
+                .tag("agent", "arbitrator")
+                .counter()!!
+                .count(),
+        )
     }
 
     @Test

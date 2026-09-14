@@ -19,6 +19,10 @@ prompts:
       - Bollinger: lower={{bbLower}}, middle={{bbMiddle}}, upper={{bbUpper}}
       - Тренд (EMA 12/26): {{trend}}
       - Объём: {{volume}}
+      Микроструктура книги заявок:
+      - Bid: {{bid}}, Ask: {{ask}}, Spread: {{spread}}
+      - Bid size: {{bidSize}}, Ask size: {{askSize}}
+      - Microprice: {{microprice}}, OBI: {{obi}}
       Индикаторы HOUR_1: тренд={{h1Trend}}, RSI={{h1Rsi}}
       Индикаторы DAY_1: тренд={{d1Trend}}, RSI={{d1Rsi}}
       Дай заключение по направлению движения цены на таймфрейме {{timeframe}}.
@@ -40,6 +44,10 @@ prompts:
       - Тренд (EMA 12/26): {{trend}}
       Индикаторы HOUR_1: тренд={{h1Trend}}, RSI={{h1Rsi}}
       Индикаторы DAY_1: тренд={{d1Trend}}, RSI={{d1Rsi}}
+      Микроструктура книги заявок:
+      - Bid: {{bid}}, Ask: {{ask}}, Spread: {{spread}}
+      - Bid size: {{bidSize}}, Ask size: {{askSize}}
+      - Microprice: {{microprice}}, OBI: {{obi}}
       Правило: если RSI, MACD и тренд не согласованы — NEUTRAL.
       Ответь СТРОГО JSON: {"conclusion":"BULLISH|BEARISH|NEUTRAL","signalStrength":0.0,"reasoning":"string"}.
   aggressive:
@@ -59,4 +67,8 @@ prompts:
       - Тренд (EMA 12/26): {{trend}}
       Индикаторы HOUR_1: тренд={{h1Trend}}, RSI={{h1Rsi}}
       Индикаторы DAY_1: тренд={{d1Trend}}, RSI={{d1Rsi}}
+      Микроструктура книги заявок:
+      - Bid: {{bid}}, Ask: {{ask}}, Spread: {{spread}}
+      - Bid size: {{bidSize}}, Ask size: {{askSize}}
+      - Microprice: {{microprice}}, OBI: {{obi}}
       Ответь СТРОГО JSON: {"conclusion":"BULLISH|BEARISH|NEUTRAL","signalStrength":0.0,"reasoning":"string"}.

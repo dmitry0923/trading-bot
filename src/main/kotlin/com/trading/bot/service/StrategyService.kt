@@ -414,10 +414,8 @@ class StrategyService(
         strategyRepo.save(strategy)
         // Redis хранит ПОСЛЕДНЮЮ действующую стратегию тикера: HOLD не перезаписывает
         // последний BUY/SELL (иначе OrderBuilder.recordStrategyExecution и REST
-        // «последняя стратегия» видели HOLD-строку без риск-полей). Shadow-победитель LLM
-        // НЕ пишется (иначе OrderBuilder мог бы исполнить HOLD-независимую «последнюю
-        // стратегию» — нарушение shadow-семантики: наблюдаем, но не торгуем).
-        if (signal.action != StrategyAction.HOLD && !result.shadowed) {
+        // «последняя стратегия» видели HOLD-строку без риск-полей).
+        if (signal.action != StrategyAction.HOLD) {
             redis.saveStrategy(strategy)
         }
 
@@ -448,11 +446,18 @@ class StrategyService(
         }
 
         if (result.shadowed) {
-            // Shadow-режим LLM (docs/17 §17.3, этап 5): победитель зафиксирован (agent_logs,
-            // Strategy, lineage), но исполняется ТОЛЬКО детерминированный вход. Сигнал не
-            // публикуется в order-admission (order не создаётся) — см. метрику/лог в StrategyRunner.
-            logger.info { "SHADOW(LLM) not executed: $ticker/$timeframe winner=${result.winnerId} (${signal.action})" }
-        } else if (shadowExecution) {
+            // Shadow-режим LLM (docs/17 §17.3, этап 5, review/P1): LLM-победитель
+            // исследовательской ветки НЕ исполняется, но `signal` здесь уже относится к
+            // ДЕТЕРМИНИРОВАННОМУ победителю (result.decision) — он публикуется в
+            // order-admission и пишется в Redis (см. выше). Наблюдение LLM — в
+            // result.all/agent_logs/lineage + метрика llm.signal.shadow в StrategyRunner.
+            logger.info {
+                "SHADOW(LLM): $ticker/$timeframe LLM observed " +
+                    "(research=${result.shadowedDecision?.action ?: "?"}, conf=${result.shadowedDecision?.signalStrength ?: 0.0}), " +
+                    "executing deterministic ${result.winnerId} (${signal.action})"
+            }
+        }
+        if (shadowExecution) {
             logger.info { "SHADOW: $ticker/$timeframe decision=${result.decision.action} recorded but NOT executed" }
         } else {
             eventPublisher.publishStrategyGenerated(signal)

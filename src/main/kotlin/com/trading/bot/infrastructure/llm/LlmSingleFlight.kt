@@ -10,6 +10,7 @@ import org.springframework.data.redis.core.script.RedisScript
 import org.springframework.stereotype.Component
 import java.security.MessageDigest
 import java.time.Duration
+import java.util.UUID
 
 /**
  * Single-flight для LLM-вызовов (P0-аудит, research/llm-signal-source).
@@ -19,6 +20,16 @@ import java.time.Duration
  * к провайдеру. При помощи Redis SETNX только один поток становится владельцем
  * лока и делает вызов; остальные получают от него запись из кэша либо (по таймауту
  * [LlmConfig.singleFlightWaitMs]) NEUTRAL fallback `SINGLE_FLIGHT_BUSY`.
+ *
+ * Ownership (review, P1): значением лока является UUID-токен владельца, а не «1».
+ * [release] снимает лок ТОЛЬКО по своему токену (атомарный Lua compare-and-delete):
+ * если владелец завис и его лок снялся по TTL, новый владелец не сможет случайно
+ * освободить чужой лок.
+ *
+ * Fail-closed (review, P1): при недоступности Redis [acquire] возвращает
+ * [AcquireResult.Unavailable] — вызывающий код отклоняет LLM-вызов (HOLD). Раньше
+ * смешанная ошибка Redis означала «пропустить single-flight» (fail-open), теперь
+ * LLM-путь обязан запретить вход, если не может гарантировать дедупликацию.
  *
  * Лок живёт [LlmConfig.singleFlightLockTtlSeconds] — сбой владельца (например
  * зависание вызова) не блокирует остальных навсегда: после TTL они смогут
@@ -44,43 +55,77 @@ class LlmSingleFlight(
         return "llm:sf:$digest"
     }
 
+    /** Результат [acquire]: владелец (с токеном), вызов уже идёт, либо Redis недоступен. */
+    sealed interface AcquireResult {
+        /** Токен владельца — обязателен для [release], снимает только свой лок. */
+        data class Owner(
+            val token: String,
+        ) : AcquireResult
+
+        /** Другой поток уже выполняет вызов по этому семантическому ключу. */
+        data object Busy : AcquireResult
+
+        /** Redis недоступен — single-flight не гарантирован, fail-closed. */
+        data object Unavailable : AcquireResult
+    }
+
     /**
      * Попытка стать владельцем вызова по заданному семантическому ключу.
      *
-     * @return true — лок получен (вызов провайдера разрешён); false — вызов уже
-     * выполняется другим потоком.
+     * @return null — single-flight выключен ([LlmConfig.singleFlightEnabled]=false):
+     * вызывающий код идёт напрямую; иначе [AcquireResult.Owner] (обычно недопустимо,
+     * лок получен), [AcquireResult.Busy] или [AcquireResult.Unavailable].
      */
     fun acquire(
         cacheKey: String,
         versionSeed: String? = null,
-    ): Boolean {
-        if (!llmConfig.singleFlightEnabled) return true
+    ): AcquireResult? {
+        if (!llmConfig.singleFlightEnabled) return null
+        val token = UUID.randomUUID().toString()
         return try {
             val acquired =
                 redisTemplate.opsForValue().setIfAbsent(
                     lockKey(cacheKey, versionSeed),
-                    "1",
+                    token,
                     Duration.ofSeconds(llmConfig.singleFlightLockTtlSeconds),
                 )
-            if (acquired == true) {
-                meterRegistry.counter("llm.single_flight.acquired").increment()
+            when (acquired) {
+                true -> {
+                    meterRegistry.counter("llm.single_flight.acquired").increment()
+                    AcquireResult.Owner(token)
+                }
+
+                // null в Spring Data Redis означает «не удалось записать» (например
+                // таймаут/ошибка) — трактуем как недоступность (fail-closed).
+                null -> {
+                    logger.warn { "Single-flight setIfAbsent returned null for $cacheKey -> unavailable" }
+                    meterRegistry.counter("llm.single_flight.unavailable").increment()
+                    AcquireResult.Unavailable
+                }
+
+                else -> {
+                    AcquireResult.Busy
+                }
             }
-            acquired == true
         } catch (e: Exception) {
-            logger.warn(e) { "Single-flight lock error for $cacheKey" }
-            // Redis недоступен — не блокируем критический путь (один вызов всё равно
-            // надёжнее, чем ждать кэш, которого не будет).
-            true
+            logger.warn(e) { "Single-flight lock error for $cacheKey -> unavailable (fail-closed)" }
+            meterRegistry.counter("llm.single_flight.unavailable").increment()
+            AcquireResult.Unavailable
         }
     }
 
-    /** Освобождение лока владельцем (compare-and-delete — снимает только свой лок). */
+    /**
+     * Освобождение лока ТОЛЬКО владельцем (compare-and-delete по токену):
+     * если лок перехватил другой поток после TTL, чужой лок не снимается.
+     */
     fun release(
         cacheKey: String,
         versionSeed: String? = null,
+        ownerToken: String? = null,
     ) {
+        if (ownerToken == null) return
         try {
-            redisTemplate.execute(RELEASE_SCRIPT, listOf(lockKey(cacheKey, versionSeed)), "1")
+            redisTemplate.execute(RELEASE_SCRIPT, listOf(lockKey(cacheKey, versionSeed)), ownerToken)
             meterRegistry.counter("llm.single_flight.released").increment()
         } catch (e: Exception) {
             logger.warn(e) { "Single-flight release error for $cacheKey" }

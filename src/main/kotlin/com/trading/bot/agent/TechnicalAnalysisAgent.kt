@@ -107,7 +107,24 @@ class TechnicalAnalysisAgent(
         val d1Candles = CandleResampler.resample(candles, "DAY_1")
         val d1Indicators = IndicatorCalculator.calculate(d1Candles)
 
-        // Семантический отпечаток: цена (1 знак) + RSI-бакет + trend + vol regime + MACD + ATR pct + сессия + multi-TF
+        // Микроструктура книги заявок (review/P2): bid/ask/спред/объёмы/microprice/OBI.
+        // Входит в переменные промпта И в семантический отпечаток — смена книги меняет кэш-ключ.
+        val microOrderbook =
+            listOf(
+                "bid=${bdOrNa(snapshot.bid)}",
+                "ask=${bdOrNa(snapshot.ask)}",
+                "bidSize=${snapshot.bidSize ?: "NA"}",
+                "askSize=${snapshot.askSize ?: "NA"}",
+                "microprice=${bdOrNa(snapshot.microprice)}",
+                "obi=${bdOrNa(snapshot.obi)}",
+            ).joinToString("|")
+        val multiTfFingerprint =
+            "H1=${h1Indicators?.trend ?: "N/A"}:${h1Indicators?.let { round2(it.rsi) } ?: "N/A"}|" +
+                "D1=${d1Indicators?.trend ?: "N/A"}:${d1Indicators?.let { round2(it.rsi) } ?: "N/A"}"
+        val bbFingerprint = "BB=${indicators.bbLower.toPlainString()}:${indicators.bbUpper.toPlainString()}"
+
+        // Семантический отпечаток: цена (1 знак) + RSI-бакет + trend + vol regime + MACD + ATR pct + сессия +
+        // микроструктура + BB + multi-TF (review/P2: порядок/объёмы книги и старшие ТФ меняют вывод агента).
         val fingerprint =
             semanticCache.fingerprint(
                 snapshot.currentPrice,
@@ -116,6 +133,7 @@ class TechnicalAnalysisAgent(
                 volatilityRegime,
                 macdHistogram = indicators.macdHistogram,
                 atrPercentile = atrPercentile,
+                extra = "$microOrderbook|$bbFingerprint|$multiTfFingerprint",
             )
 
         val variables =
@@ -131,6 +149,14 @@ class TechnicalAnalysisAgent(
                 "trend" to indicators.trend,
                 "volume" to (snapshot.volume ?: 0),
                 "timeframe" to "MINUTE_10",
+                // Микроструктура книги заявок (bid/ask/спред/размеры/microprice/OBI).
+                "bid" to bdOrNa(snapshot.bid),
+                "ask" to bdOrNa(snapshot.ask),
+                "spread" to (snapshot.bid?.let { b -> snapshot.ask?.let { a -> a.subtract(b).toPlainString() } } ?: "NA"),
+                "bidSize" to (snapshot.bidSize ?: "NA"),
+                "askSize" to (snapshot.askSize ?: "NA"),
+                "microprice" to bdOrNa(snapshot.microprice),
+                "obi" to bdOrNa(snapshot.obi),
                 // Multi-timeframe: индикаторы H1/D1 (null если <30 свечей старшего ТФ)
                 "h1Trend" to (h1Indicators?.trend ?: "UNKNOWN"),
                 "h1Rsi" to (h1Indicators?.let { round2(it.rsi) } ?: "N/A"),
@@ -262,4 +288,7 @@ class TechnicalAnalysisAgent(
     }
 
     private fun round2(v: Double): Double = kotlin.math.round(v * 100) / 100.0
+
+    /** BigDecimal → "x.xx" для промпта/отпечатка, null → "NA". */
+    private fun bdOrNa(v: BigDecimal?): String = v?.setScale(2, RoundingMode.HALF_UP)?.toPlainString() ?: "NA"
 }

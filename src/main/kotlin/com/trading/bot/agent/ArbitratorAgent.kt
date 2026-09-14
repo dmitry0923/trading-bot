@@ -1,6 +1,9 @@
 package com.trading.bot.agent
 
+import com.trading.bot.infrastructure.llm.DefaultJsonSchemaValidator
 import com.trading.bot.infrastructure.llm.Guardrails
+import com.trading.bot.infrastructure.llm.JsonSchemaValidator
+import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -41,6 +44,7 @@ class ArbitratorAgent(
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    private val jsonSchemaValidator: JsonSchemaValidator = DefaultJsonSchemaValidator(objectMapper),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -178,12 +182,29 @@ class ArbitratorAgent(
                     logger.info { "LLM unavailable for arbitration of ${snapshot.ticker}, HOLD" }
                     hold(snapshot.currentPrice, "LLM unavailable", "FALLBACK: LLM_UNAVAILABLE")
                 } else {
-                    try {
-                        parseFinal(resp.content, draft)
-                    } catch (e: Exception) {
-                        logger.error(e) { "Final parse error" }
-                        meterRegistry.counter("agent.arbitrator.parse.error").increment()
-                        hold(snapshot.currentPrice, "Parse error: ${e.message}", "FALLBACK: PARSE_ERROR")
+                    // Убираем fenced-json обёртку ДО schema validation.
+                    val cleaned =
+                        resp.content
+                            .replace("```json", "")
+                            .replace("```", "")
+                            .trim()
+                    if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.STRATEGY_DECISION)) {
+                        // P0/review: схема-контракт решения арбитра — fail-closed HOLD.
+                        logger.warn { "Arbitrator LLM response failed schema validation for ${snapshot.ticker}" }
+                        meterRegistry
+                            .counter(
+                                "llm.schema.rejected",
+                                Tags.of("agent", "arbitrator", "ticker", snapshot.ticker),
+                            ).increment()
+                        hold(snapshot.currentPrice, "Schema rejected", "FALLBACK: SCHEMA_REJECTED")
+                    } else {
+                        try {
+                            parseFinal(cleaned, draft)
+                        } catch (e: Exception) {
+                            logger.error(e) { "Final parse error" }
+                            meterRegistry.counter("agent.arbitrator.parse.error").increment()
+                            hold(snapshot.currentPrice, "Parse error: ${e.message}", "FALLBACK: PARSE_ERROR")
+                        }
                     }
                 }
 

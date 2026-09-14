@@ -244,7 +244,7 @@ class StrategyRunnerTest {
     }
 
     @Test
-    fun `llm shadow marks winner shadowed when llm wins and shadow flag enabled`() {
+    fun `llm shadow keeps deterministic winner executable when llm wins research`() {
         val tradingConfig =
             TradingConfig().apply {
                 llmSignalSourceEnabled = true
@@ -254,17 +254,21 @@ class StrategyRunnerTest {
             runner(
                 listOf(
                     FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "llm")),
-                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.6, "trend")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.SELL, BigDecimal("100.0"), 0.6, "trend")),
                 ),
                 tradingConfig,
             )
         val result = runBlocking { runner.runAll(context) }
-        assertEquals(LlmSignalStrategy.ID, result.winnerId)
+        // research выиграла LLM, но исполняется детерминированный победитель.
         assertTrue(result.shadowed)
+        assertEquals("TREND_FOLLOWING", result.winnerId)
+        assertEquals(StrategyAction.SELL, result.decision.action)
+        assertTrue(LlmSignalStrategy.ID in result.all)
+        assertEquals("llm", result.shadowedDecision?.reasoning)
     }
 
     @Test
-    fun `llm shadow without shadow flag leaves winner executable`() {
+    fun `llm shadow without shadow flag leaves llm winner executable`() {
         val tradingConfig = TradingConfig().apply { llmSignalSourceEnabled = true }
         val runner =
             runner(
@@ -277,6 +281,7 @@ class StrategyRunnerTest {
         val result = runBlocking { runner.runAll(context) }
         assertEquals(LlmSignalStrategy.ID, result.winnerId)
         assertFalse(result.shadowed)
+        assertEquals(null, result.shadowedDecision)
     }
 
     @Test
@@ -297,5 +302,28 @@ class StrategyRunnerTest {
         val result = runBlocking { runner.runAll(context) }
         assertEquals("TREND_FOLLOWING", result.winnerId)
         assertFalse(result.shadowed)
+        assertEquals(null, result.shadowedDecision)
+    }
+
+    @Test
+    fun `llm shadow with signal-only yields HOLD with no executable strategy`() {
+        val tradingConfig =
+            TradingConfig().apply {
+                llmSignalSourceEnabled = true
+                llmSignalOnly = true
+                llmSignalShadow = true
+            }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "llm")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertTrue(result.shadowed)
+        assertEquals("NONE", result.winnerId)
+        assertEquals(StrategyAction.HOLD, result.decision.action)
+        assertEquals(LlmSignalStrategy.ID, result.all.keys.single())
     }
 }

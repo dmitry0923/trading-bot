@@ -65,6 +65,7 @@ class ChaosLlmIntegrationTest {
             registry.add("llm.retry-enabled") { "false" }
             registry.add("llm.circuit-breaker-enabled") { "false" }
             registry.add("llm.rate-limiter-enabled") { "false" }
+            registry.add("llm.budget-enabled") { "false" }
             registry.add("llm.timeout-sec") { "3" }
         }
     }

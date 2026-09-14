@@ -54,6 +54,8 @@ class SemanticCache(
      * @param macdHistogram значение MACD-гистограммы (NaN — не учитывать)
      * @param atrPercentile перцентиль ATR относительно окна свечей (0..100, -1 — не учитывать)
      * @param session торговая сессия (по умолчанию — текущая)
+     * @param extra дополнительные стабильные компоненты (микроструктура, multi-TF, BB) —
+     *             разделитель внутри них — «|», добавляются к отпечатку как есть
      */
     fun fingerprint(
         price: BigDecimal,
@@ -63,6 +65,7 @@ class SemanticCache(
         macdHistogram: Double = Double.NaN,
         atrPercentile: Int = -1,
         session: String = sessionOf(LocalTime.now()),
+        extra: String = "",
     ): String {
         val pricePart = price.setScale(1, RoundingMode.HALF_UP).toPlainString()
         val rsiBucket = (rsi.coerceIn(0.0, 100.0) / 10).toInt().coerceIn(0, 10)
@@ -80,7 +83,8 @@ class SemanticCache(
                 atrPercentile <= 75 -> "AM"
                 else -> "AH"
             }
-        return "$pricePart:$rsiBucket:$trend:$volatilityRegime:$macdPart:$atrPart:$session"
+        val base = "$pricePart:$rsiBucket:$trend:$volatilityRegime:$macdPart:$atrPart:$session"
+        return if (extra.isBlank()) base else "$base|$extra"
     }
 
     /**

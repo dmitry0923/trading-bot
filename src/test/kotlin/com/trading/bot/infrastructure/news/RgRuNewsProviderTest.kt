@@ -184,6 +184,44 @@ class RgRuNewsProviderTest {
             }
         }
 
+    @Test
+    fun `parses naive timestamps as Moscow timezone not UTC`() =
+        runBlocking {
+            val body =
+                """[{"title":"наивное время","publishedAt":"2026-09-11 08:00:00"},""" +
+                    """{"title":"с явным offset","publishedAt":"2026-09-11T08:00:00+03:00"}]"""
+            val server = jsonServer(body)
+            try {
+                val provider = provider(server, NewsConfig().apply { enabled = true })
+                val items = provider.newsFor("GAZP", 24)
+
+                assertEquals(2, items.size)
+                // naive "08:00" трактуется как МСК (UTC+3): 05:00 UTC, а не 08:00 UTC.
+                assertEquals(Instant.parse("2026-09-11T05:00:00Z"), items.first { it.title == "наивное время" }.publishedAt)
+                assertEquals(Instant.parse("2026-09-11T05:00:00Z"), items.first { it.title == "с явным offset" }.publishedAt)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `drops news without publish date to avoid look-ahead bias`() =
+        runBlocking {
+            val body =
+                """[{"title":"без даты","snippet":"когда опубликовано — неизвестно"},""" +
+                    """{"title":"с датой","publishedAt":"2026-09-11T09:00:00Z"}]"""
+            val server = jsonServer(body)
+            try {
+                val provider = provider(server, NewsConfig().apply { enabled = true })
+                val items = provider.newsFor("GAZP", 24)
+
+                assertEquals(1, items.size)
+                assertEquals("с датой", items.single().title)
+            } finally {
+                server.stop(0)
+            }
+        }
+
     private fun provider(
         server: HttpServer?,
         config: NewsConfig,

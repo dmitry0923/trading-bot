@@ -1,5 +1,8 @@
 package com.trading.bot.agent
 
+import com.trading.bot.infrastructure.llm.DefaultJsonSchemaValidator
+import com.trading.bot.infrastructure.llm.JsonSchemaValidator
+import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -20,7 +23,11 @@ import tools.jackson.databind.ObjectMapper
  *
  * - Оспаривает черновик стратега: валидность, уровень риска и критика
  * - Guardrail: при HOLD-черновике не вызывает LLM, риск LOW
- * - При недоступности LLM разрешает сделку (isValid=true, riskLevel=LOW)
+ * - Fail-closed (review/P1): при недоступности LLM / ошибке парсинга / несоответствии
+ *   схеме возвращает isValid=false, riskLevel=CRITICAL, signalStrength=0.0 и
+ *   [ChallengeReport.llmAvailable]=false — цепочка (LlmChainExecutor) переводит в HOLD.
+ *   Раньше недоступность LLM «разрешала» сделку (fail-open: isValid=true, LOW) — сделка
+ *   могла пройти без объективной оценки рисков.
  * - Кэширует результат по семантическому отпечатку рынка (SemanticCache)
  * - Пишет лог в AgentLogRepository и метрики agent.contrarian.decision
  */
@@ -32,6 +39,7 @@ class ContrarianAgent(
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    private val jsonSchemaValidator: JsonSchemaValidator = DefaultJsonSchemaValidator(objectMapper),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -40,6 +48,8 @@ class ContrarianAgent(
         val riskLevel: String,
         val critique: String,
         val signalStrength: Double,
+        /** false — LLM не отвечал (fallback/схема/парсинг): цепочка обязана дать HOLD. */
+        val llmAvailable: Boolean = true,
     )
 
     /**
@@ -120,13 +130,38 @@ class ContrarianAgent(
 
         val report =
             if (resp.isFallback) {
-                logger.info { "LLM unavailable for challenge, allowing trade" }
-                ChallengeReport(isValid = true, riskLevel = "LOW", critique = "LLM unavailable", signalStrength = 0.5)
+                logger.warn { "Contrarian LLM unavailable for ${snapshot.ticker} -> fail-closed CRITICAL" }
+                meterRegistry
+                    .counter(
+                        "llm.fallback.activated",
+                        Tags.of("agent", "contrarian", "reason", "FAIL_CLOSED_UNAVAILABLE"),
+                    ).increment()
+                ChallengeReport(
+                    isValid = false,
+                    riskLevel = "CRITICAL",
+                    critique = "LLM unavailable",
+                    signalStrength = 0.0,
+                    llmAvailable = false,
+                )
+            } else if (!jsonSchemaValidator.isValid(resp.content, LlmResponseSchemas.CHALLENGE_REPORT)) {
+                logger.warn { "Contrarian LLM response failed schema validation for ${snapshot.ticker}" }
+                meterRegistry
+                    .counter(
+                        "llm.schema.rejected",
+                        Tags.of("agent", "contrarian", "ticker", snapshot.ticker),
+                    ).increment()
+                ChallengeReport(
+                    isValid = false,
+                    riskLevel = "CRITICAL",
+                    critique = "Schema rejected",
+                    signalStrength = 0.0,
+                    llmAvailable = false,
+                )
             } else {
                 try {
                     val j = objectMapper.readTree(resp.content)
                     ChallengeReport(
-                        isValid = j.path("isValid").asBoolean(true),
+                        isValid = j.path("isValid").asBoolean(false),
                         riskLevel =
                             j.path("riskLevel").asString("LOW").uppercase().let {
                                 if (it in setOf("LOW", "MEDIUM", "HIGH", "CRITICAL")) it else "LOW"
@@ -135,8 +170,14 @@ class ContrarianAgent(
                         signalStrength = j.path("signalStrength").asDouble(0.0).coerceIn(0.0, 1.0),
                     )
                 } catch (e: Exception) {
-                    logger.warn(e) { "Contrarian LLM parse error" }
-                    ChallengeReport(isValid = true, riskLevel = "LOW", critique = "Parse error", signalStrength = 0.5)
+                    logger.warn(e) { "Contrarian LLM parse error for ${snapshot.ticker} -> fail-closed CRITICAL" }
+                    ChallengeReport(
+                        isValid = false,
+                        riskLevel = "CRITICAL",
+                        critique = "Parse error",
+                        signalStrength = 0.0,
+                        llmAvailable = false,
+                    )
                 }
             }
 

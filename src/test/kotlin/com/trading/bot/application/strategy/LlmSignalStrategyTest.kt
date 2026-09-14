@@ -174,6 +174,46 @@ class LlmSignalStrategyTest {
         }
 
     @Test
+    fun `evaluate holds when contrarian unavailable`() =
+        runBlocking {
+            val unavailableChallenge = challenge.copy(llmAvailable = false)
+            whenever(adaptiveRisk.getAdaptiveConfidenceThreshold("SBER")).thenReturn(0.6)
+            whenever(techAgent.analyze("SBER", candles, snapshot, cycleId)).thenReturn(tech)
+            whenever(fundAgent.analyze("SBER", cycleId)).thenReturn(fund)
+            whenever(
+                stratAgent.formulate("SBER", tech, fund, snapshot, cycleId, 0.6, PromptRegistry.DEFAULT_VERSION, 0.15, null, null, null),
+            ).thenReturn(draft)
+            whenever(
+                contrAgent.challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.1, null, null),
+            ).thenReturn(unavailableChallenge)
+
+            val cfg = TradingConfig().apply { llmSignalSourceEnabled = true }
+            val registry = SimpleMeterRegistry()
+            val decision = strategy(tradingConfig = cfg, registry = registry).evaluate(context)
+
+            assertEquals(StrategyAction.HOLD, decision.action)
+            assertEquals(1.0, registry.counter("llm.chain.contrarian_unavailable", "ticker", "SBER").count())
+            Mockito
+                .verify(
+                    arbAgent,
+                    Mockito.never(),
+                ).adjudicate(
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                )
+        }
+
+    @Test
     fun `evaluate fails closed with HOLD when chain exceeds budget`() =
         runBlocking {
             stubChain()

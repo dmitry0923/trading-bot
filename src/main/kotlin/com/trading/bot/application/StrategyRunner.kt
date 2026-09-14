@@ -19,14 +19,16 @@ import org.springframework.stereotype.Component
  * решения для журналирования. Ти-брейк — порядок регистрации (детерминирован).
  *
  * [shadowed] — победа LLM-стратегии в shadow-режиме (`trading.llm-signal-shadow`):
- * решение формируется и журналируется, но НЕ должно исполняться (order-admission /
- * Redis «последняя стратегия» пропускаются). Для остальных победителей — false.
+ * решение LLM формируется и журналируется ([shadowedDecision]), но ИСПОЛНЯЕТСЯ
+ * детерминированный победитель (winnerId/decision из тех же оценок, без LLM).
+ * [shadowedDecision] — решение LLM-победителя исследовательской ветки (наблюдение).
  */
 data class StrategyResult(
     val winnerId: String,
     val decision: StrategyDecision,
     val all: Map<String, StrategyDecision>,
     val shadowed: Boolean = false,
+    val shadowedDecision: StrategyDecision? = null,
 )
 
 /**
@@ -154,22 +156,49 @@ class StrategyRunner(
                 id to weightedDecision
             }
 
-        val winner =
+        // Две конкуренции из ОДНОГО набора оценок (review/P1):
+        //  1. research — победитель по всем стратегиям (включая LLM);
+        //  2. execution — победитель, который РЕАЛЬНО исполняется. При shadow-флаге
+        //     LLM-победитель исследовательской ветки НЕ исполняется: вместо него
+        //     исполняется лучший детерминированный (A/B-наблюдение).
+        val researchWinner =
             weighted.maxByOrNull { it.second.signalStrength }
                 ?: return StrategyResult(
                     winnerId = "NONE",
                     decision = StrategyDecision.hold(context.snapshot.currentPrice, "No strategies evaluated"),
                     all = emptyMap(),
                 )
-        meterRegistry.counter("strategy.runner.winner", Tags.of("strategy", winner.first)).increment()
-        // Shadow-режим (docs/17 §17.3, этап 5): LLM-победитель логируется, но НЕ исполняется.
-        val shadowed = winner.first == LlmSignalStrategy.ID && tradingConfig.llmSignalShadow
+        val shadowed = researchWinner.first == LlmSignalStrategy.ID && tradingConfig.llmSignalShadow
+        val executionCandidates =
+            if (shadowed) {
+                weighted.filter { it.first != LlmSignalStrategy.ID }
+            } else {
+                weighted
+            }
+        val executionWinner = executionCandidates.maxByOrNull { it.second.signalStrength }
+        if (executionWinner == null) {
+            // shadow + llm-signal-only: исполняемых (не-LLM) стратегий нет — HOLD.
+            meterRegistry.counter("llm.signal.shadow", Tags.of("ticker", context.ticker, "strategy", researchWinner.first)).increment()
+            return StrategyResult(
+                winnerId = "NONE",
+                decision =
+                    StrategyDecision.hold(
+                        context.snapshot.currentPrice,
+                        "LLM shadow-only: no executable strategy",
+                    ),
+                all = weighted.toMap(),
+                shadowed = true,
+                shadowedDecision = researchWinner.second,
+            )
+        }
+        meterRegistry.counter("strategy.runner.winner", Tags.of("strategy", executionWinner.first)).increment()
         if (shadowed) {
             logger.info {
-                "SHADOW(LLM): ${context.ticker} winner=${winner.first} (${winner.second.action}) logged but not executed"
+                "SHADOW(LLM): ${context.ticker} research winner=${researchWinner.first} " +
+                    "(${researchWinner.second.action}) observed; executing=${executionWinner.first} (${executionWinner.second.action})"
             }
             meterRegistry
-                .counter("llm.signal.shadow", Tags.of("ticker", context.ticker, "strategy", winner.first))
+                .counter("llm.signal.shadow", Tags.of("ticker", context.ticker, "strategy", researchWinner.first))
                 .increment()
         }
         if (regime != null && evaluated.size < signalStrategies.size) {
@@ -177,6 +206,12 @@ class StrategyRunner(
                 .counter("strategy.runner.filtered", Tags.of("ticker", context.ticker))
                 .increment()
         }
-        return StrategyResult(winner.first, winner.second, weighted.toMap(), shadowed)
+        return StrategyResult(
+            winnerId = executionWinner.first,
+            decision = executionWinner.second,
+            all = weighted.toMap(),
+            shadowed = shadowed,
+            shadowedDecision = if (shadowed) researchWinner.second else null,
+        )
     }
 }

@@ -184,12 +184,29 @@ class StrategyAgentTest {
     }
 
     @Test
-    fun `coerces out of range signal strength and defaults unknown action to hold`() {
+    fun `coerces out of range signal strength`() {
         val llm =
             StubLlmClient(
                 listOf(
                     LlmResponse(
-                        content = """{"action":"MOON","targetPrice":"bad","signalStrength":3.0}""",
+                        content = """{"action":"BUY","targetPrice":101,"signalStrength":3.0,"reasoning":"test"}""",
+                    ),
+                ),
+            )
+
+        val draft = runBlocking { agent(llm, SimpleMeterRegistry()).formulate("SBER", tech(), fund(), snapshot, "c1") }
+
+        assertEquals(StrategyAction.BUY, draft.action)
+        assertEquals(1.0, draft.signalStrength)
+    }
+
+    @Test
+    fun `rejects unknown action via schema`() {
+        val llm =
+            StubLlmClient(
+                listOf(
+                    LlmResponse(
+                        content = """{"action":"MOON","targetPrice":100,"signalStrength":0.8}""",
                     ),
                 ),
             )
@@ -197,8 +214,6 @@ class StrategyAgentTest {
         val draft = runBlocking { agent(llm, SimpleMeterRegistry()).formulate("SBER", tech(), fund(), snapshot, "c1") }
 
         assertEquals(StrategyAction.HOLD, draft.action)
-        assertEquals(BigDecimal("100"), draft.targetPrice)
-        assertEquals(1.0, draft.signalStrength)
     }
 
     @Test
@@ -224,15 +239,15 @@ class StrategyAgentTest {
     }
 
     @Test
-    fun `holds on unparsable llm content and records parse error metric`() {
+    fun `holds on unparsable llm content via schema rejection`() {
         val meter = SimpleMeterRegistry()
         val llm = StubLlmClient(listOf(LlmResponse(content = "not-json{")))
 
         val draft = runBlocking { agent(llm, meter).formulate("SBER", tech(), fund(), snapshot, "c1") }
 
         assertEquals(StrategyAction.HOLD, draft.action)
-        assertTrue(draft.reasoning.contains("Parse error"))
-        assertEquals(1.0, meter.counter("strategy.agent.parse.error", "ticker", "SBER").count())
+        assertTrue(draft.reasoning.contains("Schema rejected"))
+        assertEquals(1.0, meter.counter("llm.schema.rejected", "agent", "strategy", "ticker", "SBER").count())
         assertEquals("not-json{", logRepo.saved.single().rawOutput)
     }
 

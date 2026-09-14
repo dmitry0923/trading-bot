@@ -138,10 +138,12 @@ class ResilientLlmClient(
             val user = prompt.renderUser(variables)
 
             // ---- Бюджет: резервируем расход ДО вызова (fail-closed по лимитам) ----
+            // Оценка = длина промпта + максимальный размер ответа (maxTokens, review/P1):
+            // одного промпта мало — бюджет должен покрывать и выход модели.
             val budget =
                 llmBudgetService?.let { budget ->
                     val cacheKey = cacheKeyOf(agent, ticker, fingerprint, cacheNamespace, seed)
-                    budget.reserve(agent, cacheKey, budget.estimateTokens(system, user))
+                    budget.reserve(agent, cacheKey, budget.estimateTokens(system, user) + llmConfig.maxTokens)
                 }
             if (budget != null && !budget.allowed) {
                 val reason = budget.reason ?: "TOKEN_BUDGET_EXCEEDED"
@@ -152,44 +154,81 @@ class ResilientLlmClient(
 
             // ---- Single-flight: при одинаковом семантическом ключе к LLM ходит один поток ----
             val cacheKey = cacheKeyOf(agent, ticker, fingerprint, cacheNamespace, seed)
-            val acquired =
+            val sf =
                 if (fingerprint != null) {
-                    llmSingleFlight?.acquire(cacheKey, seed) ?: true
+                    llmSingleFlight
                 } else {
-                    true
+                    null
                 }
 
-            if (acquired) {
-                try {
-                    val response =
-                        try {
-                            llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
-                        } catch (e: Exception) {
-                            logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
-                            meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
-                            LlmResponse.fallback("CALL_ERROR", e.message)
-                        }
+            // Single-flight выключен или у вызова нет fingerprint — прямой вызов владельцем.
+            if (sf == null) {
+                return@withMdc executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed)
+            }
 
-                    // Полный трейс (промпты + ответ) в S3/MinIO; storage_key попадает
-                    // в ответ, semantic cache и agent_logs — без хранения сырых промптов в БД.
-                    val finalResponse =
-                        response.copy(storageKey = persistTrace(agent, ticker, fingerprint, system, user, response, endpoint))
-
-                    if (fingerprint != null && !finalResponse.isFallback) {
-                        semanticCache.put(agent, ticker, fingerprint, finalResponse, cacheNamespace, seed)
-                    }
-                    finalResponse
-                } finally {
-                    if (fingerprint != null) {
-                        llmSingleFlight?.release(cacheKey, seed)
+            when (val acquired = sf.acquire(cacheKey, seed)) {
+                is LlmSingleFlight.AcquireResult.Owner -> {
+                    try {
+                        executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed)
+                    } finally {
+                        sf.release(cacheKey, seed, acquired.token)
                     }
                 }
-            } else {
-                // Не владелец: параллельный цикл уже выполняет этот вызов — ждём
-                // запись в кэш от владельца и только после таймаута даём fallback.
-                waitForOwnerCache(agent, ticker, fingerprint!!, cacheNamespace, seed)
+
+                is LlmSingleFlight.AcquireResult.Busy -> {
+                    // Не владелец: параллельный цикл уже выполняет этот вызов — ждём
+                    // запись в кэш от владельца и только после таймаута даём fallback.
+                    waitForOwnerCache(agent, ticker, fingerprint!!, cacheNamespace, seed)
+                }
+
+                is LlmSingleFlight.AcquireResult.Unavailable -> {
+                    // Redis недоступен (review/P1): дедупликация не гарантирована — fail-closed.
+                    logger.warn { "Single-flight unavailable (Redis) for agent=$agent ticker=$ticker -> fail-closed" }
+                    meterRegistry
+                        .counter(
+                            "llm.fallback.activated",
+                            Tags.of("agent", agent, "reason", "SINGLE_FLIGHT_UNAVAILABLE"),
+                        ).increment()
+                    LlmResponse.fallback("SINGLE_FLIGHT_UNAVAILABLE")
+                }
+
+                null -> {
+                    executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed)
+                }
             }
         }
+    }
+
+    /** Выполняет LLM-вызов (очередь + resilience), трассирует и пишет semantic cache. */
+    private suspend fun executeLlmCall(
+        agent: String,
+        ticker: String,
+        fingerprint: String?,
+        system: String,
+        user: String,
+        temperature: Double,
+        endpoint: ResolvedEndpoint,
+        cacheNamespace: String?,
+        seed: String?,
+    ): LlmResponse {
+        val response =
+            try {
+                llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
+            } catch (e: Exception) {
+                logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
+                meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
+                LlmResponse.fallback("CALL_ERROR", e.message)
+            }
+
+        // Полный трейс (промпты + ответ) в S3/MinIO; storage_key попадает
+        // в ответ, semantic cache и agent_logs — без хранения сырых промптов в БД.
+        val finalResponse =
+            response.copy(storageKey = persistTrace(agent, ticker, fingerprint, system, user, response, endpoint))
+
+        if (fingerprint != null && !finalResponse.isFallback) {
+            semanticCache.put(agent, ticker, fingerprint, finalResponse, cacheNamespace, seed)
+        }
+        return finalResponse
     }
 
     private suspend fun waitForOwnerCache(
@@ -224,13 +263,14 @@ class ResilientLlmClient(
         }
 
     /**
-     * Версия семантики кэша: имя промпта из [LlmConfig.cacheDataVersion] инвалидирует
-     * записи при изменении логики агентов/промптов вручную (env LLM_CACHE_DATA_VERSION).
+     * Версия семантики кэша: имя промпта + модель + [LlmConfig.cacheDataVersion] +
+     * провайдер/baseUrl. Смена любого из них (включая переключение между провайдерами
+     * с одинаковой моделью) инвалидирует старые записи — защита от устаревших ответов.
      */
     private fun versionSeed(
         promptVersion: String,
         endpoint: ResolvedEndpoint,
-    ): String = "$promptVersion:${endpoint.model}:${llmConfig.cacheDataVersion}"
+    ): String = "$promptVersion:${endpoint.model}:${llmConfig.cacheDataVersion}:${endpoint.provider.name}:${endpoint.baseUrl}"
 
     /**
      * Определяет активный провайдер: приоритет у настроек из UI (SettingsService),

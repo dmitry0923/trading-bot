@@ -21,7 +21,10 @@ import tools.jackson.databind.ObjectMapper
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Источник новостей эмитентов rg.ru (платная подписка в LIVE).
@@ -152,7 +155,7 @@ class RgRuNewsProvider(
                 val now = Instant.now(clock)
                 array
                     .mapNotNull { item -> toNewsItem(item) }
-                    .filter { item -> item.publishedAt == null || item.publishedAt.isAfter(now.minusMillis(hours * 3_600_000L)) }
+                    .filter { item -> (item.publishedAt?.isAfter(now.minusMillis(hours * 3_600_000L)) == true) }
                     .distinctBy { item -> item.url.ifBlank { item.title } }
                     .sortedByDescending { it.publishedAt ?: Instant.EPOCH }
                     .take(newsConfig.maxItems)
@@ -178,10 +181,13 @@ class RgRuNewsProvider(
     private fun toNewsItem(node: JsonNode): NewsItem? {
         val title = node.path("title").asString("")
         if (title.isBlank()) return null
+        // Review/P2: новость без даты публикации отбрасывается — в противном случае
+        // look-ahead bias (неизвестно, когда новость была фактически известна рынку).
+        val publishedAt = parseInstant(node) ?: return null
         return NewsItem(
             title = title,
             url = firstString(node, "url", "link"),
-            publishedAt = parseInstant(node),
+            publishedAt = publishedAt,
             snippet = firstString(node, "snippet", "text", "description", "summary"),
         )
     }
@@ -202,18 +208,29 @@ class RgRuNewsProvider(
         return null
     }
 
-    /** ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss[.SSS][Z]`) или `yyyy-MM-dd HH:mm:ss`. */
+    /**
+     * ISO-8601 (`yyyy-MM-dd'T'HH:mm:ss[.SSS][Z|±HH:MM]`) или `yyyy-MM-dd HH:mm:ss`.
+     *
+     * Review/P2: naive-времена (без offset) трактуются как МСК (Europe/Moscow), а не
+     * как UTC — rg.ru публикует время в московской часовой зоне. Раньше наивный
+     * timestamp получал `Z` (трактовался как UTC) и сдвигался на +3 часа — окно
+     * «свежести» и захват новостей были смещены.
+     */
     private fun parseFlexible(raw: String): Instant? {
         val cleaned = raw.trim().replace(" ", "T")
-        val normalized =
-            if (cleaned.endsWith("Z") || cleaned.contains('+')) cleaned else "${cleaned}Z"
-        return runCatching { Instant.parse(normalized) }
-            .getOrElse {
-                runCatching {
-                    val date = LocalDate.parse(normalized.take(10))
-                    date.atStartOfDay(ZoneId.of("Europe/Moscow")).toInstant()
-                }.getOrNull()
-            }
+        // Явный offset — как есть.
+        runCatching { return Instant.parse(cleaned) }
+        runCatching { return OffsetDateTime.parse(cleaned, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant() }
+        // Без offset — время МСК.
+        runCatching {
+            val local = LocalDateTime.parse(cleaned)
+            return local.atZone(ZoneId.of("Europe/Moscow")).toInstant()
+        }
+        runCatching {
+            val date = LocalDate.parse(cleaned.take(10))
+            return date.atStartOfDay(ZoneId.of("Europe/Moscow")).toInstant()
+        }
+        return null
     }
 
     private fun cached(key: String): List<NewsItem>? =

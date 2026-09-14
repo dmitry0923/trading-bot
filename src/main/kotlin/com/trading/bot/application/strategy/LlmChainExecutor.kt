@@ -67,6 +67,19 @@ object LlmChainExecutor {
                     fundDelta = fundDelta,
                 )
             val challenge = contrAgent.challenge(draft, tech, fund, context.snapshot, context.cycleId, techDelta = techDelta)
+            if (!challenge.llmAvailable) {
+                // Fail-closed (review/P1): контраргументы не получены (LLM недоступен/
+                // сбой/схема). Объективную оценку рисков провести нельзя — HOLD.
+                meterRegistry
+                    .counter(
+                        "llm.chain.contrarian_unavailable",
+                        Tags.of("ticker", context.ticker),
+                    ).increment()
+                return@coroutineScope StrategyDecision.hold(
+                    context.snapshot.currentPrice,
+                    "Contrarian LLM unavailable -> HOLD",
+                )
+            }
             val final =
                 arbAgent.adjudicate(
                     draft,

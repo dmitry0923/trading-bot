@@ -49,6 +49,11 @@ class FundamentalAnalysisAgent(
     private val logger = KotlinLogging.logger {}
     private val newsDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
+    private companion object {
+        /** Валютные коды для определения валютных фьючерсов (CNYRUBF, Si и др.). */
+        val CURRENCY_CODES = setOf("CNY", "RUB", "USD", "EUR", "GBP", "JPY", "HKD", "TRY", "KZT")
+    }
+
     /**
      * Фундаментальный анализ тикера на основе макро-контекста и новостей
      * по эмитенту (если источник настроен).
@@ -69,7 +74,10 @@ class FundamentalAnalysisAgent(
     ): FundamentalReport {
         val start = System.currentTimeMillis()
         val macro = macroContextService.fetch()
-        val isFx = instrumentsConfig?.find(ticker)?.type?.uppercase() == "FX"
+        // Review/P2: FX-подобными считаем и валютные ФЬЮЧЕРСЫ (CNYRUBF: baseAsset=CNY,
+        // quoteAsset=RUB), а не только спот-тикеры типа "FX": для «юань/рубль» эмитентных
+        // новостей нет, нужен макро/FX/Китай-контекст (см. fxContext).
+        val isFx = isFxLike(ticker)
         val news = if (isFx) emptyList() else issuerDataProvider?.newsFor(ticker, 24) ?: emptyList()
 
         val variables =
@@ -78,7 +86,7 @@ class FundamentalAnalysisAgent(
                 "cbrRate" to macro.cbrRate.toPlainString(),
                 "brentPrice" to macro.brentPrice.toPlainString(),
                 "usdRub" to macro.usdRub.toPlainString(),
-                "issuerNews" to (if (isFx) fxContext(macro) else renderNews(news)),
+                "issuerNews" to (if (isFx) fxContext(ticker, macro) else renderNews(news)),
             )
 
         // Фундаментальный fingerprint: макро-фон + СТАБИЛЬНЫЕ поля новостей
@@ -152,14 +160,32 @@ class FundamentalAnalysisAgent(
         return report
     }
 
+    /**
+     * FX-подобный инструмент: спот-тип "FX" или фьючерс на валютную пару
+     * (baseAsset/quoteAsset — валюты, например CNYRUBF: CNY/RUB, Si: USD/RUB).
+     * Для них эмитентные новости не используются — только макро/FX-контекст.
+     */
+    private fun isFxLike(ticker: String): Boolean {
+        val spec = instrumentsConfig?.find(ticker) ?: return false
+        val type = spec.type.uppercase()
+        if (type == "FX") return true
+        return type == "FUTURES" && spec.baseAsset.uppercase() in CURRENCY_CODES && spec.quoteAsset.uppercase() in CURRENCY_CODES
+    }
+
     /** Формирует FX-контекст для валютных инструментов (CNYRUBF) вместо эмитентных новостей. */
-    private fun fxContext(macro: MacroContextService.MacroContext): String {
-        val label = "FX-контекст (валютная пара CNY/RUB), эмитентных новостей нет:"
+    private fun fxContext(
+        ticker: String,
+        macro: MacroContextService.MacroContext,
+    ): String {
+        val spec = instrumentsConfig?.find(ticker)
+        val pair = "${spec?.baseAsset ?: "?"}/${spec?.quoteAsset ?: "?"}"
+        val label = "FX-контекст (валютная пара $pair), эмитентных новостей нет:"
         val macroPart =
             "ставка ЦБ РФ ${macro.cbrRate.toPlainString()}%, курс USD/RUB ${macro.usdRub.toPlainString()}, " +
                 "нефть Brent ${macro.brentPrice.toPlainString()}$/барр"
-        return "$label $macroPart. Учитывай также политику Народного банка Китая (PBoC), " +
-            "торговый баланс и потоки между РФ и КНР настолько, насколько они известны."
+        return "$label $macroPart. Учитывай также политику центрального банка страны базовой валюты " +
+            "(например, для CNY/RUB — Народный банк Китая/PBoC), торговый баланс и потоки между РФ и этой страной " +
+            "настолько, насколько они известны."
     }
 
     /** SHA-256 «отпечаток содержимого» новостей: title|url|publishedAt каждого, отсортированные. */

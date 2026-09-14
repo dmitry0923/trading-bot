@@ -109,6 +109,8 @@ class TechnicalAnalysisAgent(
 
         // Микроструктура книги заявок (review/P2): bid/ask/спред/объёмы/microprice/OBI.
         // Входит в переменные промпта И в семантический отпечаток — смена книги меняет кэш-ключ.
+        // P2: OBI 4 знака (0.2110 ≠ 0.2140), spread в bps (нормализовано к мид-цене).
+        val spreadBpsValue = spreadBps(snapshot.bid, snapshot.ask)
         val microOrderbook =
             listOf(
                 "bid=${bdOrNa(snapshot.bid)}",
@@ -116,7 +118,8 @@ class TechnicalAnalysisAgent(
                 "bidSize=${snapshot.bidSize ?: "NA"}",
                 "askSize=${snapshot.askSize ?: "NA"}",
                 "microprice=${bdOrNa(snapshot.microprice)}",
-                "obi=${bdOrNa(snapshot.obi)}",
+                "obi=${bd4(snapshot.obi)}",
+                "spreadBps=$spreadBpsValue",
             ).joinToString("|")
         val multiTfFingerprint =
             "H1=${h1Indicators?.trend ?: "N/A"}:${h1Indicators?.let { round2(it.rsi) } ?: "N/A"}|" +
@@ -153,10 +156,11 @@ class TechnicalAnalysisAgent(
                 "bid" to bdOrNa(snapshot.bid),
                 "ask" to bdOrNa(snapshot.ask),
                 "spread" to (snapshot.bid?.let { b -> snapshot.ask?.let { a -> a.subtract(b).toPlainString() } } ?: "NA"),
+                "spreadBps" to spreadBpsValue,
                 "bidSize" to (snapshot.bidSize ?: "NA"),
                 "askSize" to (snapshot.askSize ?: "NA"),
                 "microprice" to bdOrNa(snapshot.microprice),
-                "obi" to bdOrNa(snapshot.obi),
+                "obi" to bd4(snapshot.obi),
                 // Multi-timeframe: индикаторы H1/D1 (null если <30 свечей старшего ТФ)
                 "h1Trend" to (h1Indicators?.trend ?: "UNKNOWN"),
                 "h1Rsi" to (h1Indicators?.let { round2(it.rsi) } ?: "N/A"),
@@ -291,4 +295,22 @@ class TechnicalAnalysisAgent(
 
     /** BigDecimal → "x.xx" для промпта/отпечатка, null → "NA". */
     private fun bdOrNa(v: BigDecimal?): String = v?.setScale(2, RoundingMode.HALF_UP)?.toPlainString() ?: "NA"
+
+    /** BigDecimal → "x.xxxx" (4 знака) для OBI — различает 0.2110 и 0.2140, null → "NA". */
+    private fun bd4(v: BigDecimal?): String = v?.setScale(4, RoundingMode.HALF_UP)?.toPlainString() ?: "NA"
+
+    /** Spread в basis points от мид-цены (bid/ask), null → "NA". */
+    private fun spreadBps(
+        bid: BigDecimal?,
+        ask: BigDecimal?,
+    ): String {
+        if (bid == null || ask == null) return "NA"
+        val mid = bid.add(ask).divide(BigDecimal(2), 8, RoundingMode.HALF_UP)
+        if (mid.signum() <= 0) return "NA"
+        return ask
+            .subtract(bid)
+            .multiply(BigDecimal("10000"))
+            .divide(mid, 2, RoundingMode.HALF_UP)
+            .toPlainString()
+    }
 }

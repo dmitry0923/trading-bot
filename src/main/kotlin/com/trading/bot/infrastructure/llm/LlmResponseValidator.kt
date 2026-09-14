@@ -3,6 +3,8 @@ package com.trading.bot.infrastructure.llm
 import org.springframework.stereotype.Component
 import tools.jackson.core.type.TypeReference
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.node.DecimalNode
+import tools.jackson.databind.node.ObjectNode
 
 /**
  * Функциональный интерфейс валидатора LLM-ответов по JSON Schema.
@@ -20,6 +22,27 @@ fun interface JsonSchemaValidator {
         json: String,
         schema: String,
     ): Boolean
+}
+
+/**
+ * Нормализация `targetPrice` перед schema-валидацией (P1: oneOf заменён на type:number).
+ *
+ * Если LLM вернул строковое число (`"73.25"`), конвертируется в JSON-number.
+ * Нечисловая строка / объект / null остаются как есть — schema отвергнет → fail-closed HOLD.
+ * Отсутствие `targetPrice` (optional) не затрагивается (парсер fallback на текущую/чертёжную цену).
+ */
+fun normalizeTargetPrice(
+    json: String,
+    objectMapper: ObjectMapper,
+): String {
+    val tree =
+        runCatching { objectMapper.readTree(json) }.getOrNull() ?: return json
+    val root = tree as? ObjectNode ?: return json
+    val target = root.get("targetPrice") ?: return json
+    if (!target.isString) return json
+    val value = target.asString().trim().toBigDecimalOrNull() ?: return json
+    root.set("targetPrice", DecimalNode.valueOf(value))
+    return root.toString()
 }
 
 /**
@@ -73,14 +96,13 @@ object LlmResponseSchemas {
               "enum": ["BUY", "SELL", "HOLD"]
             },
             "targetPrice": {
-              "oneOf": [
-                { "type": "number", "minimum": 0.0 },
-                { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$" }
-              ]
+              "type": "number",
+              "minimum": 0.0
             },
             "signalStrength": {
               "type": "number",
-              "minimum": 0.0
+              "minimum": 0.0,
+              "maximum": 1.0
             },
             "reasoning": {
               "type": "string"

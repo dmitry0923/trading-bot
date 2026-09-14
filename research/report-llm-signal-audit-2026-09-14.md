@@ -103,6 +103,10 @@
 - Полный прогон после кода: `./gradlew ktlintCheck test integrationTest` —
   **BUILD SUCCESSFUL** (integrationTest ~15m22s).
 - После doc-правок: все таски UP-TO-DATE (код не менялся) — зелёно.
+- После P1/P2 (round 2): `ktlintFormat`+`ktlintCheck` ✅, `test` ✅ (1467),
+  `integrationTest` ✅ (101 PASSED + 1 SKIPPED, 15m27s).
+- Нюанс Jackson 3: `ObjectNode`/`DecimalNode.valueOf` из `tools.jackson.databind.node`;
+  `isString`/`asString` вместо `isTextual`/`asText`; `set` без generic-параметра.
 
 ## 4. Коммиты
 
@@ -110,8 +114,45 @@
 |---|---|
 | `5bf6794` | RgRuNewsProvider + issuerNews в FundamentalAnalysisAgent + LIVE runbook (этапы 3–4) |
 | `f821463` | LLM как источник сигнала (этапы 1–5) + риск-аудит пути R1–R4 + lineage + shadow + docs; 48 файлов, +3160/−147 |
+| `9c00435` | Правки первого code-review: single-flight owner-token + Lua release; shadow = research vs execution winner; budget = prompt-estimate + maxTokens; contrarian fail-closed (`llm.chain.contrarian_unavailable`); schema-fail-closed для strategy/arbitrator; fenced-json до schema; RgRuNewsProvider naive→Moscow + drop undated; technical multi-TF/orderbook; CNYRUBF FX-контекст; 23 файла, +803/−149 |
 
-Оба запушены в `origin/research/llm-signal-source`.
+Запушены в `origin/research/llm-signal-source`.
+
+## 4a. Второй code-review (P1/P2, финальный технический revision перед Stage 6)
+
+Ревизоры подтвердили закрытие всех замечаний round 1 (8.5/10) и выявили
+финальный набор правок:
+
+### P1 — `oneOf` НЕ был реализован в `DefaultJsonSchemaValidator` (главный дефект)
+
+`targetPrice: {}` проходил schema-проверку (валидатор не знает `oneOf`), затем парсер
+молча fallback на `snapshot.currentPrice` → невалидный `BUY`. Исправлено **вариантом B**
+(простая схема + строгая нормализация, БЕЗ fallback):
+
+- Схема `STRATEGY_DECISION`: `"targetPrice": {"type":"number","minimum":0.0}`
+  (`oneOf`/`pattern` удалены — валидатор их не обрабатывает).
+- Новый `normalizeTargetPrice(json, objectMapper)` — конвертирует строковое число
+  `"73.25"` → `73.25` ДО валидации; нечисловая строка / объект / null остаются как есть →
+  schema reject → fail-closed **HOLD**, `llm.schema.rejected`.
+- Применено в `StrategyAgent` и `ArbitratorAgent` (валидация и парсинг — по normalized).
+- Тесты: `rejects object targetPrice via schema`, `rejects non-numeric targetPrice string
+  via schema` (StrategyAgentTest), string-normalization-кейсы (уже существовавшие).
+
+### P2 — остальные правки
+
+| Пункт | Правка |
+|---|---|
+| `maximum: 1.0` у `signalStrength` | Вернут в схему (контракт 0..1); parser `coerceIn()` оставлен как последняя линия обороны. Тесты `coerces out of range signal strength` → `rejects out-of-range signal strength via schema` (+1.7/3.0 → HOLD). |
+| Точность fingerprint orderbook | `OBI` → 4 знака (`bd4`: 0.2110 ≠ 0.2140); **spread в bps** от мид-цены (`spreadBps`, 2 знака) — и в отпечатке, и в промпте (`{{spreadBps}}`). bid/ask/microprice — 2 знака. |
+| Fundamental prompt | Убрано «фундаментальный аналитик российского фондового рынка» / «новости по эмитенту» → «аналитик рынков (акции, фьючерсы, валюты)»; для FX/futures: центробанки (ЦБ РФ, PBoC), торговые потоки; для акций: эмитентские новости. Обе line — и system, и user_template (default/conservative/aggressive). |
+
+### Вердикт второго раунда
+
+- Схема-контракт стратегии теперь максимально простая и честная: только то, что валидатор
+  реально умеет проверять (`type`/`enum`/`required`/`additionalProperties`/`min`/`max`).
+  Невалидное значение `targetPrice`/`signalStrength` ВСЕГДА → HOLD, никакого тихого
+  fallback-на-цену.
+- `LLM production readiness` ≈ 8.5–9/10; кодовая часть LLM-pipeline считается закрытой.
 
 ## 5. Итог аудита
 

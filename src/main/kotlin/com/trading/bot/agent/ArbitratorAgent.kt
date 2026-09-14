@@ -7,6 +7,7 @@ import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
+import com.trading.bot.infrastructure.llm.normalizeTargetPrice
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
@@ -182,13 +183,14 @@ class ArbitratorAgent(
                     logger.info { "LLM unavailable for arbitration of ${snapshot.ticker}, HOLD" }
                     hold(snapshot.currentPrice, "LLM unavailable", "FALLBACK: LLM_UNAVAILABLE")
                 } else {
-                    // Убираем fenced-json обёртку ДО schema validation.
+                    // Убираем fenced-json обёртку ДО schema validation и нормализуем targetPrice (P1).
                     val cleaned =
                         resp.content
                             .replace("```json", "")
                             .replace("```", "")
                             .trim()
-                    if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.STRATEGY_DECISION)) {
+                    val normalized = normalizeTargetPrice(cleaned, objectMapper)
+                    if (!jsonSchemaValidator.isValid(normalized, LlmResponseSchemas.STRATEGY_DECISION)) {
                         // P0/review: схема-контракт решения арбитра — fail-closed HOLD.
                         logger.warn { "Arbitrator LLM response failed schema validation for ${snapshot.ticker}" }
                         meterRegistry
@@ -199,7 +201,7 @@ class ArbitratorAgent(
                         hold(snapshot.currentPrice, "Schema rejected", "FALLBACK: SCHEMA_REJECTED")
                     } else {
                         try {
-                            parseFinal(cleaned, draft)
+                            parseFinal(normalized, draft)
                         } catch (e: Exception) {
                             logger.error(e) { "Final parse error" }
                             meterRegistry.counter("agent.arbitrator.parse.error").increment()

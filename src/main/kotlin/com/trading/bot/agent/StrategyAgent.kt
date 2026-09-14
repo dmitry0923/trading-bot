@@ -7,6 +7,7 @@ import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
+import com.trading.bot.infrastructure.llm.normalizeTargetPrice
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
@@ -143,13 +144,15 @@ class StrategyAgent(
         }
 
         // P0/review: структурная валидация ответа до парсинга — невалидная схема → HOLD
-        // (fail-closed), а не «парсинг-дефолт». Сначала убираем fenced-json обёртку.
+        // (fail-closed), а не «парсинг-дефолт». Сначала убираем fenced-json обёртку,
+        // затем нормализуем строковый targetPrice (P1: oneOf → type:number + strict).
         val cleaned =
             resp.content
                 .replace("```json", "")
                 .replace("```", "")
                 .trim()
-        if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.STRATEGY_DECISION)) {
+        val normalized = normalizeTargetPrice(cleaned, objectMapper)
+        if (!jsonSchemaValidator.isValid(normalized, LlmResponseSchemas.STRATEGY_DECISION)) {
             logger.warn { "Strategy LLM response failed schema validation for $ticker" }
             meterRegistry.counter("llm.schema.rejected", Tags.of("agent", "strategy", "ticker", ticker)).increment()
             return logAndReturn(
@@ -166,7 +169,7 @@ class StrategyAgent(
 
         val draft =
             try {
-                val j = objectMapper.readTree(cleaned)
+                val j = objectMapper.readTree(normalized)
                 val action =
                     StrategyAction.entries.firstOrNull {
                         it.name == j.path("action").asString("HOLD").uppercase()

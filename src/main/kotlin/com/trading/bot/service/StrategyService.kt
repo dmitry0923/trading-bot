@@ -414,8 +414,10 @@ class StrategyService(
         strategyRepo.save(strategy)
         // Redis хранит ПОСЛЕДНЮЮ действующую стратегию тикера: HOLD не перезаписывает
         // последний BUY/SELL (иначе OrderBuilder.recordStrategyExecution и REST
-        // «последняя стратегия» видели HOLD-строку без риск-полей).
-        if (signal.action != StrategyAction.HOLD) {
+        // «последняя стратегия» видели HOLD-строку без риск-полей). Shadow-победитель LLM
+        // НЕ пишется (иначе OrderBuilder мог бы исполнить HOLD-независимую «последнюю
+        // стратегию» — нарушение shadow-семантики: наблюдаем, но не торгуем).
+        if (signal.action != StrategyAction.HOLD && !result.shadowed) {
             redis.saveStrategy(strategy)
         }
 
@@ -445,7 +447,12 @@ class StrategyService(
             paperTradingService.recordVariantDecision(variantDecision, version = variantVersion)
         }
 
-        if (shadowExecution) {
+        if (result.shadowed) {
+            // Shadow-режим LLM (docs/17 §17.3, этап 5): победитель зафиксирован (agent_logs,
+            // Strategy, lineage), но исполняется ТОЛЬКО детерминированный вход. Сигнал не
+            // публикуется в order-admission (order не создаётся) — см. метрику/лог в StrategyRunner.
+            logger.info { "SHADOW(LLM) not executed: $ticker/$timeframe winner=${result.winnerId} (${signal.action})" }
+        } else if (shadowExecution) {
             logger.info { "SHADOW: $ticker/$timeframe decision=${result.decision.action} recorded but NOT executed" }
         } else {
             eventPublisher.publishStrategyGenerated(signal)

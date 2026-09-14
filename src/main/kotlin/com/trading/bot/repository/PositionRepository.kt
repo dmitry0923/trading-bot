@@ -228,6 +228,20 @@ class PositionRepository(
     }
 
     /**
+     * Все позиции цикла (lineage): открытие ведётся на signal цикла, поэтому
+     * cycle_id связывает сделку с полной цепочкой решения. Используется
+     * реконструкцией по cycleId ([com.trading.bot.service.LineageService]).
+     */
+    suspend fun findByCycleId(cycleId: String): List<Position> =
+        databaseClient
+            .sql("SELECT * FROM positions WHERE cycle_id = :cycleId ORDER BY opened_at ASC")
+            .bind("cycleId", cycleId)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /**
      * Атомарный claim позиции на закрытие (EXEC-001).
      *
      * Одиночный UPDATE с условиями `status = 'OPEN' AND pending_close = false` —

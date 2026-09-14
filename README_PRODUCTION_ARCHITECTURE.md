@@ -6,6 +6,33 @@
 > убыточен, consistency 0.5, сделок 20 < 100). Бот работает в research-режиме
 > paper; LIVE-входы блокируются `LIVE_TICKERS_ALLOWLIST` (fail-closed).
 
+## LLM как источник сигнала (research, дефолт off)
+
+> Аудит, дизайн и план — `docs/17-llm-signal-source.md`; ветка `research/llm-signal-source`.
+> В production флаги дефолтно выключены — детерминированный сигнал не меняется.
+
+Полная LLM-цепочка (tech→fund→strategy→contrarian→arbitrator, `LlmSignalStrategy`) может
+участвовать в конкурентном выборе сигнала как **источник решения**, но не как «руки»
+(риск-паритет: `StrategyDecision` несёт только action/target/уверенность, qty/SL/TP
+назначает OrderBuilder + риск-слой):
+
+| Флаг (env) | Смысл | Fail-closed |
+|---|---|---|
+| `trading.llm-signal-source` (`TRADING_LLM_SIGNAL_SOURCE`) | LLM в конкуренции за сигнал | LLM недоступен / бюджет / ошибка → HOLD |
+| `trading.llm-signal-only` (`TRADING_LLM_SIGNAL_ONLY`) | только LLM-источник (дет. отключаются) | вводится только после A/B против базлайна |
+| `trading.llm-signal-shadow` (`TRADING_LLM_SIGNAL_SHADOW`) | LLM-победитель логируется, НЕ исполняется | исполнение остаётся детерминированным |
+| `trading.llm-signal-budget-ms` (`TRADING_LLM_SIGNAL_BUDGET_MS`) | жёсткий бюджет цепочки (2000 мс) | превышение → HOLD (`llm.signal.timeout`) |
+
+**Shadow-режим (этап 5, 2026-09-14)**: победа LLM фиксируется в `agent_logs` → Strategy →
+lineage (`GET /api/v1/lineage/{cycleId}`), но сигнал НЕ публикуется в order-admission и НЕ
+пишется в Redis «последняя стратегия» — вход исполняется только детерминированной
+стратегией (метрика `llm.signal.shadow{ticker,strategy}`). Это A/B-наблюдение LLM-winner
+vs базлайн на 30д до включения `llm-signal-only`.
+
+**Реализовано на 2026-09-14 (этапы 1–5)**. Блокер: этап 6 (smoke-бэктест «строго LLM»,
+`bt.agent.live-strategies=false`) ждёт реальный `LLM_API_KEY` — без ключа агенты на
+детерминированных fallback, прогон валиден только как smoke (docs/17 §17.7).
+
 ## Что нового в v2
 
 ### 🧠 Self-Learning Engine

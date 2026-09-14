@@ -39,6 +39,7 @@ class StrategySelector {
             "BREAKOUT" to DirectionFit(trend = 0.8, range = 0.3),
             "SCALPING" to DirectionFit(trend = 0.7, range = 0.4),
             "DISCRETIONARY" to DirectionFit(trend = 0.8, range = 0.7),
+            "LLM_SIGNAL" to DirectionFit(trend = 0.8, range = 0.7),
             "ARBITRAGE" to DirectionFit(trend = 0.5, range = 0.8),
             "GRID" to DirectionFit(trend = 0.0, range = 1.0),
             "MEAN_REVERSION" to DirectionFit(trend = 0.0, range = 1.0),
@@ -49,7 +50,7 @@ class StrategySelector {
         mapOf(
             RegimeVolatility.LOW to fits.keys,
             RegimeVolatility.NORMAL to fits.keys,
-            RegimeVolatility.HIGH to setOf("SCALPING", "DISCRETIONARY", "ARBITRAGE", "CNYRUB_TOM"),
+            RegimeVolatility.HIGH to setOf("SCALPING", "DISCRETIONARY", "LLM_SIGNAL", "ARBITRAGE", "CNYRUB_TOM"),
             RegimeVolatility.EXTREME to emptySet(),
         )
 

@@ -234,6 +234,8 @@
 | 2026-09-08 | Издержки/funding 2 (`futures-margin-funding-audit`) | side-specific GO; риск-снапшот; `FundingProvider` (MOEX); slippage в риск-бюджете | 1384 |
 | 2026-09-09 | CNYRUBF 365д донакачка + gate (`research-wfa-cnyrubf`) | retention 90д → 730д; WFA/holdout/MC на 365д; фикс бага `passed` в `DeploymentGate`; фикс YAML `db.changelog-master`; скрипт `research_wfa_cnyrubf.ps1` | RESEARCH_ONLY |
 | 2026-09-09 | P0-1 + код-P1 по аудиту `8b4ebd67` | P0-1 `report.avgPrice!!` → mark-to-market fallback + метрика `close.price_estimated` (регресс-тесты); P1 Clock `Europe/Moscow` в funding-провайдерах; `README_PRODUCTION_ARCHITECTURE.md` (дисклеймер RESEARCH_ONLY); research/production разделение в AGENTS.md | test+int+ktlint |
+| 2026-09-14 | Этап 3 риск-аудит LLM-пути (R1–R4) | R1 риск-паритет (LLM-победитель через единый EntryRequest; StrategyDecision без qty/SL/TP — тест делегирования цепочки); R2 бюджет `trading.llm-signal-budget-ms=2000` + `withTimeout` → fail-closed HOLD + метрика `llm.signal.timeout`; R3 фикс StackOverflow `ResilientLlmClient.decoratedCall` (immutable-цепочка, регресс-тест с HTTP-сервером); R4 fail-closed LLM недоступен/таймаут/ошибка агента → HOLD; docs/17 §17.8 | test+int+ktlint |
+| 2026-09-14 | Этап 5: shadow-режим LLM-сигнала | `trading.llm-signal-shadow=true` (+`llm-signal-source`): LLM участвует в конкуренции, но победа НЕ исполняется — `StrategyResult.shadowed` (не публикуется в order-admission, не пишется в Redis «последняя стратегия»); метрика `llm.signal.shadow{ticker,strategy}`; тесты StrategyRunnerTest (3); docs/17 §17.3/§17.7.2/§17.8 R5 | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -248,8 +250,11 @@
   всегда за детерминированными стратегиями.
 - Дизайн зафиксирован в `docs/17-llm-signal-source.md` (ADR). Ключевые флаги
   (research, дефолт off): `trading.llm-signal-source` (LLM участвует в конкурентном
-  выборе сигнала), `trading.llm-signal-only` (только LLM), shadow-режим — логировать
-  победителя без исполнения. Роль `LlmAdvisor` сохраняется как fail-safe слой.
+  выборе сигнала), `trading.llm-signal-only` (только LLM), `trading.llm-signal-shadow=true`
+  (**РЕАЛИЗОВАН, этап 5, 2026-09-14**: LLM-победитель логируется — `StrategyResult.shadowed`,
+  метрика `llm.signal.shadow{ticker,strategy}` — но НЕ исполняется: сигнал не публикуется
+  в order-admission и не пишется в Redis «последняя стратегия»; см. docs/17 §17.8 R5).
+  Роль `LlmAdvisor` сохраняется как fail-safe слой.
 - Новостной источник — **rg.ru** (проверка 2026-09-11): публичный доступ закрыт
   CAPTCHA `qauth` (все GET → 401, RSS в браузере). **Решение пользователя (2026-09-11):
   в LIVE будет платная подписка rg.ru** — под неё `RgRuNewsProvider` РЕАЛИЗОВАН
@@ -266,3 +271,8 @@
 - Блокер валидации: **`LLM_API_KEY` в `.env` отсутствует** → все LLM-агенты на
   детерминированных fallback (smoke-only до появления ключа).
 - `docs/03-llm-pipeline.md` описывает текущие 6 агентов и не менялся для этого дизайна.
+- Риск-аудит LLM-пути (этап 3, 2026-09-14; docs/17 §17.8): `trading.llm-signal-budget-ms=2000`
+  (env `TRADING_LLM_SIGNAL_BUDGET_MS`) — `LlmSignalStrategy.evaluate` под `withTimeout` → при
+  превышении fail-closed HOLD + метрика `llm.signal.timeout`; риск-паритет структурный
+  (StrategyDecision/Signal без qty/SL/TP, риск-поля — только OrderBuilder); фикс
+  StackOverflow в `ResilientLlmClient.decoratedCall` (immutable-цепочка, регресс-тест).

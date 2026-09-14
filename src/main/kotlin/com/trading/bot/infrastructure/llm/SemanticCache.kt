@@ -94,15 +94,21 @@ class SemanticCache(
      * бэктест не читает/не пишет live-кэш, иначе исторический бар мог бы получить
      * «будущий» ответ (look-ahead bias) и наоборот — live мог бы получить
      * бэктест-ответ по похожему отпечатку.
+     *
+     * `versionSeed` (P0, research/llm-signal-source): версия семантики промптов —
+     * любой bump (например смена логики агента, добавление multi-TF) инвалидирует
+     * старые записи и предотвращает повторное использование устаревших ответов.
      */
     fun key(
         agent: String,
         ticker: String,
         fingerprint: String,
         namespace: String? = null,
+        versionSeed: String? = null,
     ): String {
         val ns = if (namespace.isNullOrBlank()) "" else ":$namespace"
-        val raw = "$agent:$ticker$ns:$fingerprint"
+        val version = if (versionSeed.isNullOrBlank()) "" else ":$versionSeed"
+        val raw = "$agent:$ticker$ns:$version:$fingerprint"
         val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
         return prefix + digest.joinToString("") { "%02x".format(it) }
     }
@@ -112,12 +118,13 @@ class SemanticCache(
         ticker: String,
         fingerprint: String,
         namespace: String? = null,
+        versionSeed: String? = null,
     ): LlmResponse? {
         if (!llmConfig.semanticCacheEnabled) {
             meterRegistry.counter("llm.cache.miss", Tags.of("agent", agent)).increment()
             return null
         }
-        val key = key(agent, ticker, fingerprint, namespace)
+        val key = key(agent, ticker, fingerprint, namespace, versionSeed)
         return try {
             redisTemplate.opsForValue().get(key)?.let { json ->
                 objectMapper.readValue(json, LlmResponse::class.java).copy(fromCache = true).also {
@@ -141,9 +148,10 @@ class SemanticCache(
         fingerprint: String,
         response: LlmResponse,
         namespace: String? = null,
+        versionSeed: String? = null,
     ) {
         if (!llmConfig.semanticCacheEnabled || response.isFallback) return
-        val key = key(agent, ticker, fingerprint, namespace)
+        val key = key(agent, ticker, fingerprint, namespace, versionSeed)
         try {
             redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(response), ttl)
             logger.debug { "Semantic cache PUT $agent:$ticker ttl=${ttl.seconds}s" }

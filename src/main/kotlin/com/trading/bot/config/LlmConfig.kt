@@ -72,6 +72,37 @@ class LlmConfig {
 
     var deltaPromptsEnabled: Boolean = false
 
+    // ===== Semantic cache versioning / LLM budgets / single-flight (research/llm-signal-source) =====
+
+    /**
+     * Версия семантики промптов-кэша. Входит в ключ SemanticCache (наряду с моделью
+     * и версией промпта): при изменении промптов/логики агентов bump вручную
+     * (env LLM_CACHE_DATA_VERSION) — старые записи кэша не будут отдаваться.
+     */
+    var cacheDataVersion: String = "2026-09-13"
+
+    /**
+     * Бюджет токенов/стоимости LLM (P0): жёсткие лимиты на резервирование перед
+     * вызовом. Redis-счётчики (atomic INCRBY): за минуту, за цикл и за день,
+     * плюс дневной бюджет стоимости (руб). Резервирование оценивает промпт
+     * до вызова; фактический расход фиксируется в charge().
+     */
+    var budgetEnabled: Boolean = true
+    var maxTokensPerMinute: Int = 4_000
+    var maxTokensPerCycle: Int = 12_000
+    var maxTokensPerDay: Int = 200_000
+    var maxDailyCostRub: Double = 200.0
+    var tokenCostRubPerMillion: Double = 3.0
+
+    /**
+     * Single-flight на LLM-вызовы (P0): у параллельных циклов с одним semantic
+     * fingerprint избегаем дублирующих запросов к LLM. Владелец Redis-lock
+     * вызывает LLM и пишет кэш; остальные ждут кэш до [singleFlightWaitMs].
+     */
+    var singleFlightEnabled: Boolean = true
+    var singleFlightLockTtlSeconds: Long = 30
+    var singleFlightWaitMs: Long = 2_000
+
     /**
      * Возвращает базовый URL и модель по умолчанию для провайдера.
      */

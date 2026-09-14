@@ -53,6 +53,20 @@ class StrategyRepository(
             .awaitSingleOrNull()
     }
 
+    /**
+     * Все стратегии цикла в хронологическом порядке (lineage): победитель + все
+     * кандидаты (rawJson). Используется реконструкцией решения по cycleId
+     * ([com.trading.bot.service.LineageService]).
+     */
+    suspend fun findByCycleId(cycleId: String): List<Strategy> =
+        databaseClient
+            .sql("SELECT * FROM strategies WHERE cycle_id = :cycleId ORDER BY created_at ASC")
+            .bind("cycleId", cycleId)
+            .map { row, _ -> toStrategy(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
     suspend fun save(strategy: Strategy): Strategy {
         val sql =
             """

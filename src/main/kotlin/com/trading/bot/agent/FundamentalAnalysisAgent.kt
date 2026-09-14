@@ -1,5 +1,9 @@
 package com.trading.bot.agent
 
+import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.infrastructure.llm.DefaultJsonSchemaValidator
+import com.trading.bot.infrastructure.llm.JsonSchemaValidator
+import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -14,6 +18,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Component
 import tools.jackson.databind.ObjectMapper
+import java.security.MessageDigest
 import java.time.format.DateTimeFormatter
 
 /**
@@ -38,6 +43,8 @@ class FundamentalAnalysisAgent(
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
     private val issuerDataProvider: IssuerDataProvider? = null,
+    private val instrumentsConfig: InstrumentsConfig? = null,
+    private val jsonSchemaValidator: JsonSchemaValidator = DefaultJsonSchemaValidator(objectMapper),
 ) {
     private val logger = KotlinLogging.logger {}
     private val newsDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
@@ -62,7 +69,8 @@ class FundamentalAnalysisAgent(
     ): FundamentalReport {
         val start = System.currentTimeMillis()
         val macro = macroContextService.fetch()
-        val news = issuerDataProvider?.newsFor(ticker, 24) ?: emptyList()
+        val isFx = instrumentsConfig?.find(ticker)?.type?.uppercase() == "FX"
+        val news = if (isFx) emptyList() else issuerDataProvider?.newsFor(ticker, 24) ?: emptyList()
 
         val variables =
             mapOf(
@@ -70,19 +78,22 @@ class FundamentalAnalysisAgent(
                 "cbrRate" to macro.cbrRate.toPlainString(),
                 "brentPrice" to macro.brentPrice.toPlainString(),
                 "usdRub" to macro.usdRub.toPlainString(),
-                "issuerNews" to renderNews(news),
+                "issuerNews" to (if (isFx) fxContext(macro) else renderNews(news)),
             )
 
         // Фундаментальный fingerprint: макро-фон + СТАБИЛЬНЫЕ поля новостей
-        // (количество, час публикации последней). Заголовки/содержимое НЕ входят:
-        // новая новость в том же часе не должна аннулировать кэш на каждый байт.
+        // (количество, час публикации последней) + newsHash (SHA-256 стабильных полей).
+        // Заголовки/содержимое отдельно не входят, но их содержимое влияет через
+        // newsHash: новая новость того же часа с другим содержимым даст другой индекс.
         val fingerprint =
             semanticCache.genericFingerprint(
                 macro.cbrRate.toPlainString(),
                 macro.brentPrice.toPlainString(),
                 macro.usdRub.toPlainString(),
+                isFx,
                 news.size,
                 news.maxOfOrNull { it.publishedAt?.epochSecond ?: 0L }?.coerceAtLeast(0L)?.div(3600L),
+                if (news.isEmpty()) null else newsHash(news),
             )
 
         val prompt = promptRegistry.getTemplate("fundamental-analysis", version)
@@ -101,6 +112,10 @@ class FundamentalAnalysisAgent(
             if (resp.isFallback) {
                 logger.info { "LLM unavailable for fundamental analysis of $ticker" }
                 FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.0, reasoning = "LLM unavailable")
+            } else if (!jsonSchemaValidator.isValid(resp.content, LlmResponseSchemas.AGENT_CONCLUSION)) {
+                logger.warn { "Fundamental LLM response failed schema validation for $ticker" }
+                meterRegistry.counter("llm.schema.rejected", Tags.of("agent", "fundamental", "ticker", ticker)).increment()
+                FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.0, reasoning = "Schema rejected")
             } else {
                 try {
                     val j = objectMapper.readTree(resp.content)
@@ -135,6 +150,29 @@ class FundamentalAnalysisAgent(
         )
         meterRegistry.counter("agent.fundamental.decision", Tags.of("action", report.conclusion, "ticker", ticker)).increment()
         return report
+    }
+
+    /** Формирует FX-контекст для валютных инструментов (CNYRUBF) вместо эмитентных новостей. */
+    private fun fxContext(macro: MacroContextService.MacroContext): String {
+        val label = "FX-контекст (валютная пара CNY/RUB), эмитентных новостей нет:"
+        val macroPart =
+            "ставка ЦБ РФ ${macro.cbrRate.toPlainString()}%, курс USD/RUB ${macro.usdRub.toPlainString()}, " +
+                "нефть Brent ${macro.brentPrice.toPlainString()}$/барр"
+        return "$label $macroPart. Учитывай также политику Народного банка Китая (PBoC), " +
+            "торговый баланс и потоки между РФ и КНР настолько, насколько они известны."
+    }
+
+    /** SHA-256 «отпечаток содержимого» новостей: title|url|publishedAt каждого, отсортированные. */
+    private fun newsHash(news: List<NewsItem>): String {
+        val material =
+            news
+                .map { "${it.title}|${it.url}|${it.publishedAt?.epochSecond ?: 0L}" }
+                .sorted()
+                .joinToString("\n")
+        return MessageDigest
+            .getInstance("SHA-256")
+            .digest(material.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
     }
 
     /** Формирует компактный дайджест новостей для промпта (лимит [NewsItem] приходит уже срезанным). */

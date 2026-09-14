@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import java.time.LocalDateTime
 
 /**
  * Интеграционные тесты батч-выборки силы сигнала стратега (roadmap 13.24, FIND-MECH-1):
@@ -55,6 +56,61 @@ class AgentLogRepositoryIntegrationTest : AbstractTestContainerTest() {
         runBlocking {
             assertTrue(repo.findStrategySignalStrengthByCycleIds("SBER", emptyList()).isEmpty())
             assertTrue(repo.findStrategySignalStrengthByCycleIds("SBER", listOf("  ", "  ")).isEmpty())
+        }
+    }
+
+    @Test
+    fun `findByCycleId returns all agents of cycle in chronological order`() {
+        val cycle = "INT_LINEAGE_CYCLE"
+        val t0 = LocalDateTime.of(2026, 9, 10, 10, 0, 0, 0)
+        runBlocking {
+            repo.save(
+                AgentLog(
+                    cycleId = cycle,
+                    agentName = "Agent-1-Technical",
+                    ticker = "CNYRUBF",
+                    action = "BUY",
+                    createdAt = t0,
+                ),
+            )
+            repo.save(
+                AgentLog(
+                    cycleId = cycle,
+                    agentName = "Agent-3-Strategist",
+                    ticker = "CNYRUBF",
+                    action = "BUY",
+                    signalStrength = 0.80,
+                    createdAt = t0.plusSeconds(1),
+                ),
+            )
+            repo.save(
+                AgentLog(
+                    cycleId = cycle,
+                    agentName = "Agent-6-Advisor",
+                    ticker = "CNYRUBF",
+                    action = "AGREE",
+                    signalStrength = 0.05,
+                    createdAt = t0.plusSeconds(2),
+                ),
+            )
+            repo.save(
+                AgentLog(
+                    cycleId = "INT_OTHER_CYCLE",
+                    agentName = "Agent-1-Technical",
+                    ticker = "CNYRUBF",
+                    action = "BUY",
+                    createdAt = t0,
+                ),
+            )
+
+            val result = repo.findByCycleId(cycle)
+
+            assertEquals(3, result.size)
+            assertEquals(
+                listOf("Agent-1-Technical", "Agent-3-Strategist", "Agent-6-Advisor"),
+                result.map { it.agentName },
+            )
+            assertTrue(result.all { it.cycleId == cycle })
         }
     }
 }

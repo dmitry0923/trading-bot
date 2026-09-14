@@ -32,6 +32,8 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
         pendingEntry: Boolean = false,
         pendingClose: Boolean = false,
         instrumentType: InstrumentType = InstrumentType.STOCK,
+        cycleId: String? = null,
+        openedAt: java.time.LocalDateTime = java.time.LocalDateTime.now(),
     ) = Position(
         ticker = ticker,
         direction = direction,
@@ -41,7 +43,8 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
         pendingEntry = pendingEntry,
         pendingClose = pendingClose,
         instrumentType = instrumentType,
-        openedAt = java.time.LocalDateTime.now(),
+        cycleId = cycleId,
+        openedAt = openedAt,
     )
 
     @Test
@@ -112,6 +115,23 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
             val stocks = repo.findOpenStocks()
             assertEquals(1, stocks.size)
             assertEquals("A", stocks[0].ticker)
+        }
+    }
+
+    @Test
+    fun `findByCycleId returns only positions of the cycle`() {
+        val t0 = java.time.LocalDateTime.of(2026, 9, 10, 10, 0, 0, 0)
+        runBlocking {
+            repo.save(pos(ticker = "A", cycleId = "cycle-1", openedAt = t0))
+            repo.save(pos(ticker = "B", cycleId = "cycle-1", openedAt = t0.plusSeconds(1)))
+            repo.save(pos(ticker = "C", cycleId = "cycle-2", openedAt = t0))
+            repo.save(pos(ticker = "D", cycleId = null, openedAt = t0))
+
+            val result = repo.findByCycleId("cycle-1")
+
+            assertEquals(2, result.size)
+            assertTrue(result.all { it.cycleId == "cycle-1" })
+            assertEquals(listOf("A", "B"), result.map { it.ticker })
         }
     }
 }

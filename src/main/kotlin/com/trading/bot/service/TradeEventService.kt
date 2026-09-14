@@ -66,6 +66,7 @@ class TradeEventService(
         mapOf(
             "positionId" to pos.id,
             "ticker" to pos.ticker,
+            "cycleId" to pos.cycleId,
             "direction" to pos.direction.name,
             "quantity" to pos.quantity,
             "entryPrice" to num(pos.entryPrice),

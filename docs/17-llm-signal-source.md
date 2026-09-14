@@ -1,7 +1,11 @@
 # 17. LLM как источник сигнала (ADR, research)
 
-> Ветка: `research/llm-signal-source`. Статус: **проектирование (design), код НЕ менялся.
-> Текущая ветка `research/llm-signal-source` создана от `research/new-hypothesis` (commit `b2a0229`).
+> Ветка: `research/llm-signal-source` (от `research/new-hypothesis`, commit `b2a0229`).
+> Статус: **реализовано (research)** — этапы 1–5 плана (§17.3) в коде: флаги
+> `llm-signal-source`/`llm-signal-only`/`llm-signal-shadow`, бюджет `llm-signal-budget-ms`
+> (R2), `RgRuNewsProvider` + интеграция `issuerNews` (этапы 3–4), shadow-режим (этап 5).
+> Live-флаги дефолт off, детерминированный сигнал не меняется. Не закрыт только этап 6
+> (smoke-бэктест «строго LLM») — блокирован отсутствием реального `LLM_API_KEY`.
 
 ## 17.1. Проблема и требование
 
@@ -139,7 +143,7 @@ fingerprint). Без реального LLM-ключа агенты падают
 | 2 | `trading.llm-signal-only` (default false): детерминированные отключаются, LLM — единственный источник | `StrategyRunner.kt` | тест: при true `DiscretionaryStrategy` единственный в `signalStrategies` |
 | 3 | `IssuerDataProvider` интерфейс + `RgRuNewsProvider` (fetch с retry+TTL, 401-safe) | новый `infrastructure/news/` + тесты на мок HTTP | ✅ `RgRuNewsProviderTest` (2026-09-11): новости, фильтр по времени, лимит, 401, disabled, невалидный JSON |
 | 4 | Интеграция новостей в `FundamentalAnalysisAgent` + промпт (переменная `issuerNews`) | `FundamentalAnalysisAgent.kt`, `prompts/fundamental-analysis.yml`, тесты парсинга | ✅ `FundamentalAnalysisAgentNewsTest` (хорошая/плохая новость, NEUTRAL-база); fingerprint стабилен |
-| 5 | Shadow-режим: LLM сигнал логируется, но не исполняется (метрика `strategy.runner.winner`) | `StrategyRunner.kt` (+флаг `shadow`) | в SIM на live-данных: LLM-победитель в логах, ордера нет |
+| 5 | Shadow-режим: LLM сигнал логируется, но не исполняется (метрика `strategy.runner.winner`) | `StrategyRunner.kt` (+флаг `shadow`) | ✅ РЕАЛИЗОВАН (2026-09-14): `trading.llm-signal-shadow`; LLM-победитель помечается `StrategyResult.shadowed` → сигнал не публикуется в order-admission и не пишется в Redis «последняя стратегия» (исполнение только детерминированного входа); метрика `llm.signal.shadow{ticker,strategy}` + лог SHADOW(LLM); тесты StrategyRunnerTest (shadow on/off/det-winner) |
 | 6 | Бэктест «строго LLM» smoke (`bt.agent.live-strategies=false`) | `application-backtest.yml` + README | прогон `/backtest/panel` завершается, результаты в `research/` |
 | 7 | Док: обновить `README_PRODUCTION_ARCHITECTURE.md`, `docs/03-llm-pipeline.md`, AGENTS.md | доки | пересчитать все 3 проверки (test+int+ktlint) |
 
@@ -222,10 +226,10 @@ curl -s -u "user:pass" -X POST http://localhost:8080/api/v1/backtest/panel `
 температура 0.0, namespace `backtest`, `sample-every=20`; НЕ калибровка edge.
 Появление ключа в `.env` → `bt.agent.*` подхватывается без пересборки.
 
-### 17.7.2. Включение LLM как источника сигнала (этапы 1-2, флаги)
+### 17.7.2. Включение LLM как источника сигнала (этапы 1-2, 5; флаги реализованы)
 
-Флаги `trading.llm-signal-source` / `trading.llm-signal-only` пока **не реализованы**
-в `StrategyRunner` (этап 1-2 плана, §17.3). После реализации:
+Флаги `trading.llm-signal-source` / `trading.llm-signal-only` реализованы в
+`StrategyRunner` (этапы 1-2), shadow-режим — этап 5 (`--trading.llm-signal-shadow=true`):
 
 ```bash
 java -jar build\libs\trading-bot-2.0.0.jar `
@@ -235,9 +239,10 @@ java -jar build\libs\trading-bot-2.0.0.jar `
   --bt.adaptive-confidence-threshold=0.60
 ```
 
-Этап 5 (shadow): `--trading.llm-signal-source=true --trading.llm-signal-shadow=true`
-на SIM (`TRADING_MODE=SIMULATION`) — LLM-победитель логируется
-(`strategy.runner.winner`), ордера нет.
+Shadow (этап 5): `--trading.llm-signal-source=true --trading.llm-signal-shadow=true`
+на SIM (`TRADING_MODE=SIMULATION`) — LLM участвует в конкуренции и его победа
+логируется (`llm.signal.shadow`, `strategy.runner.winner`), но ордера нет;
+исполняется только детерминированный вход.
 
 ### 17.7.3. Новости эмитентов (rg.ru, реализовано, §17.2.4.1)
 
@@ -251,3 +256,58 @@ java -jar build\libs\trading-bot-2.0.0.jar `
 
 Без подписки (`news.enabled=false` или пустой `api-key`) провайдер молча отдаёт
 пустой список → фундаментальный агент работает по макро (NEUTRAL-база).
+
+## 17.8. Риск-аудит LLM-пути (этап 3, 2026-09-14)
+
+Полный риск-аудит LLM как источника сигнала (R1–R4). Итог: **риск-параритет
+структурный и закреплён тестами; добавлен бюджет латентности; исправлен баг
+декораторов LLM-клиента.** Live-флаги не менялись (`llm-signal-source` дефолт off).
+
+### R1. Риск-паритет (LLM-победитель проходит единый риск-конвейер)
+
+| Точка | Что гарантирует | Код |
+|---|---|---|
+| `StrategyDecision` | у решения НЕТ риск-полей (qty/SL/TP/trailing) — по типу LLM не может задать размер позиции | `domain/strategy/StrategyDecision.kt` |
+| `LlmChainExecutor` | из ответа арбитра переносится только action/targetPrice/signalStrength/reasoning | `LlmChainExecutor.run` → `StrategyDecision(...)` |
+| `StrategyService` | стратегическая запись сохраняется с `quantity=0, stopLoss=null, takeProfit=null` для ЛЮБОГО победителя; риск-поля заполняются в OrderBuilder при входе | `StrategyService.kt:396-412`, `Signal.kt` |
+| Гейты поверх победителя | адаптивный confidence-порог + freshness (возраст снапшота, отклонение цены, спред) + MarketDataGate/DecisionEngine — одинаковы для любого источника | `StrategyService.kt:353-392` |
+| `LlmAdvisor` | guardrail ПОД общими риск-гейтами: VETO только при CRITICAL-риске, направление не меняет, поправка уверенности −0.30..+0.15 | `LlmAdvisor.kt` |
+
+Тест: `LlmSignalStrategyTest.evaluate delegates to full llm chain and passes only
+direction and target through` — signalStrength == решению арбитра (не усилено),
+передаются только 4 поля решения.
+
+### R2. Бюджет латентности LLM-цепочки
+
+- Новый конфиг `trading.llm-signal-budget-ms = 2000` (env `TRADING_LLM_SIGNAL_BUDGET_MS`).
+- `LlmSignalStrategy.evaluate` обёрнут в `withTimeout(llmSignalBudgetMs)`: при превышении —
+  **fail-closed HOLD** + метрика `llm.signal.timeout{ticker}`. LLM-источник сигнала НЕ
+  задерживает order-execution, цикл не виснет на неотвечающем LLM.
+- При `llm-signal-source=false` бюджет не активен (цепочка в конкуренцию не запускается).
+- Тест: `LlmSignalStrategyTest.evaluate fails closed with HOLD when chain exceeds budget`.
+
+### R3. Фикс `ResilientLlmClient.decoratedCall` (StackOverflow)
+
+Баг: цепочка строилась через живую `var call` + замыкание `{ call() }`. Kotlin-лямбда
+читает переменную в момент ВЫЗОВА → после `call = retry.decorateSuspendFunction { call() }`
+обёртка замыкается на саму себя → бесконечная рекурсия → **StackOverflowError** при
+включённом ЛЮБОМ декораторе (в проде retry/rateLimiter/circuitBreaker дефолтно on).
+Фикс: неизменяемая цепочка `breaker(rateLimiter(retry(block)))` по `val`. Ретгресс —
+`ResilientLlmClientTest` (реальный HTTP-вызов к локальному JDK HttpServer, все 3 декоратора on).
+
+### R4. Fail-closed (LLM недоступен / бюджет исчерпан / агент упал)
+
+- LLM недоступен → агенты отдают NEUTRAL-базу (fallback), сигнал слабый → confidence-гейт
+  → HOLD; лимиты/исполнение не расширяются (риск-поля назначаются только снизу, R1).
+- Бюджет превышен → HOLD (R2); исключение агента → `StrategyRunner` ловит и держит HOLD.
+- `LlmAdvisor` VETO/CRITICAL по-прежнему блокирует вход через `advisor.blocked`/`ADVISOR_VETO`.
+
+### R5. Shadow-режим (этап 5 плана, 2026-09-14)
+
+`trading.llm-signal-shadow=true` (+ `llm-signal-source=true`): LLM участвует в конкуренции,
+но его победа НЕ исполняется — `StrategyResult.shadowed` → в `StrategyService` сигнал не
+публикуется в order-admission и не пишется в Redis «последняя стратегия» (исполнение остаётся
+только у детерминированного входа). Решение при этом фиксируется (agent_logs → Strategy →
+lineage — этап 2), метрика `llm.signal.shadow{ticker,strategy}`. Это A/B-наблюдение LLM-winner
+vs базлайн до включения `llm-signal-only`. Fail-safe: флаг без `llm-signal-source` неэффективен;
+`llm-signal-only` + shadow = чистое наблюдение (ордеров нет вообще).

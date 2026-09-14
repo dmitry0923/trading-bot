@@ -391,3 +391,28 @@ rate за 14 дней:
 **Паузы**:
 - `AdaptiveRiskService.shouldPauseTrading(ticker)`: `maxConsecutiveLosses >= 4` или `profitFactor <= 0.5 при trades >= 5` → пауза;
 - `isInDrawdownRecovery()`: 3+ подряд убыточных за 3 дня → recovery-режим.
+
+## 3.6. LLM как источник сигнала (research, deфолт off)
+
+Плата «LLM — мозг, но не руки» (§3.1) расширена конкуренцией за **сигнал** (не за
+исполнение): `LlmSignalStrategy` (полная цепочка tech→fund→strategy→contrarian→arbitrator)
+собирается в `StrategyRunner` в один `signalStrategies` с детерминированными стратегиями,
+победитель выбирается по максимальной взвешенной уверенности (fit × signalStrength).
+Полный дизайн, план этапов и риск-аудит — `docs/17-llm-signal-source.md`; трассировка
+решений агентов — `agent_logs → Strategy → lineage` (`GET /api/v1/lineage/{cycleId}`).
+
+Отличия от advisory-режима (`LlmAdvisor`, дефолт):
+
+| Аспект | Advisory | Сигнальный путь (research) |
+|---|---|---|
+| Роль | поправка уверенности ±, VETO только CRITICAL | участие в конкурентном выборе сигнала |
+| Риск-поля | qty/SL/TP не задаются (риск-паритет) | то же: назначаются только в OrderBuilder |
+| Латентность | `advisor-budget-ms` | `llm-signal-budget-ms` (2000 мс) + `withTimeout` → HOLD |
+| Доступность LLM | fallback → детерминированный сигнал | недоступен / таймаут → HOLD (fail-closed) |
+| Метрики | `advisor.*` | `llm.signal.timeout`, `llm.signal.shadow`, `strategy.runner.winner` |
+
+Флаги (research, дефолт off): `trading.llm-signal-source`, `trading.llm-signal-only`,
+`trading.llm-signal-shadow`. Shadow = LLM-победитель логируется, но НЕ исполняется
+(сигнал не публикуется в order-admission, в Redis «последняя стратегия» не пишется;
+исполняется только детерминированный вход). Новостной источник для фундаментального
+агента — rg.ru (`RgRuNewsProvider`, конфиг `news.*`, docs/17 §17.2.4).

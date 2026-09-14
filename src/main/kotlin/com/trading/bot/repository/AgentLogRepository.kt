@@ -76,6 +76,20 @@ class AgentLogRepository(
             .awaitSingleOrNull()
 
     /**
+     * Все записи агентов цикла в хронологическом порядке (lineage): цепочка
+     * tech→fund→strategy→contrarian→arbitrator + советник одной выборкой.
+     * Используется реконструкцией решения по cycleId ([com.trading.bot.service.LineageService]).
+     */
+    suspend fun findByCycleId(cycleId: String): List<AgentLog> =
+        databaseClient
+            .sql("SELECT * FROM agent_logs WHERE cycle_id = :cycleId ORDER BY created_at ASC")
+            .bind("cycleId", cycleId)
+            .map { row, _ -> toAgentLog(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /**
      * Батч-получение силы сигнала стратега (Agent-3-Strategist) по списку cycleId тикера.
      *
      * Используется онлайн-калибровкой порога уверенности (roadmap 13.11.8): для закрытых

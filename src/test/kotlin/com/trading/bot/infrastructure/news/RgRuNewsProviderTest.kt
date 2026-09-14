@@ -3,6 +3,9 @@ package com.trading.bot.infrastructure.news
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import com.trading.bot.config.NewsConfig
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
+import io.github.resilience4j.ratelimiter.RateLimiterRegistry
+import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,12 +19,14 @@ import java.nio.charset.StandardCharsets
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * RgRuNewsProvider: live-источник новостей эмитентов (платная подписка).
  * Покрытие: парсинг ответа (хорошая/плохая новость), ограничение по времени и
  * количеству, 401 (нет подписки) → пустой список + метрика, выключенный
- * конфиг → пустой список. HTTP замокан JDK HttpServer (см. MoexFundingProviderTest).
+ * конфиг → пустой список, dedup по url/title, resilience (retry при 5xx,
+ * 429 → throttled-метрика). HTTP замокан JDK HttpServer (см. MoexFundingProviderTest).
  */
 class RgRuNewsProviderTest {
     private val objectMapper = ObjectMapper()
@@ -91,6 +96,57 @@ class RgRuNewsProviderTest {
         }
 
     @Test
+    fun `deduplicates items with same url`() =
+        runBlocking {
+            val body =
+                """[{"title":"a","url":"https://x","publishedAt":"2026-09-11T09:00:00Z"},""" +
+                    """{"title":"b","url":"https://x","publishedAt":"2026-09-11T08:00:00Z"}]"""
+            val server = jsonServer(body)
+            try {
+                val provider = provider(server, NewsConfig().apply { enabled = true })
+                val items = provider.newsFor("GAZP", 24)
+
+                assertEquals(1, items.size)
+                assertEquals("a", items[0].title)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `retries transient 5xx and returns items`() =
+        runBlocking {
+            val hits = AtomicInteger(0)
+            val server = flakyServer(hits)
+            val config = NewsConfig().apply { enabled = true }
+            try {
+                val provider = provider(server, config, resilience = true)
+                val items = provider.newsFor("GAZP", 24)
+
+                assertEquals(1, items.size)
+                assertTrue(hits.get() >= 2)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `429 rate limit yields empty list and throttled metric`() =
+        runBlocking {
+            val server = jsonServer("", statusCode = 429)
+            try {
+                val meter = SimpleMeterRegistry()
+                val provider = provider(server, NewsConfig().apply { enabled = true }, meter, resilience = true)
+                val items = provider.newsFor("GAZP", 24)
+
+                assertTrue(items.isEmpty())
+                assertEquals(1.0, meter.counter("news.provider.throttled", "ticker", "GAZP").count())
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
     fun `401 unauthorized yields empty list and metric`() =
         runBlocking {
             val server = jsonServer("", statusCode = 401)
@@ -132,12 +188,23 @@ class RgRuNewsProviderTest {
         server: HttpServer?,
         config: NewsConfig,
         meter: SimpleMeterRegistry = SimpleMeterRegistry(),
+        resilience: Boolean = false,
     ): RgRuNewsProvider {
         if (server != null) {
             config.baseUrl = "http://127.0.0.1:${server.address.port}/news/{ticker}?hours={hours}"
         }
         config.apiKey = "test-key"
-        return RgRuNewsProvider(config, objectMapper, redis, meter, fixedClock)
+        config.resilienceEnabled = resilience
+        return RgRuNewsProvider(
+            config,
+            objectMapper,
+            redis,
+            meter,
+            fixedClock,
+            RetryRegistry.ofDefaults(),
+            RateLimiterRegistry.ofDefaults(),
+            CircuitBreakerRegistry.ofDefaults(),
+        )
     }
 
     private fun jsonServer(
@@ -146,6 +213,20 @@ class RgRuNewsProviderTest {
     ): HttpServer {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { exchange -> respond(exchange, body, statusCode) }
+        server.start()
+        return server
+    }
+
+    /** Сервер: первый запрос отвечает 500, последующие — валидным телом. */
+    private fun flakyServer(hits: AtomicInteger): HttpServer {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            if (hits.incrementAndGet() == 1) {
+                respond(exchange, "", 500)
+            } else {
+                respond(exchange, """[{"title":"после ретрая","url":"https://y","publishedAt":"2026-09-11T09:00:00Z"}]""", 200)
+            }
+        }
         server.start()
         return server
     }

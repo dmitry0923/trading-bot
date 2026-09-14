@@ -16,6 +16,7 @@ import io.github.resilience4j.ratelimiter.RateLimiterRegistry
 import io.github.resilience4j.retry.RetryRegistry
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.http.MediaType
 import org.springframework.http.client.reactive.ReactorClientHttpConnector
@@ -37,6 +38,9 @@ import java.util.concurrent.TimeUnit
  * - Таймаут HTTP 30 секунд
  * - response_format = {"type":"json_object"} — принудительный JSON
  * - Semantic Cache (Redis) поверх вызовов
+ * - Бюджет LLM (резервирование токенов/стоимости, fail-closed) — [LlmBudgetService]
+ * - Single-flight: при одинаковом семантическом ключе только один поток ходит к LLM —
+ *   остальные ожидают запись владельца ([LlmSingleFlight])
  * - Fallback: JSON с conclusion=NEUTRAL, signalStrength=0.0 при недоступности LLM
  * - Метрики: llm.latency, llm.tokens.used, llm.fallback.activated, llm.cache.hit/miss
  */
@@ -52,6 +56,8 @@ class ResilientLlmClient(
     private val settingsService: SettingsService,
     private val traceStorage: TraceStorage,
     private val traceStorageConfig: TraceStorageConfig,
+    private val llmBudgetService: LlmBudgetService? = null,
+    private val llmSingleFlight: LlmSingleFlight? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -80,6 +86,10 @@ class ResilientLlmClient(
         val apiKey: String,
     )
 
+    private companion object {
+        const val SINGLE_FLIGHT_POLL_MS = 100L
+    }
+
     /**
      * Выполняет LLM-вызов с resilience-обвязкой и semantic cache.
      *
@@ -107,37 +117,120 @@ class ResilientLlmClient(
             return LlmResponse.fallback("NO_API_KEY")
         }
 
+        // Версия семантики кэша: смена промпта/модели/логики агента автоматически
+        // инвалидирует старые записи (защита от устаревших LLM-ответов).
+        val seed =
+            if (fingerprint != null) {
+                versionSeed(prompt.version, endpoint)
+            } else {
+                null
+            }
+
         // Весь вызов выполняется в MDC-контексте с agent: trace_id наследуется
         // от родительской корутины цикла (см. TraceContext / StrategyService),
         // поэтому каждый JSON-лог и трейс привязаны к конкретному агенту и циклу.
         return TraceContext.withMdc(mapOf(TraceContext.AGENT to agent)) {
             if (fingerprint != null) {
-                semanticCache.get(agent, ticker, fingerprint, cacheNamespace)?.let { return@withMdc it }
+                semanticCache.get(agent, ticker, fingerprint, cacheNamespace, seed)?.let { return@withMdc it }
             }
 
             val system = prompt.renderSystem(variables)
             val user = prompt.renderUser(variables)
 
-            val response =
-                try {
-                    llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
-                } catch (e: Exception) {
-                    logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
-                    meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
-                    LlmResponse.fallback("CALL_ERROR", e.message)
+            // ---- Бюджет: резервируем расход ДО вызова (fail-closed по лимитам) ----
+            val budget =
+                llmBudgetService?.let { budget ->
+                    val cacheKey = cacheKeyOf(agent, ticker, fingerprint, cacheNamespace, seed)
+                    budget.reserve(agent, cacheKey, budget.estimateTokens(system, user))
+                }
+            if (budget != null && !budget.allowed) {
+                val reason = budget.reason ?: "TOKEN_BUDGET_EXCEEDED"
+                logger.warn { "LLM budget blocked agent=$agent ticker=$ticker: $reason" }
+                meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", reason)).increment()
+                return@withMdc LlmResponse.fallback(reason)
+            }
+
+            // ---- Single-flight: при одинаковом семантическом ключе к LLM ходит один поток ----
+            val cacheKey = cacheKeyOf(agent, ticker, fingerprint, cacheNamespace, seed)
+            val acquired =
+                if (fingerprint != null) {
+                    llmSingleFlight?.acquire(cacheKey, seed) ?: true
+                } else {
+                    true
                 }
 
-            // Полный трейс (промпты + ответ) в S3/MinIO; storage_key попадает
-            // в ответ, semantic cache и agent_logs — без хранения сырых промптов в БД.
-            val finalResponse =
-                response.copy(storageKey = persistTrace(agent, ticker, fingerprint, system, user, response, endpoint))
+            if (acquired) {
+                try {
+                    val response =
+                        try {
+                            llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
+                        } catch (e: Exception) {
+                            logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
+                            meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()
+                            LlmResponse.fallback("CALL_ERROR", e.message)
+                        }
 
-            if (fingerprint != null && !finalResponse.isFallback) {
-                semanticCache.put(agent, ticker, fingerprint, finalResponse, cacheNamespace)
+                    // Полный трейс (промпты + ответ) в S3/MinIO; storage_key попадает
+                    // в ответ, semantic cache и agent_logs — без хранения сырых промптов в БД.
+                    val finalResponse =
+                        response.copy(storageKey = persistTrace(agent, ticker, fingerprint, system, user, response, endpoint))
+
+                    if (fingerprint != null && !finalResponse.isFallback) {
+                        semanticCache.put(agent, ticker, fingerprint, finalResponse, cacheNamespace, seed)
+                    }
+                    finalResponse
+                } finally {
+                    if (fingerprint != null) {
+                        llmSingleFlight?.release(cacheKey, seed)
+                    }
+                }
+            } else {
+                // Не владелец: параллельный цикл уже выполняет этот вызов — ждём
+                // запись в кэш от владельца и только после таймаута даём fallback.
+                waitForOwnerCache(agent, ticker, fingerprint!!, cacheNamespace, seed)
             }
-            finalResponse
         }
     }
+
+    private suspend fun waitForOwnerCache(
+        agent: String,
+        ticker: String,
+        fingerprint: String,
+        cacheNamespace: String?,
+        seed: String?,
+    ): LlmResponse {
+        val deadline = System.currentTimeMillis() + llmConfig.singleFlightWaitMs
+        while (System.currentTimeMillis() < deadline) {
+            delay(SINGLE_FLIGHT_POLL_MS)
+            semanticCache.get(agent, ticker, fingerprint, cacheNamespace, seed)?.let { return it }
+        }
+        meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "SINGLE_FLIGHT_BUSY")).increment()
+        logger.warn { "Single-flight wait timeout agent=$agent ticker=$ticker" }
+        return LlmResponse.fallback("SINGLE_FLIGHT_BUSY")
+    }
+
+    /** Детерминированный семантический ключ (тот же, что у participant, ожидающих кэш). */
+    private fun cacheKeyOf(
+        agent: String,
+        ticker: String,
+        fingerprint: String?,
+        cacheNamespace: String?,
+        seed: String?,
+    ): String =
+        if (fingerprint != null) {
+            semanticCache.key(agent, ticker, fingerprint, cacheNamespace, seed)
+        } else {
+            "$agent:$ticker:no-fingerprint"
+        }
+
+    /**
+     * Версия семантики кэша: имя промпта из [LlmConfig.cacheDataVersion] инвалидирует
+     * записи при изменении логики агентов/промптов вручную (env LLM_CACHE_DATA_VERSION).
+     */
+    private fun versionSeed(
+        promptVersion: String,
+        endpoint: ResolvedEndpoint,
+    ): String = "$promptVersion:${endpoint.model}:${llmConfig.cacheDataVersion}"
 
     /**
      * Определяет активный провайдер: приоритет у настроек из UI (SettingsService),
@@ -190,22 +283,35 @@ class ResilientLlmClient(
 
     /**
      * Декорирует вызов: Retry (внутри) → RateLimiter → CircuitBreaker (снаружи).
+     *
+     * Неизменяемая цепочка через [val]-переменные: каждая обёртка замыкается на
+     * ПРЕДЫДУЩИЙ [val], а не на живую `var`.
+     *
+     * Ретгресс (этап 3, risk / R3): раньше использовалась `var call` + замыкание
+     * `{ call() }`. Котлин-лямбда читает переменную в МОМЕНТ ВЫЗОВА, поэтому после
+     * `call = retry.decorateSuspendFunction { call() }` повторный вызов полученной
+     * обёртки замыкается на САМУ `call` (уже новую обёртку) → бесконечная рекурсия
+     * `decoratedCall -> itself -> bytecode limit -> StackOverflowError`. Теперь
+     * цепочка собрана без live-переменной: `breaker(rateLimiter(retry(block)))`.
      */
     private suspend fun decoratedCall(block: suspend () -> LlmResponse): LlmResponse {
-        var call: suspend () -> LlmResponse = block
-        if (llmConfig.retryEnabled) {
-            val retry = retryRegistry.retry("llm")
-            call = retry.decorateSuspendFunction { call() }
-        }
-        if (llmConfig.rateLimiterEnabled) {
-            val limiter = rateLimiterRegistry.rateLimiter("llm")
-            call = limiter.decorateSuspendFunction { call() }
-        }
-        if (llmConfig.circuitBreakerEnabled) {
-            val breaker = circuitBreakerRegistry.circuitBreaker("llm")
-            call = breaker.decorateSuspendFunction { call() }
-        }
-        return call()
+        val withRetry =
+            if (llmConfig.retryEnabled) {
+                retryRegistry.retry("llm").decorateSuspendFunction { block() }
+            } else {
+                block
+            }
+        val withRateLimit =
+            if (llmConfig.rateLimiterEnabled) {
+                rateLimiterRegistry.rateLimiter("llm").decorateSuspendFunction { withRetry() }
+            } else {
+                withRetry
+            }
+        return if (llmConfig.circuitBreakerEnabled) {
+            circuitBreakerRegistry.circuitBreaker("llm").decorateSuspendFunction { withRateLimit() }
+        } else {
+            withRateLimit
+        }()
     }
 
     private suspend fun callLlm(

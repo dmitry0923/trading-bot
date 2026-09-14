@@ -106,8 +106,10 @@ class AgentResponseParsingTest {
 
     private val techMeter = SimpleMeterRegistry()
 
-    private fun techAgent(llm: ResilientLlmClient): TechnicalAnalysisAgent =
-        TechnicalAnalysisAgent(llm, mock(), mock(), mock(), techMeter, objectMapper)
+    private fun techAgent(
+        llm: ResilientLlmClient,
+        meter: SimpleMeterRegistry = techMeter,
+    ): TechnicalAnalysisAgent = TechnicalAnalysisAgent(llm, mock(), mock(), mock(), meter, objectMapper)
 
     @Test
     fun `technical agent parses bullish json into enhanced report`() {
@@ -129,21 +131,42 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `technical agent coerces signalStrength into zero to one`() {
+    fun `technical agent rejects out-of-contract strength with baseline`() {
         val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BULLISH","signalStrength":5.0}""")))
+        val meter = SimpleMeterRegistry()
 
-        val report = runBlocking { techAgent(llm).analyze("SBER", candles(30), snapshot, "c1") }
+        val report = runBlocking { techAgent(llm, meter).analyze("SBER", candles(30), snapshot, "c1") }
 
-        assertEquals(1.0, report.signalStrength)
+        // 5.0 вне [0,1] и нет reasoning — контракт нарушен, ответ отбрасывается (fail-closed).
+        assertEquals(0.55, report.signalStrength)
+        assertEquals("BEARISH", report.conclusion)
+        assertEquals(
+            1.0,
+            meter
+                .find("llm.schema.rejected")
+                .tag("agent", "technical")
+                .counter()!!
+                .count(),
+        )
     }
 
     @Test
-    fun `technical agent sanitizes unknown conclusion to neutral`() {
+    fun `technical agent rejects unknown conclusion with baseline`() {
         val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"WEIRD","signalStrength":0.8}""")))
+        val meter = SimpleMeterRegistry()
 
-        val report = runBlocking { techAgent(llm).analyze("SBER", candles(30), snapshot, "c1") }
+        val report = runBlocking { techAgent(llm, meter).analyze("SBER", candles(30), snapshot, "c1") }
 
-        assertEquals("NEUTRAL", report.conclusion)
+        // WEIRD вне enum и нет reasoning — контракт нарушен, отбрасывается (fail-closed).
+        assertEquals("BEARISH", report.conclusion)
+        assertEquals(
+            1.0,
+            meter
+                .find("llm.schema.rejected")
+                .tag("agent", "technical")
+                .counter()!!
+                .count(),
+        )
     }
 
     @Test
@@ -239,7 +262,7 @@ class AgentResponseParsingTest {
         val report = runBlocking { fundAgent(llm).analyze("SBER", "c1") }
 
         assertEquals("NEUTRAL", report.conclusion)
-        assertEquals("Parse error", report.reasoning)
+        assertEquals("Schema rejected", report.reasoning)
     }
 
     // ===== StrategyAgent =====

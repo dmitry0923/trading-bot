@@ -7,8 +7,7 @@ prompts:
       Правила:
       1. Если counterarguments сильные (riskLevel HIGH) или сила сигнала ниже порога — HOLD.
       2. Если сделка оправдана — подтверди action с обоснованием.
-      3. quantity — количество лотов.
-      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"quantity":0,"stopLoss":0.0,"takeProfit":0.0,"trailingStop":false,"signalStrength":0.0,"reasoning":"string"}.
+      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"signalStrength":0.0,"reasoning":"string"}.
     user_template: >
       STRATEGY: {{action}} @ {{targetPrice}} qty={{quantity}} conf={{signalStrength}}
       Reasoning стратега: {{strategyReasoning}}
@@ -24,7 +23,7 @@ prompts:
       Ты — консервативный арбитр торговой системы.
       При любом HIGH риск-уровне от контрариана или неуверенном анализе — HOLD.
       Подтверждай сделку только при полном согласии всех сигналов.
-      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"quantity":0,"stopLoss":0.0,"takeProfit":0.0,"trailingStop":false,"signalStrength":0.0,"reasoning":"string"}.
+      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"signalStrength":0.0,"reasoning":"string"}.
     user_template: >
       STRATEGY: {{action}} @ {{targetPrice}} qty={{quantity}} conf={{signalStrength}}
       Reasoning стратега: {{strategyReasoning}}
@@ -39,7 +38,7 @@ prompts:
     system: >
       Ты — арбитр, допускающий сделки при обоснованном риске.
       Обращай внимание на counterarguments, но не блокируй сделку без CRITICAL-причины.
-      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"quantity":0,"stopLoss":0.0,"takeProfit":0.0,"trailingStop":false,"signalStrength":0.0,"reasoning":"string"}.
+      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"signalStrength":0.0,"reasoning":"string"}.
     user_template: >
       STRATEGY: {{action}} @ {{targetPrice}} qty={{quantity}} conf={{signalStrength}}
       Reasoning стратега: {{strategyReasoning}}

@@ -1,6 +1,10 @@
 package com.trading.bot.agent
 
+import com.trading.bot.domain.technical.CandleResampler
 import com.trading.bot.domain.technical.IndicatorCalculator
+import com.trading.bot.infrastructure.llm.DefaultJsonSchemaValidator
+import com.trading.bot.infrastructure.llm.JsonSchemaValidator
+import com.trading.bot.infrastructure.llm.LlmResponseSchemas
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.infrastructure.llm.ResilientLlmClient
 import com.trading.bot.infrastructure.llm.SemanticCache
@@ -34,6 +38,7 @@ class TechnicalAnalysisAgent(
     private val agentLogRepository: AgentLogRepository,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    private val jsonSchemaValidator: JsonSchemaValidator = DefaultJsonSchemaValidator(objectMapper),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -95,7 +100,14 @@ class TechnicalAnalysisAgent(
         val volatilityRegime = volatilityRegime(indicators.atr, snapshot.currentPrice)
         val atrPercentile = IndicatorCalculator.atrPercentile(candles)
 
-        // Семантический отпечаток: цена (1 знак) + RSI-бакет + trend + vol regime + MACD + ATR pct + сессия
+        // Multi-timeframe: ресемплируем 10-мин свечи в HOUR_1 и DAY_1,
+        // считаем индикаторы старшего ТФ и добавляем в промпт (trend + RSI).
+        val h1Candles = CandleResampler.resample(candles, "HOUR_1")
+        val h1Indicators = IndicatorCalculator.calculate(h1Candles)
+        val d1Candles = CandleResampler.resample(candles, "DAY_1")
+        val d1Indicators = IndicatorCalculator.calculate(d1Candles)
+
+        // Семантический отпечаток: цена (1 знак) + RSI-бакет + trend + vol regime + MACD + ATR pct + сессия + multi-TF
         val fingerprint =
             semanticCache.fingerprint(
                 snapshot.currentPrice,
@@ -119,6 +131,11 @@ class TechnicalAnalysisAgent(
                 "trend" to indicators.trend,
                 "volume" to (snapshot.volume ?: 0),
                 "timeframe" to "MINUTE_10",
+                // Multi-timeframe: индикаторы H1/D1 (null если <30 свечей старшего ТФ)
+                "h1Trend" to (h1Indicators?.trend ?: "UNKNOWN"),
+                "h1Rsi" to (h1Indicators?.let { round2(it.rsi) } ?: "N/A"),
+                "d1Trend" to (d1Indicators?.trend ?: "UNKNOWN"),
+                "d1Rsi" to (d1Indicators?.let { round2(it.rsi) } ?: "N/A"),
             )
 
         val prompt = promptRegistry.getTemplate("technical-analysis", version)
@@ -142,6 +159,22 @@ class TechnicalAnalysisAgent(
                 start,
                 resp.content,
                 isCached = resp.fromCache,
+                storageKey = resp.storageKey,
+            )
+        }
+
+        // P0: структурная валидация ответа (обязательные поля, enum, диапазоны).
+        if (!jsonSchemaValidator.isValid(resp.content, LlmResponseSchemas.AGENT_CONCLUSION)) {
+            logger.warn { "Technical LLM response failed schema validation for $ticker" }
+            meterRegistry.counter("llm.schema.rejected", Tags.of("agent", "technical", "ticker", ticker)).increment()
+            return logAndReturn(
+                baseline,
+                ticker,
+                cycleId,
+                start,
+                resp.content,
+                isCached = resp.fromCache,
+                tokensUsed = resp.tokensUsed,
                 storageKey = resp.storageKey,
             )
         }

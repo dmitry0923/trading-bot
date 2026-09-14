@@ -13,9 +13,6 @@ import com.trading.bot.infrastructure.llm.DeltaPromptStore
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.service.AdaptiveRiskService
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
 import org.springframework.stereotype.Component
 
 /**
@@ -72,55 +69,18 @@ class DiscretionaryStrategy(
         version: String,
         bypassCache: Boolean,
     ): StrategyDecision =
-        coroutineScope {
-            // Независимые вызовы (tech, fund, адаптивный порог) — параллельно.
-            // Дальше цепочка строго последовательная: каждый шаг зависит от предыдущего.
-            val (tech, fund, adaptiveConf) =
-                coroutineScope {
-                    val t = async { techAgent.analyze(context.ticker, context.candles, context.snapshot, context.cycleId) }
-                    val f = async { fundAgent.analyze(context.ticker, context.cycleId) }
-                    val a = async { adaptiveRisk.getAdaptiveConfidenceThreshold(context.ticker) }
-                    Triple(t.await(), f.await(), a.await())
-                }
-
-            val techDelta = if (llmConfig.deltaPromptsEnabled) deltaStore.techDelta(context.ticker, tech) else null
-            val fundDelta = if (llmConfig.deltaPromptsEnabled) deltaStore.fundDelta(context.ticker, fund) else null
-
-            val draft =
-                stratAgent.formulate(
-                    context.ticker,
-                    tech,
-                    fund,
-                    context.snapshot,
-                    context.cycleId,
-                    adaptiveThreshold = adaptiveConf,
-                    techDelta = techDelta,
-                    fundDelta = fundDelta,
-                )
-            val challenge = contrAgent.challenge(draft, tech, fund, context.snapshot, context.cycleId, techDelta = techDelta)
-            val final =
-                arbAgent.adjudicate(
-                    draft,
-                    challenge,
-                    tech,
-                    fund,
-                    context.snapshot,
-                    context.cycleId,
-                    contextPrompt = context.contextPrompt,
-                    adaptiveConfidence = adaptiveConf,
-                    version = version,
-                    bypassCache = bypassCache,
-                )
-
-            if (llmConfig.deltaPromptsEnabled) {
-                deltaStore.update(context.ticker, tech, fund)
-                meterRegistry
-                    .counter(
-                        "agent.delta.prompts",
-                        Tags.of("agent", "discretionary-chain", "mode", if (techDelta != null) "DELTA" else "FULL"),
-                    ).increment()
-            }
-
-            StrategyDecision(final.action, final.targetPrice, final.signalStrength, final.reasoning)
-        }
+        LlmChainExecutor.run(
+            techAgent = techAgent,
+            fundAgent = fundAgent,
+            stratAgent = stratAgent,
+            contrAgent = contrAgent,
+            arbAgent = arbAgent,
+            adaptiveRisk = adaptiveRisk,
+            deltaStore = deltaStore,
+            llmConfig = llmConfig,
+            meterRegistry = meterRegistry,
+            context = context,
+            version = version,
+            bypassCache = bypassCache,
+        )
 }

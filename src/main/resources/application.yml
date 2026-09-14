@@ -122,6 +122,18 @@ llm:
   queue-capacity: 64
   queue-concurrency: 2
   delta-prompts-enabled: ${LLM_DELTA_PROMPTS_ENABLED:false}
+  # P0 (research/llm-signal-source): версия семантики промптов в ключе кэша,
+  # бюджеты токенов/стоимости (Redis INCRBY), single-flight на параллельные вызовы.
+  cache-data-version: ${LLM_CACHE_DATA_VERSION:2026-09-13}
+  budget-enabled: ${LLM_BUDGET_ENABLED:true}
+  max-tokens-per-minute: ${LLM_MAX_TOKENS_PER_MINUTE:4000}
+  max-tokens-per-cycle: ${LLM_MAX_TOKENS_PER_CYCLE:12000}
+  max-tokens-per-day: ${LLM_MAX_TOKENS_PER_DAY:200000}
+  max-daily-cost-rub: ${LLM_MAX_DAILY_COST_RUB:200}
+  token-cost-rub-per-million: ${LLM_TOKEN_COST_RUB_PER_MILLION:3}
+  single-flight-enabled: ${LLM_SINGLE_FLIGHT_ENABLED:true}
+  single-flight-lock-ttl-seconds: ${LLM_SINGLE_FLIGHT_LOCK_TTL_SECONDS:30}
+  single-flight-wait-ms: ${LLM_SINGLE_FLIGHT_WAIT_MS:2000}
 
 # Новости по эмитентам для фундаментального агента (Agent-2).
 # LIVE-источник — платная подписка (rg.ru API); baseUrl — шаблон с плейсхолдерами
@@ -134,6 +146,9 @@ news:
   max-items: 5
   timeout-ms: 5000
   ttl-minutes: 15
+  # Resilience4j-обвязка запросов (retry/ratelimiter/circuitbreaker, инстанс rgru).
+  # Включена в проде; OFF в unit-тестах, чтобы не инжектить конфигурированные реестры.
+  resilience-enabled: ${NEWS_RESILIENCE_ENABLED:true}
 
 trace-storage:
   enabled: ${TRACE_STORAGE_ENABLED:false}
@@ -214,6 +229,23 @@ resilience4j:
           - java.io.IOException
           - org.springframework.web.reactive.function.client.WebClientRequestException
           - org.springframework.web.reactive.function.client.WebClientResponseException
+      rgru:
+        registerHealthIndicator: true
+        slidingWindowSize: 6
+        minimumNumberOfCalls: 3
+        permittedNumberOfCallsInHalfOpenState: 2
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 40
+        eventConsumerBufferSize: 6
+        recordExceptions:
+          - java.io.IOException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException$TooManyRequests
+          - org.springframework.web.reactive.function.client.WebClientResponseException$ServiceUnavailable
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Unauthorized
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Forbidden
       alor:
         registerHealthIndicator: true
         slidingWindowSize: 20
@@ -239,6 +271,10 @@ resilience4j:
         limitForPeriod: 60
         limitRefreshPeriod: 60s
         timeoutDuration: 5s
+      rgru:
+        limitForPeriod: 5
+        limitRefreshPeriod: 60s
+        timeoutDuration: 2s
       alor:
         limitForPeriod: 10
         limitRefreshPeriod: 1s
@@ -257,6 +293,22 @@ resilience4j:
           - org.springframework.web.reactive.function.client.WebClientResponseException$TooManyRequests
         ignoreExceptions:
           - org.springframework.web.reactive.function.client.WebClientResponseException$BadRequest
+      rgru:
+        maxAttempts: 3
+        waitDuration: 500ms
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2.0
+        maxInterval: 4s
+        randomizationFactor: 0.3
+        retryExceptions:
+          - java.io.IOException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException$TooManyRequests
+          - org.springframework.web.reactive.function.client.WebClientResponseException$ServiceUnavailable
+        ignoreExceptions:
+          - org.springframework.web.reactive.function.client.WebClientResponseException$BadRequest
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Unauthorized
+          - org.springframework.web.reactive.function.client.WebClientResponseException$Forbidden
       alor:
         maxAttempts: 3
         waitDuration: 500ms
@@ -305,6 +357,11 @@ trading:
   signal-max-deviation-percent-cap: ${SIGNAL_MAX_DEVIATION_PERCENT_CAP:1.0}
   # Нормальный гейт спреда = 0.1%; жёсткий потолок 0.5% зашит в коде (не конфигурируется)
   signal-max-spread-percent: ${SIGNAL_MAX_SPREAD_PERCENT:0.1}
+  # LLM как источник сигнала (research, дефолт off; docs/17-llm-signal-source.md).
+  # llm-signal-source: LlmSignalStrategy участвует в конкурентном выборе сигнала;
+  # llm-signal-only: в конкуренции остаётся ТОЛЬКО LLM.
+  llm-signal-source: ${LLM_SIGNAL_SOURCE_ENABLED:false}
+  llm-signal-only: ${LLM_SIGNAL_ONLY_ENABLED:false}
 
 # Distributed lock (мульти-реплика): включить при запуске нескольких инстансов бота.
 # В single-instance (по умолчанию) лок не используется, Redis не требуется.

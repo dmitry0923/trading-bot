@@ -62,4 +62,27 @@ class TradeEventRepository(
             .collectList()
             .awaitSingle()
     }
+
+    /**
+     * События нескольких агрегатов в хронологическом порядке (lineage): все
+     * позиции цикла одним запросом. Используется реконструкцией по cycleId
+     * ([com.trading.bot.service.LineageService]).
+     */
+    suspend fun findByAggregateIds(aggregateIds: Collection<UUID>): List<TradeEvent> {
+        val ids = aggregateIds.distinct()
+        if (ids.isEmpty()) return emptyList()
+        val placeholders = ids.indices.joinToString(",") { ":id$it" }
+        var spec =
+            databaseClient
+                .sql(
+                    "SELECT * FROM trade_events WHERE aggregate_id IN ($placeholders) " +
+                        "ORDER BY occurred_at ASC",
+                )
+        ids.forEachIndexed { i, id -> spec = spec.bind("id$i", id) }
+        return spec
+            .map { row, _ -> toTradeEvent(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
 }

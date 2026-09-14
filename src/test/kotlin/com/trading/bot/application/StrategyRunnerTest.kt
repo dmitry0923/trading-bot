@@ -1,5 +1,7 @@
 package com.trading.bot.application
 
+import com.trading.bot.application.strategy.LlmSignalStrategy
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.risk.MarketEvent
 import com.trading.bot.domain.risk.PerTickerRegime
 import com.trading.bot.domain.risk.RegimeDirection
@@ -41,11 +43,15 @@ class StrategyRunnerTest {
             cycleId = "cycle-1",
         )
 
-    private fun runner(strategies: List<Strategy>): StrategyRunner =
+    private fun runner(
+        strategies: List<Strategy>,
+        tradingConfig: TradingConfig = TradingConfig(),
+    ): StrategyRunner =
         StrategyRunner(
             strategies = strategies,
             strategySelector = StrategySelector(),
             meterRegistry = SimpleMeterRegistry(),
+            tradingConfig = tradingConfig,
         )
 
     private fun regime(
@@ -169,5 +175,127 @@ class StrategyRunnerTest {
         val result = runBlocking { runner.runAll(context) }
         assertEquals("GRID", result.winnerId)
         assertEquals(2, result.all.size)
+    }
+
+    @Test
+    fun `llm signal strategy is excluded while llm signal source is disabled`() {
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.95, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.6, "trend")),
+                ),
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals("TREND_FOLLOWING", result.winnerId)
+        assertFalse(LlmSignalStrategy.ID in result.all)
+    }
+
+    @Test
+    fun `llm signal strategy participates when signal source enabled`() {
+        val tradingConfig = TradingConfig().apply { llmSignalSourceEnabled = true }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.6, "trend")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals(LlmSignalStrategy.ID, result.winnerId)
+        assertEquals(2, result.all.size)
+    }
+
+    @Test
+    fun `llm signal only keeps single llm strategy`() {
+        val tradingConfig =
+            TradingConfig().apply {
+                llmSignalSourceEnabled = true
+                llmSignalOnly = true
+            }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.7, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.9, "trend")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals(LlmSignalStrategy.ID, result.winnerId)
+        assertEquals(listOf(LlmSignalStrategy.ID), result.all.keys.toList())
+    }
+
+    @Test
+    fun `llm signal only without enable flag falls back to ordinary competition`() {
+        val tradingConfig = TradingConfig().apply { llmSignalOnly = true }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.95, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.6, "trend")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals("TREND_FOLLOWING", result.winnerId)
+        assertFalse(LlmSignalStrategy.ID in result.all)
+    }
+
+    @Test
+    fun `llm shadow marks winner shadowed when llm wins and shadow flag enabled`() {
+        val tradingConfig =
+            TradingConfig().apply {
+                llmSignalSourceEnabled = true
+                llmSignalShadow = true
+            }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.6, "trend")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals(LlmSignalStrategy.ID, result.winnerId)
+        assertTrue(result.shadowed)
+    }
+
+    @Test
+    fun `llm shadow without shadow flag leaves winner executable`() {
+        val tradingConfig = TradingConfig().apply { llmSignalSourceEnabled = true }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.6, "trend")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals(LlmSignalStrategy.ID, result.winnerId)
+        assertFalse(result.shadowed)
+    }
+
+    @Test
+    fun `llm shadow does not shadow a deterministic winner`() {
+        val tradingConfig =
+            TradingConfig().apply {
+                llmSignalSourceEnabled = true
+                llmSignalShadow = true
+            }
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy(LlmSignalStrategy.ID, StrategyDecision(StrategyAction.HOLD, BigDecimal("100.0"), 0.3, "llm")),
+                    FakeStrategy("TREND_FOLLOWING", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.8, "trend")),
+                ),
+                tradingConfig,
+            )
+        val result = runBlocking { runner.runAll(context) }
+        assertEquals("TREND_FOLLOWING", result.winnerId)
+        assertFalse(result.shadowed)
     }
 }

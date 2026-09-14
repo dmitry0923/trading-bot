@@ -31,6 +31,9 @@ object TraceContext {
 
     fun traceId(): String? = MDC.get(TRACE_ID)
 
+    /** Идентификатор торгового цикла из MDC; null — вне цикла (например backtest). */
+    fun cycleId(): String? = MDC.get(CYCLE_ID)
+
     fun currentMdc(): Map<String, String> = MDC.getCopyOfContextMap()?.toMap() ?: emptyMap()
 
     /**

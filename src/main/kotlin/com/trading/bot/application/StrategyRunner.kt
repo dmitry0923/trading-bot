@@ -1,5 +1,7 @@
 package com.trading.bot.application
 
+import com.trading.bot.application.strategy.LlmSignalStrategy
+import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.strategy.AdvisoryOnlyStrategy
 import com.trading.bot.domain.strategy.Strategy
 import com.trading.bot.domain.strategy.StrategyContext
@@ -15,11 +17,16 @@ import org.springframework.stereotype.Component
 /**
  * Итог запуска стратегий: победитель (максимальная взвешенная уверенность) и все
  * решения для журналирования. Ти-брейк — порядок регистрации (детерминирован).
+ *
+ * [shadowed] — победа LLM-стратегии в shadow-режиме (`trading.llm-signal-shadow`):
+ * решение формируется и журналируется, но НЕ должно исполняться (order-admission /
+ * Redis «последняя стратегия» пропускаются). Для остальных победителей — false.
  */
 data class StrategyResult(
     val winnerId: String,
     val decision: StrategyDecision,
     val all: Map<String, StrategyDecision>,
+    val shadowed: Boolean = false,
 )
 
 /**
@@ -30,6 +37,12 @@ data class StrategyResult(
  * Стратегии, помеченные [AdvisoryOnlyStrategy] (LLM-контур), исключаются из
  * конкуренции за сигнал (C-001): единственный источник сигнала — детерминированные
  * стратегии, LLM работает советником вне критического пути.
+ *
+ * LLM как источник сигнала (P0, research):
+ *  - [LlmSignalStrategy] участвует в конкуренции ТОЛЬКО при
+ *    `trading.llm-signal-source=true` — иначе исключается (fail-closed);
+ *  - `trading.llm-signal-only=true` — в конкуренции остаётся только она
+ *    (требование «решения принимает строго LLM»).
  *
  * Учёт рыночного режима ([StrategyContext.regime]) — через [StrategySelector]:
  *   1. Жёсткий фильтр: при [com.trading.bot.domain.risk.PerTickerRegime.blocksEntry]
@@ -47,9 +60,27 @@ class StrategyRunner(
     strategies: List<Strategy>,
     private val strategySelector: StrategySelector,
     private val meterRegistry: MeterRegistry,
+    private val tradingConfig: TradingConfig = TradingConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
-    private val signalStrategies: List<Strategy> = strategies.filterNot { it is AdvisoryOnlyStrategy }
+
+    /**
+     * Стратегии-кандидаты для конкуренции:
+     *  - [AdvisoryOnlyStrategy] исключены всегда (C-001);
+     *  - [LlmSignalStrategy] участвует только при `llm-signal-source` (fail-closed);
+     *  - при `llm-signal-only` остаётся только она.
+     */
+    private val signalStrategies: List<Strategy> =
+        strategies
+            .filterNot { it is AdvisoryOnlyStrategy }
+            .filter { it.id != LlmSignalStrategy.ID || tradingConfig.llmSignalSourceEnabled }
+            .let { candidates ->
+                if (tradingConfig.llmSignalOnly && tradingConfig.llmSignalSourceEnabled) {
+                    candidates.filter { it.id == LlmSignalStrategy.ID }
+                } else {
+                    candidates
+                }
+            }
 
     suspend fun runAll(context: StrategyContext): StrategyResult {
         if (signalStrategies.isEmpty()) {
@@ -131,11 +162,21 @@ class StrategyRunner(
                     all = emptyMap(),
                 )
         meterRegistry.counter("strategy.runner.winner", Tags.of("strategy", winner.first)).increment()
+        // Shadow-режим (docs/17 §17.3, этап 5): LLM-победитель логируется, но НЕ исполняется.
+        val shadowed = winner.first == LlmSignalStrategy.ID && tradingConfig.llmSignalShadow
+        if (shadowed) {
+            logger.info {
+                "SHADOW(LLM): ${context.ticker} winner=${winner.first} (${winner.second.action}) logged but not executed"
+            }
+            meterRegistry
+                .counter("llm.signal.shadow", Tags.of("ticker", context.ticker, "strategy", winner.first))
+                .increment()
+        }
         if (regime != null && evaluated.size < signalStrategies.size) {
             meterRegistry
                 .counter("strategy.runner.filtered", Tags.of("ticker", context.ticker))
                 .increment()
         }
-        return StrategyResult(winner.first, winner.second, weighted.toMap())
+        return StrategyResult(winner.first, winner.second, weighted.toMap(), shadowed)
     }
 }

@@ -50,6 +50,8 @@ import com.trading.bot.service.EmergencyStopService
 import com.trading.bot.service.EmergencyStopSource
 import com.trading.bot.service.FrozenStrategyStore
 import com.trading.bot.service.InvestorService
+import com.trading.bot.service.LineageChain
+import com.trading.bot.service.LineageService
 import com.trading.bot.service.LiveStrategyFingerprintProvider
 import com.trading.bot.service.PaperTradingService
 import com.trading.bot.service.ProfitForecastService
@@ -135,6 +137,7 @@ class ApiController(
     private val emergencyStopService: EmergencyStopService,
     private val tradingGate: TradingGate,
     private val paperTradingService: PaperTradingService,
+    private val lineageService: LineageService,
     private val ragErrorAnalyzer: RagErrorAnalyzer,
     private val traceQueryService: TraceQueryService,
     private val meterRegistry: MeterRegistry,
@@ -250,6 +253,21 @@ class ApiController(
                 mapOf("traces" to traceQueryService.listRecent(limit))
             }
         }
+    }
+
+    /**
+     * Полная реконструкция цепочки решения по cycleId (trace_id = cycle_id):
+     * agent_logs (все агенты + советник) → strategies → positions → trade_events →
+     * (опционально) сырые LLM-трейсы из S3. `includeTraces=true` тянет содержимое
+     * промптов/ответов из объектного хранилища (дороже по сети).
+     */
+    @GetMapping("/lineage/{cycleId}")
+    suspend fun getLineage(
+        @PathVariable cycleId: String,
+        @RequestParam(defaultValue = "false") includeTraces: Boolean,
+    ): LineageChain {
+        meterRegistry.counter("api.lineage").increment()
+        return lineageService.buildChain(cycleId, includeTraces)
     }
 
     /**

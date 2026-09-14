@@ -13,7 +13,9 @@ import org.springframework.stereotype.Component
  * - [apiKey] — ключ подписки (заголовок Authorization); при пустом — пустой список;
  * - [maxItems] — число новостей, которые отдаются агенту (лимит токенов промпта);
  * - [timeoutMs] — таймаут HTTP-запроса;
- * - [ttlMinutes] — TTL кэша новостей в Redis (новины не дёргаются каждый цикл).
+ * - [ttlMinutes] — TTL кэша новостей в Redis (новины не дёргаются каждый цикл);
+ * - [resilienceEnabled] — resilience4j обвязка (retry/ratelimiter/circuitbreaker,
+ *   инстанс `rgru` в application.yml); OFF при unit-тестах, ON в проде.
  */
 @Component
 @ConfigurationProperties(prefix = "news")
@@ -24,4 +26,5 @@ class NewsConfig {
     var maxItems: Int = 5
     var timeoutMs: Long = 5_000L
     var ttlMinutes: Long = 15L
+    var resilienceEnabled: Boolean = false
 }

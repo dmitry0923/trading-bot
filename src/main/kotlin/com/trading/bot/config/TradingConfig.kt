@@ -96,4 +96,45 @@ class TradingConfig {
      * даже при ошибочно завышенном конфиге спред > 0.5% никогда не допускается.
      */
     var signalMaxSpreadPercent: Double = 0.1
+
+    // ===== LLM as signal source (research, дефолт off; docs/17-llm-signal-source.md) =====
+
+    /**
+     * МАСТЕР-флаг участия LLM-стратегии ([LlmSignalStrategy]) в конкурентном выборе
+     * сигнала. default false (research): пока не включён явно, LLM не влияет на
+     * направление — единственный источник сигнала остаются детерминированные
+     * стратегии, LLM работает советником (C-001).
+     */
+    var llmSignalSourceEnabled: Boolean = false
+
+    /**
+     * Строго LLM: когда включён вместе с [llmSignalSourceEnabled], в конкуренции за
+     * сигнал участвует ТОЛЬКО LlmSignalStrategy (детерминированные стратегии в
+     * StrategyRunner исключаются). Требование «решения принимает строго LLM».
+     */
+    var llmSignalOnly: Boolean = false
+
+    /**
+     * Жёсткий бюджет времени полной LLM-цепочки сигнала (мс) — [LlmSignalStrategy]:
+     * Technical+Fundamental (параллельно) -> Strategist -> Contrarian -> Arbitrator.
+     *
+     * Этап 3 (risk), R2: LLM как источник сигнала НЕ должен задерживать
+     * order-execution. При превышении бюджета цепочка прерывается (withTimeout) и
+     * стратегия возвращает fail-closed HOLD с метрикой `llm.signal.timeout` —
+     * лимиты/исполнение не расширяются, цикл не виснет на неотвечающем LLM.
+     * Дефолт 2000 мс не трогается, когда флаг `llm-signal-source` выключен
+     * (детерминированный путь), т.к. цепочка в конкуренции не запускается.
+     */
+    var llmSignalBudgetMs: Long = 2000
+
+    /**
+     * Shadow-режим LLM как источника сигнала (docs/17 §17.3, этап 5): при
+     * `llm-signal-source=true` + `llm-signal-shadow=true` LLM УЧАСТВУЕТ в конкуренции
+     * (решение логируется в agent_logs/Strategy/lineage), но его победа НЕ исполняется:
+     * сигнал не публикуется в order-admission, в Redis «последняя стратегия» не пишется.
+     * Цель — сравнение LLM-winner vs детерминированный на 30д БЕЗ риска (A/B перед
+     * `llm-signal-only`). Метрика `llm.signal.shadow{ticker,strategy}` + лог SHADOW(LLM).
+     * Без `llm-signal-source=true` флаг неэффективен (LLM в конкуренции нет).
+     */
+    var llmSignalShadow: Boolean = false
 }

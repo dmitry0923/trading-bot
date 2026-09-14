@@ -327,9 +327,9 @@ class AgentResponseParsingTest {
     }
 
     @Test
-    fun `strategy agent parses buy draft and coerces signalStrength`() {
+    fun `strategy agent parses buy draft with string targetPrice normalized`() {
         val llm =
-            StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","signalStrength":1.7,"reasoning":"go"}""")))
+            StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","signalStrength":0.7,"reasoning":"go"}""")))
         val guardrails: Guardrails = mock()
         whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
             passthrough(it.getArgument(0))
@@ -339,7 +339,30 @@ class AgentResponseParsingTest {
 
         assertEquals(StrategyAction.BUY, draft.action)
         assertEquals(BigDecimal("102.5"), draft.targetPrice)
-        assertEquals(1.0, draft.signalStrength)
+        assertEquals(0.7, draft.signalStrength)
+    }
+
+    @Test
+    fun `strategy agent rejects out-of-range signalStrength via schema`() {
+        val llm =
+            StubLlmClient(listOf(LlmResponse(content = """{"action":"BUY","targetPrice":"102.5","signalStrength":1.7,"reasoning":"go"}""")))
+        val guardrails: Guardrails = mock()
+        whenever(guardrails.apply(any(), any(), any(), any())).thenAnswer {
+            passthrough(it.getArgument(0))
+        }
+
+        val draft = runBlocking { stratAgent(llm, guardrails).formulate("SBER", techReport, fundReport, snapshot, "c1") }
+
+        assertEquals(StrategyAction.HOLD, draft.action)
+        assertEquals(
+            1.0,
+            stratMeter
+                .find("llm.schema.rejected")
+                .tag("agent", "strategy")
+                .tag("ticker", "SBER")
+                .counter()!!
+                .count(),
+        )
     }
 
     @Test

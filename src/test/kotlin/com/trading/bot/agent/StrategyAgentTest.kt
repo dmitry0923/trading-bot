@@ -184,7 +184,8 @@ class StrategyAgentTest {
     }
 
     @Test
-    fun `coerces out of range signal strength`() {
+    fun `rejects out-of-range signal strength via schema`() {
+        val meter = SimpleMeterRegistry()
         val llm =
             StubLlmClient(
                 listOf(
@@ -194,10 +195,49 @@ class StrategyAgentTest {
                 ),
             )
 
-        val draft = runBlocking { agent(llm, SimpleMeterRegistry()).formulate("SBER", tech(), fund(), snapshot, "c1") }
+        val draft = runBlocking { agent(llm, meter).formulate("SBER", tech(), fund(), snapshot, "c1") }
 
-        assertEquals(StrategyAction.BUY, draft.action)
-        assertEquals(1.0, draft.signalStrength)
+        assertEquals(StrategyAction.HOLD, draft.action)
+        assertTrue(draft.reasoning.contains("Schema rejected"))
+        assertEquals(1.0, meter.counter("llm.schema.rejected", "agent", "strategy", "ticker", "SBER").count())
+    }
+
+    @Test
+    fun `rejects object targetPrice via schema`() {
+        val meter = SimpleMeterRegistry()
+        val llm =
+            StubLlmClient(
+                listOf(
+                    LlmResponse(
+                        content = """{"action":"BUY","targetPrice":{},"signalStrength":0.8}""",
+                    ),
+                ),
+            )
+
+        val draft = runBlocking { agent(llm, meter).formulate("SBER", tech(), fund(), snapshot, "c1") }
+
+        assertEquals(StrategyAction.HOLD, draft.action)
+        assertTrue(draft.reasoning.contains("Schema rejected"))
+        assertEquals(1.0, meter.counter("llm.schema.rejected", "agent", "strategy", "ticker", "SBER").count())
+    }
+
+    @Test
+    fun `rejects non-numeric targetPrice string via schema`() {
+        val meter = SimpleMeterRegistry()
+        val llm =
+            StubLlmClient(
+                listOf(
+                    LlmResponse(
+                        content = """{"action":"BUY","targetPrice":"hundred","signalStrength":0.8}""",
+                    ),
+                ),
+            )
+
+        val draft = runBlocking { agent(llm, meter).formulate("SBER", tech(), fund(), snapshot, "c1") }
+
+        assertEquals(StrategyAction.HOLD, draft.action)
+        assertTrue(draft.reasoning.contains("Schema rejected"))
+        assertEquals(1.0, meter.counter("llm.schema.rejected", "agent", "strategy", "ticker", "SBER").count())
     }
 
     @Test

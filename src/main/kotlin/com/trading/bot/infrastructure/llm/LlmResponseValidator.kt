@@ -214,7 +214,7 @@ class DefaultJsonSchemaValidator(
         }
 
         if (type == "number" || type == "integer") {
-            val number = node as? Number ?: return false
+            val number = parseNumber(node) ?: return false
             val min = (schema["minimum"] as? Number)?.toDouble()
             val max = (schema["maximum"] as? Number)?.toDouble()
             val value = number.toDouble()
@@ -257,10 +257,26 @@ class DefaultJsonSchemaValidator(
             "object" -> node is Map<*, *>
             "array" -> node is List<*>
             "string" -> node is String
-            "number" -> node is Number
-            "integer" -> node is Number && node.toDouble() % 1.0 == 0.0
-            "boolean" -> node is Boolean
+            "number" -> isNumeric(node)
+            "integer" -> isNumeric(node) && parseNumber(node)!! % 1.0 == 0.0
+            "boolean" -> node is Boolean || (node is String && node.toBooleanStrictOrNull() != null)
             "null" -> node == null
             else -> true
+        }
+
+    /** true, если узел — число или строка-число (напр. `"0.72"` от Anthropic). */
+    private fun isNumeric(node: Any?): Boolean =
+        when (node) {
+            is Number -> true
+            is String -> node.toDoubleOrNull() != null
+            else -> false
+        }
+
+    /** Числовое значение узла; не-число возвращает null. */
+    private fun parseNumber(node: Any?): Double? =
+        when (node) {
+            is Number -> node.toDouble()
+            is String -> node.toDoubleOrNull()
+            else -> null
         }
 }

@@ -116,17 +116,23 @@ class FundamentalAnalysisAgent(
                 cacheNamespace = cacheNamespace,
             )
 
+        val cleaned =
+            resp.content
+                .replace("```json", "")
+                .replace("```", "")
+                .trim()
+
         val report =
             if (resp.isFallback) {
                 logger.info { "LLM unavailable for fundamental analysis of $ticker" }
                 FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.0, reasoning = "LLM unavailable")
-            } else if (!jsonSchemaValidator.isValid(resp.content, LlmResponseSchemas.AGENT_CONCLUSION)) {
+            } else if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.AGENT_CONCLUSION)) {
                 logger.warn { "Fundamental LLM response failed schema validation for $ticker" }
                 meterRegistry.counter("llm.schema.rejected", Tags.of("agent", "fundamental", "ticker", ticker)).increment()
                 FundamentalReport(conclusion = "NEUTRAL", signalStrength = 0.0, reasoning = "Schema rejected")
             } else {
                 try {
-                    val j = objectMapper.readTree(resp.content)
+                    val j = objectMapper.readTree(cleaned)
                     FundamentalReport(
                         conclusion =
                             j.path("conclusion").asString("NEUTRAL").uppercase().let {

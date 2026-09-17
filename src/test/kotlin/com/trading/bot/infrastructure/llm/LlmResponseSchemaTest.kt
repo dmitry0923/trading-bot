@@ -109,4 +109,68 @@ class LlmResponseSchemaTest {
     fun `strategy decision missing required action rejected`() {
         assertFalse(validator.isValid("""{"signalStrength":0.5}""", LlmResponseSchemas.STRATEGY_DECISION))
     }
+
+    @Test
+    fun `string signal strength accepted for anthropic models`() {
+        // Claude Opus возвращает числовые поля строками ("0.72") — должны проходить schema.
+        assertTrue(
+            validator.isValid(
+                """{"conclusion":"BULLISH","signalStrength":"0.72","reasoning":"тренд вверх"}""",
+                LlmResponseSchemas.AGENT_CONCLUSION,
+            ),
+        )
+        assertTrue(
+            validator.isValid(
+                """{"action":"BUY","signalStrength":"0.65"}""",
+                LlmResponseSchemas.STRATEGY_DECISION,
+            ),
+        )
+    }
+
+    @Test
+    fun `non numeric string signal strength rejected`() {
+        assertFalse(
+            validator.isValid(
+                """{"conclusion":"BULLISH","signalStrength":"high","reasoning":"не число"}""",
+                LlmResponseSchemas.AGENT_CONCLUSION,
+            ),
+        )
+    }
+
+    @Test
+    fun `string signal strength out of range rejected`() {
+        assertFalse(
+            validator.isValid(
+                """{"conclusion":"BULLISH","signalStrength":"1.7","reasoning":"over confident"}""",
+                LlmResponseSchemas.AGENT_CONCLUSION,
+            ),
+        )
+    }
+
+    @Test
+    fun `string boolean isValid accepted for anthropic models`() {
+        // Claude Opus возвращает булевы поля строками ("true") — должны проходить schema.
+        assertTrue(
+            validator.isValid(
+                """{"isValid":"true","riskLevel":"LOW","signalStrength":"0.72","critique":"ok"}""",
+                LlmResponseSchemas.CHALLENGE_REPORT,
+            ),
+        )
+        assertTrue(
+            validator.isValid(
+                """{"isValid":"false","riskLevel":"CRITICAL","signalStrength":"0.0","critique":"no"}""",
+                LlmResponseSchemas.CHALLENGE_REPORT,
+            ),
+        )
+    }
+
+    @Test
+    fun `non boolean string isValid rejected`() {
+        assertFalse(
+            validator.isValid(
+                """{"isValid":"yes","riskLevel":"LOW","signalStrength":"0.72","critique":"ok"}""",
+                LlmResponseSchemas.CHALLENGE_REPORT,
+            ),
+        )
+    }
 }

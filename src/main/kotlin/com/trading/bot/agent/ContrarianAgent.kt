@@ -128,6 +128,12 @@ class ContrarianAgent(
                 cacheNamespace = cacheNamespace,
             )
 
+        val cleaned =
+            resp.content
+                .replace("```json", "")
+                .replace("```", "")
+                .trim()
+
         val report =
             if (resp.isFallback) {
                 logger.warn { "Contrarian LLM unavailable for ${snapshot.ticker} -> fail-closed CRITICAL" }
@@ -143,7 +149,7 @@ class ContrarianAgent(
                     signalStrength = 0.0,
                     llmAvailable = false,
                 )
-            } else if (!jsonSchemaValidator.isValid(resp.content, LlmResponseSchemas.CHALLENGE_REPORT)) {
+            } else if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.CHALLENGE_REPORT)) {
                 logger.warn { "Contrarian LLM response failed schema validation for ${snapshot.ticker}" }
                 meterRegistry
                     .counter(
@@ -159,7 +165,7 @@ class ContrarianAgent(
                 )
             } else {
                 try {
-                    val j = objectMapper.readTree(resp.content)
+                    val j = objectMapper.readTree(cleaned)
                     ChallengeReport(
                         isValid = j.path("isValid").asBoolean(false),
                         riskLevel =

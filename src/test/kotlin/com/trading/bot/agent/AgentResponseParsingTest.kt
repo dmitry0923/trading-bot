@@ -131,6 +131,30 @@ class AgentResponseParsingTest {
     }
 
     @Test
+    fun `technical agent parses fenced json into enhanced report`() {
+        val fenced =
+            """```json
+{"conclusion":"BULLISH","signalStrength":0.7,"reasoning":"fenced"}
+```"""
+        val llm = StubLlmClient(listOf(LlmResponse(content = fenced)))
+        val meter = SimpleMeterRegistry()
+
+        val report = runBlocking { techAgent(llm, meter).analyze("SBER", candles(30), snapshot, "c1") }
+
+        assertEquals("BULLISH", report.conclusion)
+        assertEquals(0.7, report.signalStrength)
+        assertEquals("fenced", report.reasoning)
+        assertEquals(
+            0.0,
+            meter
+                .find("llm.schema.rejected")
+                .tag("agent", "technical")
+                .counter()
+                ?.count() ?: 0.0,
+        )
+    }
+
+    @Test
     fun `technical agent rejects out-of-contract strength with baseline`() {
         val llm = StubLlmClient(listOf(LlmResponse(content = """{"conclusion":"BULLISH","signalStrength":5.0}""")))
         val meter = SimpleMeterRegistry()
@@ -228,6 +252,23 @@ class AgentResponseParsingTest {
         assertEquals("BULLISH", report.conclusion)
         assertEquals(0.75, report.signalStrength)
         assertEquals("rate cut", report.reasoning)
+    }
+
+    @Test
+    fun `fundamental agent parses fenced json`() {
+        val fenced =
+            """```json
+{"conclusion":"BEARISH","signalStrength":0.6,"reasoning":"fenced"}
+```"""
+        val llm = StubLlmClient(listOf(LlmResponse(content = fenced)))
+
+        runBlocking { stubMacro() }
+
+        val report = runBlocking { fundAgent(llm).analyze("SBER", "c1") }
+
+        assertEquals("BEARISH", report.conclusion)
+        assertEquals(0.6, report.signalStrength)
+        assertEquals("fenced", report.reasoning)
     }
 
     @Test
@@ -486,6 +527,23 @@ class AgentResponseParsingTest {
         assertEquals("HIGH", report.riskLevel)
         assertEquals("risky", report.critique)
         assertEquals(0.9, report.signalStrength)
+        assertEquals(true, report.llmAvailable)
+    }
+
+    @Test
+    fun `contrarian agent parses fenced json challenge`() {
+        val fenced =
+            """```json
+{"isValid":true,"riskLevel":"MEDIUM","critique":"mild","signalStrength":0.6}
+```"""
+        val llm = StubLlmClient(listOf(LlmResponse(content = fenced)))
+
+        val report = runBlocking { contrAgent(llm).challenge(buyDraft, techReport, fundReport, snapshot, "c1") }
+
+        assertEquals(true, report.isValid)
+        assertEquals("MEDIUM", report.riskLevel)
+        assertEquals("mild", report.critique)
+        assertEquals(0.6, report.signalStrength)
         assertEquals(true, report.llmAvailable)
     }
 

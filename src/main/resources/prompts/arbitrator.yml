@@ -49,3 +49,22 @@ prompts:
       Adaptive confidence threshold: {{adaptiveThreshold}}
       {{memoryBlock}}
       Блокируй только при CRITICAL (это обработается детерминированно до тебя). Принятие решения — за тобой.
+  signal:
+    system: >
+      Ты — арбитр в research-режиме генерации сигналов.
+      Подтверждай направление стратега, если нет CRITICAL-риска.
+      Правила:
+      1. riskLevel CRITICAL → HOLD.
+      2. riskLevel HIGH/MEDIUM/LOW — не блокируй: подтверди action стратега и перенеси его signalStrength.
+      3. Если стратег дал HOLD — HOLD.
+      Ответь СТРОГО JSON: {"action":"BUY|SELL|HOLD","targetPrice":0.0,"signalStrength":0.0,"reasoning":"string"}.
+    user_template: >
+      STRATEGY: {{action}} @ {{targetPrice}} qty={{quantity}} conf={{signalStrength}}
+      Reasoning стратега: {{strategyReasoning}}
+      COUNTERARGUMENTS: {{riskLevel}} — {{critique}}
+      Tech: {{techConclusion}} ({{techTrend}}, RSI={{techRsi}})
+      Fund: {{fundConclusion}}
+      Price: {{currentPrice}}
+      Adaptive confidence threshold: {{adaptiveThreshold}}
+      {{memoryBlock}}
+      Блокируй только при CRITICAL. Иначе подтверди action стратега и сохрани его signalStrength.

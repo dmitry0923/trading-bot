@@ -193,8 +193,14 @@ class TechnicalAnalysisAgent(
             )
         }
 
+        val cleaned =
+            resp.content
+                .replace("```json", "")
+                .replace("```", "")
+                .trim()
+
         // P0: структурная валидация ответа (обязательные поля, enum, диапазоны).
-        if (!jsonSchemaValidator.isValid(resp.content, LlmResponseSchemas.AGENT_CONCLUSION)) {
+        if (!jsonSchemaValidator.isValid(cleaned, LlmResponseSchemas.AGENT_CONCLUSION)) {
             logger.warn { "Technical LLM response failed schema validation for $ticker" }
             meterRegistry.counter("llm.schema.rejected", Tags.of("agent", "technical", "ticker", ticker)).increment()
             return logAndReturn(
@@ -210,7 +216,7 @@ class TechnicalAnalysisAgent(
         }
 
         return try {
-            val j = objectMapper.readTree(resp.content)
+            val j = objectMapper.readTree(cleaned)
             val enhanced =
                 baseline.copy(
                     conclusion =

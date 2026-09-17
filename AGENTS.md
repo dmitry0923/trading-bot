@@ -260,6 +260,23 @@ guardrail (тех-агент давал 0.3–0.55 при жёстком `signal
   латентность ~1.5 с, LLM работал штатно (тех 0.65–0.75, стратег BUY/SELL).
   Тот же вывод, что и по DeepSeek/тех-дефолту: LLM-сигналы edge не дают; детерминированные
   стратегии CNYRUBF MINUTE_10 остаются единственным значимым источником (PF=2.15, P=0.0425).
+- **claude-opus-4.6 на CNYRUBF (WFA, 2026-09-17, 90д MINUTE_10 folds=3 sample-every=240,
+  RouterAI `anthropic/claude-opus-4.6`, prompt-version=signal/th=0.30, `LLM_DISABLE_REASONING=true`)**:
+  OOS сделок **10**, Return +0.09%, PF=**1.11**, consistency 0.333, edge P=**0.48**, Sharpe 0.12,
+  CI [−125.3, +171.3] — **edge НЕТ** (слишком мало сделок, статистически не значимо). Тот же
+  вывод, что по DeepSeek/qwen3-32b: LLM-сигналы edge не дают; детерминированные стратегии
+  CNYRUBF MINUTE_10 остаются единственным значимым источником.
+- По ходу Opus-прогонов исправлены research-баги конвейера (Live/детерминированные стратегии НЕ затронуты):
+  - **fenced-JSON bug**: `ContrarianAgent`/`FundamentalAnalysisAgent`/`TechnicalAnalysisAgent`
+    валидировали сырой `resp.content` без снятия ```json-обёртки (Strategy/Arbitrator стрипали).
+    Opus (в отличие от qwen) оборачивает JSON в код-фенс → schema rejected → fail-closed CRITICAL →
+    контрарьян ветоил ВСЕ входы (0 сделок и «все HOLD»). Исправлено: fence-strip перед
+    валидацией/парсингом + регресс-тесты `AgentResponseParsingTest` (tech/fund/contrarian).
+  - **`signal`-промпты добавлены contrarian/arbitrator**: ранее при `prompt-version=signal` они
+    откатывались на консервативный `default` (`arbitrator.yml` «riskLevel HIGH → HOLD») → арбитр
+    ветоил сигналы Opus (контрарьян Opus ставит HIGH, qwen — нет). Теперь блокирует только CRITICAL.
+  - **Opus возвращает скаляры строками** (`"0.72"`, `"true"`): `LlmResponseValidator` принимает
+    строковые number/integer/boolean (тесты `LlmResponseSchemaTest`).
 - Кандидаты на продолжение: другие таймфреймы, платная подписка rg.ru (news в
   `FundamentalAnalysisAgent`), либо закрытие LLM-сигнального пути как не-еdge.
 
@@ -281,6 +298,7 @@ guardrail (тех-агент давал 0.3–0.55 при жёстком `signal
 | 2026-09-14 | Этап 3 риск-аудит LLM-пути (R1–R4) | R1 риск-паритет (LLM-победитель через единый EntryRequest; StrategyDecision без qty/SL/TP — тест делегирования цепочки); R2 бюджет `trading.llm-signal-budget-ms=2000` + `withTimeout` → fail-closed HOLD + метрика `llm.signal.timeout`; R3 фикс StackOverflow `ResilientLlmClient.decoratedCall` (immutable-цепочка, регресс-тест с HTTP-сервером); R4 fail-closed LLM недоступен/таймаут/ошибка агента → HOLD; docs/17 §17.8 | test+int+ktlint |
 | 2026-09-14 | Этап 5: shadow-режим LLM-сигнала | `trading.llm-signal-shadow=true` (+`llm-signal-source`): LLM участвует в конкуренции, но победа НЕ исполняется — `StrategyResult.shadowed` (не публикуется в order-admission, не пишется в Redis «последняя стратегия»); метрика `llm.signal.shadow{ticker,strategy}`; тесты StrategyRunnerTest (3); docs/17 §17.3/§17.7.2/§17.8 R5 | test+int+ktlint |
 | 2026-09-16 | LLM-сигналы WFA 365д (`llm-signal-wfa-365d`) | guardrail-конфиг (tech-min-signal-strength/prompt-version/sample-every); промпт-версия `signal` в tech/strategy; grid-тюнинг 30д/90д/365д; **вердикт: edge НЕТ (PF=0.73, P=0.886, 69 OOS-сделок)**; кросс-тикер GAZP PF=0.73/SBER 0 сделок; research-инструменты остаются, LIVE не одобрено | test+int+ktlint |
+| 2026-09-17 | Opus-проверка (`llm-signal-opus`) | fenced-JSON bug у Contrarian/Fundamental/Technical (0 сделок из-за fail-closed CRITICAL); `signal`-промпты contrarian/arbitrator; строковые скаляры Opus в `LlmResponseValidator` + тесты; **вердикт: Opus edge НЕТ (PF=1.11, P=0.48, 10 OOS-сделок)**; конвейер теперь реально генерирует сделки | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).

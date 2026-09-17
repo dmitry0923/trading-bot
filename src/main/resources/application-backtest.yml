@@ -21,5 +21,16 @@ bt:
   adaptive-confidence-threshold: 0.60
   agent:
     enabled: true
-    # Порог уверенности стратега и арбитра (live-fallback без статистики).
-    confidence-threshold: 0.60
+    # RESEARCH-настройки для сигнал-проверки (reinforce выращивания сигналов LLM):
+    # - confidence-threshold 0.30 вместо live 0.60 — LLM-стратег/арбитр могут давать
+    #   BUY/SELL при умеренной уверенности, иначе низкий signalStrength (0.3–0.35)
+    #   тех-агента всегда превращается в HOLD.
+    # - tech-min-signal-strength 0.0 — снимает жёсткий guardrail StrategyAgent
+    #   (live: 0.5): в бэктесте вход в стратег-LLM при любом выводе кроме
+    #   INSUFFICIENT_DATA. Live-путь НЕ затрагивается (там дефолт 0.5 в коде).
+    # - prompt-version signal — версия промптов tech/strategy с расчётливой
+    #   шкалой уверенности и входом по одному анализу (tech >= 0.20), чтобы
+    #   LLM реально генерировал BUY/SELL вместо HOLD.
+    confidence-threshold: 0.30
+    tech-min-signal-strength: 0.0
+    prompt-version: signal

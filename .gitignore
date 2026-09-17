@@ -35,6 +35,8 @@ desktop.ini
 
 # Logs
 *.log
+*.err
+bootrun.err
 logs/
 
 # Секреты: файл с API-ключами и паролями НИКОГДА не должен попадать в git
@@ -42,6 +44,7 @@ logs/
 .env.*
 !.env.example
 admin_token.txt
+jwt.token
 
 # Остатки распакованных jar (ktlint-gradle, testcontainers и др.)
 META-INF/

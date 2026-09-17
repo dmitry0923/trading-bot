@@ -219,6 +219,50 @@
   true) — исправлено на `(… == true).also`, добавлены регрессионные тесты. Также починен отступ
   `db.changelog-master.yaml` (include 028–034 ломал парс Liquibase → 90/100 integration-тестов).
 
+### LLM-сигналы на CNYRUBF (WFA-валидация, 2026-09-16, полная история 365д)
+
+Прогон конвейера tech→fund→strategy→contrarian→arbitrator (`bt.agent.live-strategies=false`,
+`prompt-version=aggressive`, `confidence-threshold=0.40`) на live-стеке после устранения
+guardrail (тех-агент давал 0.3–0.55 при жёстком `signalStrength < 0.5` в `StrategyAgent`).
+
+| Прогон | Сделок OOS | OOS Return | OOS PF | Consistency | Вывод |
+|--------|-----------|------------|--------|-------------|-------|
+| 30д folds=2 (sample-every 240) | 4–10 | +0.10..0.48% | 1.24–20.65 | 1.0 | **шум** на 4–9 сделках |
+| 90д folds=6 (sample-every 60) | 55 | −1.22% | **0.22** | 0.0 | большой минус |
+| 90д folds=6 (sample-every 240) | 9 | ~0% | 0.97 | 0.33 | безубыток |
+| 90д folds=6 (sample-every 960) | 17 | минус | 0.40 | — | минус |
+| **365д folds=6 (sample-every 240)** | **69** | **−0.41%** | **0.73** | 0.50 | **edge нет** |
+
+- **Вердикт (зафиксирован): LLM-сигнальный конвейер на CNYRUBF НЕ имеет edge.**
+  Ключевые показатели на полной 365д истории (69 OOS-сделок — достаточная выборка):
+  PF=0.73 (проигрыш), edge P=0.886 (no-edge), mean trade CI −15..+3.9 ₽ (статистическая
+  нулёвка), consistency 0.5. Ранние «PF 9–20» на 30д — классический overfit на коротком окне.
+- Закономерность: **чем чаще LLM торгует (sample-every 60), тем хуже** (PF 0.22) — сигнал
+  не предсказывает направление, убыток растёт с числом попыток. Это не «мало данных», а
+  отсутствие устойчивого edge.
+- **Достижение прогона (код остаётся)**: guardrail-задача решена — LLM реально генерирует
+  BUY/SELL (в логах 376 BUY / 837 SELL по тех/стратегу), конвейер бэктеста работает.
+  Промпт-версии `aggressive`/`signal`, параметры `bt.agent.confidence-threshold`/
+  `tech-min-signal-strength`/`prompt-version`/`sample-every` — рабочие research-инструменты.
+- Live-параметры НЕ менялись; maxC=1, LIVE-guard, Kelly-сайзинг — в силе. LLM-сигналы
+  остаются research/shadow (docs/17, этап 5); для LIVE НЕ одобрено.
+- **Кросс-тикерная проверка (2026-09-16, 365д folds=6, aggressive/th=0.40/sample-240)**:
+  GAZP — 24 сделки, PF=0.73, −4.9%, consistency 0.33, edge P=0.74; SBER — 0 сделок OOS.
+  Тот же PF=0.73, что и у CNYRUBF — **проблема НЕ тикер-специфична**: тот же конвейер
+  отбракован проверкой детерминированных стратегий. LLM-сигналы edge не дают.
+- **qwen3-32b на CNYRUBF (WFA, 2026-09-17, 365д MINUTE_10 folds=6 sample-every=240,
+  RouterAI `qwen/qwen3-32b`, aggressive/th=0.40)`**:
+  OOS сделок 67, Return −0.65%, PF=**0.81**, consistency 0.167, edge P=**0.72**, Sharpe −0.57,
+  CI [−40.4, +24.3] — **edge НЕТ**. Модель включена через `LLM_DISABLE_REASONING=true`
+  (`llm.disable-reasoning`, см. `LlmConfig`/`ResilientLlmClient`): у qwen3-32b (thinking-модель)
+  без этого параметра ответ занимает 60+ с и упирается в `llm.timeout-sec: 30` (fallback
+  `CALL_ERROR` → детерминированный baseline с занижением сигналов); с выключенным reasoning
+  латентность ~1.5 с, LLM работал штатно (тех 0.65–0.75, стратег BUY/SELL).
+  Тот же вывод, что и по DeepSeek/тех-дефолту: LLM-сигналы edge не дают; детерминированные
+  стратегии CNYRUBF MINUTE_10 остаются единственным значимым источником (PF=2.15, P=0.0425).
+- Кандидаты на продолжение: другие таймфреймы, платная подписка rg.ru (news в
+  `FundamentalAnalysisAgent`), либо закрытие LLM-сигнального пути как не-еdge.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -236,6 +280,7 @@
 | 2026-09-09 | P0-1 + код-P1 по аудиту `8b4ebd67` | P0-1 `report.avgPrice!!` → mark-to-market fallback + метрика `close.price_estimated` (регресс-тесты); P1 Clock `Europe/Moscow` в funding-провайдерах; `README_PRODUCTION_ARCHITECTURE.md` (дисклеймер RESEARCH_ONLY); research/production разделение в AGENTS.md | test+int+ktlint |
 | 2026-09-14 | Этап 3 риск-аудит LLM-пути (R1–R4) | R1 риск-паритет (LLM-победитель через единый EntryRequest; StrategyDecision без qty/SL/TP — тест делегирования цепочки); R2 бюджет `trading.llm-signal-budget-ms=2000` + `withTimeout` → fail-closed HOLD + метрика `llm.signal.timeout`; R3 фикс StackOverflow `ResilientLlmClient.decoratedCall` (immutable-цепочка, регресс-тест с HTTP-сервером); R4 fail-closed LLM недоступен/таймаут/ошибка агента → HOLD; docs/17 §17.8 | test+int+ktlint |
 | 2026-09-14 | Этап 5: shadow-режим LLM-сигнала | `trading.llm-signal-shadow=true` (+`llm-signal-source`): LLM участвует в конкуренции, но победа НЕ исполняется — `StrategyResult.shadowed` (не публикуется в order-admission, не пишется в Redis «последняя стратегия»); метрика `llm.signal.shadow{ticker,strategy}`; тесты StrategyRunnerTest (3); docs/17 §17.3/§17.7.2/§17.8 R5 | test+int+ktlint |
+| 2026-09-16 | LLM-сигналы WFA 365д (`llm-signal-wfa-365d`) | guardrail-конфиг (tech-min-signal-strength/prompt-version/sample-every); промпт-версия `signal` в tech/strategy; grid-тюнинг 30д/90д/365д; **вердикт: edge НЕТ (PF=0.73, P=0.886, 69 OOS-сделок)**; кросс-тикер GAZP PF=0.73/SBER 0 сделок; research-инструменты остаются, LIVE не одобрено | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).

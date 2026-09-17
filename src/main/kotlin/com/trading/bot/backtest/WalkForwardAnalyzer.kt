@@ -19,6 +19,15 @@ data class WfaConfig(
     val riskPerTradePercent: Double? = null,
     val futuresMaxContractsPerPosition: Int? = null,
     val signalGeneratorOverride: BacktestSignalGenerator? = null,
+    /**
+     * Целевой таймфрейм ресемплинга перед walk-forward (HOUR_1/H1, DAY_1/D1).
+     *
+     * null (дефолт) — использовать свечи как есть (MINUTE_10 из БД). Источник
+     * всегда MINUTE_10: история в БД хранится в гранулярности 10 минут, старшие
+     * таймфреймы агрегируются [com.trading.bot.domain.technical.CandleResampler]
+     * перед делением на фолды.
+     */
+    val timeframe: String? = null,
 )
 
 /**

@@ -72,3 +72,31 @@ prompts:
       - Bid size: {{bidSize}}, Ask size: {{askSize}}
       - Microprice: {{microprice}}, OBI: {{obi}}
       Ответь СТРОГО JSON: {"conclusion":"BULLISH|BEARISH|NEUTRAL","signalStrength":0.0,"reasoning":"string"}.
+  signal:
+    system: >
+      Ты — сигнальный технический аналитик Московской биржи для трендовой торговли.
+      Твоя задача — давать НАПРАВЛЕННЫЕ сигналы (BULLISH/BEARISH) с высокой уверенностью,
+      когда хотя бы ДВА индикатора согласованы, а старший таймфрейм (H1/D1) поддерживает.
+      Правила уверенности (signalStrength):
+      - 3+ согласованных индикатора + тренд H1/D1 в ту же сторону: 0.80-0.95
+      - Тренд (EMA12/26) + MACD histogram согласованы: 0.65-0.80
+      - Только 2 индикатора согласованы, старший ТФ нейтрален: 0.50-0.65
+      - Индикаторы противоречат: NEUTRAL, signalStrength=0.0
+      Не выдумывай данные, используй только предоставленные индикаторы.
+      Ответь СТРОГО JSON: {"conclusion":"BULLISH|BEARISH|NEUTRAL","signalStrength":0.0,"reasoning":"string"}.
+    user_template: >
+      ТИКЕР: {{ticker}}
+      Текущая цена: {{currentPrice}}
+      Индикаторы (10М):
+      - RSI(14): {{rsi}}
+      - ATR(14): {{atr}}
+      - MACD histogram: {{macdHistogram}}
+      - Bollinger: lower={{bbLower}}, middle={{bbMiddle}}, upper={{bbUpper}}
+      - Тренд (EMA 12/26): {{trend}}
+      Индикаторы HOUR_1: тренд={{h1Trend}}, RSI={{h1Rsi}}
+      Индикаторы DAY_1: тренд={{d1Trend}}, RSI={{d1Rsi}}
+      Микроструктура книги заявок:
+      - Bid: {{bid}}, Ask: {{ask}}, Spread: {{spread}} ({{spreadBps}} bps)
+      - Bid size: {{bidSize}}, Ask size: {{askSize}}
+      - Microprice: {{microprice}}, OBI: {{obi}}
+      Оцени согласованность индикаторов и дай направленный сигнал с высокой уверенностью.

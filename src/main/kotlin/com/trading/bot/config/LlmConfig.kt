@@ -58,6 +58,14 @@ class LlmConfig {
     var maxTokens: Int = 4096
     var temperature: Double = 0.15
 
+    /**
+     * Отключает thinking/reasoning-режим модели (RouterAI `reasoning: {enabled: false}`).
+     * Для "thinking" моделей (qwen3-32b и др.) без этого параметра ответ может
+     * генерироваться 60+ секунд и упираться в [timeoutSec]; с выключенным reasoning
+     * латентность падает до ~1-2 с. Не влияет на модели без режима размышлений.
+     */
+    var disableReasoning: Boolean = false
+
     var semanticCacheEnabled: Boolean = true
     var semanticCacheTtlMinutes: Long = 30
 

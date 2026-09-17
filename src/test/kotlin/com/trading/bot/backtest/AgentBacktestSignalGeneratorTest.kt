@@ -120,7 +120,20 @@ class AgentBacktestSignalGeneratorTest {
             fundAgent.analyze("SBER", cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
         ).thenReturn(fund)
         whenever(
-            stratAgent.formulate("SBER", tech, fund, snapshot, cycleId, 0.60, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+            stratAgent.formulate(
+                "SBER",
+                tech,
+                fund,
+                snapshot,
+                cycleId,
+                0.60,
+                PromptRegistry.DEFAULT_VERSION,
+                0.0,
+                "backtest",
+                null,
+                null,
+                0.0,
+            ),
         ).thenReturn(draft)
         whenever(
             contrAgent.challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
@@ -169,7 +182,20 @@ class AgentBacktestSignalGeneratorTest {
             Mockito.verify(fundAgent).analyze("SBER", cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
             Mockito
                 .verify(stratAgent)
-                .formulate("SBER", tech, fund, snapshot, cycleId, 0.60, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
+                .formulate(
+                    "SBER",
+                    tech,
+                    fund,
+                    snapshot,
+                    cycleId,
+                    0.60,
+                    PromptRegistry.DEFAULT_VERSION,
+                    0.0,
+                    "backtest",
+                    null,
+                    null,
+                    0.0,
+                )
             Mockito
                 .verify(contrAgent)
                 .challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
@@ -215,7 +241,20 @@ class AgentBacktestSignalGeneratorTest {
                 fundAgent.analyze("SBER", cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
             ).thenReturn(fund)
             whenever(
-                stratAgent.formulate("SBER", tech, fund, snapshot, cycleId, 0.75, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
+                stratAgent.formulate(
+                    "SBER",
+                    tech,
+                    fund,
+                    snapshot,
+                    cycleId,
+                    0.75,
+                    PromptRegistry.DEFAULT_VERSION,
+                    0.0,
+                    "backtest",
+                    null,
+                    null,
+                    0.0,
+                ),
             ).thenReturn(draft)
             whenever(
                 contrAgent.challenge(draft, tech, fund, snapshot, cycleId, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest"),
@@ -244,7 +283,20 @@ class AgentBacktestSignalGeneratorTest {
         runBlocking {
             Mockito
                 .verify(stratAgent)
-                .formulate("SBER", tech, fund, snapshot, cycleId, 0.75, PromptRegistry.DEFAULT_VERSION, 0.0, "backtest")
+                .formulate(
+                    "SBER",
+                    tech,
+                    fund,
+                    snapshot,
+                    cycleId,
+                    0.75,
+                    PromptRegistry.DEFAULT_VERSION,
+                    0.0,
+                    "backtest",
+                    null,
+                    null,
+                    0.0,
+                )
             Mockito.verify(arbAgent).adjudicate(
                 draft,
                 challenge,

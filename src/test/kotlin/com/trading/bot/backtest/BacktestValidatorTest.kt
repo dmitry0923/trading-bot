@@ -430,6 +430,53 @@ class BacktestValidatorTest {
         assertFalse(empty.isRobust())
     }
 
+    @Test
+    fun `resample timeframe reduces candles before simulation`() {
+        // 1000 MINUTE_10 свечей (10 мин через mockCandle) -> ~167 HOUR_1 баров.
+        // WfaConfig.timeframe=HOUR_1 должен передать в engine ресемплированные свечи
+        // (timeframe=HOUR_1) вместо исходных MINUTE_10.
+        val captured = ArrayList<List<Candle>>()
+        runBlocking {
+            whenever(
+                engine.simulate(
+                    anyString(),
+                    any(),
+                    any(),
+                    anyInt(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenAnswer {
+                captured.add(it.getArgument(1))
+                result()
+            }
+            validator.validate("SBER", List(1000) { mockCandle(it) }, folds = 3, timeframe = "HOUR_1")
+        }
+        val nonEmpty = captured.filter { it.isNotEmpty() }
+        assertTrue(nonEmpty.isNotEmpty(), "expected engine.simulate to be invoked with non-empty candles")
+        assertTrue(nonEmpty.all { candles -> candles.all { it.timeframe == "HOUR_1" } })
+        val maxWindow = nonEmpty.maxOf { it.size }
+        assertTrue(maxWindow <= 1000 / 6 + 2, "expected ~167 HOUR_1 bars max, got $maxWindow")
+        assertTrue(maxWindow > 100, "expected > 100 HOUR_1 bars max, got $maxWindow")
+    }
+
+    @Test
+    fun `resample unsupported timeframe throws illegal argument`() {
+        // MINUTE_30 не поддерживается CandleResampler -> validate пробрасывает IllegalArgumentException.
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            runBlocking { validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3, timeframe = "MINUTE_30") }
+        }
+    }
+
     private companion object {
         const val OOS_TRADES = 3
     }

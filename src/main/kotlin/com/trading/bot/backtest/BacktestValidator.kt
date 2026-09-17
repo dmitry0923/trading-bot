@@ -2,6 +2,7 @@ package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.domain.technical.CandleResampler
 import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Component
@@ -119,6 +120,7 @@ class BacktestValidator(
             riskPerTradePercent = config.riskPerTradePercent,
             futuresMaxContractsPerPosition = config.futuresMaxContractsPerPosition,
             signalGeneratorOverride = config.signalGeneratorOverride,
+            timeframe = config.timeframe,
         )
 
     /**
@@ -171,6 +173,7 @@ class BacktestValidator(
         riskPerTradePercent: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
+        timeframe: String? = null,
     ): ValidationResult {
         val sorted = candles.sortedBy { it.time }
         if (folds < 2 || sorted.size < minBarsForSignal * (folds + 1)) {
@@ -181,18 +184,27 @@ class BacktestValidator(
             )
         }
 
-        val segment = sorted.size / folds
+        val effectiveCandles = if (timeframe != null) CandleResampler.resample(sorted, timeframe) else sorted
+        if (timeframe != null && effectiveCandles.size < minBarsForSignal * (folds + 1)) {
+            logger.warn { "Walk-forward $ticker ($timeframe): insufficient resampled candles (${effectiveCandles.size}), cannot validate" }
+            return ValidationResult(
+                folds = emptyList(),
+                aggregateOutOfSample = emptyResult(ticker),
+            )
+        }
+
+        val segment = effectiveCandles.size / folds
         val foldResults =
             (0 until folds).map { i ->
                 val testStart = i * segment
-                val testEnd = if (i == folds - 1) sorted.size else (i + 1) * segment
+                val testEnd = if (i == folds - 1) effectiveCandles.size else (i + 1) * segment
                 val train =
                     if (expanding) {
-                        sorted.subList(0, testStart)
+                        effectiveCandles.subList(0, testStart)
                     } else {
-                        sorted.subList(maxOf(0, testStart - segment), testStart)
+                        effectiveCandles.subList(maxOf(0, testStart - segment), testStart)
                     }
-                val test = sorted.subList(testStart, testEnd)
+                val test = effectiveCandles.subList(testStart, testEnd)
 
                 val params =
                     if (train.size >= minBarsForSignal * 2) {

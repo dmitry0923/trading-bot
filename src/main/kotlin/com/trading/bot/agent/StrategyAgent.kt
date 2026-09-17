@@ -65,6 +65,8 @@ class StrategyAgent(
      * @param version версия LLM-шаблона промпта
      * @param temperature температура генерации (live-путь 0.15, бэктест — 0.0)
      * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
+     * @param techMinSignalStrength минимальная уверенность тех-отчёта для входа в LLM (0.5 — live);
+     *   в бэктесте занижается, чтобы агенты могли давать слабые сигналы
      * @param techDelta дельта-компрессия тех-отчёта (roadmap 13.8); null — полный текст
      * @param fundDelta дельта-компрессия фундаментального отчёта (roadmap 13.8); null — полный текст
      * @return черновик стратегии (Draft)
@@ -81,11 +83,12 @@ class StrategyAgent(
         cacheNamespace: String? = null,
         techDelta: String? = null,
         fundDelta: String? = null,
+        techMinSignalStrength: Double = 0.5,
     ): Draft {
         val start = System.currentTimeMillis()
 
         // GUARDRAIL: недостаточно данных → HOLD без LLM-вызова
-        if (tech.conclusion == "INSUFFICIENT_DATA" || tech.signalStrength < 0.5) {
+        if (tech.conclusion == "INSUFFICIENT_DATA" || tech.signalStrength < techMinSignalStrength) {
             return logAndReturn(
                 hold(snapshot.currentPrice, "Insufficient technical data (conf=${tech.signalStrength})"),
                 ticker,

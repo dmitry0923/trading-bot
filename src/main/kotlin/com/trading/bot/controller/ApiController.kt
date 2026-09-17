@@ -19,6 +19,7 @@ import com.trading.bot.backtest.splitDevHoldout
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.LlmProvider
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.domain.technical.CandleResampler
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.dto.RagAnalysis
@@ -604,7 +605,12 @@ class ApiController(
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
-        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        // Ресемплинг поддерживается только из MINUTE_10 (единый timeframe в БД).
+        // Для HOUR_1/DAY_1 читаем MINUTE_10 свечи, а ресемпл выполняется в
+        // BacktestValidator.validate() через WfaConfig.timeframe.
+        val isResampleTarget = effectiveTimeframe != backtestConfig.timeframe && isResampleTimeframe(effectiveTimeframe)
+        val sourceTimeframe = if (isResampleTarget) backtestConfig.timeframe else effectiveTimeframe
+        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, sourceTimeframe, from, LocalDateTime.now())
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
                 LiveStrategyBacktestSignalGenerator(
@@ -624,6 +630,7 @@ class ApiController(
                     riskPerTradePercent = riskPerTradePercent,
                     futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                     signalGeneratorOverride = signalGeneratorOverride,
+                    timeframe = if (isResampleTarget) effectiveTimeframe else null,
                 ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
@@ -967,6 +974,19 @@ class ApiController(
             "totalTrades" to scenario.totalTrades,
             "passable" to scenario.passable,
         )
+
+    /**
+     * Поддерживаемые целевые таймфреймы для ресемплинга MINUTE_10 → старший ТФ.
+     * CandleResampler поддерживает HOUR_1/H1 и DAY_1/D1; любые другие выбрасывают
+     * IllegalArgumentException.
+     */
+    private fun isResampleTimeframe(tf: String): Boolean =
+        try {
+            CandleResampler.durationMinutes(tf)
+            true
+        } catch (_: IllegalArgumentException) {
+            false
+        }
 
     private suspend fun persistValidationResult(
         ticker: String,

@@ -5,7 +5,6 @@ import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.agent.FundamentalAnalysisAgent
 import com.trading.bot.agent.StrategyAgent
 import com.trading.bot.agent.TechnicalAnalysisAgent
-import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
@@ -31,6 +30,9 @@ import java.time.ZoneId
  * - Порог уверенности — единый `bt.agent.confidence-threshold` (0.60) для стратега
  *   и арбитра, как live-fallback без статистики (адаптивный порог в бэктесте не
  *   вычисляется: истории сделок в прогоне нет, а обращаться к live-истории нельзя).
+ * - Версия промптов `bt.agent.prompt-version` (research: aggressive) и минимальная
+ *   уверенность тех-отчёта `bt.agent.tech-min-signal-strength` (research: 0.0 —
+ *   LLM даёт BUY/SELL по одному сильному анализу)
  *
  * При недоступности LLM агенты возвращают детерминированные fallback'и
  * (INSUFFICIENT_DATA/NEUTRAL/HOLD) — прогон идёт без API-ключа.
@@ -86,7 +88,7 @@ class AgentBacktestSignalGenerator(
                             window,
                             snapshot,
                             cycleId,
-                            PromptRegistry.DEFAULT_VERSION,
+                            config.promptVersion,
                             config.temperature,
                             config.cacheNamespace,
                         )
@@ -96,7 +98,7 @@ class AgentBacktestSignalGenerator(
                         fundAgent.analyze(
                             ticker,
                             cycleId,
-                            PromptRegistry.DEFAULT_VERSION,
+                            config.promptVersion,
                             config.temperature,
                             config.cacheNamespace,
                         )
@@ -112,9 +114,10 @@ class AgentBacktestSignalGenerator(
                 snapshot,
                 cycleId,
                 adaptiveThreshold = config.confidenceThreshold,
-                version = PromptRegistry.DEFAULT_VERSION,
+                version = config.promptVersion,
                 temperature = config.temperature,
                 cacheNamespace = config.cacheNamespace,
+                techMinSignalStrength = config.techMinSignalStrength,
             )
         val challenge =
             contrAgent.challenge(
@@ -123,7 +126,7 @@ class AgentBacktestSignalGenerator(
                 fund,
                 snapshot,
                 cycleId,
-                version = PromptRegistry.DEFAULT_VERSION,
+                version = config.promptVersion,
                 temperature = config.temperature,
                 cacheNamespace = config.cacheNamespace,
             )
@@ -137,7 +140,7 @@ class AgentBacktestSignalGenerator(
                 cycleId,
                 contextPrompt = null,
                 adaptiveConfidence = config.confidenceThreshold,
-                version = PromptRegistry.DEFAULT_VERSION,
+                version = config.promptVersion,
                 bypassCache = false,
                 temperature = config.temperature,
                 cacheNamespace = config.cacheNamespace,

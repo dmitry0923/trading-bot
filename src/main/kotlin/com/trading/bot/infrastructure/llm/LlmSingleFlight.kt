@@ -140,7 +140,7 @@ class LlmSingleFlight(
                 if redis.call('GET', KEYS[1]) == ARGV[1] then
                     return redis.call('DEL', KEYS[1])
                 end
-                return 0L
+                return 0
                 """.trimIndent(),
                 Long::class.javaObjectType,
             )

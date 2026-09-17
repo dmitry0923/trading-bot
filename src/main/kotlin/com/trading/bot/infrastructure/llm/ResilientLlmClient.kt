@@ -363,17 +363,16 @@ class ResilientLlmClient(
     ): LlmResponse {
         val start = System.currentTimeMillis()
         val body =
-            mapOf(
-                "model" to endpoint.model,
-                "messages" to
-                    listOf(
-                        mapOf("role" to "system", "content" to system),
-                        mapOf("role" to "user", "content" to user),
-                    ),
-                "temperature" to temperature,
-                "max_tokens" to llmConfig.maxTokens,
-                "response_format" to mapOf("type" to "json_object"),
-            )
+            buildMap {
+                put("model", endpoint.model)
+                put("messages", listOf(mapOf("role" to "system", "content" to system), mapOf("role" to "user", "content" to user)))
+                put("temperature", temperature)
+                put("max_tokens", llmConfig.maxTokens)
+                put("response_format", mapOf("type" to "json_object"))
+                if (llmConfig.disableReasoning) {
+                    put("reasoning", mapOf("enabled" to false))
+                }
+            }
 
         val raw: String =
             webClient

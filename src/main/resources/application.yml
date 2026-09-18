@@ -363,6 +363,14 @@ trading:
   # llm-signal-only: в конкуренции остаётся ТОЛЬКО LLM.
   llm-signal-source: ${LLM_SIGNAL_SOURCE_ENABLED:false}
   llm-signal-only: ${LLM_SIGNAL_ONLY_ENABLED:false}
+  # Funding Veto (research, дефолт off; AGENTS.md / docs/16): вето на вход по стороне,
+  # когда per-clearing funding (MOEX SWAPRATE) дорог для удержания позиции.
+  # LONG блокируется при funding > +long-threshold, SHORT — при funding < -short-threshold
+  # (руб/контракт/клиринг). WFA-калибровка порогов ограничена отсутствием истории SWAPRATE.
+  funding-veto-enabled: ${TRADING_FUNDING_VETO_ENABLED:false}
+  funding-veto-long-threshold-rub: ${TRADING_FUNDING_VETO_LONG_THRESHOLD_RUB:2.0}
+  funding-veto-short-threshold-rub: ${TRADING_FUNDING_VETO_SHORT_THRESHOLD_RUB:2.0}
+  funding-veto-block-on-unknown: ${TRADING_FUNDING_VETO_BLOCK_ON_UNKNOWN:true}
 
 # Distributed lock (мульти-реплика): включить при запуске нескольких инстансов бота.
 # В single-instance (по умолчанию) лок не используется, Redis не требуется.

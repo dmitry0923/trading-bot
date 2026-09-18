@@ -1,6 +1,7 @@
 package com.trading.bot.application
 
 import com.trading.bot.application.decision.DecisionEngine
+import com.trading.bot.application.decision.FundingVetoGate
 import com.trading.bot.application.decision.FuturesEntryProfile
 import com.trading.bot.application.decision.NetEvGate
 import com.trading.bot.application.risk.FuturesPositionSizer
@@ -141,6 +142,11 @@ class FuturesTradingBotServiceEntryPartialFillTest {
             netEvGate,
             Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
             entryLeaseRecoveryGate = EntryLeaseRecoveryGate(meterRegistry),
+            fundingVetoGate =
+                FundingVetoGate(
+                    fundingSnapshotService = Mockito.mock(com.trading.bot.application.funding.FundingSnapshotService::class.java),
+                    tradingConfig = TradingConfig(),
+                ),
         )
 
     private val service =

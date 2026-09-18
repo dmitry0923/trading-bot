@@ -90,6 +90,37 @@ class FundingSnapshotService(
     }
 
     /**
+     * Свежий funding-снапшот тикера для входного гейта
+     * ([com.trading.bot.application.decision.FundingVetoGate], research).
+     *
+     * LIVE: только МОЕХ-снапшот не старше [FundingConfig.moexTtlMs] (fail-closed —
+     * устаревшая или CONFIG-ставка НЕ проходит, чтобы veto/разрешение не строилось
+     * на «тихой» фиксированной 0.5 ₽). SIM/backtest: последний снапшот серии
+     * (CONFIG-ставка, корректна для симуляции).
+     *
+     * @return авторитетная ставка (руб/контракт/клиринг) или null, если фильтр
+     *   разрешает pass только при включённом fail-closed (см. [TradingConfig]).
+     */
+    fun latestForVeto(ticker: String): BigDecimal? =
+        if (isLive) {
+            val latest = series[ticker]?.lastEntry()?.value
+            if (
+                latest == null ||
+                latest.source != FundingSource.MOEX ||
+                Duration.between(latest.timestamp, LocalDateTime.now(clock)).toMillis() > fundingConfig.moexTtlMs
+            ) {
+                null
+            } else {
+                latest.valueRubPerContractPerClearing
+            }
+        } else {
+            // SIM/backtest: серия пополняется CONFIG-снапшотом при [refresh];
+            // если refresh ещё не вызывался — CONFIG-значение напрямую.
+            series[ticker]?.lastEntry()?.value?.valueRubPerContractPerClearing
+                ?: configuredFunding.value(ticker)
+        }
+
+    /**
      * TOTAL funding за 1 контракт по всем пережитым [clearings] (RUB) для P&L
      * (синхронно, без сетевых вызовов). Сумма значений ЗА КАЖДЫЙ клиринг.
      *

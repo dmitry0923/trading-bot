@@ -137,4 +137,38 @@ class TradingConfig {
      * Без `llm-signal-source=true` флаг неэффективен (LLM в конкуренции нет).
      */
     var llmSignalShadow: Boolean = false
+
+    // ===== Funding Veto (research, дефолт off; docs/16, AGENTS.md) =====
+
+    /**
+     * МАСТЕР-флаг research-фильтра [com.trading.bot.application.decision.FundingVetoGate]:
+     * вето на вход в фьючерс, когда per-clearing funding (MOEX SWAPRATE → руб/контракт/
+     * клиринг) по своей стороне превышает порог. Правило по знаку ставки:
+     *   - LONG блокируется при funding > +[fundingVetoLongThresholdRub] (лонг платит);
+     *   - SHORT блокируется при funding < −[fundingVetoShortThresholdRub] (шорт платит).
+     * default false (research): live-поведение не меняется. Включение — только для
+     * SIM-исследований/наблюдений; WFA-валидация порога ограничена отсутствием
+     * исторического ряда SWAPRATE (см. AGENTS.md — открытый P1).
+     */
+    var fundingVetoEnabled: Boolean = false
+
+    /**
+     * Порог veto для LONG (руб/контракт/клиринг, положительный). LONG разрешён,
+     * пока funding ≤ порога; превышение означает, что удержание лонга стоит денег.
+     */
+    var fundingVetoLongThresholdRub: Double = 2.0
+
+    /**
+     * Порог veto для SHORT (руб/контракт/клиринг, по модулю отрицательной ставки).
+     * SHORT разрешён, пока funding ≥ −порога; ниже — шорт платит, вход запрещён.
+     */
+    var fundingVetoShortThresholdRub: Double = 2.0
+
+    /**
+     * Fail-closed для [fundingVetoEnabled]: при включённом фильтре отсутствие
+     * свежего/авторитетного funding-снапшота (unresolved provider, stale > TTL)
+     * блокирует вход (FUNDING_UNKNOWN ≠ funding≤порога). default true — не знаем
+     * ставки → не рискуем стороной. Не влияет, когда фильтр выключен.
+     */
+    var fundingVetoBlockOnUnknown: Boolean = true
 }

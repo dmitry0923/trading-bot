@@ -83,6 +83,7 @@ class DecisionEngine(
     private val netEvGate: NetEvGate,
     private val adaptiveRisk: AdaptiveRiskService,
     private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
+    private val fundingVetoGate: FundingVetoGate,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -367,6 +368,21 @@ class DecisionEngine(
             }
 
             is NetEvGate.GateResult.Pass -> {}
+        }
+
+        // Funding Veto Gate (research, default off): тратит вход по стороне, когда
+        // per-clearing funding (MOEX SWAPRATE) слишком дорог для удержания позиции
+        // (LONG платит при funding > +порога, SHORT — при funding < −порога).
+        when (val fvResult = fundingVetoGate.check(ticker, direction)) {
+            is FundingVetoGate.VetoResult.Blocked -> {
+                logger.warn { "Funding veto rejected $ticker $direction: funding=${fvResult.fundingRub ?: "UNKNOWN"}" }
+                meterRegistry
+                    .counter("${profile.metricPrefix}.risk.reject", Tags.of("ticker", ticker, "reason", "FUNDING_VETO"))
+                    .increment()
+                return
+            }
+
+            FundingVetoGate.VetoResult.Pass -> {}
         }
 
         // Портфельный риск (агрегат): VaR95 / эффективное число ставок / направленная

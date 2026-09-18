@@ -244,6 +244,57 @@ class FundingSnapshotServiceTest {
             Mockito.verify(moex, Mockito.times(2)).currentSnapshot("CNYRUBF")
         }
 
+    @Test
+    fun `latestForVeto live returns fresh MOEX value`() =
+        runBlocking {
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            Mockito
+                .`when`(moex.currentSnapshot("CNYRUBF"))
+                .thenReturn(
+                    FundingSnapshot(
+                        ticker = "CNYRUBF",
+                        clearingDate = LocalDate.of(2026, 9, 8),
+                        rawValue = BigDecimal("0.00279"),
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
+                        valueRubPerContractPerClearing = BigDecimal("2.79"),
+                        source = FundingSource.MOEX,
+                        timestamp = LocalDateTime.now(),
+                    ),
+                )
+            val registry = SimpleMeterRegistry()
+            val service = service(mode = "LIVE", moex = moex, configValue = BigDecimal("0.5"), registry = registry)
+
+            service.refresh("CNYRUBF")
+            val value = service.latestForVeto("CNYRUBF")
+
+            assertEquals(0, BigDecimal("2.79").compareTo(value))
+        }
+
+    @Test
+    fun `latestForVeto live stale CONFIG fallback is not authoritative`() =
+        runBlocking {
+            // LIVE без работающего MOEX (или устаревший снапшот) → для veto ставка
+            // НЕ подставляется из CONFIG: fail-closed (FundingVetoGate: unknown → BLOCK).
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            Mockito.`when`(moex.currentSnapshot("CNYRUBF")).thenReturn(null)
+            val registry = SimpleMeterRegistry()
+            val service = service(mode = "LIVE", moex = moex, configValue = BigDecimal("0.5"), registry = registry)
+
+            service.refresh("CNYRUBF")
+            assertNull(service.latestForVeto("CNYRUBF"))
+        }
+
+    @Test
+    fun `latestForVeto simulation uses config value`() =
+        runBlocking {
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            val registry = SimpleMeterRegistry()
+            val service = service(mode = "SIMULATION", moex = moex, configValue = BigDecimal("0.5"), registry = registry)
+
+            // refresh ещё не вызывался → серия пуста, но CONFIG-значение доступно всегда.
+            assertEquals(0, BigDecimal("0.5").compareTo(service.latestForVeto("CNYRUBF")))
+        }
+
     private fun service(
         mode: String,
         moex: MoexFundingProvider,

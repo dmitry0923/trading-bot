@@ -79,6 +79,18 @@
 - Slippage в риск-бюджете сайзинга: `max(entryPrice × slippageBps/10000 × pointValue, priceStep × pointValue)`
   (минимум 1 тик); `effectiveRiskPerContract = loss + комиссия×2 + slippage×2`.
 
+### Funding Veto Gate (research, дефолт off; 2026-09-18, docs/16)
+
+- `FundingVetoGate` (входной гейт `DecisionEngine`, после NetEvGate; метрика
+  `entry.rejected{reason=FUNDING_VETO}`): LONG блокируется при funding > `+long-threshold`,
+  SHORT — при funding < `−short-threshold` (руб/контракт/клиринг, SWAPRATE MOEX; положительная
+  ставка = лонг платит). Источник — `FundingSnapshotService.latestForVeto` (LIVE: только свежий
+  MOEX ≤ `moexTtlMs`; SIM/backtest — CONFIG). Uстаревший/нет снапшота + `funding-veto-block-on-unknown=true`
+  → BLOCK (fail-closed).
+- Конфиг (`trading.*`, env `TRADING_FUNDING_VETO_*`): `enabled=false` (research, live-поведение не
+  меняется), пороги default 2.0; WFA-валидация порогов ограничена отсутствием исторического ряда
+  SWAPRATE в БД (открытый P1, донакачка ставок MOEX отдельной серией) — пороги задаются вручную.
+
 ### Мониторинг (2026-09-09)
 
 Пороги синхронизированы с гейтами (`prometheus-alerting-rules.yml`):
@@ -299,10 +311,15 @@ guardrail (тех-агент давал 0.3–0.55 при жёстком `signal
 | 2026-09-14 | Этап 5: shadow-режим LLM-сигнала | `trading.llm-signal-shadow=true` (+`llm-signal-source`): LLM участвует в конкуренции, но победа НЕ исполняется — `StrategyResult.shadowed` (не публикуется в order-admission, не пишется в Redis «последняя стратегия»); метрика `llm.signal.shadow{ticker,strategy}`; тесты StrategyRunnerTest (3); docs/17 §17.3/§17.7.2/§17.8 R5 | test+int+ktlint |
 | 2026-09-16 | LLM-сигналы WFA 365д (`llm-signal-wfa-365d`) | guardrail-конфиг (tech-min-signal-strength/prompt-version/sample-every); промпт-версия `signal` в tech/strategy; grid-тюнинг 30д/90д/365д; **вердикт: edge НЕТ (PF=0.73, P=0.886, 69 OOS-сделок)**; кросс-тикер GAZP PF=0.73/SBER 0 сделок; research-инструменты остаются, LIVE не одобрено | test+int+ktlint |
 | 2026-09-17 | Opus-проверка (`llm-signal-opus`) | fenced-JSON bug у Contrarian/Fundamental/Technical (0 сделок из-за fail-closed CRITICAL); `signal`-промпты contrarian/arbitrator; строковые скаляры Opus в `LlmResponseValidator` + тесты; **вердикт: Opus edge НЕТ (PF=1.11, P=0.48, 10 OOS-сделок)**; конвейер теперь реально генерирует сделки | test+int+ktlint |
+| 2026-09-18 | Funding Veto research (`funding-veto`) | `FundingVetoGate` (входной гейт после NetEvGate, `FUNDING_VETO`, fail-closed); `FundingSnapshotService.latestForVeto` (LIVE: только свежий MOEX); конфиг `trading.funding-veto-*`; тесты FundingVetoGateTest/DecisionEngineTest/FundingSnapshotServiceTest; docs/16 + AGENTS.md | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
+- WFA-калибровка порогов funding-veto невозможна без исторического ряда SWAPRATE в БД (P1,
+  донакачка ставок MOEX отдельной серией); порог 2.0 ₽/контракт/клиринг задан вручную (research).
+- WFA-прогон LLM с Kimi K3 (`moonshotai/kimi-k3`) отложен: исчерпан месячный лимит RouterAI
+  (429, 2054,78 ₽ / 2000 ₽); модель подтверждена в `/api/v1/models`.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

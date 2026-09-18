@@ -72,6 +72,23 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
   устаревший MOEX-снапшот (> TTL) → fallback с метрикой `funding.live.snapshot_stale_config_fallback`.
   Множитель: лот 1000 CNY.
 
+### Funding Veto Gate (research, дефолт off)
+
+- **Назначение**: вето на вход во фьючерс, когда per-clearing funding по СВОЕЙ стороне
+  слишком дорог (удержание позиции через клиринг съедает edge до выхода).
+- **Правило** (по знаку ставки SWAPRATE; положительная ставка = лонг платит):
+  LONG блокируется при funding > `+funding-veto-long-threshold-rub`; SHORT — при
+  funding < `−funding-veto-short-threshold-rub` (руб/контракт/клиринг).
+- **Источник гейта**: `FundingSnapshotService.latestForVeto(ticker)` — свежий
+  MOEX-снапшот (≤ `funding.moex-ttl-ms`) в LIVE; CONFIG-ставка в SIM/backtest.
+  Uстаревший/отсутствующий снапшот при включённом фильтре → **BLOCK (fail-closed)**
+  (`funding-veto-block-on-unknown=true`), т.к. неизвестная ставка ≠ ставка в пределах
+  порога. На метрики добавляется `entry.rejected{reason=FUNDING_VETO}`.
+- **Конфиг** (`trading.*`, env `TRADING_FUNDING_VETO_*`, application.yml):
+  `funding-veto-enabled=false` (research), пороги default 2.0 ₽/контракт/клиринг.
+- **Ограничение валидации**: исторического ряда `SWAPRATE` в БД нет, WFA-калибровка
+  порогов ограничена — донакачка ставок MOEX в отдельной серии (открытый P1, AGENTS.md).
+
 ### Отличие от Si/акций
 
 - `Si` / `RI` остаются в конфиге как тестовая фикстура (commissionRub легаси; funding — нет).

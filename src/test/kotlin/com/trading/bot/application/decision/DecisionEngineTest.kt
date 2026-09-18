@@ -2,6 +2,7 @@ package com.trading.bot.application.decision
 
 import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.OrderBuilder
+import com.trading.bot.application.funding.FundingSnapshotService
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
@@ -77,6 +78,7 @@ class DecisionEngineTest {
     private val instrumentsConfig = InstrumentsConfig()
     private val netEvGate = PassThroughNetEvGate()
     private val entryLeaseRecoveryGate = EntryLeaseRecoveryGate(meterRegistry)
+    private val fundingVetoGate = PassThroughFundingVetoGate()
     private val tradingConfig = TradingConfig().apply { mode = "SIMULATION" }
 
     private var gatewayCalls = 0
@@ -146,6 +148,7 @@ class DecisionEngineTest {
             netEvGate,
             Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
             entryLeaseRecoveryGate,
+            fundingVetoGate,
         )
 
     private fun signal(
@@ -438,6 +441,30 @@ class DecisionEngineTest {
 
     @Test
     fun `degenerate case pass-through when guard allows`() {
+        runBlocking {
+            engine().openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
+        assertEquals(PositionDirection.LONG, gatewayDirection)
+    }
+
+    @Test
+    fun `funding veto rejection blocks entry`() {
+        val profile = FakeEntryProfile(riskVerdict = RiskVerdict.Allowed)
+        fundingVetoGate.blocked = true
+
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("FUNDING_VETO"))
+        fundingVetoGate.blocked = false
+    }
+
+    @Test
+    fun `funding veto pass-through when gate allows`() {
         runBlocking {
             engine().openPosition(signal(), gateway())
         }
@@ -757,5 +784,21 @@ class DecisionEngineTest {
             expectedNet: java.math.BigDecimal?,
             snapshot: com.trading.bot.model.dto.MarketSnapshot?,
         ) = GateResult.Pass
+    }
+
+    /**
+     * FundingVetoGate that always passes by default.
+     */
+    private class PassThroughFundingVetoGate :
+        FundingVetoGate(
+            fundingSnapshotService = Mockito.mock(FundingSnapshotService::class.java),
+            tradingConfig = TradingConfig(),
+        ) {
+        var blocked = false
+
+        override fun check(
+            ticker: String,
+            direction: PositionDirection,
+        ): VetoResult = if (blocked) VetoResult.Blocked(java.math.BigDecimal("2.79")) else VetoResult.Pass
     }
 }

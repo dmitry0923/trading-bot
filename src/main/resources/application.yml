@@ -395,6 +395,14 @@ bt:
   # Multi-timeframe фильтр тренда в бэктесте (roadmap v2.5): вход гейтится трендом
   # старшего ТФ (mtf.filter.higher-timeframe) на момент бара; не влияет на live-гейт mtf.filter.enabled.
   mtf-filter-enabled: ${BT_MTF_FILTER_ENABLED:false}
+  # Funding-veto входной фильтр в бэктесте (research, зеркало live-гейта
+  # trading.funding-veto.enabled): вход гейтится ФАКТИЧЕСКИМ SWAPRATE с даты клиринга
+  # (funding_history) по порогам ниже. По умолчанию false (research-инструмент для
+  # WFA-калибровки порогов; live-поведение не меняет).
+  funding-veto-enabled: ${BT_FUNDING_VETO_ENABLED:false}
+  funding-veto-long-threshold-rub: ${BT_FUNDING_VETO_LONG_THRESHOLD_RUB:2.0}
+  funding-veto-short-threshold-rub: ${BT_FUNDING_VETO_SHORT_THRESHOLD_RUB:2.0}
+  funding-veto-block-on-unknown: ${BT_FUNDING_VETO_BLOCK_ON_UNKNOWN:true}
   # Monte Carlo + стресс-сценарии бэктеста (roadmap 13.7.8): число bootstrap-симуляций
   # и фиксированный seed для воспроизводимых прогонов /api/v1/backtest/{ticker}/robustness.
   # Live risk-gate parity в бэктесте (BacktestRiskSimulator): воспроизводит полную
@@ -736,3 +744,4 @@ funding:
   moex-lot-multiplier: ${FUNDING_MOEX_LOT_MULTIPLIER:1000}
   moex-ttl-ms: ${FUNDING_MOEX_TTL_MS:300000}
   request-timeout-ms: ${FUNDING_REQUEST_TIMEOUT_MS:10000}
+  moex-history-url: ${FUNDING_MOEX_HISTORY_URL:}

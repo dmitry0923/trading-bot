@@ -69,3 +69,5 @@ databaseChangeLog:
       file: db/changelog/changes/034-funding-unknown.sql
   - include:
       file: db/changelog/changes/035-agent-log-action-varchar.sql
+  - include:
+      file: db/changelog/changes/036-funding-history.sql

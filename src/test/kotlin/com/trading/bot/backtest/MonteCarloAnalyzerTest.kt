@@ -245,6 +245,10 @@ class MonteCarloAnalyzerTest {
                     eq(0.30),
                     eq(33),
                     anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
                 )
         }
     }
@@ -304,6 +308,10 @@ class MonteCarloAnalyzerTest {
                 anyOrNull(),
                 anyOrNull(),
                 anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
             ),
         ).thenReturn(result)
     }
@@ -329,6 +337,10 @@ class MonteCarloAnalyzerTest {
                 anyOrNull(),
                 eq(p.riskPerTradePercent),
                 eq(p.futuresMaxContractsPerPosition),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
                 anyOrNull(),
             ),
         ).thenReturn(result)

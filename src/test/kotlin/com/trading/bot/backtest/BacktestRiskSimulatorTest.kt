@@ -93,7 +93,7 @@ class BacktestRiskSimulatorTest {
             maxOpenPositions = 5
             maxSectorExposure = 3
             riskPerTradePercent = 1.0
-            // Gate 11 выключен по умолчанию: одна позиция всегда даёт effectivePositions = 1.0 < 1.5
+            // Gate 12 (portfolio concentration) выключен по умолчанию: одна позиция всегда даёт effectivePositions = 1.0 < 1.5
             portfolioRiskEnabled = false
             sectors = mapOf("TEST" to "TECH", "TEST2" to "TECH", "TEST3" to "TECH")
             // Стенд-хелпер: холодный старт 0.3% AUM (P1-3) слишком мал для гейтов ПОСЛЕ сайзинга
@@ -145,8 +145,20 @@ class BacktestRiskSimulatorTest {
         riskConfig: RiskConfig,
         instrumentsConfig: InstrumentsConfig,
         netEvGate: NetEvGate? = null,
+        fundingVetoEnabled: Boolean = false,
+        fundingVetoLongThresholdRub: Double = 2.0,
+        fundingVetoShortThresholdRub: Double = 2.0,
+        fundingVetoBlockOnUnknown: Boolean = true,
     ): BacktestRiskSimulator =
-        BacktestRiskSimulator(riskConfig, instrumentsConfig, netEvGate).apply {
+        BacktestRiskSimulator(
+            riskConfig,
+            instrumentsConfig,
+            netEvGate,
+            fundingVetoEnabled,
+            fundingVetoLongThresholdRub,
+            fundingVetoShortThresholdRub,
+            fundingVetoBlockOnUnknown,
+        ).apply {
             initialize(capital)
         }
 
@@ -156,14 +168,17 @@ class BacktestRiskSimulatorTest {
         cash: BigDecimal = capital,
         candle: Candle = entryCandle(),
         history: List<Candle> = normalHistory(),
+        signal: StrategyAction = StrategyAction.BUY,
+        fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
     ): BacktestRiskSimulator.GateResult =
         sim.checkEntry(
             ticker = ticker,
-            signal = StrategyAction.BUY,
+            signal = signal,
             entryPrice = BigDecimal("100.00"),
             cash = cash,
             candle = candle,
             history = history,
+            fundingHistory = fundingHistory,
         )
 
     // ===== Tests =====
@@ -425,7 +440,102 @@ class BacktestRiskSimulatorTest {
     }
 
     @Nested
-    inner class Gate11PortfolioConcentration {
+    inner class Gate11FundingVeto {
+        private fun vetoSim(
+            enabled: Boolean = true,
+            longThreshold: Double = 2.0,
+            shortThreshold: Double = 2.0,
+            blockOnUnknown: Boolean = true,
+        ): BacktestRiskSimulator =
+            initSimulator(
+                riskConfig,
+                instrumentsConfig,
+                fundingVetoEnabled = enabled,
+                fundingVetoLongThresholdRub = longThreshold,
+                fundingVetoShortThresholdRub = shortThreshold,
+                fundingVetoBlockOnUnknown = blockOnUnknown,
+            )
+
+        /** fundingHistory по дате входа (candle at(0,10) → LocalDate.now()). */
+        private fun fundingOn(value: String?): Map<LocalDate, BigDecimal> =
+            if (value == null) {
+                emptyMap()
+            } else {
+                mapOf(LocalDate.now() to BigDecimal(value))
+            }
+
+        @Test
+        fun `disabled by default passes regardless of funding`() =
+            runBlocking {
+                val result = checkEntry(fundingHistory = fundingOn("2.5"))
+                assertTrue(result.allowed)
+                assertNull(result.reason)
+            }
+
+        @Test
+        fun `blocks LONG when funding above long threshold`() =
+            runBlocking {
+                val result = checkEntry(sim = vetoSim(), fundingHistory = fundingOn("2.79"))
+                assertFalse(result.allowed)
+                assertEquals("FUNDING_VETO", result.reason)
+            }
+
+        @Test
+        fun `passes LONG when funding within threshold`() =
+            runBlocking {
+                val result = checkEntry(sim = vetoSim(), fundingHistory = fundingOn("1.0"))
+                assertTrue(result.allowed)
+                assertNull(result.reason)
+            }
+
+        @Test
+        fun `blocks SHORT when funding strongly negative`() =
+            runBlocking {
+                val result = checkEntry(sim = vetoSim(), signal = StrategyAction.SELL, fundingHistory = fundingOn("-2.5"))
+                assertFalse(result.allowed)
+                assertEquals("FUNDING_VETO", result.reason)
+            }
+
+        @Test
+        fun `passes SHORT when negative funding within threshold`() =
+            runBlocking {
+                val result = checkEntry(sim = vetoSim(), signal = StrategyAction.SELL, fundingHistory = fundingOn("-1.5"))
+                assertTrue(result.allowed)
+                assertNull(result.reason)
+            }
+
+        @Test
+        fun `passes SHORT on positive funding and LONG on negative funding`() =
+            runBlocking {
+                assertTrue(checkEntry(sim = vetoSim(), signal = StrategyAction.SELL, fundingHistory = fundingOn("2.5")).allowed)
+                assertTrue(checkEntry(sim = vetoSim(), fundingHistory = fundingOn("-2.5")).allowed)
+            }
+
+        @Test
+        fun `blocks on unknown funding when blockOnUnknown true`() =
+            runBlocking {
+                val result = checkEntry(sim = vetoSim(), fundingHistory = fundingOn(null))
+                assertFalse(result.allowed)
+                assertEquals("FUNDING_VETO", result.reason)
+            }
+
+        @Test
+        fun `passes on unknown funding when blockOnUnknown false`() =
+            runBlocking {
+                val result = checkEntry(sim = vetoSim(blockOnUnknown = false), fundingHistory = fundingOn(null))
+                assertTrue(result.allowed)
+            }
+
+        @Test
+        fun `custom long threshold scales gate`() =
+            runBlocking {
+                assertFalse(checkEntry(sim = vetoSim(), fundingHistory = fundingOn("2.5")).allowed)
+                assertTrue(checkEntry(sim = vetoSim(longThreshold = 3.0), fundingHistory = fundingOn("2.5")).allowed)
+            }
+    }
+
+    @Nested
+    inner class Gate12PortfolioConcentration {
         @Test
         fun `single position below minEffectivePositions blocks with PORTFOLIO_CONCENTRATION`() =
             runBlocking {

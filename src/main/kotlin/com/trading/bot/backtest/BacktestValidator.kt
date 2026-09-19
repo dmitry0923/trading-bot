@@ -121,6 +121,10 @@ class BacktestValidator(
             futuresMaxContractsPerPosition = config.futuresMaxContractsPerPosition,
             signalGeneratorOverride = config.signalGeneratorOverride,
             timeframe = config.timeframe,
+            fundingVetoEnabled = config.fundingVetoEnabled,
+            fundingVetoLongThresholdRub = config.fundingVetoLongThresholdRub,
+            fundingVetoShortThresholdRub = config.fundingVetoShortThresholdRub,
+            fundingVetoBlockOnUnknown = config.fundingVetoBlockOnUnknown,
         )
 
     /**
@@ -174,6 +178,10 @@ class BacktestValidator(
         futuresMaxContractsPerPosition: Int? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
         timeframe: String? = null,
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): ValidationResult {
         val sorted = candles.sortedBy { it.time }
         if (folds < 2 || sorted.size < minBarsForSignal * (folds + 1)) {
@@ -217,6 +225,10 @@ class BacktestValidator(
                             riskPerTradePercent,
                             futuresMaxContractsPerPosition,
                             signalGeneratorOverride,
+                            fundingVetoEnabled,
+                            fundingVetoLongThresholdRub,
+                            fundingVetoShortThresholdRub,
+                            fundingVetoBlockOnUnknown,
                         )
                     } else {
                         gridFor(ticker).first()
@@ -232,6 +244,10 @@ class BacktestValidator(
                         riskPerTradePercent,
                         futuresMaxContractsPerPosition,
                         signalGeneratorOverride,
+                        fundingVetoEnabled,
+                        fundingVetoLongThresholdRub,
+                        fundingVetoShortThresholdRub,
+                        fundingVetoBlockOnUnknown,
                     )
                 val outOfSample =
                     simulateWith(
@@ -244,6 +260,10 @@ class BacktestValidator(
                         riskPerTradePercent,
                         futuresMaxContractsPerPosition,
                         signalGeneratorOverride,
+                        fundingVetoEnabled,
+                        fundingVetoLongThresholdRub,
+                        fundingVetoShortThresholdRub,
+                        fundingVetoBlockOnUnknown,
                     )
                 FoldValidation(
                     foldIndex = i,
@@ -275,6 +295,10 @@ class BacktestValidator(
         riskPerTradePercent: Double?,
         futuresMaxContractsPerPosition: Int?,
         signalGeneratorOverride: BacktestSignalGenerator?,
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): BacktestResult =
         backtestEngine.simulate(
             ticker,
@@ -292,6 +316,10 @@ class BacktestValidator(
             riskPerTradePercent = riskPerTradePercent,
             futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
             signalGeneratorOverride = signalGeneratorOverride,
+            fundingVetoEnabled = fundingVetoEnabled,
+            fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+            fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+            fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
         )
 
     /**
@@ -308,6 +336,10 @@ class BacktestValidator(
         riskPerTradePercent: Double?,
         futuresMaxContractsPerPosition: Int?,
         signalGeneratorOverride: BacktestSignalGenerator?,
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): GridParams {
         val candidates =
             gridFor(ticker).map { params ->
@@ -323,6 +355,10 @@ class BacktestValidator(
                         riskPerTradePercent,
                         futuresMaxContractsPerPosition,
                         signalGeneratorOverride,
+                        fundingVetoEnabled,
+                        fundingVetoLongThresholdRub,
+                        fundingVetoShortThresholdRub,
+                        fundingVetoBlockOnUnknown,
                     ),
                 )
             }

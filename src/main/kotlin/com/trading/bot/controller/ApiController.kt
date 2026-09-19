@@ -8,6 +8,7 @@ import com.trading.bot.backtest.DeploymentStatus
 import com.trading.bot.backtest.FinalHoldoutValidator
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.backtest.LiveStrategyBacktestSignalGenerator
+import com.trading.bot.backtest.MoexFundingHistoryLoader
 import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
@@ -37,6 +38,7 @@ import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.DailyRiskSnapshotRepository
+import com.trading.bot.repository.FundingHistoryRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.repository.StrategyRepository
@@ -145,6 +147,8 @@ class ApiController(
     private val deploymentApprovalService: DeploymentApprovalService,
     private val liveStrategyFingerprintProvider: LiveStrategyFingerprintProvider,
     private val frozenStrategyStore: FrozenStrategyStore,
+    private val moexFundingHistoryLoader: MoexFundingHistoryLoader,
+    private val fundingHistoryRepository: FundingHistoryRepository,
 ) {
     private val logger =
         io.github.oshai.kotlinlogging.KotlinLogging
@@ -418,6 +422,10 @@ class ApiController(
         @PathVariable ticker: String,
         @RequestParam(required = false) days: Int?,
         @RequestParam(defaultValue = "false") loadHistory: Boolean,
+        @RequestParam(required = false) fundingVetoEnabled: Boolean?,
+        @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -429,7 +437,15 @@ class ApiController(
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val result = backtestEngine.run(ticker, effectiveDays)
+        val result =
+            backtestEngine.run(
+                ticker,
+                effectiveDays,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+            )
         return mapOf(
             "ticker" to result.ticker,
             "totalReturn" to result.totalReturn,
@@ -448,6 +464,44 @@ class ApiController(
                 LocalDateTime
                     .now()
                     .toString(),
+        )
+    }
+
+    /**
+     * Донакачка исторического ряда funding (MOEX ISS SWAPRATE → funding_history)
+     * для P&L бэктеста и калибровки funding-veto (research, открытый P1).
+     *
+     * @param ticker тикер фьючерса (CNYRUBF)
+     * @param days глубина истории в днях (по умолчанию `bt.days`)
+     */
+    @GetMapping("/backtest/{ticker}/funding-history")
+    suspend fun fundingHistoryBackfill(
+        @PathVariable ticker: String,
+        @RequestParam(required = false) days: Int?,
+    ): Map<String, Any> {
+        meterRegistry.counter("api.backtest.funding_history", Tags.of("ticker", ticker)).increment()
+        val effectiveDays = days ?: backtestConfig.days
+        val result = moexFundingHistoryLoader.loadAndSave(ticker, effectiveDays)
+        return mapOf(
+            "ticker" to result.ticker,
+            "loaded" to result.loaded,
+            "saved" to result.saved,
+        )
+    }
+
+    /**
+     * Состояние исторического ряда funding по тикеру: есть ли данные в БД
+     * (покрытие датами клирингов), чтобы бэктест переключился с configured-ставки
+     * на фактический SWAPRATE.
+     */
+    @GetMapping("/backtest/{ticker}/funding-history/status")
+    suspend fun fundingHistoryStatus(
+        @PathVariable ticker: String,
+    ): Map<String, Any> {
+        val hasData = fundingHistoryRepository.hasData(ticker)
+        return mapOf(
+            "ticker" to ticker,
+            "hasHistory" to hasData,
         )
     }
 
@@ -592,6 +646,10 @@ class ApiController(
         @RequestParam(required = false) riskPerTradePercent: Double?,
         @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
         @RequestParam(required = false) adaptiveConfidenceThreshold: Double?,
+        @RequestParam(required = false) fundingVetoEnabled: Boolean?,
+        @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -631,6 +689,10 @@ class ApiController(
                     futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                     signalGeneratorOverride = signalGeneratorOverride,
                     timeframe = if (isResampleTarget) effectiveTimeframe else null,
+                    fundingVetoEnabled = fundingVetoEnabled,
+                    fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                    fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                    fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
@@ -670,6 +732,10 @@ class ApiController(
         @RequestParam(required = false) method: String?,
         @RequestParam(required = false) avgBlockLength: Double?,
         @RequestParam(required = false) blockLength: Int?,
+        @RequestParam(required = false) fundingVetoEnabled: Boolean?,
+        @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -713,6 +779,10 @@ class ApiController(
                 method = method ?: backtestConfig.mcMethod,
                 avgBlockLength = avgBlockLength ?: backtestConfig.mcAvgBlockLength,
                 blockLength = blockLength ?: backtestConfig.mcBlockLength,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
             )
         return mapOf(
             "ticker" to ticker,
@@ -844,6 +914,10 @@ class ApiController(
         @RequestParam(required = false) riskPerTradePercent: Double?,
         @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
         @RequestParam(required = false) holdoutFraction: Double?,
+        @RequestParam(required = false) fundingVetoEnabled: Boolean?,
+        @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -881,6 +955,10 @@ class ApiController(
                 riskPerTradePercent = riskPerTradePercent,
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 signalGeneratorOverride = signalGeneratorOverride,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
             )
         // Базовый backtest и WFA берём из holdout-валидации (уже на dev-данных):
         // отдельный прогон на всей истории протекал бы holdout в edge-проверку.
@@ -897,6 +975,10 @@ class ApiController(
                 parameters = holdout.paramsUsed,
                 method = backtestConfig.mcMethod,
                 signalGeneratorOverride = signalGeneratorOverride,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
             )
 
         val decision =

@@ -46,13 +46,19 @@ import kotlin.math.sqrt
  * 10. Kelly sizing (Wilson + staged + vol targeting + confidence + drawdown degradation)
  * 11. Post-sizing: gross/net exposure
  * 12. NET EV gate (reuse NetEvGate directly)
- * 13. Portfolio risk (упрощённый: concentration + effective positions)
- * 14. Minimum lot policy
+ * 13. Funding Veto (research, mirror of FundingVetoGate — enabled only via
+ *     [fundingVetoEnabled], off by default; rate per clearing from [checkEntry] fundingHistory)
+ * 14. Portfolio risk (упрощённый: concentration + effective positions)
+ * 15. Minimum lot policy
  */
 class BacktestRiskSimulator(
     private val riskConfig: RiskConfig,
     private val instrumentsConfig: InstrumentsConfig,
     private val netEvGate: NetEvGate? = null,
+    private val fundingVetoEnabled: Boolean = false,
+    private val fundingVetoLongThresholdRub: Double = 2.0,
+    private val fundingVetoShortThresholdRub: Double = 2.0,
+    private val fundingVetoBlockOnUnknown: Boolean = true,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -128,6 +134,9 @@ class BacktestRiskSimulator(
      * @param history история свечей (для ATR, volatility)
      * @param signalStrength сила сигнала (0..1) для confidence sizing
      * @param currentTime текущее время симуляции
+     * @param fundingHistory фактические funding (руб/контракт/клиринг) по дате клиринга
+     *   (из `funding_history`); используется funding-veto гейтом — зеркало live
+     *   [com.trading.bot.application.decision.FundingVetoGate] (research, default off)
      * @return [GateResult] — pass/block + kelly size
      */
     suspend fun checkEntry(
@@ -139,6 +148,7 @@ class BacktestRiskSimulator(
         history: List<Candle>,
         signalStrength: Double? = null,
         currentTime: LocalDateTime = candle.time,
+        fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
     ): GateResult {
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
         val spec = instrumentsConfig.find(ticker)
@@ -269,7 +279,38 @@ class BacktestRiskSimulator(
             )
         }
 
-        // ===== Gate 11: Simplified portfolio concentration =====
+        // ===== Gate 11: Funding Veto (research, зеркало FundingVetoGate) =====
+        if (fundingVetoEnabled) {
+            val fundingRub = fundingHistory[currentTime.toLocalDate()]
+            val vetoBlocked =
+                when {
+                    fundingRub == null && fundingVetoBlockOnUnknown -> true
+
+                    // LONG платит при положительной ставке > порога
+                    direction == PositionDirection.LONG &&
+                        fundingRub != null &&
+                        fundingRub.compareTo(BigDecimal(fundingVetoLongThresholdRub)) > 0 -> true
+
+                    // SHORT платит при отрицательной ставке ниже −порога
+                    direction == PositionDirection.SHORT &&
+                        fundingRub != null &&
+                        fundingRub.compareTo(BigDecimal(fundingVetoShortThresholdRub).negate()) < 0 -> true
+
+                    else -> false
+                }
+            if (vetoBlocked) {
+                logger.debug { "Backtest risk: FUNDING_VETO $ticker $direction (funding=$fundingRub)" }
+                return GateResult(
+                    allowed = false,
+                    reason = "FUNDING_VETO",
+                    kellySizeLots = kellyResult.first,
+                    kellySizeRub = kellyResult.second,
+                    netEvResult = netEvResult,
+                )
+            }
+        }
+
+        // ===== Gate 12: Simplified portfolio concentration =====
         val concentrationCheck = checkConcentration(ticker, direction, candidateNotional)
         if (concentrationCheck != null) {
             logger.debug { "Backtest risk: $concentrationCheck for $ticker" }

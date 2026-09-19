@@ -86,8 +86,21 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
   порога. На метрики добавляется `entry.rejected{reason=FUNDING_VETO}`.
 - **Конфиг** (`trading.*`, env `TRADING_FUNDING_VETO_*`, application.yml):
   `funding-veto-enabled=false` (research), пороги default 2.0 ₽/контракт/клиринг.
-- **Ограничение валидации**: исторического ряда `SWAPRATE` в БД нет, WFA-калибровка
-  порогов ограничена — донакачка ставок MOEX в отдельной серии (открытый P1, AGENTS.md).
+- **Источник для калибровки**: исторический ряд `SWAPRATE` донакачан в `funding_history`
+  (миграция 036, `GET /api/v1/backtest/{ticker}/funding-history?days=`, CNYRUBF 509 дат
+  2024-09-18..2026-09-17) — WFA-калибровка порогов возможна; порог 2.0 задан вручную (research).
+- **Backtest-калибровка (2026-09-19)**: изолированный input-фильтр в `BacktestEngine`
+  (`bt.funding-veto-*`, env `BT_FUNDING_VETO_*`, default off; метрика `bt_funding_veto_blocked_total`)
+  по паттерну ML/MTF-фильтров — не через `BacktestRiskSimulator` (не Spring-бин, в проде
+  `riskSimulator==null`). Ставка — `fundingHistory[дата входа]` из `funding_history`.
+  Query-параметры `fundingVetoEnabled/fundingVetoLongThresholdRub/fundingVetoShortThresholdRub/
+  fundingVetoBlockOnUnknown` на `/backtest`, `/validate`, `/robustness`, `/deployment-gate`
+  (override `bt.*`, проброс `WfaConfig`→`BacktestValidator`/`FinalHoldoutValidator`→`MonteCarloAnalyzer`)
+  — калибровка порогов без перезапуска приложения.
+- **Результат WFA-калибровки (CNYRUBF, 365д, folds=6, conf=0.60)**: оптимум **long 9 ₽ / short 2 ₽**
+  (OOS PF 1.58, Sharpe +0.93 vs baseline PF 0.88/−0.27, 26 OOS-сделок); deployment-gate —
+  **RESEARCH_ONLY** (OOS 23 сделки < 100, holdout 5, edge нет). LIVE-пороги НЕ менялись
+  (`trading.funding-veto-*` default off/2.0); перенос research-порогов — решение пользователя.
 
 ### Отличие от Si/акций
 

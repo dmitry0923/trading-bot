@@ -77,6 +77,10 @@ class FinalHoldoutValidator(
         futuresMaxContractsPerPosition: Int? = null,
         adaptiveConfidenceThreshold: Double? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): HoldoutValidation {
         require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
         val sorted = candles.sortedBy { it.time }
@@ -106,6 +110,10 @@ class FinalHoldoutValidator(
                     riskPerTradePercent = riskPerTradePercent,
                     futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                     signalGeneratorOverride = effectiveOverride,
+                    fundingVetoEnabled = fundingVetoEnabled,
+                    fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                    fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                    fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 ),
             )
 
@@ -158,6 +166,10 @@ class FinalHoldoutValidator(
                 riskPerTradePercent = riskPerTradePercent,
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 signalGeneratorOverride = effectiveOverride,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
             )
 
         // Одноразовый финальный прогон на независимом holdout с зафиксированными параметрами.
@@ -178,6 +190,10 @@ class FinalHoldoutValidator(
                 riskPerTradePercent = riskPerTradePercent,
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 signalGeneratorOverride = effectiveOverride,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
             )
 
         val result = HoldoutValidation(walkForward, holdout, paramsUsed, frozenStrategy, devBacktest)

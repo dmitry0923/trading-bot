@@ -100,6 +100,10 @@ class FinalHoldoutValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
                 ),
             ).thenReturn(holdoutCandidate)
         }
@@ -152,6 +156,10 @@ class FinalHoldoutValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
                 ),
             ).thenReturn(strongResult(40))
         }
@@ -195,6 +203,10 @@ class FinalHoldoutValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),

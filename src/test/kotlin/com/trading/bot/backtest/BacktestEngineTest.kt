@@ -14,6 +14,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.FundingHistoryRepository
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import com.trading.bot.service.MlFeatureResolver
@@ -33,6 +34,7 @@ import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
 import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 class BacktestEngineTest {
@@ -76,6 +78,58 @@ class BacktestEngineTest {
         assertTrue(result.equityCurve.isNotEmpty())
         assertTrue(result.sharpeRatio.isFinite())
         assertTrue(result.profitFactor >= 0.0)
+    }
+
+    @Test
+    fun `funding history empty falls back to configured rate`() {
+        // Ряд funding отсутствует в БД → сразу CONFIG-ставка, поведение не меняется.
+        val candles = trendingCandles().map { it.copy(ticker = "SBER") }
+        val baseline = runBlocking { engine.simulate("SBER", candles) }
+
+        val fundingRepo = Mockito.mock(FundingHistoryRepository::class.java)
+        runBlocking {
+            Mockito
+                .`when`(fundingRepo.findValuesBetween(Mockito.anyString(), anyLocalDate(), anyLocalDate()))
+                .thenReturn(emptyMap())
+        }
+        val engineWithRepo =
+            BacktestEngine(
+                candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                fundingHistoryRepository = fundingRepo,
+            )
+        val withEmptyHistory = runBlocking { engineWithRepo.simulate("SBER", candles) }
+
+        assertEquals(baseline.totalReturn, withEmptyHistory.totalReturn, 1e-9)
+        assertEquals(baseline.equityCurve, withEmptyHistory.equityCurve)
+    }
+
+    @Test
+    fun `non empty funding history does not break simulation`() {
+        // Исторический ряд присутствует → P&L вычитает фактические значения по датам
+        // клирингов (нет NPE/исключений), метрики конечны.
+        val candles = trendingCandles().map { it.copy(ticker = "SBER") }
+        val fundingRepo = Mockito.mock(FundingHistoryRepository::class.java)
+        runBlocking {
+            Mockito
+                .`when`(fundingRepo.findValuesBetween(Mockito.anyString(), anyLocalDate(), anyLocalDate()))
+                .thenReturn(
+                    mapOf(
+                        LocalDate.now() to BigDecimal("2.78"),
+                        LocalDate.now().plusDays(1) to BigDecimal("2.56"),
+                    ),
+                )
+        }
+        val engineWithFunding =
+            BacktestEngine(
+                candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                fundingHistoryRepository = fundingRepo,
+            )
+
+        val result = runBlocking { engineWithFunding.simulate("SBER", candles) }
+
+        assertTrue(result.totalTrades >= 0)
+        assertTrue(result.equityCurve.isNotEmpty())
+        assertTrue(result.sharpeRatio.isFinite())
     }
 
     @Test
@@ -867,6 +921,155 @@ class BacktestEngineTest {
         runBlocking {
             Mockito.verify(higherTfTrendFilter, Mockito.never()).shouldBlock(any(), any(), any(), any(), any())
         }
+    }
+
+    private fun fundingRepoReturning(vararg entries: Pair<LocalDate, BigDecimal>): FundingHistoryRepository {
+        val repo = Mockito.mock(FundingHistoryRepository::class.java)
+        runBlocking {
+            Mockito
+                .`when`(repo.findValuesBetween(Mockito.anyString(), anyLocalDate(), anyLocalDate()))
+                .thenReturn(entries.toMap())
+        }
+        return repo
+    }
+
+    /** repo funding=value на все даты серии свечей — детерминированно вне зависимости от времени суток. */
+    private fun fundingRepoAcrossSeries(
+        series: List<Candle>,
+        value: BigDecimal,
+        vararg extra: Pair<LocalDate, BigDecimal>,
+    ): FundingHistoryRepository {
+        val entries: List<Pair<LocalDate, BigDecimal>> =
+            series.map { it.time.toLocalDate() }.associateWith { value }.toList() + extra.toList()
+        return fundingRepoReturning(*entries.toTypedArray())
+    }
+
+    @Test
+    fun `funding veto blocks all long entries when funding above threshold`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val repo = fundingRepoAcrossSeries(trendingCandles(), BigDecimal("3.0"))
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoLongThresholdRub = 2.0
+                        fundingVetoShortThresholdRub = 2.0
+                    },
+                fundingHistoryRepository = repo,
+            )
+
+        // trendingCandles генерирует BUY (LONG) внизу V — funding 3.0 > порог 2.0.
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertEquals(0, result.totalTrades, "funding-veto должен блокировать LONG при funding > порога")
+        val blocked = meterRegistry.counter("bt_funding_veto_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    @Test
+    fun `funding veto blocks all short entries when funding below negative threshold`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val repo = fundingRepoAcrossSeries(candles(), BigDecimal("-3.0"))
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoLongThresholdRub = 2.0
+                        fundingVetoShortThresholdRub = 2.0
+                    },
+                signalGenerator = ConstantSignalGenerator(StrategyAction.SELL),
+                fundingHistoryRepository = repo,
+            )
+
+        // Постоянный SELL → SHORT; funding −3.0 < −порога 2.0 → блокируется.
+        val result = runBlocking { filteredEngine.simulate("SBER", candles(), minBarsForSignal = 1) }
+
+        assertEquals(0, result.totalTrades, "funding-veto должен блокировать SHORT при funding < −порога")
+        val blocked = meterRegistry.counter("bt_funding_veto_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    @Test
+    fun `funding veto pass-through keeps trades when funding within thresholds`() {
+        val repo = fundingRepoAcrossSeries(trendingCandles(), BigDecimal("0.5"))
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoLongThresholdRub = 2.0
+                        fundingVetoShortThresholdRub = 2.0
+                    },
+                fundingHistoryRepository = repo,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertTrue(result.totalTrades > 0, "funding 0.5 < порога не должен блокировать LONG, got ${result.totalTrades}")
+    }
+
+    @Test
+    fun `funding veto blocks unknown funding fail-closed when blockOnUnknown`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val emptyRepo = fundingRepoReturning()
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = meterRegistry,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoBlockOnUnknown = true
+                    },
+                fundingHistoryRepository = emptyRepo,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertEquals(0, result.totalTrades, "нет ряда funding + block-on-unknown → fail-closed")
+        val blocked = meterRegistry.counter("bt_funding_veto_blocked_total", "ticker", "SBER").count()
+        assertTrue(blocked > 0, "метрика блокировок должна увеличиваться, got $blocked")
+    }
+
+    @Test
+    fun `funding veto allows unknown funding when blockOnUnknown false`() {
+        val emptyRepo = fundingRepoReturning()
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoBlockOnUnknown = false
+                    },
+                fundingHistoryRepository = emptyRepo,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertTrue(result.totalTrades > 0, "нет ряда funding + block-off → не блокирует, got ${result.totalTrades}")
+    }
+
+    @Test
+    fun `funding veto is not consulted when bt flag disabled`() {
+        val repo = fundingRepoAcrossSeries(trendingCandles(), BigDecimal("50.0"))
+        val filteredEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig = BacktestConfig().apply { fundingVetoEnabled = false },
+                fundingHistoryRepository = repo,
+            )
+
+        val result = runBlocking { filteredEngine.simulate("SBER", trendingCandles()) }
+
+        assertTrue(result.totalTrades > 0, "выключенный фильтр не должен блокировать сделки")
     }
 
     private class BtRecordingModel(
@@ -1717,5 +1920,10 @@ class BacktestEngineTest {
             assertEquals(0.10, result.monthlyReturns.getValue("2025-06"), 1e-9)
             assertEquals(0.05, result.monthlyReturns.getValue("2025-07"), 1e-9)
         }
+    }
+
+    private fun anyLocalDate(): LocalDate {
+        Mockito.any(LocalDate::class.java)
+        return LocalDate.of(2000, 1, 1)
     }
 }

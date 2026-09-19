@@ -24,6 +24,13 @@ import java.math.BigDecimal
  *   — `LATESTFUNDING` в MOEX ISS НЕ существует (верифицировано 2026-09-10).
  * - [moexLotMultiplier] — конвертация raw-значения → RUB/контракт/клиринг (CNYRUBF:
  *   ставка за 1 CNY × лот 1000).
+ *
+ * Research-источник ИСТОРИИ funding (донакачка SWAPRATE в
+ * `funding_history` для P&L бэктеста / калибровки funding-veto, открытый P1):
+ * - [moexHistoryUrl] — URL-шаблон ISS history endpoint; плейсхолдеры `{ticker}`,
+ *   `{from}`, `{till}` заменяются соответственно. Пустой → донакачка отключена
+ *   (loader возвращает пустой результат, backtest остаётся на configured-ставке).
+ * Семантика значения/конвертации — та же, что у [moexColumn]/[moexLotMultiplier].
  */
 @Component
 @ConfigurationProperties(prefix = "funding")
@@ -33,4 +40,11 @@ class FundingConfig {
     var moexLotMultiplier: BigDecimal = BigDecimal("1000")
     var moexTtlMs: Long = 5 * 60_000L
     var requestTimeoutMs: Long = 10_000L
+
+    /**
+     * URL-шаблон ISS HISTORY endpoint для донакачки funding (research, P1):
+     * `https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/{ticker}.json?iss.meta=off&from={from}&till={till}`
+     * Плейсхолдеры — `{ticker}`, `{from}` (yyyy-MM-dd), `{till}` (yyyy-MM-dd).
+     */
+    var moexHistoryUrl: String? = null
 }

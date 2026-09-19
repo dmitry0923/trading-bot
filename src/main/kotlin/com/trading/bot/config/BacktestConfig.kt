@@ -52,6 +52,19 @@ import java.math.BigDecimal
  *   внутри свечи по цене стопа/таргета БЕЗ двойного спреда поверх (intrabar
  *   parity с live-защитными ордерами). При false — прежняя фиксированная ставка
  *   0.1% для всех исполнений, включая стопы (legacy-режим).
+ * @property fundingVetoEnabled применять funding-veto входной гейт (зеркало
+ *   live-гейта [com.trading.bot.application.decision.FundingVetoGate]) в бэктесте.
+ *   Вход (LONG/SHORT) блокируется исходя из фактического SWAPRATE на дату бара
+ *   ([fundingHistory]) по порогам fundingVetoLongThresholdRub/fundingVetoShortThresholdRub.
+ *   Ставка funding на дату входа отсутствует и fundingVetoBlockOnUnknown=true →
+ *   fail-closed: вход блокируется. research-инструмент для WFA-калибровки порогов;
+ *   по умолчанию false (не влияет на live, `trading.funding-veto.enabled`).
+ * @property fundingVetoLongThresholdRub порог LONG funding-veto в бэктесте
+ *   (руб/контракт/клиринг): LONG блокируется при funding > порога.
+ * @property fundingVetoShortThresholdRub порог SHORT funding-veto в бэктесте
+ *   (руб/контракт/клиринг): SHORT блокируется при funding < –порога.
+ * @property fundingVetoBlockOnUnknown в бэктесте блокировать вход при отсутствии
+ *   ставки funding на дату бара (fail-closed, паритет live `trading.funding-veto.block-on-unknown`).
  * @property futuresLiquidationSimulation симулировать принудительную ликвидацию
  *   фьючерсной позиции на уровне ликвидационной цены (паритет live-monitorу
  *   [com.trading.bot.application.FuturesPositionMonitor]). При true позиция,
@@ -79,6 +92,12 @@ class BacktestConfig {
     var regimeDetectionEnabled: Boolean = true
     var adaptiveConfidenceThreshold: Double = 0.60
     var futuresLiquidationSimulation: Boolean = true
+
+    /** Funding-veto research-фильтр: false по умолчанию (live управляется trading.funding-veto.enabled). */
+    var fundingVetoEnabled: Boolean = false
+    var fundingVetoLongThresholdRub: Double = 2.0
+    var fundingVetoShortThresholdRub: Double = 2.0
+    var fundingVetoBlockOnUnknown: Boolean = true
 
     /** Доля КОНЦА истории, резервируемая под финальный независимый holdout (0..1). */
     var holdoutFraction: Double = 0.20

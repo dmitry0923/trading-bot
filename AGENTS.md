@@ -76,6 +76,9 @@
   **Праздничный календарь MOEX не моделируется** (открытый P1).
 - P&L futures вычитает комиссию `qty × commissionRub × 2` и funding `× qty × clearings`
   (live через `FundingSnapshotService`, backtest — на config) — паритет live↔backtest.
+- Backtest P&L использует ФАКТИЧЕСКИЕ SWAPRATE из `funding_history` (если ряд донакачан):
+  `sum(funding_history[clearingDate]) × qty` вместо config-ставки (fallback — при отсутствии
+  истории или тикера). Донакачка — `GET /api/v1/backtest/{ticker}/funding-history?days=`.
 - Slippage в риск-бюджете сайзинга: `max(entryPrice × slippageBps/10000 × pointValue, priceStep × pointValue)`
   (минимум 1 тик); `effectiveRiskPerContract = loss + комиссия×2 + slippage×2`.
 
@@ -88,8 +91,24 @@
   MOEX ≤ `moexTtlMs`; SIM/backtest — CONFIG). Uстаревший/нет снапшота + `funding-veto-block-on-unknown=true`
   → BLOCK (fail-closed).
 - Конфиг (`trading.*`, env `TRADING_FUNDING_VETO_*`): `enabled=false` (research, live-поведение не
-  меняется), пороги default 2.0; WFA-валидация порогов ограничена отсутствием исторического ряда
-  SWAPRATE в БД (открытый P1, донакачка ставок MOEX отдельной серией) — пороги задаются вручную.
+  меняется), пороги default 2.0. WFA-калибровка порогов возможна: исторический ряд SWAPRATE
+  донакачан в `funding_history` (миграция 036, `MoexFundingHistoryLoader` + endpoint
+  `GET /api/v1/backtest/{ticker}/funding-history?days=`, CNYRUBF 509 дат 2024-09-18..2026-09-17,
+  конфиг `funding.moex-history-url`/`FUNDING_MOEX_HISTORY_URL`).
+- **Backtest-зеркало**: `BacktestRiskSimulator` воспроизводит гейт (вход после NetEvGate,
+  reason `FUNDING_VETO`, конструируется с `fundingVeto*`-параметрами, default off); ставка =
+  `fundingHistory[дата входа]` из `funding_history`.
+- **Backtest input-фильтр (2026-09-19, калибровка)**: изолированный funding-veto фильтр входа в
+  `BacktestEngine` (по паттерну ML/MTF-фильтров, НЕ через `BacktestRiskSimulator` — он не Spring-бин,
+  в проде `riskSimulator==null` → риск-гейты в бэктесте выключены). Управление `bt.funding-veto-*`
+  (`BT_FUNDING_VETO_*`), default off; reason `FUNDING_VETO`, метрика `bt_funding_veto_blocked_total{ticker}`;
+  блок LONG при funding > long-порога, SHORT при funding < −short-порога, fail-closed на неизвестной дате.
+  **Query-параметры на API** `fundingVetoEnabled/fundingVetoLongThresholdRub/fundingVetoShortThresholdRub/
+  fundingVetoBlockOnUnknown` (override bt.*, калибровка порогов без перезапуска): `/backtest`,
+  `/validate`, `/robustness`, `/deployment-gate` (пробрасываются через `WfaConfig`→`BacktestValidator`/
+  `FinalHoldoutValidator`→`MonteCarloAnalyzer`).
+- **Результат WFA-калибровки порогов (CNYRUBF, 365д, folds=6, conf 0.60)**: см. research-раздел ниже
+  «WFA-калибровка funding-veto (2026-09-19)». Оптимум — long 9 ₽, short 2 ₽; live-пороги НЕ менялись.
 
 ### Мониторинг (2026-09-09)
 
@@ -292,6 +311,41 @@ guardrail (тех-агент давал 0.3–0.55 при жёстком `signal
 - Кандидаты на продолжение: другие таймфреймы, платная подписка rg.ru (news в
   `FundamentalAnalysisAgent`), либо закрытие LLM-сигнального пути как не-еdge.
 
+### WFA-калибровка funding-veto (2026-09-19)
+
+Прогон на live-стеке (postgres+redis, `java -jar` с `--spring.mvc.async.request-timeout=600000`).
+Источник ставок — `funding_history` (SWAPRATE MOEX, 509 дат). Инструмент — новый изолированный
+input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fundingVeto*` на API, см.
+раздел «Funding Veto Gate»). WFA: CNYRUBF, 365д, MINUTE_10, folds=6, conf 0.60.
+
+| Параметры | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency |
+|-----------|---------|--------|------------|-----------|-------------|
+| baseline (фильтр off) | −0.23% | 0.88 | −0.27 | 31 | 0.667 |
+| long 2 / short 2 ₽ | +0.16% | 1.16 | +0.22 | 15 | 0.500 |
+| long 4 / short 4 ₽ | +0.53% | 1.49 | +0.67 | 19 | 0.667 |
+| long 6 / short 6 ₽ | +0.57% | 1.38 | +0.64 | 24 | 0.667 |
+| long 7 / short 7 ₽ | +0.58% | 1.39 | +0.65 | 25 | 0.667 |
+| **long 8 / short 8 ₽** | +0.78% | 1.52 | +0.85 | 26 | 0.667 |
+| **long 9 / short 9 ₽** | +0.85% | 1.58 | +0.92 | 26 | 0.667 |
+| **long 9 / short 2 ₽** | **+0.86%** | **1.58** | **+0.93** | 26 | 0.667 |
+| long 10 / short 10 ₽ | +0.80% | 1.53 | +0.87 | 26 | 0.667 |
+| long 12 / short 12 ₽ | −0.31% | 0.84 | −0.37 | 30 | 0.667 |
+| long 14 / short 14 ₽ | −0.31% | 0.84 | −0.37 | 30 | 0.667 |
+
+- **Оптимум — long 9 ₽, short 2 ₽**: OOS PF 1.58 (baseline 0.88), Sharpe +0.93 (−0.27), OOS +0.86%
+  (−0.23%). Разворот OOS из отрицательной зоны в положительную; consistency 0.667 (как baseline).
+  Дробные пороги (7–10) дают единый плато, 12+ откатывается к baseline — слишком слабая фильтрация
+  LONG, а жёсткий SHORT-порог режет.
+- Deployment-gate того же кандидата (research): **RESEARCH_ONLY** — backtest PASS (Sharpe 1.22, MDD 0.8%,
+  PF 1.66, 22 сделки), но WFA OOS 23 сделки < 100 (consistency 0.333, oosPF 0.79), edge нет
+  (P=0.668), holdout 5 сделок < 30 (return 1.3%), MC p5=−0.5% → не robust. Тот же ограничитель —
+  тонкая выборка; funding-veto НЕ чинит статистический edge (улучшение сидит на 26 OOS-сделках).
+- IS-панель через `/backtest` (live-like сайзинг maxC=1): порог 2.0 → 21 сделка, PF 1.76, MDD 0.14%
+  vs baseline 38 сделок, PF 1.08, MDD 0.24% — фильтр реально отсекает убыточные LONG-входы в
+  высокий funding.
+- **Live-пороги НЕ менялись**: `trading.funding-veto-*` остаётся default off/2.0. Research-пороги
+  не переносятся автоматически (см. «Открытые пункты»).
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -312,12 +366,15 @@ guardrail (тех-агент давал 0.3–0.55 при жёстком `signal
 | 2026-09-16 | LLM-сигналы WFA 365д (`llm-signal-wfa-365d`) | guardrail-конфиг (tech-min-signal-strength/prompt-version/sample-every); промпт-версия `signal` в tech/strategy; grid-тюнинг 30д/90д/365д; **вердикт: edge НЕТ (PF=0.73, P=0.886, 69 OOS-сделок)**; кросс-тикер GAZP PF=0.73/SBER 0 сделок; research-инструменты остаются, LIVE не одобрено | test+int+ktlint |
 | 2026-09-17 | Opus-проверка (`llm-signal-opus`) | fenced-JSON bug у Contrarian/Fundamental/Technical (0 сделок из-за fail-closed CRITICAL); `signal`-промпты contrarian/arbitrator; строковые скаляры Opus в `LlmResponseValidator` + тесты; **вердикт: Opus edge НЕТ (PF=1.11, P=0.48, 10 OOS-сделок)**; конвейер теперь реально генерирует сделки | test+int+ktlint |
 | 2026-09-18 | Funding Veto research (`funding-veto`) | `FundingVetoGate` (входной гейт после NetEvGate, `FUNDING_VETO`, fail-closed); `FundingSnapshotService.latestForVeto` (LIVE: только свежий MOEX); конфиг `trading.funding-veto-*`; тесты FundingVetoGateTest/DecisionEngineTest/FundingSnapshotServiceTest; docs/16 + AGENTS.md | test+int+ktlint |
+| 2026-09-18 | Донакачка SWAPRATE + funding-history в бэктест (`funding-history-backfill`) | миграция 036 `funding_history`; `FundingHistoryRepository` (R2DBC) + `MoexFundingHistoryLoader` (ISS history, пагинация); endpoint `funding-history`/`funding-history/status`; BacktestEngine P&L по фактическим SWAPRATE per-clering (fallback на config-ставку при отсутствии истории); CNYRUBF 509 дат 2024-09-18..2026-09-17 | test+int+ktlint |
+| 2026-09-19 | Funding-veto калибровка WFA (`funding-veto-calibration`) | изолированный funding-veto входной фильтр в `BacktestEngine` (ML/MTF-паттерн, НЕ через неактивный в проде `BacktestRiskSimulator`); query-параметры `fundingVeto*` на `/backtest` `/validate` `/robustness` `/deployment-gate` (override bt.*, калибровка без перезапусков, проброс через `WfaConfig`→`BacktestValidator`/`FinalHoldoutValidator`→`MonteCarloAnalyzer`); метрика `bt_funding_veto_blocked_total`; **WFA 365д folds=6 conf=0.60: оптимум long 9 ₽ / short 2 ₽ (PF 1.58, Sharpe 0.93 vs baseline PF 0.88/−0.27); вердикт deployment-gate
+  RESEARCH_ONLY (OOS 23 сделки < 100, holdout 5, edge нет)**; live-пороги НЕ менялись | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
-- WFA-калибровка порогов funding-veto невозможна без исторического ряда SWAPRATE в БД (P1,
-  донакачка ставок MOEX отдельной серией); порог 2.0 ₽/контракт/клиринг задан вручную (research).
+- Funding-veto: research-пороги (long 9 ₽ / short 2 ₽) НЕ переносятся в live автоматически —
+  live-конфиг `trading.funding-veto-*` остаётся default off/2.0; решение о live-порогах — за пользователем.
 - WFA-прогон LLM с Kimi K3 (`moonshotai/kimi-k3`) отложен: исчерпан месячный лимит RouterAI
   (429, 2054,78 ₽ / 2000 ₽); модель подтверждена в `/api/v1/models`.
 

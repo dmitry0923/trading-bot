@@ -15,6 +15,7 @@ import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.repository.BacktestResultRepository
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.FundingHistoryRepository
 import com.trading.bot.service.HigherTfTrendFilter
 import com.trading.bot.service.MlEntryFilter
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -79,6 +81,7 @@ class BacktestEngine(
     private val riskConfig: RiskConfig = RiskConfig(),
     private val futuresStopResolver: FuturesStopResolver = FuturesStopResolver(),
     private val riskSimulator: BacktestRiskSimulator? = null,
+    private val fundingHistoryRepository: FundingHistoryRepository? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -131,6 +134,10 @@ class BacktestEngine(
         riskPerTradePercent: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -156,6 +163,10 @@ class BacktestEngine(
                 riskPerTradePercent,
                 futuresMaxContractsPerPosition,
                 signalGeneratorOverride,
+                fundingVetoEnabled,
+                fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -232,6 +243,11 @@ class BacktestEngine(
         riskPerTradePercent: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
+        /** research funding-veto override: null → bt.* (калибровка порогов без перезапуска). */
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): BacktestResult {
         val effectiveCapitalSlice = capitalSlice ?: backtestConfig.capitalSlice
         val effectiveSignalGenerator = signalGeneratorOverride ?: signalGenerator
@@ -245,6 +261,7 @@ class BacktestEngine(
         var mlBlockedCount = 0
         var mtfBlockedCount = 0
         var riskBlockedCount = 0
+        var fundingVetoBlockedCount = 0
 
         // Live risk gates: initialize in-memory state machine
         val useRiskGates = backtestConfig.liveRiskGates && riskSimulator != null
@@ -255,6 +272,26 @@ class BacktestEngine(
 
         var position: PositionSim? = null
         val sorted = candles.sortedBy { it.time }
+
+        // Historical per-clearing funding (research P1, funding_history): если для
+        // тикера в БД есть ряд SWAPRATE, P&L использует ФАКТИЧЕСКИЕ значения по
+        // датам клирингов вместо конфигурационного fundingRubPerContractPerDay.
+        val fundingHistory: Map<LocalDate, BigDecimal> =
+            try {
+                val repo = fundingHistoryRepository
+                if (repo == null) {
+                    emptyMap()
+                } else {
+                    repo.findValuesBetween(
+                        ticker,
+                        sorted.first().time.toLocalDate(),
+                        sorted.last().time.toLocalDate(),
+                    )
+                }
+            } catch (e: Exception) {
+                logger.warn(e) { "Backtest $ticker: funding history unavailable, fallback to configured rate" }
+                emptyMap()
+            }
 
         fun recordEquity(
             price: BigDecimal,
@@ -294,6 +331,7 @@ class BacktestEngine(
                             slippageMultiplier,
                             current,
                             applySlippage = !backtestConfig.realisticExecution,
+                            fundingHistory = fundingHistory,
                         )
                     recordRiskSimClose(ticker, liqPos, "LIQUIDATION", liq, i, sorted, cash)
                     position = null
@@ -320,6 +358,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
+                                fundingHistory = fundingHistory,
                             )
                         recordRiskSimClose(ticker, pos0, "STOP_LOSS", pos0.stopLoss, i, sorted, cash)
                         position = null
@@ -341,6 +380,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
+                                fundingHistory = fundingHistory,
                             )
                         recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, i, sorted, cash)
                         position = null
@@ -383,6 +423,7 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                                 current,
+                                fundingHistory = fundingHistory,
                             )
                         recordRiskSimClose(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -424,8 +465,66 @@ class BacktestEngine(
                                 commissionMultiplier,
                                 slippageMultiplier,
                                 current,
+                                fundingHistory = fundingHistory,
                             )
                         recordRiskSimClose(ticker, curPos, "MTF_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
+                        position = null
+                    }
+                    recordEquity(current.closePrice, current.time)
+                    continue
+                }
+            }
+
+            // Funding-veto research-фильтр входа (зеркало live FundingVetoGate):
+            // вход гейтится фактическим SWAPRATE на дату бара. При отсутствии ряда
+            // и block-on-unknown=true — fail-closed; LONG блокируется при funding >
+            // long-порога, SHORT — при funding < −short-порога. Параметры из query
+            // (fundingVeto* override) приоритетнее bt.* — калибровка порогов без
+            // перезапуска приложения.
+            val vetoEnabled = fundingVetoEnabled ?: backtestConfig.fundingVetoEnabled
+            val vetoLongThreshold = fundingVetoLongThresholdRub ?: backtestConfig.fundingVetoLongThresholdRub
+            val vetoShortThreshold = fundingVetoShortThresholdRub ?: backtestConfig.fundingVetoShortThresholdRub
+            val vetoBlockUnknown = fundingVetoBlockOnUnknown ?: backtestConfig.fundingVetoBlockOnUnknown
+            if (entering && vetoEnabled) {
+                val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+                val fundingRub = fundingHistory[current.time.toLocalDate()]
+                val vetoBlocked =
+                    when {
+                        fundingRub == null && vetoBlockUnknown -> true
+
+                        direction == PositionDirection.LONG &&
+                            fundingRub != null &&
+                            fundingRub.compareTo(BigDecimal(vetoLongThreshold)) > 0 -> true
+
+                        direction == PositionDirection.SHORT &&
+                            fundingRub != null &&
+                            fundingRub.compareTo(BigDecimal(vetoShortThreshold).negate()) < 0 -> true
+
+                        else -> false
+                    }
+                if (vetoBlocked) {
+                    fundingVetoBlockedCount++
+                    logger.debug { "Backtest $ticker: funding-veto blocked entry at ${current.time}: funding=$fundingRub" }
+                    meterRegistry?.counter("bt_funding_veto_blocked_total", "ticker", ticker)?.increment()
+                    if (curPos != null) {
+                        // Сигнал инверсии, но встречный вход отклонён фильтром → закрыть текущую позицию
+                        cash =
+                            closePosition(
+                                ticker,
+                                curPos,
+                                "FUNDING_VETO_REVERSAL",
+                                current.openPrice,
+                                cash,
+                                i,
+                                tradeReturns,
+                                tradeHoldBars,
+                                commissionAccumulator,
+                                commissionMultiplier,
+                                slippageMultiplier,
+                                current,
+                                fundingHistory = fundingHistory,
+                            )
+                        recordRiskSimClose(ticker, curPos, "FUNDING_VETO_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
                     }
                     recordEquity(current.closePrice, current.time)
@@ -445,6 +544,7 @@ class BacktestEngine(
                         candle = current,
                         history = sorted.subList(0, i),
                         currentTime = current.time,
+                        fundingHistory = fundingHistory,
                     )
                 if (!gateResult.allowed) {
                     riskBlockedCount++
@@ -474,6 +574,7 @@ class BacktestEngine(
                             commissionMultiplier,
                             slippageMultiplier,
                             current,
+                            fundingHistory = fundingHistory,
                         )
                     recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
                     position =
@@ -547,6 +648,7 @@ class BacktestEngine(
                     commissionMultiplier,
                     slippageMultiplier,
                     sorted.last(),
+                    fundingHistory = fundingHistory,
                 )
             recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
@@ -569,7 +671,8 @@ class BacktestEngine(
                 "MDD=${String.format("%.2f%%", result.maxDrawdown * 100)}, PF=${String.format("%.2f", result.profitFactor)}, " +
                 "win=${String.format("%.2f%%", result.winRate * 100)}, expectancy=${String.format("%.2f", result.expectancy)}, " +
                 "W/L=${String.format("%.2f", result.winLossRatio)}, trades=${result.totalTrades}, " +
-                "mlBlocked=$mlBlockedCount, mtfBlocked=$mtfBlockedCount " +
+                "mlBlocked=$mlBlockedCount, mtfBlocked=$mtfBlockedCount, " +
+                "fundingVetoBlocked=$fundingVetoBlockedCount " +
                 "-> ${if (result.isPassable()) "PASS" else "REJECT"}"
         }
         return result
@@ -952,6 +1055,7 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
         candle: Candle? = null,
         applySlippage: Boolean = true,
+        fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill =
@@ -977,15 +1081,25 @@ class BacktestEngine(
             }.multiply(profitMultiplierPerLot(ticker, instrument)).multiply(BigDecimal(pos.quantity))
         // Funding (CNYRUBF): вычитается за каждый клиринг, который позиция пережила
         // между открытием и закрытием (паритет live PnlCalculator.futures).
+        // Если доступен исторический ряд (funding_history) — per-date значения;
+        // иначе fallback на конфигурационное значение.
         val funding =
             if (instrument != null && instrumentsConfig.isFutures(ticker) &&
-                pos.entryTime != null && candle != null &&
-                instrument.fundingPerClearing() > BigDecimal.ZERO
+                pos.entryTime != null && candle != null
             ) {
-                val clearings = FundingCosts.clearingsCrossed(pos.entryTime, candle.time)
-                instrument.fundingPerClearing().multiply(
-                    BigDecimal(pos.quantity).multiply(BigDecimal(clearings)),
-                )
+                val dates = FundingCosts.clearingDates(pos.entryTime, candle.time)
+                if (dates.isEmpty()) {
+                    BigDecimal.ZERO
+                } else if (fundingHistory.isNotEmpty()) {
+                    val fundingSum = dates.fold(BigDecimal.ZERO) { acc, date -> acc.add(fundingHistory[date] ?: BigDecimal.ZERO) }
+                    fundingSum.multiply(BigDecimal(pos.quantity))
+                } else if (instrument.fundingPerClearing() > BigDecimal.ZERO) {
+                    instrument.fundingPerClearing().multiply(
+                        BigDecimal(pos.quantity).multiply(BigDecimal(dates.size)),
+                    )
+                } else {
+                    BigDecimal.ZERO
+                }
             } else {
                 BigDecimal.ZERO
             }

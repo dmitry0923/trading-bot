@@ -28,6 +28,11 @@ data class WfaConfig(
      * перед делением на фолды.
      */
     val timeframe: String? = null,
+    /** research funding-veto override: null → bt.* (калибровка порогов без перезапуска). */
+    val fundingVetoEnabled: Boolean? = null,
+    val fundingVetoLongThresholdRub: Double? = null,
+    val fundingVetoShortThresholdRub: Double? = null,
+    val fundingVetoBlockOnUnknown: Boolean? = null,
 )
 
 /**

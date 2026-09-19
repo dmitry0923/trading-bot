@@ -446,6 +446,10 @@ class MonteCarloAnalyzer(
         avgBlockLength: Double = backtestConfig.mcAvgBlockLength,
         blockLength: Int = backtestConfig.mcBlockLength,
         signalGeneratorOverride: BacktestSignalGenerator? = null,
+        fundingVetoEnabled: Boolean? = null,
+        fundingVetoLongThresholdRub: Double? = null,
+        fundingVetoShortThresholdRub: Double? = null,
+        fundingVetoBlockOnUnknown: Boolean? = null,
     ): BacktestRobustnessReport {
         // Замороженные параметры стратегии (если переданы) приоритетнее config-дефолтов —
         // robustness обязан проверять ту же стратегию, что уйдёт на holdout/live.
@@ -478,6 +482,10 @@ class MonteCarloAnalyzer(
                 riskPerTradePercent = effRisk,
                 futuresMaxContractsPerPosition = effMaxContracts,
                 signalGeneratorOverride = effOverride,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
             )
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
@@ -529,6 +537,10 @@ class MonteCarloAnalyzer(
                         riskPerTradePercent = effRisk,
                         futuresMaxContractsPerPosition = effMaxContracts,
                         signalGeneratorOverride = effOverride,
+                        fundingVetoEnabled = fundingVetoEnabled,
+                        fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                        fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                        fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                     ),
                 )
             }

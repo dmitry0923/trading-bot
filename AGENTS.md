@@ -176,11 +176,18 @@
 | 365д (OOS, folds=6) | те же | +82.9% | 4.53 | - | 8 |
 | 365д (OOS, folds=8) | те же | +57.8% | 3.46 | - | 8 |
 | 730д (IS) | risk 30%, maxC 100, SL 150, TP 1200, conf 0.6 | +381.9% | 1.86 | 81.3% | 54 |
-| 730д (OOS, folds=8) | те же | +104.4% | 1.22 | - | 63 |
+| ~~730д (OOS, folds=8)~~ | ~~те же~~ | ~~+104.4%~~ | ~~1.22~~ | - | ~~63~~ |
+
+> **ОПРОВЕРГНУТО 2026-09-20 (см. «730д WFA детерминированной стратегии CNYRUBF» ниже):**
+> повторный прогон той же калибровки на полной живоtikce-истории (46 124 свечи 2024-09-19..2026-09-19,
+> с издержками/funding/liq-симуляцией) даёт OOS **−80.4%**, PF 0.72, consistency 0.25, robust=false —
+> старый «+104%» был получен на неполной истории/старом режиме издержек. 730д OOS убыточен.
 
 Выводы:
-- OOS стабильно положителен (365д +83% при folds=6, 730д +104%), но consistency 33–50%;
-  `robust=false`. Слабый кандидат — live без доп. фильтра не рекомендуется.
+- OOS стабильно положителен на 365д (+83% при folds=6), но consistency 33–50%; `robust=false`.
+  Слабый кандидат — live без доп. фильтра не рекомендуется.
+- **730д (2026-09-20, полная история): OOS убыточен (−80.4%, PF 0.72, consistency 0.25)** —
+  детерминированный edge на истории через 2024 regime не держится (см. ниже).
 - **Conf 0.63 vs 0.60 — вопрос открыт**: на 365д панели БЕЗ издержек «0.63 strict better»
   (+45.1%→+82.9% OOS), на 3-мес окне С издержками сильнее 0.60 (+77.4% / consistency 0.667 / edge sig).
   Требуется повторная чувствительность на полной истории (после донакачки). 0.64+ резко деградирует.
@@ -380,6 +387,35 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
   слишком мало; детерминированные стратегии CNYRUBF MINUTE_10 остаются единственным значимым
   источником (PF 2.15, P=0.0425).
 
+### 730д WFA детерминированной стратегии CNYRUBF (2026-09-20, калибровочный риск-профиль)
+
+Прогон на live-стеке (postgres+redis, `java -jar` с `--spring.mvc.async.request-timeout=3600000`,
+история 730д уже в БД: 46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат).
+Скрипт `research_wfa730_cnyrubf.ps1`. IS base (`/backtest?days=730`, live-like сайзинг maxC=1):
+**+0.2%, PF 1.11, 86 сделок, MDD 0.4%** (285 с). WFA (`/validate?days=730&folds=8&conf=0.60`
++ калибровочный риск `riskPerTradePercent=30&futuresMaxContractsPerPosition=100`, SL/TP-сетка
+futuresGrid в In-sample, 77 OOS-сделок):
+
+| Метрика | Значение |
+|---------|----------|
+| OOS Return | **−80.4%** |
+| OOS PF | **0.72** |
+| OOS Sharpe | +0.25 |
+| Consistency | **0.25** |
+| Robust | **false** |
+
+- **Вывод: детерминированная стратегия НЕ выживает на 730д истории.** OOS на полной выборке
+  убыточен (−80.4%, PF 0.72, consistency 0.25) — агрессивный риск-профиль (risk 30% / maxC 100)
+  разворачивает прежний «edge» (PF 2.15 на ~52 неделях) в глубокий минус на истории через 2024
+  regime. 86 IS-сделок при maxC=1 дают +0.2%/год — потолок порядка 1%+ именно из-за сайзинга.
+- **Ответ на цель «100% в год»: на текущей детерминированной стратегии недостижим.** Единственный
+  источник IS-доходности 3-значного уровня (risk 30%/maxC 100) в OOS даёт −80%; live-сайзинг (maxC 1,
+  Kelly) даёт ~1%. Ни конификация (дынные фильтры ML/funding/session/pullback), ни LLM, ни
+  увеличение истории не создают устойчивый edge выше уровня PF~1 на 730д.
+- Live-параметры НЕ менялись (maxC=1, Kelly, LIVE-guard — в силе). Кандидаты: диверсификация
+  по таймфреймам/тикерам + отдельный IS/OOS-профиль для research против сложного капитала —
+  решение за пользователем.
+
 ### WFA-калибровка входных фильтров (session + pullback, 2026-09-20)
 
 Прогон на live-стеке (postgres+redis, `java -jar`, `--spring.mvc.async.request-timeout=600000`).
@@ -437,6 +473,7 @@ Sharpe 0.80, 25 сделок).
   RESEARCH_ONLY (OOS 23 сделки < 100, holdout 5, edge нет)**; live-пороги НЕ менялись | test+int+ktlint |
 | 2026-09-20 | ML-фильтр направления калибровка (`ml-direction-calibration`) | query-оверрайды `mlDirection*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` через `buildSignalGenerator` (паттерн funding-veto; `MlDirectionOverrides` + `OnlineMlDirectionStrategy.from(config, overrides)`, null → bt.*); метрика WFA 365д folds=6 conf=0.60 на 6 конфигах: **честный baseline (ML off) лучший OOS (PF 1.63, Sharpe +1.00, +0.96%), дефолтный ML ухудшает (PF 0.96, −0.07%), blockUnknown PF 2.29 но 11 сделок** → ML-фильтр edge не даёт, `bt.ml-direction-enabled` остаётся off | test+int+ktlint |
 | 2026-09-20 | Входные фильтры (session+pullback) калибровка (`entry-filters-calibration`) | query-оверрайды `sessionFilter*`/`pullbackFilter*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` (паттерн funding-veto/ML; `EntryFilters.from(config, overrides)` в `LiveStrategyBacktestSignalGenerator` после confidence gate, до ML-фильтра; HOLD-блокировка, исключение → не блокировать; `bt.session-filter-*`/`bt.pullback-filter-*` + env `BT_SESSION_FILTER_*`/`BT_PULLBACK_FILTER_*`; тесты `EntryFiltersTest` + 2 теста генератора); IS-сетка 12 конфигов + **WFA 365д folds=6 conf=0.60: baseline лучший OOS (PF 1.63, +0.96%), pb 0.3% PF 1.78 но 18 сделок, session 14–18 PF 0.55/−0.28%, комбо=session** → фильтры edge НЕ дают, `bt.session-filter-enabled`/`bt.pullback-filter-enabled` остаются off | test+int+ktlint |
+| 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -450,6 +487,11 @@ Sharpe 0.80, 25 сделок).
 - Входные фильтры session/pullback: калибровка WFA (2026-09-20) показала отсутствие OOS-edge —
   решение «не включать» (`bt.session-filter-enabled`/`bt.pullback-filter-enabled` остаются off), см.
   research-раздел выше.
+- **Цель «100% в год» (2026-09-20)**: WFA 730д показывает, что детерминированная стратегия CNYRUBF
+  на полной истории (2024 regime) OOS убыточна (−80.4% при калибровочном риске 30%/maxC 100); при
+  live-сайзинге (maxC 1/Kelly) потолок ~1%+/год. Устойчивый edge уровня 100%/год на текущей
+  стратегии не найден ни одним из калиброванных фильтров (ML/funding/session/pullback) и LLM.
+  Кандидаты вне скоупа: диверсификация по таймфреймам/тикерам; решение за пользователем.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

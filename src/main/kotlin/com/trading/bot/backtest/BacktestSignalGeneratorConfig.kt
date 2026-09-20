@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.RiskConfig
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
@@ -21,6 +22,11 @@ import org.springframework.context.annotation.Primary
  * Regime parity: передаёт [RiskConfig.toRegimeDetectionConfig] в генератор,
  * чтобы backtest использовал тот же regime detection что и LIVE
  * ([com.trading.bot.service.StrategyService]).
+ *
+ * ML-фильтр направления (research): при `bt.ml-direction-enabled` в генератор
+ * передаётся OnlineMlDirectionStrategy — к победителю-стратегии применяется
+ * veto при противоречии направления, `bt.ml-direction-block-on-unknown` задаёт
+ * fail-closed поведение на неизвестном направлении.
  */
 @Configuration
 class BacktestSignalGeneratorConfig(
@@ -39,5 +45,7 @@ class BacktestSignalGeneratorConfig(
                     null
                 },
             adaptiveConfidenceThreshold = backtestConfig.adaptiveConfidenceThreshold,
+            mlDirection = OnlineMlDirectionStrategy.from(backtestConfig),
+            mlDirectionBlockOnUnknown = backtestConfig.mlDirectionBlockOnUnknown,
         )
 }

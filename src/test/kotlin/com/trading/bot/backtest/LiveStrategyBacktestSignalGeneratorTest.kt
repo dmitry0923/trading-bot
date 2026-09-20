@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
@@ -340,6 +341,47 @@ class LiveStrategyBacktestSignalGeneratorTest {
                 gen.signal("SBER", candles, index, minBars, "test-cycle")
             }
         }
+
+    /**
+     * ML-фильтр направления (blockOnUnknown=false) не режет согласованные входы:
+     * на сильном восходящем тренде ML после warmup согласен с BUY-победителем.
+     */
+    @Test
+    fun `ml filter keeps agreeing entrance after warmup`() {
+        val gen =
+            LiveStrategyBacktestSignalGenerator(
+                mlDirection = OnlineMlDirectionStrategy(minSamples = 5),
+                mlDirectionBlockOnUnknown = false,
+            )
+        val candles = rampCandles(count = 150, start = 100.0, step = 2.0, wick = 0.2)
+        val signals = collectSignalsWith(gen, candles)
+
+        // После длинного warmup ML дообучился на восходящей серии и согласен с
+        // BUY-победителем — должен появиться хотя бы один не-HOLD на позднем окне.
+        val lateNonHold = signals.drop(60).count { it != StrategyAction.HOLD }
+        assertTrue(lateNonHold > 0, "согласованный фильтр не должен вырезать все BUY, lateNonHold=$lateNonHold")
+    }
+
+    /**
+     * ML-фильтр (blockOnUnknown=true) режет входы в период warmup модели.
+     */
+    @Test
+    fun `ml filter block on unknown gates early signals`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genBlockUnknown =
+            LiveStrategyBacktestSignalGenerator(
+                mlDirection = OnlineMlDirectionStrategy(minSamples = 50),
+                mlDirectionBlockOnUnknown = true,
+            )
+        val candles = rampCandles(count = 90, start = 100.0, step = 2.0, wick = 0.2)
+        val signalsBaseline = collectSignalsWith(genBaseline, candles)
+        val signalsBlockUnknown = collectSignalsWith(genBlockUnknown, candles)
+
+        val baselineNonHold = signalsBaseline.count { it != StrategyAction.HOLD }
+        val blockedNonHold = signalsBlockUnknown.count { it != StrategyAction.HOLD }
+        assertTrue(baselineNonHold > 0, "baseline должен давать входы на сильном тренде")
+        assertTrue(blockedNonHold < baselineNonHold, "блок на неизвестном должен сократить число входов")
+    }
 
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)

@@ -110,4 +110,31 @@ class BacktestConfig {
 
     /** Фиксированная длина блока для block bootstrap (>= 1). */
     var mcBlockLength: Int = 5
+
+    /** Онлайн-логистическая регрессия направления (research, дефолт off).
+     *  При true в live-генератор сигналов добавляется
+     *  OnlineMlDirectionStrategy (см. docs/17, этап 4b) как фильтр НАПРАВЛЕНИЯ:
+     *  обучается на каждом баре (без lookahead), veto при противоречии направления
+     *  победителю-стратегии; веса сбрасываются на каждый simulate по cycleId.
+     *  НЕ влияет на live-входы: работает только в бэктесте/валидации. */
+    var mlDirectionEnabled: Boolean = false
+
+    /** Горизонт метки онлайн-LR: через сколько баров оценивается направление. */
+    var mlDirectionHorizonBars: Int = 6
+
+    /** Минимальный модуль доходности за [mlDirectionHorizonBars] для обучения (%). */
+    var mlDirectionMinReturnPercent: Double = 0.05
+
+    /** Скорость обучения SGD. */
+    var mlDirectionLearningRate: Double = 0.05
+
+    /** L2-регуляризация SGD. */
+    var mlDirectionL2: Double = 0.001
+
+    /** Порог уверенности P(up) относительно 0.5 для сигнала (0..1). */
+    var mlDirectionSignalMargin: Double = 0.05
+
+    /** Fail-closed для ML-фильтра направления: при ML HOLD (нехватка данных /
+     *  warmup / без уверенности) БЛОКИРОВАТЬ вход (true) или пропускать (false). */
+    var mlDirectionBlockOnUnknown: Boolean = false
 }

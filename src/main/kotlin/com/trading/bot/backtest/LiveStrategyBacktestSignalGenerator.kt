@@ -5,6 +5,7 @@ import com.trading.bot.application.strategy.BreakoutStrategy
 import com.trading.bot.application.strategy.CnyRubStrategy
 import com.trading.bot.application.strategy.GridStrategy
 import com.trading.bot.application.strategy.MeanReversionStrategy
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.application.strategy.ScalpingStrategy
 import com.trading.bot.application.strategy.TrendFollowingStrategy
 import com.trading.bot.domain.risk.PerTickerRegime
@@ -46,10 +47,22 @@ import java.time.ZoneId
  * `bt.agent.live-strategies=true`). Все стратегии создаются локально на каждый
  * вызов сигнала не нужны — они stateless, поэтому список создаётся один раз.
  * Детерминирован по `candles[0..index]`: никаких LLM, часов или внешних данных.
+ *
+ * [mlDirection] — исследовательский онлайн-фильтр НАПРАВЛЕНИЯ (bt.ml-direction-enabled).
+ * НЕ конкурирует за сигнал: обучается на каждом баре (онлайн-LR, без lookahead,
+ * сброс модели по cycleId на каждый simulate — изоляция фолдов/MC) и применяется
+ * к победителю среди детерминированных стратегий следующим образом:
+ *   - если ML-направление уверенное и совпадает с направлением победителя — вход;
+ *   - если ML-направление уверенное и ПРОТИВОПОЛОЖНО победителю — вход заблокирован
+ *     (причина `ML_DIRECTION_VETO`);
+ *   - если ML HOLD (нехватка данных/warmup/нет уверенности) — зависит от
+ *     [mlDirectionBlockOnUnknown] (true: fail-closed блок, false: пропуск).
  */
 class LiveStrategyBacktestSignalGenerator(
     private val regimeConfig: RegimeDetectionConfig? = null,
     private val adaptiveConfidenceThreshold: Double = 0.60,
+    private val mlDirection: OnlineMlDirectionStrategy? = null,
+    private val mlDirectionBlockOnUnknown: Boolean = false,
 ) : BacktestSignalGenerator {
     private val strategies: List<Strategy> =
         listOf(
@@ -103,6 +116,17 @@ class LiveStrategyBacktestSignalGenerator(
                 regime = regime,
             )
 
+        // ML-фильтр обучается на каждом баре (онлайн-LR без lookahead), даже если
+        // в этом баре ни одна стратегия не дала сигнала.
+        val mlDecision =
+            mlDirection?.let {
+                try {
+                    it.evaluate(context)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
         var bestAction = StrategyAction.HOLD
         var bestStrength = 0.0
 
@@ -135,6 +159,28 @@ class LiveStrategyBacktestSignalGenerator(
             return StrategyAction.HOLD
         }
 
-        return bestAction
+        // ML-фильтр направления: veto против направления победителя.
+        val mlAction = mlDecision?.action ?: StrategyAction.HOLD
+        return when {
+            mlDecision == null -> {
+                bestAction
+            }
+
+            mlAction == StrategyAction.HOLD -> {
+                if (mlDirectionBlockOnUnknown) {
+                    StrategyAction.HOLD
+                } else {
+                    bestAction
+                }
+            }
+
+            mlAction != bestAction -> {
+                StrategyAction.HOLD
+            }
+
+            else -> {
+                bestAction
+            }
+        }
     }
 }

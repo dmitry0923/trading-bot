@@ -1,5 +1,7 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.service.BuildIdentity
@@ -57,6 +59,7 @@ class FinalHoldoutValidator(
     private val buildIdentity: BuildIdentity,
     private val fingerprintProvider: LiveStrategyFingerprintProvider,
     private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
+    private val backtestConfig: BacktestConfig = BacktestConfig(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -92,7 +95,11 @@ class FinalHoldoutValidator(
         val effectiveOverride =
             signalGeneratorOverride
                 ?: adaptiveConfidenceThreshold?.let {
-                    LiveStrategyBacktestSignalGenerator(adaptiveConfidenceThreshold = it)
+                    LiveStrategyBacktestSignalGenerator(
+                        adaptiveConfidenceThreshold = it,
+                        mlDirection = backtestConfig?.let { c -> OnlineMlDirectionStrategy.from(c) },
+                        mlDirectionBlockOnUnknown = backtestConfig?.mlDirectionBlockOnUnknown ?: false,
+                    )
                 }
 
         // Walk-forward выполняется ТОЛЬКО на данных до holdout-границы, через

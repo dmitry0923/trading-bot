@@ -1,7 +1,10 @@
 package com.trading.bot.controller
 
 import com.trading.bot.application.TradingGate
+import com.trading.bot.application.strategy.MlDirectionOverrides
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.backtest.BacktestEngine
+import com.trading.bot.backtest.BacktestSignalGenerator
 import com.trading.bot.backtest.DeploymentCriteria
 import com.trading.bot.backtest.DeploymentGate
 import com.trading.bot.backtest.DeploymentStatus
@@ -153,6 +156,23 @@ class ApiController(
     private val logger =
         io.github.oshai.kotlinlogging.KotlinLogging
             .logger {}
+
+    /**
+     * Сборка [LiveStrategyBacktestSignalGenerator] с research-оверрайдами ML-фильтра
+     * направления. [overrides] null или пустой → параметры из `bt.ml-direction-*`;
+     * query-параметры `mlDirection*` (паттерн funding-veto) калибруют пороги без
+     * перезапуска.
+     */
+    private fun buildSignalGenerator(
+        adaptiveConfidenceThreshold: Double,
+        overrides: MlDirectionOverrides?,
+    ): BacktestSignalGenerator =
+        LiveStrategyBacktestSignalGenerator(
+            regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+            adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
+            mlDirection = OnlineMlDirectionStrategy.from(backtestConfig, overrides ?: MlDirectionOverrides()),
+            mlDirectionBlockOnUnknown = overrides?.blockOnUnknown ?: backtestConfig.mlDirectionBlockOnUnknown,
+        )
 
     @GetMapping("/settings")
     fun getSettings(): BotSettings = settingsService.getSettings()
@@ -426,6 +446,13 @@ class ApiController(
         @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) mlDirectionEnabled: Boolean?,
+        @RequestParam(required = false) mlDirectionHorizonBars: Int?,
+        @RequestParam(required = false) mlDirectionMinReturnPercent: Double?,
+        @RequestParam(required = false) mlDirectionLearningRate: Double?,
+        @RequestParam(required = false) mlDirectionL2: Double?,
+        @RequestParam(required = false) mlDirectionSignalMargin: Double?,
+        @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -437,10 +464,26 @@ class ApiController(
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
+        val mlOverrides =
+            MlDirectionOverrides(
+                enabled = mlDirectionEnabled,
+                horizonBars = mlDirectionHorizonBars,
+                minReturnPercent = mlDirectionMinReturnPercent,
+                learningRate = mlDirectionLearningRate,
+                l2 = mlDirectionL2,
+                signalMargin = mlDirectionSignalMargin,
+                blockOnUnknown = mlDirectionBlockOnUnknown,
+            )
         val result =
             backtestEngine.run(
                 ticker,
                 effectiveDays,
+                signalGeneratorOverride =
+                    if (mlOverrides.anyProvided) {
+                        buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides)
+                    } else {
+                        null
+                    },
                 fundingVetoEnabled = fundingVetoEnabled,
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
@@ -650,6 +693,13 @@ class ApiController(
         @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) mlDirectionEnabled: Boolean?,
+        @RequestParam(required = false) mlDirectionHorizonBars: Int?,
+        @RequestParam(required = false) mlDirectionMinReturnPercent: Double?,
+        @RequestParam(required = false) mlDirectionLearningRate: Double?,
+        @RequestParam(required = false) mlDirectionL2: Double?,
+        @RequestParam(required = false) mlDirectionSignalMargin: Double?,
+        @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -669,12 +719,21 @@ class ApiController(
         val isResampleTarget = effectiveTimeframe != backtestConfig.timeframe && isResampleTimeframe(effectiveTimeframe)
         val sourceTimeframe = if (isResampleTarget) backtestConfig.timeframe else effectiveTimeframe
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, sourceTimeframe, from, LocalDateTime.now())
+        val mlOverrides =
+            MlDirectionOverrides(
+                enabled = mlDirectionEnabled,
+                horizonBars = mlDirectionHorizonBars,
+                minReturnPercent = mlDirectionMinReturnPercent,
+                learningRate = mlDirectionLearningRate,
+                l2 = mlDirectionL2,
+                signalMargin = mlDirectionSignalMargin,
+                blockOnUnknown = mlDirectionBlockOnUnknown,
+            )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
-                LiveStrategyBacktestSignalGenerator(
-                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
-                    adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
-                )
+                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides)
+            } else if (mlOverrides.anyProvided) {
+                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides)
             } else {
                 null
             }
@@ -736,6 +795,13 @@ class ApiController(
         @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) mlDirectionEnabled: Boolean?,
+        @RequestParam(required = false) mlDirectionHorizonBars: Int?,
+        @RequestParam(required = false) mlDirectionMinReturnPercent: Double?,
+        @RequestParam(required = false) mlDirectionLearningRate: Double?,
+        @RequestParam(required = false) mlDirectionL2: Double?,
+        @RequestParam(required = false) mlDirectionSignalMargin: Double?,
+        @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -769,6 +835,16 @@ class ApiController(
                     futuresMaxContractsPerPosition = f.futuresMaxContractsPerPosition,
                 )
             }
+        val mlOverrides =
+            MlDirectionOverrides(
+                enabled = mlDirectionEnabled,
+                horizonBars = mlDirectionHorizonBars,
+                minReturnPercent = mlDirectionMinReturnPercent,
+                learningRate = mlDirectionLearningRate,
+                l2 = mlDirectionL2,
+                signalMargin = mlDirectionSignalMargin,
+                blockOnUnknown = mlDirectionBlockOnUnknown,
+            )
         val report =
             monteCarloAnalyzer.analyze(
                 ticker,
@@ -779,6 +855,15 @@ class ApiController(
                 method = method ?: backtestConfig.mcMethod,
                 avgBlockLength = avgBlockLength ?: backtestConfig.mcAvgBlockLength,
                 blockLength = blockLength ?: backtestConfig.mcBlockLength,
+                signalGeneratorOverride =
+                    if (mlOverrides.anyProvided) {
+                        buildSignalGenerator(
+                            frozenParams?.confidenceThreshold ?: backtestConfig.adaptiveConfidenceThreshold,
+                            mlOverrides,
+                        )
+                    } else {
+                        null
+                    },
                 fundingVetoEnabled = fundingVetoEnabled,
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
@@ -835,6 +920,13 @@ class ApiController(
         @RequestParam(required = false) riskPerTradePercent: Double?,
         @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
         @RequestParam(required = false) adaptiveConfidenceThreshold: Double?,
+        @RequestParam(required = false) mlDirectionEnabled: Boolean?,
+        @RequestParam(required = false) mlDirectionHorizonBars: Int?,
+        @RequestParam(required = false) mlDirectionMinReturnPercent: Double?,
+        @RequestParam(required = false) mlDirectionLearningRate: Double?,
+        @RequestParam(required = false) mlDirectionL2: Double?,
+        @RequestParam(required = false) mlDirectionSignalMargin: Double?,
+        @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -850,12 +942,21 @@ class ApiController(
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val mlOverrides =
+            MlDirectionOverrides(
+                enabled = mlDirectionEnabled,
+                horizonBars = mlDirectionHorizonBars,
+                minReturnPercent = mlDirectionMinReturnPercent,
+                learningRate = mlDirectionLearningRate,
+                l2 = mlDirectionL2,
+                signalMargin = mlDirectionSignalMargin,
+                blockOnUnknown = mlDirectionBlockOnUnknown,
+            )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
-                LiveStrategyBacktestSignalGenerator(
-                    regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
-                    adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
-                )
+                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides)
+            } else if (mlOverrides.anyProvided) {
+                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides)
             } else {
                 null
             }
@@ -918,6 +1019,13 @@ class ApiController(
         @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
         @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) mlDirectionEnabled: Boolean?,
+        @RequestParam(required = false) mlDirectionHorizonBars: Int?,
+        @RequestParam(required = false) mlDirectionMinReturnPercent: Double?,
+        @RequestParam(required = false) mlDirectionLearningRate: Double?,
+        @RequestParam(required = false) mlDirectionL2: Double?,
+        @RequestParam(required = false) mlDirectionSignalMargin: Double?,
+        @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -938,9 +1046,18 @@ class ApiController(
         // можно было бы подбирать confidence по holdout (confidence=0.60..0.64 и
         // выбирать лучший), что протекало бы holdout в выбор параметров.
         val signalGeneratorOverride =
-            LiveStrategyBacktestSignalGenerator(
-                regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
+            buildSignalGenerator(
                 adaptiveConfidenceThreshold = backtestConfig.adaptiveConfidenceThreshold,
+                overrides =
+                    MlDirectionOverrides(
+                        enabled = mlDirectionEnabled,
+                        horizonBars = mlDirectionHorizonBars,
+                        minReturnPercent = mlDirectionMinReturnPercent,
+                        learningRate = mlDirectionLearningRate,
+                        l2 = mlDirectionL2,
+                        signalMargin = mlDirectionSignalMargin,
+                        blockOnUnknown = mlDirectionBlockOnUnknown,
+                    ),
             )
 
         // Holdout-валидация режет историю на dev (до holdout-границы) и holdout и

@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.RiskConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -172,6 +173,8 @@ class PanelBacktestService(
                                                 null
                                             },
                                         adaptiveConfidenceThreshold = confidenceThreshold,
+                                        mlDirection = OnlineMlDirectionStrategy.from(backtestConfig),
+                                        mlDirectionBlockOnUnknown = backtestConfig.mlDirectionBlockOnUnknown,
                                     )
                                 } else {
                                     null

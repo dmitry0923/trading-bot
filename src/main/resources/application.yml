@@ -403,6 +403,19 @@ bt:
   funding-veto-long-threshold-rub: ${BT_FUNDING_VETO_LONG_THRESHOLD_RUB:2.0}
   funding-veto-short-threshold-rub: ${BT_FUNDING_VETO_SHORT_THRESHOLD_RUB:2.0}
   funding-veto-block-on-unknown: ${BT_FUNDING_VETO_BLOCK_ON_UNKNOWN:true}
+  # Онлайн-логистическая регрессия направления в бэктесте (research, docs/17 этап 4b):
+  # P(up) обучается онлайн-SGD на барах истории (без lookahead), BUY/SELL по
+  # калиброванной вероятности. По умолчанию false; на live-входы не влияет.
+  ml-direction-enabled: ${BT_ML_DIRECTION_ENABLED:false}
+  ml-direction-horizon-bars: ${BT_ML_DIRECTION_HORIZON_BARS:6}
+  ml-direction-min-return-percent: ${BT_ML_DIRECTION_MIN_RETURN_PERCENT:0.05}
+  ml-direction-learning-rate: ${BT_ML_DIRECTION_LEARNING_RATE:0.05}
+  ml-direction-l2: ${BT_ML_DIRECTION_L2:0.001}
+  ml-direction-signal-margin: ${BT_ML_DIRECTION_SIGNAL_MARGIN:0.05}
+  # ML как фильтр НАПРАВЛЕНИЯ к победителю-стратегии: veto при противоречии.
+  # ml-direction-block-on-unknown: ML HOLD (warmup/нет уверенности) → блок входа
+  # (fail-closed, true) или пропуск (false, дефолт).
+  ml-direction-block-on-unknown: ${BT_ML_DIRECTION_BLOCK_ON_UNKNOWN:false}
   # Monte Carlo + стресс-сценарии бэктеста (roadmap 13.7.8): число bootstrap-симуляций
   # и фиксированный seed для воспроизводимых прогонов /api/v1/backtest/{ticker}/robustness.
   # Live risk-gate parity в бэктесте (BacktestRiskSimulator): воспроизводит полную

@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.model.entity.Candle
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -463,7 +464,11 @@ class MonteCarloAnalyzer(
         val effOverride =
             signalGeneratorOverride
                 ?: parameters?.confidenceThreshold?.let {
-                    LiveStrategyBacktestSignalGenerator(adaptiveConfidenceThreshold = it)
+                    LiveStrategyBacktestSignalGenerator(
+                        adaptiveConfidenceThreshold = it,
+                        mlDirection = OnlineMlDirectionStrategy.from(backtestConfig),
+                        mlDirectionBlockOnUnknown = backtestConfig.mlDirectionBlockOnUnknown,
+                    )
                 }
         val baseResult =
             backtestEngine.simulate(

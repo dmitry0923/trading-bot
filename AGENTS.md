@@ -346,6 +346,40 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
 - **Live-пороги НЕ менялись**: `trading.funding-veto-*` остаётся default off/2.0. Research-пороги
   не переносятся автоматически (см. «Открытые пункты»).
 
+### WFA-калибровка ML-фильтра направления (2026-09-20)
+
+Прогон на live-стеке (postgres+redis, `java -jar` с `--bt.ml-direction-enabled=true` и
+`--spring.mvc.async.request-timeout=600000`). Инструмент — query-оверрайды ML-фильтра на API
+(`buildSignalGenerator` в ApiController, паттерн funding-veto): `mlDirectionEnabled`,
+`mlDirectionHorizonBars`, `mlDirectionMinReturnPercent`, `mlDirectionLearningRate`, `mlDirectionL2`,
+`mlDirectionSignalMargin`, `mlDirectionBlockOnUnknown`. WFA: CNYRUBF, 365д, MINUTE_10, folds=6, conf 0.60.
+
+| Конфиг | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency |
+|--------|---------|--------|------------|-----------|-------------|
+| **ML выкл (честный baseline)** | **+0.96%** | **1.63** | **+1.00** | 26 | **0.667** |
+| ML вкл (default m=0.05) | −0.07% | 0.96 | −0.05 | 17 | 0.333 |
+| ML m=0.08 | +0.13% | 1.09 | +0.16 | 19 | 0.500 |
+| ML blockUnknown | +0.78% | 2.29 | +0.91 | 11 | 0.500 |
+| ML m=0.10+block | +0.43% | 1.70 | +0.73 | 11 | 0.333 |
+| ML hor=10 | +0.14% | 1.11 | +0.18 | 17 | 0.500 |
+
+- **Вывод: ML-фильтр направления edge НЕ добавляет.** Честный baseline (ML off) OOS лучше всех
+  ML-вариантов: +0.96%/PF 1.63/Sharpe +1.00/consistency 0.667 против −0.07%/PF 0.96 (−0.05) у
+  дефолтного ML. Все `robust=false` (тонкая выборка 11–26 сделок; тот же ограничитель, что у
+  funding-veto/визных путей).
+- IS-скрининг был обманчив: `blockUnknown`/`m=0.10+block` давали PF 2.2–2.97/Sharpe 1.13–1.24 на
+  `/backtest`, но резали выборку вдвое (7–11 сделок) и OOS НЕ подтвердились — классический overfit.
+- **IS-картина по margin парадоксальна**: чем выше signalMargin (0.03→0.20), тем БОЛЬШЕ сделок
+  (14→23) — ML с высоким порогом реже выдаёт veto-enough сигнал и пропускает входы; блокинг-режим
+  (blockOnUnknown) — единственное, что реально режет входы.
+- Baseline здесь +0.96% (consistency 0.667) vs funding-veto-baseline −0.23% — расхождение
+  обусловлено сменой генератора сигналов исследования (`LiveStrategyBacktestSignalGenerator` вместо
+  прежнего конвейера), а не стратегией.
+- **Решение: ML-фильтр направления НЕ включается в research-варианты бэктеста по умолчанию**
+  (`bt.ml-direction-enabled` остаётся off, `bt.ml-direction-*` — research). Флатификация: 26 OOS-сделок
+  слишком мало; детерминированные стратегии CNYRUBF MINUTE_10 остаются единственным значимым
+  источником (PF 2.15, P=0.0425).
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -369,6 +403,7 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
 | 2026-09-18 | Донакачка SWAPRATE + funding-history в бэктест (`funding-history-backfill`) | миграция 036 `funding_history`; `FundingHistoryRepository` (R2DBC) + `MoexFundingHistoryLoader` (ISS history, пагинация); endpoint `funding-history`/`funding-history/status`; BacktestEngine P&L по фактическим SWAPRATE per-clering (fallback на config-ставку при отсутствии истории); CNYRUBF 509 дат 2024-09-18..2026-09-17 | test+int+ktlint |
 | 2026-09-19 | Funding-veto калибровка WFA (`funding-veto-calibration`) | изолированный funding-veto входной фильтр в `BacktestEngine` (ML/MTF-паттерн, НЕ через неактивный в проде `BacktestRiskSimulator`); query-параметры `fundingVeto*` на `/backtest` `/validate` `/robustness` `/deployment-gate` (override bt.*, калибровка без перезапусков, проброс через `WfaConfig`→`BacktestValidator`/`FinalHoldoutValidator`→`MonteCarloAnalyzer`); метрика `bt_funding_veto_blocked_total`; **WFA 365д folds=6 conf=0.60: оптимум long 9 ₽ / short 2 ₽ (PF 1.58, Sharpe 0.93 vs baseline PF 0.88/−0.27); вердикт deployment-gate
   RESEARCH_ONLY (OOS 23 сделки < 100, holdout 5, edge нет)**; live-пороги НЕ менялись | test+int+ktlint |
+| 2026-09-20 | ML-фильтр направления калибровка (`ml-direction-calibration`) | query-оверрайды `mlDirection*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` через `buildSignalGenerator` (паттерн funding-veto; `MlDirectionOverrides` + `OnlineMlDirectionStrategy.from(config, overrides)`, null → bt.*); метрика WFA 365д folds=6 conf=0.60 на 6 конфигах: **честный baseline (ML off) лучший OOS (PF 1.63, Sharpe +1.00, +0.96%), дефолтный ML ухудшает (PF 0.96, −0.07%), blockUnknown PF 2.29 но 11 сделок** → ML-фильтр edge не даёт, `bt.ml-direction-enabled` остаётся off | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -377,6 +412,9 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
   live-конфиг `trading.funding-veto-*` остаётся default off/2.0; решение о live-порогах — за пользователем.
 - WFA-прогон LLM с Kimi K3 (`moonshotai/kimi-k3`) отложен: исчерпан месячный лимит RouterAI
   (429, 2054,78 ₽ / 2000 ₽); модель подтверждена в `/api/v1/models`.
+- ML-фильтр направления: калибровка WFA (2026-09-20) показала отсутствие OOS-edge — решение «не
+  включать» (`bt.ml-direction-enabled` остаётся off), см. research-раздел выше. Дальше — pt.2
+  (session/pullback фильтры) по плану.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

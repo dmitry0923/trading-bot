@@ -137,4 +137,34 @@ class BacktestConfig {
     /** Fail-closed для ML-фильтра направления: при ML HOLD (нехватка данных /
      *  warmup / без уверенности) БЛОКИРОВАТЬ вход (true) или пропускать (false). */
     var mlDirectionBlockOnUnknown: Boolean = false
+
+    /** Session-фильтр входа (research, pt.2): вход разрешён только когда время
+     *  бара попадает в окно [sessionFilterStartMinutes, sessionFilterEndMinutes]
+     *  (минуты с полуночи). Исключает «первый час после открытия» и «финал сессии»,
+     *  где ликвидность/направление хуже. research-инструмент, по умолчанию off
+     *  (на live-входы не влияет). */
+    var sessionFilterEnabled: Boolean = false
+
+    /** Начало окна входов session-фильтра (минуты с полуночи, 600 = 10:00). */
+    var sessionFilterStartMinutes: Int = 600
+
+    /** Конец окна входов session-фильтра (минуты с полуночи, 1080 = 18:00). */
+    var sessionFilterEndMinutes: Int = 1080
+
+    /** Pullback-фильтр входа (research, pt.2): блокирует «погоню за ценой» —
+     *  вход разрешён только когда цена в полосе отката от EMA: модуль отклонения
+     *  (close − EMA)/EMA ≤ pullbackMaxDeviationPercent%. При недостатке баров для
+     *  EMA и pullbackBlockOnUnknown=true — fail-closed блок. research-инструмент,
+     *  по умолчанию off (на live-входы не влияет). */
+    var pullbackFilterEnabled: Boolean = false
+
+    /** Период EMA для pullback-фильтра. */
+    var pullbackEmaPeriod: Int = 20
+
+    /** Максимальное отклонение цены от EMA (%), при котором вход ещё разрешён. */
+    var pullbackMaxDeviationPercent: Double = 1.0
+
+    /** Fail-closed для pullback-фильтра: при нехватке баров для EMA БЛОКИРОВАТЬ
+     *  вход (true) или пропускать (false). */
+    var pullbackBlockOnUnknown: Boolean = false
 }

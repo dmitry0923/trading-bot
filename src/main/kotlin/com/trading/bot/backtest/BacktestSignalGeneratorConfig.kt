@@ -47,5 +47,6 @@ class BacktestSignalGeneratorConfig(
             adaptiveConfidenceThreshold = backtestConfig.adaptiveConfidenceThreshold,
             mlDirection = OnlineMlDirectionStrategy.from(backtestConfig),
             mlDirectionBlockOnUnknown = backtestConfig.mlDirectionBlockOnUnknown,
+            entryFilters = EntryFilters.from(backtestConfig),
         )
 }

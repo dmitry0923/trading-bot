@@ -99,6 +99,7 @@ class FinalHoldoutValidator(
                         adaptiveConfidenceThreshold = it,
                         mlDirection = backtestConfig?.let { c -> OnlineMlDirectionStrategy.from(c) },
                         mlDirectionBlockOnUnknown = backtestConfig?.mlDirectionBlockOnUnknown ?: false,
+                        entryFilters = backtestConfig?.let { c -> EntryFilters.from(c) },
                     )
                 }
 

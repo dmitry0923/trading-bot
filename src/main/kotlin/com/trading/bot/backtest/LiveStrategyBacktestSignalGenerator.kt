@@ -8,6 +8,7 @@ import com.trading.bot.application.strategy.MeanReversionStrategy
 import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.application.strategy.ScalpingStrategy
 import com.trading.bot.application.strategy.TrendFollowingStrategy
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.domain.risk.PerTickerRegime
 import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.domain.risk.RegimeDetector
@@ -17,7 +18,91 @@ import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
+import java.math.BigDecimal
+import java.time.LocalTime
 import java.time.ZoneId
+
+/**
+ * Research-фильтры входа (docs/17 этап 4c, pt.2, 2026-09-20). Аналог funding-veto/
+ * ml-direction null-override: query-параметры перекрывают `bt.*`, null → конфиг.
+ */
+data class EntryFilterOverrides(
+    val sessionFilterEnabled: Boolean? = null,
+    val sessionFilterStartMinutes: Int? = null,
+    val sessionFilterEndMinutes: Int? = null,
+    val pullbackFilterEnabled: Boolean? = null,
+    val pullbackEmaPeriod: Int? = null,
+    val pullbackMaxDeviationPercent: Double? = null,
+    val pullbackBlockOnUnknown: Boolean? = null,
+) {
+    val anyProvided: Boolean
+        get() =
+            sessionFilterEnabled != null ||
+                sessionFilterStartMinutes != null ||
+                sessionFilterEndMinutes != null ||
+                pullbackFilterEnabled != null ||
+                pullbackEmaPeriod != null ||
+                pullbackMaxDeviationPercent != null ||
+                pullbackBlockOnUnknown != null
+}
+
+/**
+ * Входные фильтры (research, pt.2): session-фильтр (вход только в определённые
+ * фазы торговой сессии) и pullback-фильтр (вход только в полосе отката к EMA —
+ * не гнаться за ценой). Fail-closed по нехватке данных — на выбор оператора.
+ */
+class EntryFilters(
+    val sessionEnabled: Boolean,
+    val sessionStartMinutes: Int,
+    val sessionEndMinutes: Int,
+    val pullbackEnabled: Boolean,
+    val pullbackEmaPeriod: Int,
+    val pullbackMaxDeviationPercent: Double,
+    val pullbackBlockOnUnknown: Boolean,
+) {
+    companion object {
+        fun from(
+            config: BacktestConfig,
+            overrides: EntryFilterOverrides? = null,
+        ): EntryFilters =
+            EntryFilters(
+                sessionEnabled = overrides?.sessionFilterEnabled ?: config.sessionFilterEnabled,
+                sessionStartMinutes =
+                    overrides?.sessionFilterStartMinutes ?: config.sessionFilterStartMinutes,
+                sessionEndMinutes =
+                    overrides?.sessionFilterEndMinutes ?: config.sessionFilterEndMinutes,
+                pullbackEnabled = overrides?.pullbackFilterEnabled ?: config.pullbackFilterEnabled,
+                pullbackEmaPeriod = overrides?.pullbackEmaPeriod ?: config.pullbackEmaPeriod,
+                pullbackMaxDeviationPercent =
+                    overrides?.pullbackMaxDeviationPercent ?: config.pullbackMaxDeviationPercent,
+                pullbackBlockOnUnknown =
+                    overrides?.pullbackBlockOnUnknown ?: config.pullbackBlockOnUnknown,
+            )
+
+        /** Фильтры выключены — не влияют на входы. */
+        val PASS_THROUGH = EntryFilters(false, 600, 1080, false, 20, 1.0, false)
+    }
+
+    /** true → вход в бар [barTime] блокирован (вне окна сессии / вне полосы отката). */
+    fun blocksEntry(
+        barTime: LocalTime,
+        close: BigDecimal,
+        closes: List<BigDecimal>,
+    ): Boolean {
+        if (sessionEnabled) {
+            val minutes = barTime.hour * 60 + barTime.minute
+            if (minutes < sessionStartMinutes || minutes > sessionEndMinutes) return true
+        }
+        if (pullbackEnabled) {
+            if (closes.size < pullbackEmaPeriod) return pullbackBlockOnUnknown
+            val ema = IndicatorCalculator.ema(closes, pullbackEmaPeriod).last()
+            if (!ema.isFinite() || ema <= 0) return true
+            val deviation = Math.abs(close.toDouble() - ema) / ema * 100.0
+            if (deviation > pullbackMaxDeviationPercent) return true
+        }
+        return false
+    }
+}
 
 /**
  * Backtest signal generator that mirrors the LIVE strategy pipeline.
@@ -63,6 +148,7 @@ class LiveStrategyBacktestSignalGenerator(
     private val adaptiveConfidenceThreshold: Double = 0.60,
     private val mlDirection: OnlineMlDirectionStrategy? = null,
     private val mlDirectionBlockOnUnknown: Boolean = false,
+    private val entryFilters: EntryFilters? = null,
 ) : BacktestSignalGenerator {
     private val strategies: List<Strategy> =
         listOf(
@@ -158,6 +244,23 @@ class LiveStrategyBacktestSignalGenerator(
         if (!bestStrength.isFinite() || bestStrength < adaptiveConfidenceThreshold) {
             return StrategyAction.HOLD
         }
+
+        // Research-фильтры входа (docs/17 этап 4c): session (вход только в фазы
+        // сессии) и pullback к EMA (не гнаться за ценой). Fail-closed по выбору
+        // оператора; по умолчанию off.
+        val entryBlocked =
+            entryFilters?.let {
+                try {
+                    it.blocksEntry(
+                        bar.time.toLocalTime(),
+                        bar.closePrice,
+                        window.map { c -> c.closePrice },
+                    )
+                } catch (_: Exception) {
+                    false
+                }
+            } ?: false
+        if (entryBlocked) return StrategyAction.HOLD
 
         // ML-фильтр направления: veto против направления победителя.
         val mlAction = mlDecision?.action ?: StrategyAction.HOLD

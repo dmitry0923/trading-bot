@@ -468,6 +468,7 @@ class MonteCarloAnalyzer(
                         adaptiveConfidenceThreshold = it,
                         mlDirection = OnlineMlDirectionStrategy.from(backtestConfig),
                         mlDirectionBlockOnUnknown = backtestConfig.mlDirectionBlockOnUnknown,
+                        entryFilters = EntryFilters.from(backtestConfig),
                     )
                 }
         val baseResult =

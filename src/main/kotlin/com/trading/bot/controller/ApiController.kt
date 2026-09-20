@@ -8,6 +8,8 @@ import com.trading.bot.backtest.BacktestSignalGenerator
 import com.trading.bot.backtest.DeploymentCriteria
 import com.trading.bot.backtest.DeploymentGate
 import com.trading.bot.backtest.DeploymentStatus
+import com.trading.bot.backtest.EntryFilterOverrides
+import com.trading.bot.backtest.EntryFilters
 import com.trading.bot.backtest.FinalHoldoutValidator
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.backtest.LiveStrategyBacktestSignalGenerator
@@ -159,19 +161,22 @@ class ApiController(
 
     /**
      * Сборка [LiveStrategyBacktestSignalGenerator] с research-оверрайдами ML-фильтра
-     * направления. [overrides] null или пустой → параметры из `bt.ml-direction-*`;
-     * query-параметры `mlDirection*` (паттерн funding-veto) калибруют пороги без
-     * перезапуска.
+     * направления и входных фильтров (session/pullback). [overrides] null или пустой
+     * → параметры из `bt.ml-direction-*`/`bt.session-filter-*`/`bt.pullback-filter-*`;
+     * query-параметры `mlDirection*`/`sessionFilter*`/`pullbackFilter*` (паттерн
+     * funding-veto) калибруют пороги без перезапуска.
      */
     private fun buildSignalGenerator(
         adaptiveConfidenceThreshold: Double,
         overrides: MlDirectionOverrides?,
+        entryOverrides: EntryFilterOverrides?,
     ): BacktestSignalGenerator =
         LiveStrategyBacktestSignalGenerator(
             regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
             adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
             mlDirection = OnlineMlDirectionStrategy.from(backtestConfig, overrides ?: MlDirectionOverrides()),
             mlDirectionBlockOnUnknown = overrides?.blockOnUnknown ?: backtestConfig.mlDirectionBlockOnUnknown,
+            entryFilters = EntryFilters.from(backtestConfig, entryOverrides),
         )
 
     @GetMapping("/settings")
@@ -453,6 +458,13 @@ class ApiController(
         @RequestParam(required = false) mlDirectionL2: Double?,
         @RequestParam(required = false) mlDirectionSignalMargin: Double?,
         @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) sessionFilterEnabled: Boolean?,
+        @RequestParam(required = false) sessionFilterStartMinutes: Int?,
+        @RequestParam(required = false) sessionFilterEndMinutes: Int?,
+        @RequestParam(required = false) pullbackFilterEnabled: Boolean?,
+        @RequestParam(required = false) pullbackEmaPeriod: Int?,
+        @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
+        @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -474,13 +486,23 @@ class ApiController(
                 signalMargin = mlDirectionSignalMargin,
                 blockOnUnknown = mlDirectionBlockOnUnknown,
             )
+        val entryOverrides =
+            EntryFilterOverrides(
+                sessionFilterEnabled = sessionFilterEnabled,
+                sessionFilterStartMinutes = sessionFilterStartMinutes,
+                sessionFilterEndMinutes = sessionFilterEndMinutes,
+                pullbackFilterEnabled = pullbackFilterEnabled,
+                pullbackEmaPeriod = pullbackEmaPeriod,
+                pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
+                pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+            )
         val result =
             backtestEngine.run(
                 ticker,
                 effectiveDays,
                 signalGeneratorOverride =
-                    if (mlOverrides.anyProvided) {
-                        buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides)
+                    if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
+                        buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
                     } else {
                         null
                     },
@@ -700,6 +722,13 @@ class ApiController(
         @RequestParam(required = false) mlDirectionL2: Double?,
         @RequestParam(required = false) mlDirectionSignalMargin: Double?,
         @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) sessionFilterEnabled: Boolean?,
+        @RequestParam(required = false) sessionFilterStartMinutes: Int?,
+        @RequestParam(required = false) sessionFilterEndMinutes: Int?,
+        @RequestParam(required = false) pullbackFilterEnabled: Boolean?,
+        @RequestParam(required = false) pullbackEmaPeriod: Int?,
+        @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
+        @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -729,11 +758,21 @@ class ApiController(
                 signalMargin = mlDirectionSignalMargin,
                 blockOnUnknown = mlDirectionBlockOnUnknown,
             )
+        val entryOverrides =
+            EntryFilterOverrides(
+                sessionFilterEnabled = sessionFilterEnabled,
+                sessionFilterStartMinutes = sessionFilterStartMinutes,
+                sessionFilterEndMinutes = sessionFilterEndMinutes,
+                pullbackFilterEnabled = pullbackFilterEnabled,
+                pullbackEmaPeriod = pullbackEmaPeriod,
+                pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
+                pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+            )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
-                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides)
-            } else if (mlOverrides.anyProvided) {
-                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides)
+                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
+            } else if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
+                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
             } else {
                 null
             }
@@ -802,6 +841,13 @@ class ApiController(
         @RequestParam(required = false) mlDirectionL2: Double?,
         @RequestParam(required = false) mlDirectionSignalMargin: Double?,
         @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) sessionFilterEnabled: Boolean?,
+        @RequestParam(required = false) sessionFilterStartMinutes: Int?,
+        @RequestParam(required = false) sessionFilterEndMinutes: Int?,
+        @RequestParam(required = false) pullbackFilterEnabled: Boolean?,
+        @RequestParam(required = false) pullbackEmaPeriod: Int?,
+        @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
+        @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -845,6 +891,16 @@ class ApiController(
                 signalMargin = mlDirectionSignalMargin,
                 blockOnUnknown = mlDirectionBlockOnUnknown,
             )
+        val entryOverrides =
+            EntryFilterOverrides(
+                sessionFilterEnabled = sessionFilterEnabled,
+                sessionFilterStartMinutes = sessionFilterStartMinutes,
+                sessionFilterEndMinutes = sessionFilterEndMinutes,
+                pullbackFilterEnabled = pullbackFilterEnabled,
+                pullbackEmaPeriod = pullbackEmaPeriod,
+                pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
+                pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+            )
         val report =
             monteCarloAnalyzer.analyze(
                 ticker,
@@ -856,10 +912,11 @@ class ApiController(
                 avgBlockLength = avgBlockLength ?: backtestConfig.mcAvgBlockLength,
                 blockLength = blockLength ?: backtestConfig.mcBlockLength,
                 signalGeneratorOverride =
-                    if (mlOverrides.anyProvided) {
+                    if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
                         buildSignalGenerator(
                             frozenParams?.confidenceThreshold ?: backtestConfig.adaptiveConfidenceThreshold,
                             mlOverrides,
+                            entryOverrides,
                         )
                     } else {
                         null
@@ -927,6 +984,13 @@ class ApiController(
         @RequestParam(required = false) mlDirectionL2: Double?,
         @RequestParam(required = false) mlDirectionSignalMargin: Double?,
         @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) sessionFilterEnabled: Boolean?,
+        @RequestParam(required = false) sessionFilterStartMinutes: Int?,
+        @RequestParam(required = false) sessionFilterEndMinutes: Int?,
+        @RequestParam(required = false) pullbackFilterEnabled: Boolean?,
+        @RequestParam(required = false) pullbackEmaPeriod: Int?,
+        @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
+        @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -952,11 +1016,21 @@ class ApiController(
                 signalMargin = mlDirectionSignalMargin,
                 blockOnUnknown = mlDirectionBlockOnUnknown,
             )
+        val entryOverrides =
+            EntryFilterOverrides(
+                sessionFilterEnabled = sessionFilterEnabled,
+                sessionFilterStartMinutes = sessionFilterStartMinutes,
+                sessionFilterEndMinutes = sessionFilterEndMinutes,
+                pullbackFilterEnabled = pullbackFilterEnabled,
+                pullbackEmaPeriod = pullbackEmaPeriod,
+                pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
+                pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+            )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
-                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides)
-            } else if (mlOverrides.anyProvided) {
-                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides)
+                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
+            } else if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
+                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
             } else {
                 null
             }
@@ -1026,6 +1100,13 @@ class ApiController(
         @RequestParam(required = false) mlDirectionL2: Double?,
         @RequestParam(required = false) mlDirectionSignalMargin: Double?,
         @RequestParam(required = false) mlDirectionBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) sessionFilterEnabled: Boolean?,
+        @RequestParam(required = false) sessionFilterStartMinutes: Int?,
+        @RequestParam(required = false) sessionFilterEndMinutes: Int?,
+        @RequestParam(required = false) pullbackFilterEnabled: Boolean?,
+        @RequestParam(required = false) pullbackEmaPeriod: Int?,
+        @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
+        @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1057,6 +1138,16 @@ class ApiController(
                         l2 = mlDirectionL2,
                         signalMargin = mlDirectionSignalMargin,
                         blockOnUnknown = mlDirectionBlockOnUnknown,
+                    ),
+                entryOverrides =
+                    EntryFilterOverrides(
+                        sessionFilterEnabled = sessionFilterEnabled,
+                        sessionFilterStartMinutes = sessionFilterStartMinutes,
+                        sessionFilterEndMinutes = sessionFilterEndMinutes,
+                        pullbackFilterEnabled = pullbackFilterEnabled,
+                        pullbackEmaPeriod = pullbackEmaPeriod,
+                        pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
+                        pullbackBlockOnUnknown = pullbackBlockOnUnknown,
                     ),
             )
 

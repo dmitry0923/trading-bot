@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
@@ -381,6 +382,56 @@ class LiveStrategyBacktestSignalGeneratorTest {
         val blockedNonHold = signalsBlockUnknown.count { it != StrategyAction.HOLD }
         assertTrue(baselineNonHold > 0, "baseline должен давать входы на сильном тренде")
         assertTrue(blockedNonHold < baselineNonHold, "блок на неизвестном должен сократить число входов")
+    }
+
+    /**
+     * Session-фильтр входа (research, pt.2): окно [11:00, 17:00] вырезает входы
+     * вне торговых фаз (утренний первый час, вечерний финал) при сильном тренде.
+     */
+    @Test
+    fun `session filter gates entries outside trading window`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genSession =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            sessionFilterEnabled = true
+                            sessionFilterStartMinutes = 11 * 60 // 11:00
+                            sessionFilterEndMinutes = 17 * 60 // 17:00
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 90, start = 100.0, step = 2.0)
+        val baselineNonHold = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val sessionNonHold = collectSignalsWith(genSession, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baselineNonHold > 0, "baseline должен давать входы на сильном тренде")
+        assertTrue(sessionNonHold < baselineNonHold, "session-фильтр должен сократить число входов")
+    }
+
+    /**
+     * Pullback-фильтр (research, pt.2): жёсткая полоса отката к EMA (0.2%) режет
+     * входы на сильном тренде — цена убегает от EMA дальше полосы.
+     */
+    @Test
+    fun `pullback filter gates far deviation from ema`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genPullback =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            pullbackFilterEnabled = true
+                            pullbackEmaPeriod = 10
+                            pullbackMaxDeviationPercent = 0.2
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 90, start = 100.0, step = 2.0)
+        val baselineNonHold = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val pullbackNonHold = collectSignalsWith(genPullback, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baselineNonHold > 0, "baseline должен давать входы на сильном тренде")
+        assertTrue(pullbackNonHold < baselineNonHold, "pullback-фильтр должен сократить число входов")
     }
 
     private companion object {

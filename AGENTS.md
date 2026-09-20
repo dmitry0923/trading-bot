@@ -380,6 +380,38 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
   слишком мало; детерминированные стратегии CNYRUBF MINUTE_10 остаются единственным значимым
   источником (PF 2.15, P=0.0425).
 
+### WFA-калибровка входных фильтров (session + pullback, 2026-09-20)
+
+Прогон на live-стеке (postgres+redis, `java -jar`, `--spring.mvc.async.request-timeout=600000`).
+Инструмент — query-оверрайды входных фильтров на API через `buildSignalGenerator` в ApiController
+(паттерн funding-veto/ML): `sessionFilterEnabled/StartMinutes/EndMinutes`,
+`pullbackFilterEnabled/EmaPeriod/MaxDeviationPercent/BlockOnUnknown`.
+Реализация — `EntryFilters`/`EntryFilterOverrides` в `LiveStrategyBacktestSignalGenerator`
+(после confidence gate, ДО ML-фильтра; блокировка = HOLD; исключение → не блокировать).
+Проброс `EntryFilters.from(backtestConfig)` через `BacktestSignalGeneratorConfig`/`MonteCarloAnalyzer`/
+`FinalHoldoutValidator`/`PanelBacktestService` (bt.*). Скрипт `research_calibrate_entry_filters.ps1`
+(IS-сетка 12 конфигов + WFA-сетка 5 кандидатов, флаги `-SkipWfa`/`-SkipIs`).
+WFA: CNYRUBF, 365д, MINUTE_10, folds=6, conf 0.60. IS-скрининг: session-окна режут входы и проигрывают
+baseline (кроме «день 14:00–18:00»: PF 1.24, 12 сделок); pullback dev=0.3% давал лучший IS (PF 1.42,
+Sharpe 0.80, 25 сделок).
+
+| Конфиг | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency |
+|--------|---------|--------|------------|-----------|-------------|
+| **baseline (фильтры off)** | **+0.96%** | 1.63 | **+1.00** | 26 | **0.667** |
+| pullback ema20 dev=0.3% | +0.85% | **1.78** | +0.98 | 18 | 0.500 |
+| pullback ema20 dev=0.5% | +0.71% | 1.47 | +0.77 | 25 | 0.667 |
+| session 14:00–18:00 | −0.28% | 0.55 | −0.73 | 11 | 0.167 |
+| session 14–18 + pb 0.5% | −0.28% | 0.55 | −0.73 | 11 | 0.167 |
+
+- **Вывод: входные (session/pullback) фильтры edge НЕ добавляют.** Session-фильтр однозначно в минус
+  (OOS −0.28% vs baseline +0.96%, PF 0.55, consistency 0.167). Pullback 0.3% даёт чуть выше PF (1.78)
+  ценой выборки (18 vs 26 сделок), но OOS-доходность ниже baseline и `robust=false` — так же, как у
+  ML-фильтра, IS-успех не выживает в OOS (флатификация на 18–26 сделках).
+- **Решение: фильтры НЕ включаются** — `bt.session-filter-enabled` и `bt.pullback-filter-enabled`
+  остаются off (default), `bt.session-filter-*`/`bt.pullback-filter-*` — research (калибровка через
+  query-оверрайды без перезапуска). Детерминированные стратегии CNYRUBF MINUTE_10 остаются
+  единственным значимым источником (PF 2.15, P=0.0425).
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -404,6 +436,7 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
 | 2026-09-19 | Funding-veto калибровка WFA (`funding-veto-calibration`) | изолированный funding-veto входной фильтр в `BacktestEngine` (ML/MTF-паттерн, НЕ через неактивный в проде `BacktestRiskSimulator`); query-параметры `fundingVeto*` на `/backtest` `/validate` `/robustness` `/deployment-gate` (override bt.*, калибровка без перезапусков, проброс через `WfaConfig`→`BacktestValidator`/`FinalHoldoutValidator`→`MonteCarloAnalyzer`); метрика `bt_funding_veto_blocked_total`; **WFA 365д folds=6 conf=0.60: оптимум long 9 ₽ / short 2 ₽ (PF 1.58, Sharpe 0.93 vs baseline PF 0.88/−0.27); вердикт deployment-gate
   RESEARCH_ONLY (OOS 23 сделки < 100, holdout 5, edge нет)**; live-пороги НЕ менялись | test+int+ktlint |
 | 2026-09-20 | ML-фильтр направления калибровка (`ml-direction-calibration`) | query-оверрайды `mlDirection*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` через `buildSignalGenerator` (паттерн funding-veto; `MlDirectionOverrides` + `OnlineMlDirectionStrategy.from(config, overrides)`, null → bt.*); метрика WFA 365д folds=6 conf=0.60 на 6 конфигах: **честный baseline (ML off) лучший OOS (PF 1.63, Sharpe +1.00, +0.96%), дефолтный ML ухудшает (PF 0.96, −0.07%), blockUnknown PF 2.29 но 11 сделок** → ML-фильтр edge не даёт, `bt.ml-direction-enabled` остаётся off | test+int+ktlint |
+| 2026-09-20 | Входные фильтры (session+pullback) калибровка (`entry-filters-calibration`) | query-оверрайды `sessionFilter*`/`pullbackFilter*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` (паттерн funding-veto/ML; `EntryFilters.from(config, overrides)` в `LiveStrategyBacktestSignalGenerator` после confidence gate, до ML-фильтра; HOLD-блокировка, исключение → не блокировать; `bt.session-filter-*`/`bt.pullback-filter-*` + env `BT_SESSION_FILTER_*`/`BT_PULLBACK_FILTER_*`; тесты `EntryFiltersTest` + 2 теста генератора); IS-сетка 12 конфигов + **WFA 365д folds=6 conf=0.60: baseline лучший OOS (PF 1.63, +0.96%), pb 0.3% PF 1.78 но 18 сделок, session 14–18 PF 0.55/−0.28%, комбо=session** → фильтры edge НЕ дают, `bt.session-filter-enabled`/`bt.pullback-filter-enabled` остаются off | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -413,8 +446,10 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
 - WFA-прогон LLM с Kimi K3 (`moonshotai/kimi-k3`) отложен: исчерпан месячный лимит RouterAI
   (429, 2054,78 ₽ / 2000 ₽); модель подтверждена в `/api/v1/models`.
 - ML-фильтр направления: калибровка WFA (2026-09-20) показала отсутствие OOS-edge — решение «не
-  включать» (`bt.ml-direction-enabled` остаётся off), см. research-раздел выше. Дальше — pt.2
-  (session/pullback фильтры) по плану.
+  включать» (`bt.ml-direction-enabled` остаётся off), см. research-раздел выше.
+- Входные фильтры session/pullback: калибровка WFA (2026-09-20) показала отсутствие OOS-edge —
+  решение «не включать» (`bt.session-filter-enabled`/`bt.pullback-filter-enabled` остаются off), см.
+  research-раздел выше.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

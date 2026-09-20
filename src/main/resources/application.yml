@@ -416,6 +416,17 @@ bt:
   # ml-direction-block-on-unknown: ML HOLD (warmup/нет уверенности) → блок входа
   # (fail-closed, true) или пропуск (false, дефолт).
   ml-direction-block-on-unknown: ${BT_ML_DIRECTION_BLOCK_ON_UNKNOWN:false}
+  # Research-фильтры входа (docs/17 этап 4c, pt.2): session-фильтр (вход только в
+  # определённые торговые фазы — исключаем первый час после открытия и финал) и
+  # pullback-фильтр к EMA (вход только в полосе отката от EMA, не гнаться за ценой).
+  # По умолчанию off; на live-входы не влияют.
+  session-filter-enabled: ${BT_SESSION_FILTER_ENABLED:false}
+  session-filter-start-minutes: ${BT_SESSION_FILTER_START_MINUTES:600}
+  session-filter-end-minutes: ${BT_SESSION_FILTER_END_MINUTES:1080}
+  pullback-filter-enabled: ${BT_PULLBACK_FILTER_ENABLED:false}
+  pullback-ema-period: ${BT_PULLBACK_EMA_PERIOD:20}
+  pullback-max-deviation-percent: ${BT_PULLBACK_MAX_DEVIATION_PERCENT:1.0}
+  pullback-block-on-unknown: ${BT_PULLBACK_BLOCK_ON_UNKNOWN:false}
   # Monte Carlo + стресс-сценарии бэктеста (roadmap 13.7.8): число bootstrap-симуляций
   # и фиксированный seed для воспроизводимых прогонов /api/v1/backtest/{ticker}/robustness.
   # Live risk-gate parity в бэктесте (BacktestRiskSimulator): воспроизводит полную

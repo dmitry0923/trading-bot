@@ -1,9 +1,9 @@
-# Research: WFA-валидация акций (диверсификация портфеля, этап 1).
+# Research: WFA-валидация тикеров/таймфреймов (диверсификация портфеля).
 #
-# Цель: проверить OOS-edge у акций с полной историей (530д MINUTE_10):
-# GAZP/NVTK/PLZL/SBER (stockGrid SL%/TP% в walk-forward, leverage x5, conf 0.60).
-# CNYRUBF-фьючерс уже отклонён на 730д (OOS -80%), акции — кандидаты на
-# диверсификацию капитала.
+# Цель: проверить OOS-edge у кандидатов на диверсификацию капитала.
+#  - Акции GAZP/NVTK/PLZL/SBER (stockGrid SL%/TP%, leverage x5)
+#  - CNYRUBF на старших таймфреймах (HOUR_1/DAY_1 ресемплинг, futuresGrid SL/TP в пунктах)
+# CNYRUBF MINUTE_10 уже отклонён на 730д (OOS -80%), 730д/365д edge для фьючерса НЕ найден.
 #
 # Прогон на live-стеке (postgres+redis, java -jar --spring.mvc.async.request-timeout=3600000).
 param(
@@ -12,7 +12,8 @@ param(
     [int]$Folds = 6,
     [double]$Conf = 0.60,
     [double]$Leverage = 5.0,
-    [string]$TickerCsv = "GAZP,NVTK,PLZL,SBER"
+    [string]$TickerCsv = "GAZP,NVTK,PLZL,SBER",
+    [string]$Timeframe = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +34,12 @@ $headers = @{ Authorization = "Bearer $($login.accessToken)" }
 $rows = @()
 foreach ($t in $Tickers) {
     $url = "$BaseUrl/api/v1/backtest/$t/validate`?days=$Days&folds=$Folds&adaptiveConfidenceThreshold=$Conf&leverage=$Leverage&loadHistory=false"
+    if ($Timeframe) { $url += "&timeframe=$Timeframe" }
+
+    # Для фьючерсного кандидата (CNYRUBF) leverage в query игнорируется:
+    # сайзинг идёт riskPerTradePercent/futuresMaxContractsPerPosition (см. BacktestConfig/BT_*).
+
+    # Логируем (полезно при долгом прогоне >60 мин).
     Write-Host ("WFA {0}: {1}" -f $t, $url)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {

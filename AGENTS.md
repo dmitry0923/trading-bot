@@ -411,6 +411,30 @@ WFA: 365д, MINUTE_10, folds=6, leverage x5, stockGrid (SL/TP % в In-sample), c
   дополнительная история/Иной таймфрейм может пересмотреть. CNYRUBF MINUTE_10 остаётся единственным
   значимым источником (PF 2.15, P=0.0425).
 
+### Таймфрейм-диверсификация CNYRUBF (HOUR_1/DAY_1 ресемплинг, WFA 365д folds=6, 2026-09-21)
+
+Продолжение диверсификации (после акций): проверка старших таймфреймов CNYRUBF через ресемплинг
+`CandleResampler` (MINUTE_10 → HOUR_1/DAY_1, поддерживается `/validate?timeframe=`). Прогон на
+live-стеке, скрипт `research_wfa_diversification.ps1` (добавлен параметр `-Timeframe`), conf 0.60,
+futuresGrid SL/TP (пункты), цикл тот же `LiveStrategyBacktestSignalGenerator`.
+
+| Timeframe | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency | P(noEdge) | robust |
+|-----------|---------|--------|------------|-----------|-------------|-----------|--------|
+| MINUTE_10 (CV, 2026-09-09/20) | −0.23..+0.96% | 0.88..1.63 | −0.27..+1.00 | 26..31 | 0.5..0.667 | 0.21..0.99 | false |
+| **HOUR_1** | **+0.69%** | **1.57** | +0.68 | 18 | **0.667** | 0.24 | false |
+| DAY_1 | −0.14% | 0.0 | 0.0 | **1** | 0.0 | 1.00 | false |
+
+- **Вывод: ресемплинг в старший таймфрейм edge НЕ добавляет.** HOUR_1 — положительный (PF 1.57,
+  consistency 0.667 наравне с лучшими MINUTE_10-прогонами), но 18 OOS-сделок << 100, edge не значим
+  (P=0.24), `robust=false` — тот же тонковатый профиль, что у минимальной выборки MINUTE_10.
+  DAY_1 практически не торгует (1 сделка) — сигнал на суточных свечах с текущим конфигом не
+  генерируется, вывод неинформативен.
+- Диверсификация (акции 2026-09-21 + таймфреймы 2026-09-21) устойчивого edge не дала нигде;
+  единственный значимый источник остаётся CNYRUBF MINUTE_10 детерминированный (PF 2.15, P=0.0425).
+- **Решение: старшие таймфреймы в research-цикл НЕ вводятся** (`bt.timeframe` не меняется,
+  default MINUTE_10). HOUR_1 можно пересмотреть при большем горизонте/ином профиле сделок — вне
+  текущего скоупа.
+
 ### 730д WFA детерминированной стратегии CNYRUBF (2026-09-20, калибровочный риск-профиль)
 
 Прогон на live-стеке (postgres+redis, `java -jar` с `--spring.mvc.async.request-timeout=3600000`,
@@ -499,6 +523,7 @@ Sharpe 0.80, 25 сделок).
 | 2026-09-20 | Входные фильтры (session+pullback) калибровка (`entry-filters-calibration`) | query-оверрайды `sessionFilter*`/`pullbackFilter*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` (паттерн funding-veto/ML; `EntryFilters.from(config, overrides)` в `LiveStrategyBacktestSignalGenerator` после confidence gate, до ML-фильтра; HOLD-блокировка, исключение → не блокировать; `bt.session-filter-*`/`bt.pullback-filter-*` + env `BT_SESSION_FILTER_*`/`BT_PULLBACK_FILTER_*`; тесты `EntryFiltersTest` + 2 теста генератора); IS-сетка 12 конфигов + **WFA 365д folds=6 conf=0.60: baseline лучший OOS (PF 1.63, +0.96%), pb 0.3% PF 1.78 но 18 сделок, session 14–18 PF 0.55/−0.28%, комбо=session** → фильтры edge НЕ дают, `bt.session-filter-enabled`/`bt.pullback-filter-enabled` остаются off | test+int+ktlint |
 | 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
 | 2026-09-21 | Диверсификация по акциям (`diversification-stocks`) | **WFA 365д folds=6 leverage x5 conf=0.60 stockGrid на GAZP/NVTK/PLZL/SBER (56k свечей с 2024-09-19): у 3 из 4 OOS убыточен (GAZP −20.2%/PF 0.59, NVTK −14.9%/0.78, SBER −8.3%/0.75), PLZL +19.0%/PF 1.26/Sharpe 0.92/70 сделок но P(noEdge)=0.21, robust=false** → диверсификация НЕ даёт устойчивый портфельный edge, PLZL в live не включается; скрипт `research_wfa_diversification.ps1` (TickerCsv, re-auth в catch) | test+int+ktlint |
+| 2026-09-21 | Таймфрейм-диверсификация CNYRUBF (`timeframe-resample`) | **WFA 365д folds=6 conf=0.60 futuresGrid через `CandleResampler` (MINUTE_10 → HOUR_1/DAY_1, `/validate?timeframe=`): HOUR_1 +0.69%/PF 1.57/Sharpe 0.68/18 сделок/P(noEdge)=0.24/consistency 0.667 но robust=false; DAY_1 −0.14%/1 сделка (неинформативно)** → старшие таймфреймы edge НЕ дают, `bt.timeframe` остаётся MINUTE_10; скрипт `research_wfa_diversification.ps1 -Timeframe` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -517,8 +542,8 @@ Sharpe 0.80, 25 сделок).
   live-сайзинге (maxC 1/Kelly) потолок ~1%+/год. Устойчивый edge уровня 100%/год на текущей
   стратегии не найден ни одним из калиброванных фильтров (ML/funding/session/pullback) и LLM.
   Диверсификация по акциям (2026-09-21) тоже edge не дала (3 из 4 OOS убыточны; PLZL +19% но
-  P=0.21). Кандидаты вне скоупа: другие таймфреймы (HOUR_1/DAY_1 ресемплинг), иное время удержания;
-  решение за пользователем.
+  P=0.21); таймфреймы (2026-09-21) — HOUR_1 +0.69%/PF 1.57 но 18 сделок/P=0.24, DAY_1 не торгует.
+  Кандидаты вне скоупа: иное время удержания, другие тикеры/таймфреймы; решение за пользователем.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

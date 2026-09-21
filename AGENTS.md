@@ -466,6 +466,9 @@ close), когда SL/TP (широкие 300/600) не сработали за �
 - **Риск-профиль НЕ решает проблему выборки**: при maxC 1→100, risk→30% число OOS-сделок НЕ
   растёт (26↔25) — входы все и так проходили маржинальный бюджет; увеличивается только
   абсолютный P&L (масштаб сайтеза). Частоту входов задаёт confidence gate, не риск.
+- **Доводка порогов — плато (2026-09-21)**: сетка long 7–10 × short 0–1.5 даёт идентичный
+  результат (PF 2.38–2.41, Sharpe 1.46–1.48, P=0.058, 23–24 сделки) — устойчивый оптимум,
+  не острый пик; P=0.05 не пробивается, CI95 сделки по-прежнему включает ноль.
 - **Снижение confidence до 0.50 разрушает edge (2026-09-21)**: выборка растёт 26→208 сделок,
   но OOS убыточен и в baseline (−124.8%, PF 0.74, P=0.954), и в комбо (−65.4%, PF 0.83, P=0.864).
   «Чем чаще торгуешь — тем хуже» (тот же паттерн, что у LLM): сигнал с conf 0.50 не
@@ -564,7 +567,12 @@ Sharpe 0.80, 25 сделок).
 | 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
 | 2026-09-21 | Диверсификация по акциям (`diversification-stocks`) | **WFA 365д folds=6 leverage x5 conf=0.60 stockGrid на GAZP/NVTK/PLZL/SBER (56k свечей с 2024-09-19): у 3 из 4 OOS убыточен (GAZP −20.2%/PF 0.59, NVTK −14.9%/0.78, SBER −8.3%/0.75), PLZL +19.0%/PF 1.26/Sharpe 0.92/70 сделок но P(noEdge)=0.21, robust=false** → диверсификация НЕ даёт устойчивый портфельный edge, PLZL в live не включается; скрипт `research_wfa_diversification.ps1` (TickerCsv, re-auth в catch) | test+int+ktlint |
 | 2026-09-21 | Таймфрейм-диверсификация CNYRUBF (`timeframe-resample`) | **WFA 365д folds=6 conf=0.60 futuresGrid через `CandleResampler` (MINUTE_10 → HOUR_1/DAY_1, `/validate?timeframe=`): HOUR_1 +0.69%/PF 1.57/Sharpe 0.68/18 сделок/P(noEdge)=0.24/consistency 0.667 но robust=false; DAY_1 −0.14%/1 сделка (неинформативно)** → старшие таймфреймы edge НЕ дают, `bt.timeframe` остаётся MINUTE_10; скрипт `research_wfa_diversification.ps1 -Timeframe` | test+int+ktlint |
-| 2026-09-21 | Max-hold (`max-hold-time-exit`) | **`bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) + query-оверрайд `maxHoldBars` на /backtest /validate /robustness (паттерн funding-veto; в `BacktestEngine` после SL/TP, приоритет ниже liq/SL/TP): WFA 365д folds=6 conf=0.60 сетка 30/46/92/184/368/736 баров — off (baseline) PF 1.63/P=0.15; 368 баров (8д) PF **2.15**/Sharpe **1.45**/P=**0.08**/consistency 0.667 но 27 сделок (robust=false); короткие 5ч–1д деградируют; комбо mh368+funding-veto 9/2 (risk30/maxC100) PF **2.27**/P=**0.065**; conf 0.50 → выборка 26→208 сделок но OOS убыточен (baseline −124.8%/P=0.954, комбо −65.4%/P=0.864) — разреженность сигнала это природа стратегии, не дефект выборки** → max-hold УЛУЧШАЕТ OOS (сильнейший research-кандидат после базы), но edge статистически НЕ значим; `bt.max-hold-bars` остаётся 0 (off); скрипт `research_wfa_maxhold.ps1` | test+int+ktlint |
+| 2026-09-21 | Max-hold (`max-hold-time-exit`) | **`bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) + query-оверрайд `maxHoldBars` на /backtest /validate /robustness (паттерн funding-veto; в `BacktestEngine` после SL/TP, приоритет ниже liq/SL/TP): WFA 365д folds=6 conf=0.60 сетка 30/46/92/184/368/736 баров — off (baseline) PF 1.63/P=0.15; 368 баров (8д) PF **2.15**/Sharpe **1.45**/P=**0.08**/consistency 0.667 но 27 сделок (robust=false); короткие 5ч–1д деградируют; комбо mh368+funding-veto 9/2 (risk30/maxC100) PF **2.27**/P=**0.065**; доводка порогов (2026-09-21,
+  long 7–10 × short 0–1.5) — **плато PF 2.38–2.41/P=0.058/24 сделки** (устойчивый оптимум, не острый
+  пик, но 0.05 не пробивается); conf 0.50 → выборка 26→208 сделок но OOS убыточен (baseline
+  −124.8%/P=0.954, комбо −65.4%/P=0.864) — разреженность сигнала это природа стратегии, не дефект
+  выборки** → max-hold УЛУЧШАЕТ OOS (сильнейший research-кандидат после базы), но edge статистически
+  НЕ значим; `bt.max-hold-bars` остаётся 0 (off); скрипт `research_wfa_maxhold.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).

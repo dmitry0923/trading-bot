@@ -387,6 +387,30 @@ input-фильтр в `BacktestEngine` (`bt.funding-veto-*`, query-override `fun
   слишком мало; детерминированные стратегии CNYRUBF MINUTE_10 остаются единственным значимым
   источником (PF 2.15, P=0.0425).
 
+### Диверсификация по акциям (WFA 365д folds=6, leverage x5, 2026-09-21)
+
+Цель 100%/год на CNYRUBF недостижима (730д OOS −80.4%) → проверка альтернативных тикеров с полной
+историей (GAZP/NVTK/PLZL/SBER, 56k свечей MINUTE_10 с 2024-09-19). Прогон на live-стеке
+(`java -jar`, async-таймаут 1 ч), скрипт `research_wfa_diversification.ps1` (TickerCsv).
+WFA: 365д, MINUTE_10, folds=6, leverage x5, stockGrid (SL/TP % в In-sample), conf 0.60.
+
+| Ticker | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency | P(noEdge) | robust |
+|--------|---------|--------|------------|-----------|-------------|-----------|--------|
+| GAZP | −20.2% | 0.59 | −1.57 | 47 | 0.167 | 0.99 | false |
+| NVTK | −14.9% | 0.78 | −0.66 | 53 | 0.167 | 0.80 | false |
+| SBER | −8.3% | 0.75 | −0.65 | 36 | 0.333 | 0.78 | false |
+| **PLZL** | **+19.0%** | 1.26 | **+0.92** | 70 | 0.500 | 0.21 | false |
+
+- **Вывод: у 3 из 4 акций OOS убыточен (GAZP −20%, NVTK −15%, SBER −8%); PLZL — единственный
+  положительный кандидат (OOS +19.0%, PF 1.26, Sharpe +0.92, 70 сделок), но edge не значим
+  (P=0.21), consistency 0.5, `robust=false`.** Диверсификация по этому набору НЕ даёт устойчивый
+  портфельный edge: ни один тикер не проходит статистический порог.
+- Сравнение с IS-калибровкой 2026-08 (GAZP +61.8%, PLZL +55.9%, NVTK +42.6%, SBER +6.3%): IS-успех
+  НЕ выживает в OOS у GAZP/NVTK (классический overfit на x5-сетке), частично держится лишь PLZL.
+- **Решение: диверсификация откладывается** — включать PLZL в live нельзя (P=0.21, thin sample);
+  дополнительная история/Иной таймфрейм может пересмотреть. CNYRUBF MINUTE_10 остаётся единственным
+  значимым источником (PF 2.15, P=0.0425).
+
 ### 730д WFA детерминированной стратегии CNYRUBF (2026-09-20, калибровочный риск-профиль)
 
 Прогон на live-стеке (postgres+redis, `java -jar` с `--spring.mvc.async.request-timeout=3600000`,
@@ -474,6 +498,7 @@ Sharpe 0.80, 25 сделок).
 | 2026-09-20 | ML-фильтр направления калибровка (`ml-direction-calibration`) | query-оверрайды `mlDirection*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` через `buildSignalGenerator` (паттерн funding-veto; `MlDirectionOverrides` + `OnlineMlDirectionStrategy.from(config, overrides)`, null → bt.*); метрика WFA 365д folds=6 conf=0.60 на 6 конфигах: **честный baseline (ML off) лучший OOS (PF 1.63, Sharpe +1.00, +0.96%), дефолтный ML ухудшает (PF 0.96, −0.07%), blockUnknown PF 2.29 но 11 сделок** → ML-фильтр edge не даёт, `bt.ml-direction-enabled` остаётся off | test+int+ktlint |
 | 2026-09-20 | Входные фильтры (session+pullback) калибровка (`entry-filters-calibration`) | query-оверрайды `sessionFilter*`/`pullbackFilter*` на `/backtest` `/validate` `/robustness` `/deployment-gate` `/holdout` (паттерн funding-veto/ML; `EntryFilters.from(config, overrides)` в `LiveStrategyBacktestSignalGenerator` после confidence gate, до ML-фильтра; HOLD-блокировка, исключение → не блокировать; `bt.session-filter-*`/`bt.pullback-filter-*` + env `BT_SESSION_FILTER_*`/`BT_PULLBACK_FILTER_*`; тесты `EntryFiltersTest` + 2 теста генератора); IS-сетка 12 конфигов + **WFA 365д folds=6 conf=0.60: baseline лучший OOS (PF 1.63, +0.96%), pb 0.3% PF 1.78 но 18 сделок, session 14–18 PF 0.55/−0.28%, комбо=session** → фильтры edge НЕ дают, `bt.session-filter-enabled`/`bt.pullback-filter-enabled` остаются off | test+int+ktlint |
 | 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
+| 2026-09-21 | Диверсификация по акциям (`diversification-stocks`) | **WFA 365д folds=6 leverage x5 conf=0.60 stockGrid на GAZP/NVTK/PLZL/SBER (56k свечей с 2024-09-19): у 3 из 4 OOS убыточен (GAZP −20.2%/PF 0.59, NVTK −14.9%/0.78, SBER −8.3%/0.75), PLZL +19.0%/PF 1.26/Sharpe 0.92/70 сделок но P(noEdge)=0.21, robust=false** → диверсификация НЕ даёт устойчивый портфельный edge, PLZL в live не включается; скрипт `research_wfa_diversification.ps1` (TickerCsv, re-auth в catch) | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -491,7 +516,9 @@ Sharpe 0.80, 25 сделок).
   на полной истории (2024 regime) OOS убыточна (−80.4% при калибровочном риске 30%/maxC 100); при
   live-сайзинге (maxC 1/Kelly) потолок ~1%+/год. Устойчивый edge уровня 100%/год на текущей
   стратегии не найден ни одним из калиброванных фильтров (ML/funding/session/pullback) и LLM.
-  Кандидаты вне скоупа: диверсификация по таймфреймам/тикерам; решение за пользователем.
+  Диверсификация по акциям (2026-09-21) тоже edge не дала (3 из 4 OOS убыточны; PLZL +19% но
+  P=0.21). Кандидаты вне скоупа: другие таймфреймы (HOUR_1/DAY_1 ресемплинг), иное время удержания;
+  решение за пользователем.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

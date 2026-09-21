@@ -548,6 +548,30 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `max hold forces exit after configured number of bars`() {
+        // Max-hold (2026-09-21): принудительный выход по числу баров удержания (MKT по close),
+        // когда SL/TP не сработали. На растущем ряде (вход BUY в начале, 2% стоп не пробивается)
+        // короткий maxHold закроет позицию раньше (по ближней цене), чем длинный / отключённый.
+        val prices = (0 until 200).map { 100.0 + it * 0.5 }
+        val candles = prices.mapIndexed { i, price -> candle(price, i) }
+        val buy = ConstantSignalGenerator(StrategyAction.BUY)
+        val early = runBlocking { engine.simulate("SBER", candles, signalGeneratorOverride = buy, maxHoldBars = 2) }
+        val late = runBlocking { engine.simulate("SBER", candles, signalGeneratorOverride = buy, maxHoldBars = 200) }
+
+        // Короткий maxHold вынуждает частые выходы и ре-входы (или меняет цену выхода),
+        // тогда как длинный позволяет позиции доживать до конца периода/стопа.
+        assertTrue(
+            early.totalTrades >= late.totalTrades,
+            "max-hold не должен уменьшать число сделок: early=${early.totalTrades} late=${late.totalTrades}",
+        )
+        // Ранний выход происходит по другой цене, чем поздний — max-hold реально влияет на план.
+        assertTrue(
+            early.tradeReturns.first() != late.tradeReturns.first(),
+            "max-hold должен менять цену выхода: early=${early.tradeReturns.first()} late=${late.tradeReturns.first()}",
+        )
+    }
+
+    @Test
     fun `stock fallback size is capped by risk per trade`() {
         // capitalSlice = 1.0 → slice дал бы 100 лотов; риск-кап (1% портфеля против
         // 2% стопа, как StockEntryProfile) ограничивает qty = (100000*0.01)/(100*0.02*10) = 50.

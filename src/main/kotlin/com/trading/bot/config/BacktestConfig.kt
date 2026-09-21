@@ -65,6 +65,10 @@ import java.math.BigDecimal
  *   (руб/контракт/клиринг): SHORT блокируется при funding < –порога.
  * @property fundingVetoBlockOnUnknown в бэктесте блокировать вход при отсутствии
  *   ставки funding на дату бара (fail-closed, паритет live `trading.funding-veto.block-on-unknown`).
+ * @property maxHoldBars принудительный выход по времени удержания в барах
+ *   (research, паттерн funding-veto; null/0 = выключено — позиция держится до SL/TP).
+ *   Задаётся в `bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) или query-оверрайдом
+ *   `maxHoldBars` на /backtest /validate /robustness /holdout /deployment-gate.
  * @property futuresLiquidationSimulation симулировать принудительную ликвидацию
  *   фьючерсной позиции на уровне ликвидационной цены (паритет live-monitorу
  *   [com.trading.bot.application.FuturesPositionMonitor]). При true позиция,
@@ -98,6 +102,9 @@ class BacktestConfig {
     var fundingVetoLongThresholdRub: Double = 2.0
     var fundingVetoShortThresholdRub: Double = 2.0
     var fundingVetoBlockOnUnknown: Boolean = true
+
+    /** Max-hold research (выход по времени удержания в барах): 0 = выключено (держать до SL/TP). */
+    var maxHoldBars: Int = 0
 
     /** Доля КОНЦА истории, резервируемая под финальный независимый holdout (0..1). */
     var holdoutFraction: Double = 0.20

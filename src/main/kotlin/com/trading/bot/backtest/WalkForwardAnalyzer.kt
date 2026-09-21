@@ -33,6 +33,8 @@ data class WfaConfig(
     val fundingVetoLongThresholdRub: Double? = null,
     val fundingVetoShortThresholdRub: Double? = null,
     val fundingVetoBlockOnUnknown: Boolean? = null,
+    /** research max-hold override (выход по барам, паттерн funding-veto): null → bt.*. */
+    val maxHoldBars: Int? = null,
 )
 
 /**

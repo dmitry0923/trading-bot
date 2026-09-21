@@ -403,6 +403,10 @@ bt:
   funding-veto-long-threshold-rub: ${BT_FUNDING_VETO_LONG_THRESHOLD_RUB:2.0}
   funding-veto-short-threshold-rub: ${BT_FUNDING_VETO_SHORT_THRESHOLD_RUB:2.0}
   funding-veto-block-on-unknown: ${BT_FUNDING_VETO_BLOCK_ON_UNKNOWN:true}
+  # Max-hold (research, docs/17 этап времени держания): принудительный выход позиции
+  # по числу баров удержания (MKT по close) вместо ожидания SL/TP месяцами.
+  # 0 (default) = выключено; query-оверрайд maxHoldBars на /backtest /validate.
+  max-hold-bars: ${BT_MAX_HOLD_BARS:0}
   # Онлайн-логистическая регрессия направления в бэктесте (research, docs/17 этап 4b):
   # P(up) обучается онлайн-SGD на барах истории (без lookahead), BUY/SELL по
   # калиброванной вероятности. По умолчанию false; на live-входы не влияет.

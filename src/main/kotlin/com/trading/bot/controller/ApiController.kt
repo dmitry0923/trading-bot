@@ -465,6 +465,7 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -510,6 +511,7 @@ class ApiController(
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                maxHoldBars = maxHoldBars,
             )
         return mapOf(
             "ticker" to result.ticker,
@@ -729,6 +731,7 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -791,6 +794,7 @@ class ApiController(
                     fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                     fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                     fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                    maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars.takeIf { it > 0 },
                 ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
@@ -848,6 +852,7 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -925,6 +930,7 @@ class ApiController(
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars.takeIf { it > 0 },
             )
         return mapOf(
             "ticker" to ticker,

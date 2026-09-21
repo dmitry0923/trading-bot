@@ -435,6 +435,33 @@ futuresGrid SL/TP (пункты), цикл тот же `LiveStrategyBacktestSign
   default MINUTE_10). HOUR_1 можно пересмотреть при большем горизонте/ином профиле сделок — вне
   текущего скоупа.
 
+### Max-hold (выход по времени удержания, WFA 365д folds=6, 2026-09-21)
+
+Второй кандидат «иное время удержания»: принудительный выход по числу баров MINUTE_10 (MKT по
+close), когда SL/TP (широкие 300/600) не сработали за долгий горизонт. Реализовано `bt.max-hold-bars`
+(env `BT_MAX_HOLD_BARS`) + query-оверрайд `maxHoldBars` на `/validate` `/backtest` `/robustness`
+(паттерн funding-veto; в `BacktestEngine` после SL/TP, приоритет ниже liq/SL/TP, выше новых сигналов).
+Прогон на live-стеке, скрипт `research_wfa_maxhold.ps1`, conf 0.60.
+
+| maxHold (бары) | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency | P(noEdge) | robust |
+|----------------|---------|--------|------------|-----------|-------------|-----------|--------|
+| off (baseline) | +0.96% | 1.63 | 1.00 | 26 | 0.667 | 0.15 | false |
+| 30 (5ч) | −0.05% | 0.93 | −0.19 | 36 | 0.667 | 0.58 | false |
+| 46 (1д) | +0.19% | 1.23 | +0.51 | 36 | 0.50 | 0.30 | false |
+| 92 (2д) | +0.24% | 1.21 | +0.45 | 34 | 0.667 | 0.33 | false |
+| 184 (4д) | +0.67% | 1.62 | +1.13 | 32 | 0.667 | 0.13 | false |
+| **368 (8д)** | **+1.17%** | **2.15** | **+1.45** | 27 | **0.667** | **0.08** | false |
+| 736 (16д) | +1.12% | 1.80 | +1.29 | 28 | 0.667 | 0.09 | false |
+
+- **Вывод: max-hold УЛУЧШАЕТ OOS относительно baseline** (368 баров/8д: PF 2.15 vs 1.63, Sharpe
+  +1.45 vs +1.00, P=0.08), короткий maxHold (5ч–1д) деградирует — согласовано с трендовым
+  характером стратегии (широкие стопы обязательны). Но 27 OOS-сделок << 100 → `robust=false`,
+  edge статистически НЕ значим (P=0.08 > 0.05). Это сильнейший кандидат из всех research-путей
+  после детерминированной базы, но НЕ проход.
+- **Решение: `bt.max-hold-bars` остаётся off (0)** — усиление само по себе не создаёт устойчивый
+  edge; max-hold=368 можно комбинировать с будущими фильтрами/профилями (вне скоупа). Цель
+  «100%/год» по-прежнему недостижима.
+
 ### 730д WFA детерминированной стратегии CNYRUBF (2026-09-20, калибровочный риск-профиль)
 
 Прогон на live-стеке (postgres+redis, `java -jar` с `--spring.mvc.async.request-timeout=3600000`,
@@ -524,6 +551,7 @@ Sharpe 0.80, 25 сделок).
 | 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
 | 2026-09-21 | Диверсификация по акциям (`diversification-stocks`) | **WFA 365д folds=6 leverage x5 conf=0.60 stockGrid на GAZP/NVTK/PLZL/SBER (56k свечей с 2024-09-19): у 3 из 4 OOS убыточен (GAZP −20.2%/PF 0.59, NVTK −14.9%/0.78, SBER −8.3%/0.75), PLZL +19.0%/PF 1.26/Sharpe 0.92/70 сделок но P(noEdge)=0.21, robust=false** → диверсификация НЕ даёт устойчивый портфельный edge, PLZL в live не включается; скрипт `research_wfa_diversification.ps1` (TickerCsv, re-auth в catch) | test+int+ktlint |
 | 2026-09-21 | Таймфрейм-диверсификация CNYRUBF (`timeframe-resample`) | **WFA 365д folds=6 conf=0.60 futuresGrid через `CandleResampler` (MINUTE_10 → HOUR_1/DAY_1, `/validate?timeframe=`): HOUR_1 +0.69%/PF 1.57/Sharpe 0.68/18 сделок/P(noEdge)=0.24/consistency 0.667 но robust=false; DAY_1 −0.14%/1 сделка (неинформативно)** → старшие таймфреймы edge НЕ дают, `bt.timeframe` остаётся MINUTE_10; скрипт `research_wfa_diversification.ps1 -Timeframe` | test+int+ktlint |
+| 2026-09-21 | Max-hold (`max-hold-time-exit`) | **`bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) + query-оверрайд `maxHoldBars` на /backtest /validate /robustness (паттерн funding-veto; в `BacktestEngine` после SL/TP, приоритет ниже liq/SL/TP): WFA 365д folds=6 conf=0.60 сетка 30/46/92/184/368/736 баров — off (baseline) PF 1.63/P=0.15; 368 баров (8д) PF **2.15**/Sharpe **1.45**/P=**0.08**/consistency 0.667 но 27 сделок (robust=false); короткие 5ч–1д деградируют** → max-hold УЛУЧШАЕТ OOS (сильнейший research-кандидат после базы), но edge статистически НЕ значим; `bt.max-hold-bars` остаётся 0 (off); скрипт `research_wfa_maxhold.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
@@ -542,8 +570,9 @@ Sharpe 0.80, 25 сделок).
   live-сайзинге (maxC 1/Kelly) потолок ~1%+/год. Устойчивый edge уровня 100%/год на текущей
   стратегии не найден ни одним из калиброванных фильтров (ML/funding/session/pullback) и LLM.
   Диверсификация по акциям (2026-09-21) тоже edge не дала (3 из 4 OOS убыточны; PLZL +19% но
-  P=0.21); таймфреймы (2026-09-21) — HOUR_1 +0.69%/PF 1.57 но 18 сделок/P=0.24, DAY_1 не торгует.
-  Кандидаты вне скоупа: иное время удержания, другие тикеры/таймфреймы; решение за пользователем.
+  P=0.21); таймфреймы (2026-09-21) — HOUR_1 +0.69%/PF 1.57 но 18 сделок/P=0.24, DAY_1 не торгует;
+  max-hold 368 баров/8д (2026-09-21) — PF 2.15/Sharpe 1.45/P=0.08, но 27 сделок (robust=false).
+  Кандидаты вне скоупа: иные тикеры/таймфреймы; решение за пользователем.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

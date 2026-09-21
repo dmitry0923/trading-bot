@@ -125,6 +125,7 @@ class BacktestValidator(
             fundingVetoLongThresholdRub = config.fundingVetoLongThresholdRub,
             fundingVetoShortThresholdRub = config.fundingVetoShortThresholdRub,
             fundingVetoBlockOnUnknown = config.fundingVetoBlockOnUnknown,
+            maxHoldBars = config.maxHoldBars,
         )
 
     /**
@@ -182,6 +183,7 @@ class BacktestValidator(
         fundingVetoLongThresholdRub: Double? = null,
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
+        maxHoldBars: Int? = null,
     ): ValidationResult {
         val sorted = candles.sortedBy { it.time }
         if (folds < 2 || sorted.size < minBarsForSignal * (folds + 1)) {
@@ -229,6 +231,7 @@ class BacktestValidator(
                             fundingVetoLongThresholdRub,
                             fundingVetoShortThresholdRub,
                             fundingVetoBlockOnUnknown,
+                            maxHoldBars,
                         )
                     } else {
                         gridFor(ticker).first()
@@ -248,6 +251,7 @@ class BacktestValidator(
                         fundingVetoLongThresholdRub,
                         fundingVetoShortThresholdRub,
                         fundingVetoBlockOnUnknown,
+                        maxHoldBars,
                     )
                 val outOfSample =
                     simulateWith(
@@ -264,6 +268,7 @@ class BacktestValidator(
                         fundingVetoLongThresholdRub,
                         fundingVetoShortThresholdRub,
                         fundingVetoBlockOnUnknown,
+                        maxHoldBars,
                     )
                 FoldValidation(
                     foldIndex = i,
@@ -299,6 +304,7 @@ class BacktestValidator(
         fundingVetoLongThresholdRub: Double? = null,
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
+        maxHoldBars: Int? = null,
     ): BacktestResult =
         backtestEngine.simulate(
             ticker,
@@ -320,6 +326,7 @@ class BacktestValidator(
             fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
             fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
             fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+            maxHoldBars = maxHoldBars,
         )
 
     /**
@@ -340,6 +347,7 @@ class BacktestValidator(
         fundingVetoLongThresholdRub: Double? = null,
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
+        maxHoldBars: Int? = null,
     ): GridParams {
         val candidates =
             gridFor(ticker).map { params ->
@@ -359,6 +367,7 @@ class BacktestValidator(
                         fundingVetoLongThresholdRub,
                         fundingVetoShortThresholdRub,
                         fundingVetoBlockOnUnknown,
+                        maxHoldBars,
                     ),
                 )
             }

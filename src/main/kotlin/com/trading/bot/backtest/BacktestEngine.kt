@@ -138,6 +138,7 @@ class BacktestEngine(
         fundingVetoLongThresholdRub: Double? = null,
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
+        maxHoldBars: Int? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -167,6 +168,7 @@ class BacktestEngine(
                 fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown,
+                maxHoldBars,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -248,6 +250,7 @@ class BacktestEngine(
         fundingVetoLongThresholdRub: Double? = null,
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
+        maxHoldBars: Int? = null,
     ): BacktestResult {
         val effectiveCapitalSlice = capitalSlice ?: backtestConfig.capitalSlice
         val effectiveSignalGenerator = signalGeneratorOverride ?: signalGenerator
@@ -388,6 +391,34 @@ class BacktestEngine(
 
                     null -> {}
                 }
+            }
+
+            // Max-hold (research, 2026-09-21): принудительный выход по времени
+            // удержания в барах. Позиция без SL/TP-срабатывания закрывается по цене
+            // закрытия текущей свечи (MKT), если она держится >= maxHoldBars баров.
+            // Паттерн funding-veto: null → bt.*, query-оверрайд на /backtest /validate.
+            val maxHoldPosition = position
+            if (maxHoldBars != null && maxHoldBars > 0 && maxHoldPosition != null &&
+                (i - maxHoldPosition.entryBars) >= maxHoldBars
+            ) {
+                cash =
+                    closePosition(
+                        ticker,
+                        maxHoldPosition,
+                        "MAX_HOLD",
+                        current.closePrice,
+                        cash,
+                        i,
+                        tradeReturns,
+                        tradeHoldBars,
+                        commissionAccumulator,
+                        commissionMultiplier,
+                        slippageMultiplier,
+                        current,
+                        fundingHistory = fundingHistory,
+                    )
+                recordRiskSimClose(ticker, maxHoldPosition, "MAX_HOLD", current.closePrice, i, sorted, cash)
+                position = null
             }
 
             val signal = effectiveSignalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)

@@ -447,8 +447,38 @@ futuresGrid SL/TP (пункты), цикл тот же `LiveStrategyBacktestSign
   (P=0.24), `robust=false` — тот же тонковатый профиль, что у минимальной выборки MINUTE_10.
   DAY_1 практически не торгует (1 сделка) — сигнал на суточных свечах с текущим конфигом не
   генерируется, вывод неинформативен.
-- Диверсификация (акции 2026-09-21 + таймфреймы 2026-09-21) устойчивого edge не дала нигде;
-  единственный значимый источник остаётся CNYRUBF MINUTE_10 детерминированный (PF 2.15, P=0.0425).
+- Диверсификация (акции 2026-09-21 + таймфреймы 2026-09-21 + перпетуалы 2026-09-22) устойчивого
+  edge не дала нигде; единственный значимый источник остаётся CNYRUBF MINUTE_10 детерминированный
+  (PF 2.15, P=0.0425).
+
+### Диверсификация по фьючерсным перпетуалам (WFA 730д, 2026-09-22)
+
+Продолжение диверсификации (после акций/таймфреймов): проверка бессрочных фьючерсов MOEX
+(перпетуалы, LASTDELDATE 2100, SECID == ticker — загрузка истории работает без склейки контрактов).
+Скрипт `research_wfa_perps.ps1` (WFA 730д×folds=8 conf=0.60, калибровочный риск-профиль
+riskPerTradePercent=30&futuresMaxContractsPerPosition=100, futuresGrid). История загружена напрямую
+с MOEX ISS (interval=10): USDRUBF 46 140 свечей, EURRUBF 43 319, GLDRUBF 50 293, IMOEXF 50 385;
+funding_history донакачан (SWAPRATE, 508 дат/тикер). Новые spec в `InstrumentsConfig`+`application.yml`
+(USDRUBF/EURRUBF/GLDRUBF/IMOEXF — research-вселенная, LIVE-guard оставляет вход только CNYRUBF).
+SLVRUBF исключён (полная история недоступна, контракт торгуется только с 2026-03).
+
+| Ticker | IS ret (maxC=1) | IS PF | IS trades | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency | P(noEdge) | robust |
+|--------|-----------------|-------|-----------|---------|--------|------------|------------|-------------|-----------|--------|
+| USDRUBF | +7.27% | 1.68 | 79 | **+1.6%** | **1.03** | +0.19 | 74 | **0.5** | **0.47** | false |
+| EURRUBF | +3.23% | 1.22 | 100 | −49.9% | 0.65 | −1.21 | 81 | 0.25 | 0.93 | false |
+| GLDRUBF | −0.71% | 0.32 | 127 | −162.1% | 0.05 | −1.09 | 120 | 0.0 | 1.00 | false |
+| IMOEXF | +1.94% | 1.29 | 94 | −628.7% | 0.12 | −1.32 | 94 | 0.0 | 1.00 | false |
+
+- **Вывод: фьючерсные перпетуалы edge НЕ дают.** USDRUBF — единственный положительный кандидат
+  (IS PF 1.68, OOS +1.6%/PF 1.03/consistency 0.5/74 сделки), но OOS P(noEdge)=0.47 (статистическая
+  нулёвка) и `robust=false` — тот же тонковатый профиль, что у PLZL/акций. EURRUBF/GLDRUBF/IMOEXF
+  OOS глубоко убыточны (PF 0.05–0.65) — конвейер на этих тикерах торгует в минус.
+- Характерно: все перпетуалы дают БОЛЬШЕ сделок, чем CNYRUBF (74–120 OOS против 21–26 у CNYRUBF),
+  но без edge — чаще входы = хуже PF (тот же паттерн, что у LLM/conf 0.50). IS-доходность не
+  выживает в OOS ни у одного тикера.
+- **Решение: перпетуалы в live НЕ включаются** (LIVE-guard allowlist остаётся только CNYRUBF);
+  research-вселенная и скрипт остаются в репозитории. CNYRUBF MINUTE_10 детерминированный остаётся
+  единственным значимым источником (PF 2.15, P=0.0425).
 - **Решение: старшие таймфреймы в research-цикл НЕ вводятся** (`bt.timeframe` не меняется,
   default MINUTE_10). HOUR_1 можно пересмотреть при большем горизонте/ином профиле сделок — вне
   текущего скоупа.
@@ -593,6 +623,7 @@ Sharpe 0.80, 25 сделок).
 | 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
 | 2026-09-21 | Диверсификация по акциям (`diversification-stocks`) | **WFA 365д folds=6 leverage x5 conf=0.60 stockGrid на GAZP/NVTK/PLZL/SBER (56k свечей с 2024-09-19): у 3 из 4 OOS убыточен (GAZP −20.2%/PF 0.59, NVTK −14.9%/0.78, SBER −8.3%/0.75), PLZL +19.0%/PF 1.26/Sharpe 0.92/70 сделок но P(noEdge)=0.21, robust=false** → диверсификация НЕ даёт устойчивый портфельный edge, PLZL в live не включается; скрипт `research_wfa_diversification.ps1` (TickerCsv, re-auth в catch) | test+int+ktlint |
 | 2026-09-21 | Таймфрейм-диверсификация CNYRUBF (`timeframe-resample`) | **WFA 365д folds=6 conf=0.60 futuresGrid через `CandleResampler` (MINUTE_10 → HOUR_1/DAY_1, `/validate?timeframe=`): HOUR_1 +0.69%/PF 1.57/Sharpe 0.68/18 сделок/P(noEdge)=0.24/consistency 0.667 но robust=false; DAY_1 −0.14%/1 сделка (неинформативно)** → старшие таймфреймы edge НЕ дают, `bt.timeframe` остаётся MINUTE_10; скрипт `research_wfa_diversification.ps1 -Timeframe` | test+int+ktlint |
+| 2026-09-22 | Диверсификация по фьючерсным перпетуалам (`perps-diversification`) | **WFA 730д×folds=8 conf=0.60 риск 30%/maxC 100 на USDRUBF/EURRUBF/GLDRUBF/IMOEXF (MOEX ISS interval=10: 46 140/43 319/50 293/50 385 свечей; funding_history 508 дат/тикер; новые spec в `InstrumentsConfig`/`application.yml`; SLVRUBF исключён — история с 2026-03): USDRUBF единственный положительный (IS PF 1.68/OOS +1.6%/PF 1.03/consistency 0.5/74 сделки но P(noEdge)=0.47, robust=false); EURRUBF/GLDRUBF/IMOEXF OOS убыточны (PF 0.65/0.05/0.12, P 0.93/1.0/1.0)** → перпетуалы edge НЕ дают, в live не включаются; скрипт `research_wfa_perps.ps1` | test+int+ktlint |
 | 2026-09-21 | Max-hold (`max-hold-time-exit`) | **`bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) + query-оверрайд `maxHoldBars` на /backtest /validate /robustness (паттерн funding-veto; в `BacktestEngine` после SL/TP, приоритет ниже liq/SL/TP): WFA 365д folds=6 conf=0.60 сетка 30/46/92/184/368/736 баров — off (baseline) PF 1.63/P=0.15; 368 баров (8д) PF **2.15**/Sharpe **1.45**/P=**0.08**/consistency 0.667 но 27 сделок (robust=false); короткие 5ч–1д деградируют; комбо mh368+funding-veto 9/2 (risk30/maxC100) PF **2.27**/P=**0.065**; доводка порогов (2026-09-21,
   long 7–10 × short 0–1.5) — **плато PF 2.38–2.41/P=0.058/24 сделки** (устойчивый оптимум, не острый
   пик, но 0.05 не пробивается); conf 0.50 → выборка 26→208 сделок но OOS убыточен (baseline
@@ -625,7 +656,9 @@ Sharpe 0.80, 25 сделок).
   P=0.21); таймфреймы (2026-09-21) — HOUR_1 +0.69%/PF 1.57 но 18 сделок/P=0.24, DAY_1 не торгует;
   max-hold 368 баров/8д (2026-09-21) — PF 2.15/Sharpe 1.45/P=0.08, но 27 сделок (robust=false);
   комбо mh368+funding-veto 9/2 (2026-09-22) — формальный deployment-gate REJECTED (OOS PF 0.92,
-  P(noEdge)=0.551, 21 сделка); сильнейший research-кандидат закрыт.
+  P(noEdge)=0.551, 21 сделка); перпетуалы (2026-09-22) — USDRUBF единственный положительный
+  (OOS +1.6%/PF 1.03, но P=0.47/robust=false), EURRUBF/GLDRUBF/IMOEXF OOS убыточны (PF 0.65/0.05/0.12);
+  сильнейший research-кандидат закрыт.
   Кандидаты вне скоупа: иные тикеры/таймфреймы; решение за пользователем.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)

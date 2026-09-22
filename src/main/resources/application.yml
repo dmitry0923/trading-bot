@@ -506,6 +506,58 @@ instruments:
       # подставляется как fallback: MOEX недоступен → клиринг FUNDING_UNKNOWN
       # (FundingSnapshotService). RUB/контракт/клиринг (18:45 МСК); сверяется по MOEX.
       fundingRubPerContractPerDay: "0.5"
+    # Бессрочные (вечные) фьючерсы MOEX — research-вселенная для WFA-скрининга 730д
+    # (диверсификация; SECID == ticker, загрузчик истории работает без склейки контрактов).
+    # Spec из MOEX ISS (2026-09-22): MINSTEP/STEPPRICE/LOTVOLUME/INITIALMARGIN.
+    # Издержки (broker/exchange/slippage) — provisional, по паттерну CNYRUBF (сверить до live).
+    - ticker: "USDRUBF"
+      type: "FUTURES"
+      lotSize: 1000
+      priceStep: "0.01"
+      priceStepCost: "10.0"
+      go: "12630" # INITIALMARGIN MOEX ISS (SIM/fallback)
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "USD"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "EURRUBF"
+      type: "FUTURES"
+      lotSize: 1000
+      priceStep: "0.01"
+      priceStepCost: "10.0"
+      go: "14474"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "EUR"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "GLDRUBF"
+      type: "FUTURES"
+      lotSize: 1
+      priceStep: "0.1"
+      priceStepCost: "0.1"
+      go: "1292"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "XAU"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "IMOEXF"
+      type: "FUTURES"
+      lotSize: 10
+      priceStep: "0.5"
+      priceStepCost: "5.0"
+      go: "2264"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "IMOEX"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
     - ticker: "SBER"
       type: "STOCK"
       lotSize: 10

@@ -94,8 +94,9 @@
   ставка = лонг платит). Источник — `FundingSnapshotService.latestForVeto` (LIVE: только свежий
   MOEX ≤ `moexTtlMs`; SIM/backtest — CONFIG). Uстаревший/нет снапшота + `funding-veto-block-on-unknown=true`
   → BLOCK (fail-closed).
-- Конфиг (`trading.*`, env `TRADING_FUNDING_VETO_*`): `enabled=false` (research, live-поведение не
-  меняется), пороги default 2.0. WFA-калибровка порогов возможна: исторический ряд SWAPRATE
+- Конфиг (`trading.*`, env `TRADING_FUNDING_VETO_*`): `enabled=false` (research; решение
+  пользователя 2026-09-22 — live остаётся off, research-пороги 9/2 НЕ переносятся),
+  пороги default 2.0. WFA-калибровка порогов возможна: исторический ряд SWAPRATE
   донакачан в `funding_history` (миграция 036, `MoexFundingHistoryLoader` + endpoint
   `GET /api/v1/backtest/{ticker}/funding-history?days=`, CNYRUBF 509 дат 2024-09-18..2026-09-17,
   конфиг `funding.moex-history-url`/`FUNDING_MOEX_HISTORY_URL`).
@@ -605,8 +606,8 @@ Sharpe 0.80, 25 сделок).
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
-- Funding-veto: research-пороги (long 9 ₽ / short 2 ₽) НЕ переносятся в live автоматически —
-  live-конфиг `trading.funding-veto-*` остаётся default off/2.0; решение о live-порогах — за пользователем.
+- Funding-veto: **решено (2026-09-22, пользователь): live остаётся off** — research-пороги
+  (long 9 ₽ / short 2 ₽) в LIVE НЕ переносятся; `trading.funding-veto-*` default off/2.0.
 - **Kimi K3 WFA (2026-09-21, 180д folds=6)**: выполнено — OOS −0.53%/PF 0.71/P(noEdge)=0.77/33 сделки,
   edge НЕТ (см. research-раздел); 365д×folds=6 не влезает в async-таймаут 3 ч (~3000 вызовов × 5 агентов);
   месячный лимит RouterAI восстановился; для research обязательно `LLM_BUDGET_ENABLED=false`

@@ -1,0 +1,62 @@
+{
+  "ticker": "CNYRUBF",
+  "timeframe": "MINUTE_10",
+  "days": 365,
+  "status": "REJECTED",
+  "liveAllowed": false,
+  "liveApprovalActive": false,
+  "researchMode": true,
+  "confirmedForProduction": false,
+  "frozenConfidenceThreshold": 0.6,
+  "checks": [
+    {
+      "key": "backtest",
+      "label": "Базовый backtest",
+      "passed": false,
+      "detail": "Sharpe=1,371 MDD=0,458 PF=1,626 trades=21"
+    },
+    {
+      "key": "walk_forward",
+      "label": "Walk-forward OOS",
+      "passed": false,
+      "detail": "consistency=0,333 oosTrades=21 oosSharpe=0,160 oosPF=0,924"
+    },
+    {
+      "key": "walk_forward_sample",
+      "label": "Достаточность OOS-выборки WFA",
+      "passed": false,
+      "detail": "need >= 100, got 21"
+    },
+    {
+      "key": "consistency",
+      "label": "Консистентность фолдов",
+      "passed": false,
+      "detail": "need >= 0,600, got 0,333"
+    },
+    {
+      "key": "edge_significance",
+      "label": "Стат. значимость edge (dev-WFA OOS)",
+      "passed": false,
+      "detail": "probabilityOfNoEdge=0,551 significant=false"
+    },
+    {
+      "key": "holdout",
+      "label": "Финальный holdout",
+      "passed": false,
+      "detail": "holdoutReturn=1,121 trades=5 passable=false"
+    },
+    {
+      "key": "holdout_sample",
+      "label": "Достаточность holdout-выборки",
+      "passed": false,
+      "detail": "need >= 30, got 5"
+    },
+    {
+      "key": "robustness",
+      "label": "Monte Carlo + stress",
+      "passed": false,
+      "detail": "mcRobust=false p5=-0,310 pLoss=0,147 stressFailed=5"
+    }
+  ],
+  "timestamp": "2026-09-22T08:33:36.348374"
+}

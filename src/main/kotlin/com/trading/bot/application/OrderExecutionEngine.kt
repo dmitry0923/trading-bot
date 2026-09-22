@@ -79,12 +79,18 @@ fun interface PnlCalculator {
          *        null при непустом списке клирингов — LIVE FUNDING_UNKNOWN (MOEX
          *        недоступен на часть клирингов): P&L посчитан без авторитетного
          *        funding, сделка помечается funding-uncertain ([Position.fundingUnknown]).
+         * @param isTradingDay предикат «день торговый (проводится клиринг)» — по
+         *        умолчанию будни; в LIVE передаётся [MoexHolidayCalendar.isTradingDay]
+         *        для учёта государственных праздников.
          */
         fun futures(
             pointValue: (String) -> BigDecimal,
             commissionRub: (String) -> BigDecimal? = { null },
             fundingPerClearing: (String, List<LocalDate>) -> BigDecimal? = { _, _ -> null },
             onFundingUnknown: (Position) -> Unit = {},
+            isTradingDay: (LocalDate) -> Boolean = { day ->
+                day.dayOfWeek != java.time.DayOfWeek.SATURDAY && day.dayOfWeek != java.time.DayOfWeek.SUNDAY
+            },
         ): PnlCalculator =
             PnlCalculator { pos, from, to, qty ->
                 val pv = pointValue(pos.ticker)
@@ -99,6 +105,7 @@ fun interface PnlCalculator {
                     FundingCosts.clearingDates(
                         pos.openedAt,
                         pos.closedAt ?: LocalDateTime.now(),
+                        isTradingDay,
                     )
                 val fundingTotal = fundingPerClearing(pos.ticker, clearings)
                 if (fundingTotal == null && clearings.isNotEmpty()) onFundingUnknown(pos)

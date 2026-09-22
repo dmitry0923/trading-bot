@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.application.FundingCosts
+import com.trading.bot.application.MoexHolidayCalendar
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
@@ -82,6 +83,7 @@ class BacktestEngine(
     private val futuresStopResolver: FuturesStopResolver = FuturesStopResolver(),
     private val riskSimulator: BacktestRiskSimulator? = null,
     private val fundingHistoryRepository: FundingHistoryRepository? = null,
+    private val moexHolidayCalendar: MoexHolidayCalendar? = null,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -1118,7 +1120,12 @@ class BacktestEngine(
             if (instrument != null && instrumentsConfig.isFutures(ticker) &&
                 pos.entryTime != null && candle != null
             ) {
-                val dates = FundingCosts.clearingDates(pos.entryTime, candle.time)
+                val dates =
+                    FundingCosts.clearingDates(
+                        pos.entryTime,
+                        candle.time,
+                        (moexHolidayCalendar ?: MoexHolidayCalendar())::isTradingDay,
+                    )
                 if (dates.isEmpty()) {
                     BigDecimal.ZERO
                 } else if (fundingHistory.isNotEmpty()) {

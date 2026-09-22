@@ -2,6 +2,7 @@ package com.trading.bot.application
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 class FundingCostsTest {
@@ -10,8 +11,6 @@ class FundingCostsTest {
         hour: Int,
         minute: Int = 0,
     ): LocalDateTime = LocalDateTime.of(2026, 9, day, hour, minute)
-
-    // 2026-09: 9/7 пн, 9/8 вт, 9/9 ср, 9/10 чт, 9/11 пт, 9/12 сб, 9/13 вс, 9/14 пн.
 
     @Test
     fun `intraday position before clearing pays nothing`() {
@@ -65,5 +64,27 @@ class FundingCostsTest {
     fun `invalid interval returns zero`() {
         assertEquals(0, FundingCosts.clearingsCrossed(dt(9, 12, 0), dt(8, 12, 0)))
         assertEquals(0, FundingCosts.clearingsCrossed(dt(8, 12, 0), dt(8, 12, 0)))
+    }
+
+    @Test
+    fun `public holidays have no clearing with calendar`() {
+        val calendar = MoexHolidayCalendar()
+        // вт 2026-11-03 10:00 → ср 2026-11-04 19:00: 11/4 — День народного единства
+        // (праздник). С календарём переживается только клиринг вт 11/3 → 1; без
+        // календаря зачлось бы оба дня (2).
+        val opened = LocalDateTime.of(2026, 11, 3, 10, 0)
+        val closed = LocalDateTime.of(2026, 11, 5, 10, 0)
+        assertEquals(2, FundingCosts.clearingsCrossed(opened, closed))
+        assertEquals(
+            1,
+            FundingCosts.clearingsCrossed(opened, closed, calendar::isTradingDay),
+        )
+    }
+
+    @Test
+    fun `extra configured holiday has no clearing`() {
+        val calendar = MoexHolidayCalendar(extraHolidays = setOf(LocalDate.of(2026, 9, 9)))
+        // ср 2026-09-09 — доп. выходной (перенос): с календарём клиринга нет.
+        assertEquals(0, FundingCosts.clearingsCrossed(dt(9, 10, 0), dt(10, 10, 0), calendar::isTradingDay))
     }
 }

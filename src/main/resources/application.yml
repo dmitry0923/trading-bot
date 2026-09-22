@@ -773,3 +773,7 @@ funding:
   moex-ttl-ms: ${FUNDING_MOEX_TTL_MS:300000}
   request-timeout-ms: ${FUNDING_REQUEST_TIMEOUT_MS:10000}
   moex-history-url: ${FUNDING_MOEX_HISTORY_URL:}
+  # Дополнительные нерабочие дни MOEX (переносы производственного календаря,
+  # спец-клиринги), yyyy-MM-dd через запятую. Гос. праздники РФ исключаются
+  # автоматически (MoexHolidayCalendar); здесь — только переносы/спец. дни.
+  holidays: ${FUNDING_HOLIDAYS:}

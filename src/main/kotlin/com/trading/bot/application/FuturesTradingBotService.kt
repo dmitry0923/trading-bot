@@ -82,6 +82,7 @@ class FuturesTradingBotService(
     private val meterRegistry: MeterRegistry,
     private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
     private val fundingSnapshotService: FundingSnapshotService,
+    private val moexHolidayCalendar: MoexHolidayCalendar = MoexHolidayCalendar(),
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -109,6 +110,7 @@ class FuturesTradingBotService(
                     commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
                     fundingPerClearing = { ticker, clearings -> fundingSnapshotService.fundingForClearings(ticker, clearings) },
                     onFundingUnknown = { pos -> pos.fundingUnknown = true },
+                    isTradingDay = moexHolidayCalendar::isTradingDay,
                 ),
             instrumentFilter = { it.instrumentType == InstrumentType.FUTURES },
             metricPrefix = "futures",

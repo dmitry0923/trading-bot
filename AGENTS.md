@@ -73,7 +73,11 @@
   `Position.fundingUnknown=true` (колонка `funding_unknown`), CONFIG-value НЕ подставляется.
   Конфиг (`funding.*`) — SIM/backtest/fallback только.
 - Клиринг 18:45 МСК, будни; открытие/закрытие на границе клиринга НЕ считаются; внутридневная позиция = 0.
-  **Праздничный календарь MOEX не моделируется** (открытый P1).
+  **Праздничный календарь MOEX моделируется** (`MoexHolidayCalendar`, P1 закрыт 2026-09-22):
+  нерабочие дни = выходные + гос. праздники РФ (новогодние 1–8 янв, 23 фев, 8 мар, 1/9 мая,
+  12 июн, 4 ноя) + переносы/спец-дни из `funding.holidays` (env `FUNDING_HOLIDAYS`, yyyy-MM-dd
+  через запятую). Календарь применяется в live (P&L futures) и backtest (число клирингов);
+  переносы правительственного производственного календаря задаются явно в `funding.holidays`.
 - P&L futures вычитает комиссию `qty × commissionRub × 2` и funding `× qty × clearings`
   (live через `FundingSnapshotService`, backtest — на config) — паритет live↔backtest.
 - Backtest P&L использует ФАКТИЧЕСКИЕ SWAPRATE из `funding_history` (если ряд донакачан):
@@ -596,10 +600,10 @@ Sharpe 0.80, 25 сделок).
   P(noEdge)=0.551) — плато P=0.058 артефакт подбора на полной истории** → max-hold УЛУЧШАЕТ OOS
   (сильнейший research-кандидат после базы), но edge статистически НЕ значим; `bt.max-hold-bars`
   остаётся 0 (off); скрипт `research_wfa_maxhold.ps1` | test+int+ktlint |
+| 2026-09-22 | Праздничный календарь MOEX (`moex-holiday-calendar`, P1) | **`MoexHolidayCalendar`**: нерабочие дни = выходные + гос. праздники РФ (новогодние 1–8 янв, 23 фев, 8 мар, 1/9 мая, 12 июн, 4 ноя) + переносы/спец-дни из `funding.holidays` (env `FUNDING_HOLIDAYS`, yyyy-MM-dd); `FundingCosts.clearingDates/clearingsCrossed` принимают `isTradingDay`-предикат (дефолт = будни, обратная совместимость), календарь подключён в LIVE P&L futures (`FuturesTradingBotService`/`PnlCalculator.futures`) и backtest (`BacktestEngine`, бин `RiskBeansConfig.moexHolidayCalendar`); переносы производственного календаря задаются явно через `funding.holidays`; тесты `MoexHolidayCalendarTest` + 2 кейса в `FundingCostsTest` | test+int+ktlint |
 | 2026-09-21 | Kimi K3 LLM-сигналы (`llm-signal-kimi`) | **WFA 180д MINUTE_10 folds=6 sample-every=240 aggressive/th=0.40 RouterAI `moonshotai/kimi-k3` (`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`): OOS 33 сделки, −0.53%/PF 0.71/Sharpe −0.74/consistency 0.500/P(noEdge)=0.77/CI [−56.5;+26.5] — edge НЕТ**; 365д×folds=6 идёт >3 ч не влезает в async-таймаут; конвейер работает (892+ Agent 5 FINAL BUY/SELL/HOLD); баги research-прогона: дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA (отключать `LLM_BUDGET_ENABLED=false`); скрипт `research_wfa_kimi.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
-- Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
 - Funding-veto: research-пороги (long 9 ₽ / short 2 ₽) НЕ переносятся в live автоматически —
   live-конфиг `trading.funding-veto-*` остаётся default off/2.0; решение о live-порогах — за пользователем.

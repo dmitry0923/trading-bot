@@ -3,6 +3,7 @@ package com.trading.bot.config
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.LocalDate
 
 /**
  * Конфигурация LIVE-funding (prefix = "funding").
@@ -47,4 +48,20 @@ class FundingConfig {
      * Плейсхолдеры — `{ticker}`, `{from}` (yyyy-MM-dd), `{till}` (yyyy-MM-dd).
      */
     var moexHistoryUrl: String? = null
+
+    /**
+     * Дополнительные нерабочие дни MOEX (переносы рабочего календаря, спец-клиринги),
+     * в формате yyyy-MM-dd через запятую, env `FUNDING_HOLIDAYS`. Пустая строка → нет
+     * дополнительных дней. В комментарии к [MoexHolidayCalendar] — модель.
+     */
+    var holidays: String = ""
+
+    /** Дополнительные нерабочие дни как даты (пусто при пустой настройке). */
+    fun holidayDates(): Set<LocalDate> =
+        holidays
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { LocalDate.parse(it) }
+            .toSet()
 }

@@ -315,6 +315,19 @@ guardrail (тех-агент давал 0.3–0.55 при жёстком `signal
     ветоил сигналы Opus (контрарьян Opus ставит HIGH, qwen — нет). Теперь блокирует только CRITICAL.
   - **Opus возвращает скаляры строками** (`"0.72"`, `"true"`): `LlmResponseValidator` принимает
     строковые number/integer/boolean (тесты `LlmResponseSchemaTest`).
+- **moonshotai/kimi-k3 на CNYRUBF (WFA, 2026-09-21, 180д MINUTE_10 folds=6 sample-every=240,
+  RouterAI `moonshotai/kimi-k3`, aggressive/th=0.40, `LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`)**:
+  OOS сделок **33**, Return −0.53%, PF=**0.71**, consistency 0.500, edge P=**0.77**, Sharpe −0.74,
+  CI [−56.5, +26.5] — **edge НЕТ**. Тот же вывод, что по DeepSeek/qwen3-32b/Opus: LLM-сигналы
+  edge не дают; детерминированные стратегии CNYRUBF MINUTE_10 остаются единственным значимым
+  источником. Прогон на полных 365д×folds=6 НЕ умещается в `--spring.mvc.async.request-timeout`
+  даже 3 ч (~3000 вызовов × 5 агентов/сэмпл, reactor-nio параллельность) — 180д уложился
+  за 46.5 мин, выборка 33 OOS-сделки достаточна для вывода. Параметры kimi: контекст 1M,
+  вход 186 ₽/1M (RouterAI, smart-routing на самый дешёвый провайдер Relace), выход 930 ₽/1M;
+  thinking-модель → `LLM_DISABLE_REASONING=true` обязателен (иначе content пустой, budget
+  уходит в reasoning_tokens); дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит параллельные
+  WFA-вызовы (каждый резервирует estimate+maxTokens=4096 ≥ лимита) — для research отключать
+  `LLM_BUDGET_ENABLED=false` (скрипты research_wfa_kimi.ps1).
 - Кандидаты на продолжение: другие таймфреймы, платная подписка rg.ru (news в
   `FundamentalAnalysisAgent`), либо закрытие LLM-сигнального пути как не-еdge.
 
@@ -573,14 +586,17 @@ Sharpe 0.80, 25 сделок).
   −124.8%/P=0.954, комбо −65.4%/P=0.864) — разреженность сигнала это природа стратегии, не дефект
   выборки** → max-hold УЛУЧШАЕТ OOS (сильнейший research-кандидат после базы), но edge статистически
   НЕ значим; `bt.max-hold-bars` остаётся 0 (off); скрипт `research_wfa_maxhold.ps1` | test+int+ktlint |
+| 2026-09-21 | Kimi K3 LLM-сигналы (`llm-signal-kimi`) | **WFA 180д MINUTE_10 folds=6 sample-every=240 aggressive/th=0.40 RouterAI `moonshotai/kimi-k3` (`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`): OOS 33 сделки, −0.53%/PF 0.71/Sharpe −0.74/consistency 0.500/P(noEdge)=0.77/CI [−56.5;+26.5] — edge НЕТ**; 365д×folds=6 идёт >3 ч не влезает в async-таймаут; конвейер работает (892+ Agent 5 FINAL BUY/SELL/HOLD); баги research-прогона: дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA (отключать `LLM_BUDGET_ENABLED=false`); скрипт `research_wfa_kimi.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - Праздничный календарь MOEX в `FundingCosts` не моделируется (P1).
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
 - Funding-veto: research-пороги (long 9 ₽ / short 2 ₽) НЕ переносятся в live автоматически —
   live-конфиг `trading.funding-veto-*` остаётся default off/2.0; решение о live-порогах — за пользователем.
-- WFA-прогон LLM с Kimi K3 (`moonshotai/kimi-k3`) отложен: исчерпан месячный лимит RouterAI
-  (429, 2054,78 ₽ / 2000 ₽); модель подтверждена в `/api/v1/models`.
+- **Kimi K3 WFA (2026-09-21, 180д folds=6)**: выполнено — OOS −0.53%/PF 0.71/P(noEdge)=0.77/33 сделки,
+  edge НЕТ (см. research-раздел); 365д×folds=6 не влезает в async-таймаут 3 ч (~3000 вызовов × 5 агентов);
+  месячный лимит RouterAI восстановился; для research обязательно `LLM_BUDGET_ENABLED=false`
+  (дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA-вызовы) и `LLM_DISABLE_REASONING=true`.
 - ML-фильтр направления: калибровка WFA (2026-09-20) показала отсутствие OOS-edge — решение «не
   включать» (`bt.ml-direction-enabled` остаётся off), см. research-раздел выше.
 - Входные фильтры session/pullback: калибровка WFA (2026-09-20) показала отсутствие OOS-edge —

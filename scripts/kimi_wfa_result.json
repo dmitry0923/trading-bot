@@ -1,0 +1,17 @@
+{
+  "ticker": "CNYRUBF",
+  "timeframe": "MINUTE_10",
+  "folds": 6,
+  "consistency": 0.5,
+  "robust": false,
+  "oosTrades": 33,
+  "oosReturn": -0.005347,
+  "oosSharpe": -0.7365366878638795,
+  "oosSortino": -0.9336953640125888,
+  "oosProfitFactor": 0.7063500179423099,
+  "oosEdgeStatisticallySignificant": false,
+  "oosProbabilityOfNoEdge": 0.77,
+  "oosMeanTradeCI95Low": -56.51205151515152,
+  "oosMeanTradeCI95High": 26.453984848484847,
+  "timestamp": "2026-09-22T02:53:58.5200975"
+}

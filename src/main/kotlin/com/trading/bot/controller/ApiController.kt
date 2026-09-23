@@ -465,6 +465,10 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) orbEnabled: Boolean?,
+        @RequestParam(required = false) orbWindowBars: Int?,
+        @RequestParam(required = false) orbStrictBreakout: Boolean?,
+        @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -496,6 +500,10 @@ class ApiController(
                 pullbackEmaPeriod = pullbackEmaPeriod,
                 pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
                 pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+                orbEnabled = orbEnabled,
+                orbWindowBars = orbWindowBars,
+                orbStrictBreakout = orbStrictBreakout,
+                orbBlockOnUnknown = orbBlockOnUnknown,
             )
         val result =
             backtestEngine.run(
@@ -731,6 +739,10 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) orbEnabled: Boolean?,
+        @RequestParam(required = false) orbWindowBars: Int?,
+        @RequestParam(required = false) orbStrictBreakout: Boolean?,
+        @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -770,6 +782,10 @@ class ApiController(
                 pullbackEmaPeriod = pullbackEmaPeriod,
                 pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
                 pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+                orbEnabled = orbEnabled,
+                orbWindowBars = orbWindowBars,
+                orbStrictBreakout = orbStrictBreakout,
+                orbBlockOnUnknown = orbBlockOnUnknown,
             )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
@@ -852,6 +868,10 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) orbEnabled: Boolean?,
+        @RequestParam(required = false) orbWindowBars: Int?,
+        @RequestParam(required = false) orbStrictBreakout: Boolean?,
+        @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -905,6 +925,10 @@ class ApiController(
                 pullbackEmaPeriod = pullbackEmaPeriod,
                 pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
                 pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+                orbEnabled = orbEnabled,
+                orbWindowBars = orbWindowBars,
+                orbStrictBreakout = orbStrictBreakout,
+                orbBlockOnUnknown = orbBlockOnUnknown,
             )
         val report =
             monteCarloAnalyzer.analyze(
@@ -997,6 +1021,10 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) orbEnabled: Boolean?,
+        @RequestParam(required = false) orbWindowBars: Int?,
+        @RequestParam(required = false) orbStrictBreakout: Boolean?,
+        @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1031,6 +1059,10 @@ class ApiController(
                 pullbackEmaPeriod = pullbackEmaPeriod,
                 pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
                 pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+                orbEnabled = orbEnabled,
+                orbWindowBars = orbWindowBars,
+                orbStrictBreakout = orbStrictBreakout,
+                orbBlockOnUnknown = orbBlockOnUnknown,
             )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
@@ -1113,6 +1145,10 @@ class ApiController(
         @RequestParam(required = false) pullbackEmaPeriod: Int?,
         @RequestParam(required = false) pullbackMaxDeviationPercent: Double?,
         @RequestParam(required = false) pullbackBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) orbEnabled: Boolean?,
+        @RequestParam(required = false) orbWindowBars: Int?,
+        @RequestParam(required = false) orbStrictBreakout: Boolean?,
+        @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1154,6 +1190,10 @@ class ApiController(
                         pullbackEmaPeriod = pullbackEmaPeriod,
                         pullbackMaxDeviationPercent = pullbackMaxDeviationPercent,
                         pullbackBlockOnUnknown = pullbackBlockOnUnknown,
+                        orbEnabled = orbEnabled,
+                        orbWindowBars = orbWindowBars,
+                        orbStrictBreakout = orbStrictBreakout,
+                        orbBlockOnUnknown = orbBlockOnUnknown,
                     ),
             )
 

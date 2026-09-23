@@ -174,4 +174,23 @@ class BacktestConfig {
     /** Fail-closed для pullback-фильтра: при нехватке баров для EMA БЛОКИРОВАТЬ
      *  вход (true) или пропускать (false). */
     var pullbackBlockOnUnknown: Boolean = false
+
+    /** Opening Range Breakout фильтр (research, pt.3): вход разрешён ТОЛЬКО при
+     *  пробое дневного opening range (диапазон первых [orbWindowBars] баров дня):
+     *  close > High → LONG, close < Low → SHORT. research-инструмент, по умолчанию
+     *  off (на live-входы не влияет). */
+    var orbEnabled: Boolean = false
+
+    /** Число баров opening range (первые бары торгового дня). Для MINUTE_10
+     *  6 баров = первый час сессии. */
+    var orbWindowBars: Int = 6
+
+    /** true → внутри opening range (без пробоя) ВХОД ЗАПРЕЩЁН (чистый ORB);
+     *  false → внутри диапазона вход пропускается (фильтр ограничивает только
+     *  направление при пробое). */
+    var orbStrictBreakout: Boolean = true
+
+    /** Fail-closed для ORB: при невозможности определить opening range (данные
+     *  начинаются не с начала дня) БЛОКИРОВАТЬ вход (true) или пропускать (false). */
+    var orbBlockOnUnknown: Boolean = false
 }

@@ -1,16 +1,22 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.entity.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
+import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 /**
- * Тесты research-фильтров входа (docs/17 этап 4c, pt.2): session (вход только в
- * определённые фазы сессии) и pullback к EMA (не гнаться за ценой).
+ * Тесты research-фильтров входа (docs/17 этап 4c, pt.2/3): session (вход только в
+ * определённые фазы сессии), pullback к EMA (не гнаться за ценой) и
+ * Opening Range Breakout (вход только в направлении пробоя дневного диапазона).
  */
 class EntryFiltersTest {
     private fun filter(
@@ -21,6 +27,10 @@ class EntryFiltersTest {
         emaPeriod: Int = 20,
         maxDeviationPercent: Double = 1.0,
         blockOnUnknown: Boolean = false,
+        orbEnabled: Boolean = false,
+        orbWindowBars: Int = 6,
+        orbStrictBreakout: Boolean = true,
+        orbBlockOnUnknown: Boolean = false,
     ): EntryFilters =
         EntryFilters(
             sessionEnabled = sessionEnabled,
@@ -30,6 +40,10 @@ class EntryFiltersTest {
             pullbackEmaPeriod = emaPeriod,
             pullbackMaxDeviationPercent = maxDeviationPercent,
             pullbackBlockOnUnknown = blockOnUnknown,
+            orbEnabled = orbEnabled,
+            orbWindowBars = orbWindowBars,
+            orbStrictBreakout = orbStrictBreakout,
+            orbBlockOnUnknown = orbBlockOnUnknown,
         )
 
     @Test
@@ -99,6 +113,125 @@ class EntryFiltersTest {
         assertTrue(fromOverrides.blocksEntry(LocalTime.of(10, 0), BigDecimal("100"), closes(100.0, 0.0, 30)))
         assertFalse(fromOverrides.blocksEntry(LocalTime.of(12, 30), BigDecimal("100"), closes(100.0, 0.0, 30)))
         assertEquals(700, fromOverrides.sessionStartMinutes)
+    }
+
+    @Test
+    fun `orb disabled returns null`() {
+        val f = filter(orbEnabled = false)
+        val candles = dayCandles(100.0, windowBars = 6, postBars = 10)
+        assertNull(f.orbDirection(candles, 15))
+    }
+
+    @Test
+    fun `orb breakout up allows long`() {
+        // Opening range = первые 6 баров дня (High=105). После окна close пробивает
+        // 108 (вверх) → BUY (только LONG).
+        val f = filter(orbEnabled = true, orbWindowBars = 6)
+        val candles = dayCandles(100.0, windowBars = 6, postBars = 10, postStep = 1.0)
+        candles[9] = candle(0, 9, open = 106.0, high = 109.0, low = 105.0, close = 108.0)
+        assertEquals(StrategyAction.BUY, f.orbDirection(candles, 9))
+    }
+
+    @Test
+    fun `orb breakout down allows short`() {
+        val f = filter(orbEnabled = true, orbWindowBars = 6)
+        val candles = dayCandles(100.0, windowBars = 6, postBars = 10, postStep = -1.0)
+        candles[9] = candle(0, 9, open = 92.0, high = 95.0, low = 90.0, close = 92.0)
+        assertEquals(StrategyAction.SELL, f.orbDirection(candles, 9))
+    }
+
+    @Test
+    fun `orb inside range strict blocks while non-strict passes`() {
+        // После окна close внутри [Low, High] диапазона открытия.
+        val fStrict = filter(orbEnabled = true, orbWindowBars = 6, orbStrictBreakout = true)
+        val fLoose = filter(orbEnabled = true, orbWindowBars = 6, orbStrictBreakout = false)
+        val candles = dayCandles(100.0, windowBars = 6, postBars = 10)
+        assertEquals(StrategyAction.HOLD, fStrict.orbDirection(candles, 9))
+        assertNull(fLoose.orbDirection(candles, 9))
+    }
+
+    @Test
+    fun `orb too few bars of the day returns null by default`() {
+        // Данные начинаются в середине дня: на индексах < windowBars начала дня нет.
+        val f = filter(orbEnabled = true, orbWindowBars = 6)
+        val candles = dayCandles(100.0, windowBars = 4, postBars = 5)
+        assertNull(f.orbDirection(candles, 5))
+    }
+
+    @Test
+    fun `orb blockOnUnknown fail-closed when range undefined`() {
+        val f = filter(orbEnabled = true, orbWindowBars = 6, orbBlockOnUnknown = true)
+        val candles = dayCandles(100.0, windowBars = 3, postBars = 5)
+        assertEquals(StrategyAction.HOLD, f.orbDirection(candles, 5))
+    }
+
+    @Test
+    fun `orb resets range on new trading day`() {
+        // Первый день: окно 100..105 (High=105), бары после окна внутри диапазона
+        // (close=100) → HOLD (strict).
+        val f = filter(orbEnabled = true, orbWindowBars = 6, orbStrictBreakout = true)
+        val firstDay = dayCandles(100.0, windowBars = 6, postBars = 4)
+        // Второй день: открытие 110 (High окна = 111). Bar 16 (idx 7 второго дня)
+        // пробивает СВОЙ High 111 close=116 → BUY на баре собственного (нового) дня.
+        val secondDay = dayCandles(110.0, windowBars = 6, postBars = 2, dayOffset = 1)
+        val candles = firstDay + secondDay
+        val last = candles.lastIndex
+
+        // close=110 в диапазоне 2-го дня → HOLD.
+        assertEquals(StrategyAction.HOLD, f.orbDirection(candles, last))
+
+        // С последним баром, пробивающим High 2-го дня (111) → BUY.
+        val broken =
+            candles.dropLast(1) +
+                candle(dayOffset = 1, idx = 7, open = 111.0, high = 117.0, low = 110.0, close = 116.0)
+        assertEquals(StrategyAction.BUY, f.orbDirection(broken, broken.lastIndex))
+
+        // Первый день: внутри диапазона → HOLD (strict), пробой 2-го дня не «затекает».
+        assertEquals(StrategyAction.HOLD, f.orbDirection(firstDay, firstDay.lastIndex))
+    }
+
+    private val dayBase = LocalDate.of(2026, 1, 5)
+
+    private fun candle(
+        dayOffset: Int,
+        idx: Int,
+        open: Double,
+        high: Double,
+        low: Double,
+        close: Double,
+    ): Candle =
+        Candle(
+            ticker = "TEST",
+            timeframe = "MINUTE_10",
+            openPrice = BigDecimal.valueOf(open),
+            highPrice = BigDecimal.valueOf(high),
+            lowPrice = BigDecimal.valueOf(low),
+            closePrice = BigDecimal.valueOf(close),
+            volume = 100,
+            time = dayBase.plusDays(dayOffset.toLong()).atTime(6, 0).plusMinutes(10L * idx),
+        )
+
+    /**
+     * День из [windowBars] баров открытия (open=high=base+..) и [postBars] баров
+     * после окна, идущих на [postStep] за бар от цены [base].
+     */
+    private fun dayCandles(
+        base: Double,
+        windowBars: Int,
+        postBars: Int,
+        postStep: Double = 0.0,
+        dayOffset: Int = 0,
+    ): MutableList<Candle> {
+        val bars = mutableListOf<Candle>()
+        repeat(windowBars) { i ->
+            val p = base + i * postStep
+            bars += candle(dayOffset, i, p, p + 1.0, p - 1.0, p)
+        }
+        repeat(postBars) { i ->
+            val p = base + (windowBars + i) * postStep
+            bars += candle(dayOffset, windowBars + i, p, p + 1.0, p - 1.0, p)
+        }
+        return bars
     }
 
     private fun closes(

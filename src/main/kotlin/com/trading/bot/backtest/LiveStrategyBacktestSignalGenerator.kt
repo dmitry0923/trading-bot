@@ -19,6 +19,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 
@@ -34,6 +35,10 @@ data class EntryFilterOverrides(
     val pullbackEmaPeriod: Int? = null,
     val pullbackMaxDeviationPercent: Double? = null,
     val pullbackBlockOnUnknown: Boolean? = null,
+    val orbEnabled: Boolean? = null,
+    val orbWindowBars: Int? = null,
+    val orbStrictBreakout: Boolean? = null,
+    val orbBlockOnUnknown: Boolean? = null,
 ) {
     val anyProvided: Boolean
         get() =
@@ -43,7 +48,11 @@ data class EntryFilterOverrides(
                 pullbackFilterEnabled != null ||
                 pullbackEmaPeriod != null ||
                 pullbackMaxDeviationPercent != null ||
-                pullbackBlockOnUnknown != null
+                pullbackBlockOnUnknown != null ||
+                orbEnabled != null ||
+                orbWindowBars != null ||
+                orbStrictBreakout != null ||
+                orbBlockOnUnknown != null
 }
 
 /**
@@ -59,6 +68,10 @@ class EntryFilters(
     val pullbackEmaPeriod: Int,
     val pullbackMaxDeviationPercent: Double,
     val pullbackBlockOnUnknown: Boolean,
+    val orbEnabled: Boolean,
+    val orbWindowBars: Int,
+    val orbStrictBreakout: Boolean,
+    val orbBlockOnUnknown: Boolean,
 ) {
     companion object {
         fun from(
@@ -77,10 +90,14 @@ class EntryFilters(
                     overrides?.pullbackMaxDeviationPercent ?: config.pullbackMaxDeviationPercent,
                 pullbackBlockOnUnknown =
                     overrides?.pullbackBlockOnUnknown ?: config.pullbackBlockOnUnknown,
+                orbEnabled = overrides?.orbEnabled ?: config.orbEnabled,
+                orbWindowBars = overrides?.orbWindowBars ?: config.orbWindowBars,
+                orbStrictBreakout = overrides?.orbStrictBreakout ?: config.orbStrictBreakout,
+                orbBlockOnUnknown = overrides?.orbBlockOnUnknown ?: config.orbBlockOnUnknown,
             )
 
         /** Фильтры выключены — не влияют на входы. */
-        val PASS_THROUGH = EntryFilters(false, 600, 1080, false, 20, 1.0, false)
+        val PASS_THROUGH = EntryFilters(false, 600, 1080, false, 20, 1.0, false, false, 6, true, false)
     }
 
     /** true → вход в бар [barTime] блокирован (вне окна сессии / вне полосы отката). */
@@ -101,6 +118,51 @@ class EntryFilters(
             if (deviation > pullbackMaxDeviationPercent) return true
         }
         return false
+    }
+
+    /**
+     * Opening Range Breakout фильтр направления (research, pt.3). Считает
+     * opening range = High/Low первых [orbWindowBars] баров текущего торгового
+     * дня ([candles[0..index]]) и возвращает желаемую сторону:
+     *  - [StrategyAction.BUY] — close пробил верх диапазона (разрешён LONG);
+     *  - [StrategyAction.SELL] — close пробил низ диапазона (разрешён SHORT);
+     *  - [StrategyAction.HOLD] — вход заблокирован: НЕ хватает баров дня до
+     *    закрытия диапазона ([barsInDay] ≤ [orbWindowBars]), день начинается не
+     *    с начала данных ([index] < [orbWindowBars] — нет начала дня), либо
+     *    внутри диапазона при [orbStrictBreakout]=true;
+     *  - null — фильтр off / пропуск (внутри диапазона при strict=false, либо
+     *    undefined-день при [orbBlockOnUnknown]=false).
+     */
+    fun orbDirection(
+        candles: List<Candle>,
+        index: Int,
+    ): StrategyAction? {
+        if (!orbEnabled || index <= 0) return null
+        val bar = candles[index]
+        // Собираем бары текущего торгового дня назад от index, пока дата совпадает
+        // с датой бара. Opening range — первые orbWindowBars баров этого дня.
+        var dayStart = index
+        val day = bar.time.toLocalDate()
+        while (dayStart > 0 && candles[dayStart - 1].time.toLocalDate() == day) {
+            dayStart--
+        }
+        val barsInDay = index - dayStart + 1
+        if (barsInDay <= orbWindowBars) {
+            // Диапазон ещё формируется (внутри окна открытия) или день начинается
+            // не с начала данных — undefined.
+            return if (orbBlockOnUnknown) StrategyAction.HOLD else null
+        }
+        val rangeBars = candles.subList(dayStart, dayStart + orbWindowBars)
+        val rangeHigh =
+            rangeBars.maxOfOrNull { it.highPrice } ?: return if (orbBlockOnUnknown) StrategyAction.HOLD else null
+        val rangeLow =
+            rangeBars.minOfOrNull { it.lowPrice } ?: return if (orbBlockOnUnknown) StrategyAction.HOLD else null
+        return when {
+            bar.closePrice > rangeHigh -> StrategyAction.BUY
+            bar.closePrice < rangeLow -> StrategyAction.SELL
+            orbStrictBreakout -> StrategyAction.HOLD
+            else -> null
+        }
     }
 }
 
@@ -261,6 +323,20 @@ class LiveStrategyBacktestSignalGenerator(
                 }
             } ?: false
         if (entryBlocked) return StrategyAction.HOLD
+
+        // Opening Range Breakout (research, pt.3): вход разрешён только в направлении
+        // пробоя дневного opening range. HOLD — вход заблокирован, BUY/SELL — только
+        // эта сторона разрешена, null — фильтр off/пропуск.
+        entryFilters?.let { filters ->
+            val orb =
+                try {
+                    filters.orbDirection(candles, index)
+                } catch (_: Exception) {
+                    null
+                }
+            if (orb == StrategyAction.HOLD) return StrategyAction.HOLD
+            if (orb != null && orb != bestAction) return StrategyAction.HOLD
+        }
 
         // ML-фильтр направления: veto против направления победителя.
         val mlAction = mlDecision?.action ?: StrategyAction.HOLD

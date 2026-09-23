@@ -595,6 +595,45 @@ Sharpe 0.80, 25 сделок).
   query-оверрайды без перезапуска). Детерминированные стратегии CNYRUBF MINUTE_10 остаются
   единственным значимым источником (PF 2.15, P=0.0425).
 
+### ORB-фильтр входа (Opening Range Breakout, WFA 365д folds=6, 2026-09-23)
+
+Гипотеза edge «вход в направлении пробоя дневного диапазона»: opening range = High/Low первых
+`orbWindowBars` баров дня (день = `time.toLocalDate()` бара; CNYRUBF MINUTE_10: открытие 06:50),
+пробой вверх → только LONG, вниз → только SHORT. Реализовано `EntryFilters.orbDirection` +
+query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnUnknown` на `/backtest`
+`/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ML, в
+`LiveStrategyBacktestSignalGenerator` после session/pullback, до ML-фильтра; strict=true — внутри
+диапазона HOLD-блок, strict=false — пропуск; `bt.orb-*`/env `BT_ORB_*`). Прогон на live-стеке,
+скрипт `research_wfa_orb.ps1`, conf 0.60, калибровочный риск-профиль risk 30%/maxC 100.
+
+| Конфиг | OOS Ret | OOS PF | OOS Trades | Consistency | P(noEdge) | robust |
+|--------|---------|--------|-----------|-------------|-----------|--------|
+| baseline (фильтры off) | +0.34% | 1.27 | 27 | 0.500 | 0.32 | false |
+| orb w6 strict | −9.35% | 0.94 | 26 | 0.500 | 0.57 | false |
+| orb w12 strict | −51.4% | 0.63 | 24 | 0.167 | 0.83 | false |
+| orb w24 strict | −51.3% | 0.63 | 24 | 0.167 | 0.83 | false |
+| orb w6 loose | +46.3% | 1.35 | 27 | 0.500 | 0.28 | false |
+| **orb w12 loose** | **+66.8%** | **1.55** | 26 | **0.667** | **0.19** | false |
+| orb w36 loose | +33.8% | 1.27 | 27 | 0.500 | 0.32 | false |
+| **orb w12 loose + fv 9/1.5** | **+89.4%** | **1.87** | 23 | **0.667** | **0.117** | false |
+| orb w12 loose + fv 9/2 | +85.2% | 1.79 | 24 | 0.667 | 0.13 | false |
+| orb w12 loose + fv 10/1.5 | +89.4% | 1.87 | 23 | 0.667 | 0.12 | false |
+
+- **Вывод: ORB как направленный фильтр edge НЕ даёт.** strict-режим (внутри диапазона HOLD) убыточен
+  (w6 −9.35%, w12/w24 −51%) — блокирует большинство входов, остаются сделки против тренда.
+  loose-режим улучшает OOS (w12 +66.8%/PF 1.55/consistency 0.667), но P=0.19 далёк от значимости;
+  комбо с funding-veto 9/1.5 (лучший) — +89.4%/PF 1.87, но P=0.117 > 0.05, 23 сделки << 100,
+  `robust=false`. Плато порогов w12≈w24, long 9–10 × short 0.5–1.5 — устойчиво, не острый пик.
+- **Deployment-gate комбо = REJECTED (формальный вердикт)**: полный пайплайн (orb w12 loose +
+  fv 9/1.5, risk 30%/maxC 100, conf 0.60, 365д folds=6): backtest PASS (Sharpe 1.25/MDD 0.4%/PF 1.56/
+  19 сделок), но WFA OOS **PF 0.78**/consistency **0.500** (20 сделок < 100), edge P(noEdge)=**0.665**,
+  holdout +1.1% (5 сделок < 30), MC p5=−0.32%/pLoss 18.3%/stressFailed 4. **Тот же паттерн, что у
+  максиа: плато `P=0.117` из `/validate` было артефактом подбора на полной истории; dev-часть OOS
+  PF 0.78.** ORB-усиление не создаёт устойчивый edge вне исторической перестройки.
+- **Решение: `bt.orb-*` остаются off** (`orbEnabled=false` default); ORB-фильтр и скрипт остаются
+  research-инструментом (комбинация с будущими фильтрами — вне скоупа). Цель «100%/год» по-прежнему
+  недостижима.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -634,6 +673,7 @@ Sharpe 0.80, 25 сделок).
   остаётся 0 (off); скрипт `research_wfa_maxhold.ps1` | test+int+ktlint |
 | 2026-09-22 | Праздничный календарь MOEX (`moex-holiday-calendar`, P1) | **`MoexHolidayCalendar`**: нерабочие дни = выходные + гос. праздники РФ (новогодние 1–8 янв, 23 фев, 8 мар, 1/9 мая, 12 июн, 4 ноя) + переносы/спец-дни из `funding.holidays` (env `FUNDING_HOLIDAYS`, yyyy-MM-dd); `FundingCosts.clearingDates/clearingsCrossed` принимают `isTradingDay`-предикат (дефолт = будни, обратная совместимость), календарь подключён в LIVE P&L futures (`FuturesTradingBotService`/`PnlCalculator.futures`) и backtest (`BacktestEngine`, бин `RiskBeansConfig.moexHolidayCalendar`); переносы производственного календаря задаются явно через `funding.holidays`; тесты `MoexHolidayCalendarTest` + 2 кейса в `FundingCostsTest` | test+int+ktlint |
 | 2026-09-21 | Kimi K3 LLM-сигналы (`llm-signal-kimi`) | **WFA 180д MINUTE_10 folds=6 sample-every=240 aggressive/th=0.40 RouterAI `moonshotai/kimi-k3` (`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`): OOS 33 сделки, −0.53%/PF 0.71/Sharpe −0.74/consistency 0.500/P(noEdge)=0.77/CI [−56.5;+26.5] — edge НЕТ**; 365д×folds=6 идёт >3 ч не влезает в async-таймаут; конвейер работает (892+ Agent 5 FINAL BUY/SELL/HOLD); баги research-прогона: дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA (отключать `LLM_BUDGET_ENABLED=false`); скрипт `research_wfa_kimi.ps1` | test+int+ktlint |
+| 2026-09-23 | ORB-фильтр входа (`orb-entry-filter`) | **`EntryFilters.orbDirection`** (opening range = High/Low первых `orbWindowBars` баров дня, `time.toLocalDate()`; пробой вверх→LONG, вниз→SHORT) + query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnUnknown` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ML; в `LiveStrategyBacktestSignalGenerator` после session/pullback, до ML-фильтра; strict=true — внутри диапазона HOLD, strict=false — пропуск; `bt.orb-*`/env `BT_ORB_*`; тесты `EntryFiltersTest` 7 кейсов + 1 тест генератора); **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +0.34%/PF 1.27/P=0.32; strict убыточен (w6 −9.35%/P=0.57, w12/w24 −51.4%/P=0.83); loose w12 +66.8%/PF 1.55/P=0.19; комбо w12loose+fv 9/1.5 +89.4%/PF 1.87/P=0.117 (плато, 23 сделки, robust=false); deployment-gate = REJECTED (OOS PF 0.78/consistency 0.5/P=0.665, holdout 5 сделок, MC p5=−0.32) — плато P=0.117 артефакт подбора на полной истории** → ORB edge НЕ даёт, `bt.orb-enabled` остаётся off; скрипт `research_wfa_orb.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).

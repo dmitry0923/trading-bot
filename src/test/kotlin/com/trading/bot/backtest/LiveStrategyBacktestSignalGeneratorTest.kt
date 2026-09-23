@@ -434,6 +434,36 @@ class LiveStrategyBacktestSignalGeneratorTest {
         assertTrue(pullbackNonHold < baselineNonHold, "pullback-фильтр должен сократить число входов")
     }
 
+    /**
+     * Opening Range Breakout (research, pt.3): входы разрешены только ПОСЛЕ пробоя
+     * дневного opening range (первые orbWindowBars баров дня). Все свечи в один
+     * торговый день — до закрытия окна входы обрезаются, после пробоя High (close
+     * ушёл дальше от базовой цены) направление совпадает с BUY-победителем тренда,
+     * поэтому общее число входов в прогоне должно СОВПАСТЬ с baseline (на поздних
+     * барах пробой + BUY) — проверяем, что фильтр не ломает согласованный тренд.
+     */
+    @Test
+    fun `orb filter keeps agreeing breakout on strong uptrend`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genOrb =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            orbEnabled = true
+                            orbWindowBars = 6
+                        },
+                    ),
+            )
+        // count=180 → 30 часов (одна дата + 1.5 дня), пробой High окна на поздних
+        // барах даёт BUY-направление, но окно каждого дня обрезает первые 6 баров.
+        val candles = rampCandles(count = 180, start = 100.0, step = 2.0, wick = 0.2)
+        val baselineNonHold = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val orbNonHold = collectSignalsWith(genOrb, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baselineNonHold > 0, "baseline должен давать входы на сильном тренде")
+        assertTrue(orbNonHold > 0, "ORB-фильтр не должен вырезать все входы на пробое, orbNonHold=$orbNonHold")
+    }
+
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)
     }

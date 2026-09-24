@@ -634,6 +634,43 @@ query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnU
   research-инструментом (комбинация с будущими фильтрами — вне скоупа). Цель «100%/год» по-прежнему
   недостижима.
 
+### Time-direction фильтр входа (блок утренних LONG / дневных SHORT, WFA 365д folds=6, 2026-09-24)
+
+Гипотеза из декомпозиции трейд-лога CNYRUBF (730д IS, maxC=1, `includeTrades=true`): основные
+убыточные кластеры — утренние LONG 7–11ч (15 сделок, сумма −319 ₽, TP 1/15) и дневные SHORT
+13–16ч (10 сделок, −358 ₽, TP 0/10); вечер 18–23ч прибылен (+688 ₽/22 сделки). Реализовано
+`EntryFilters.blocksDirection(time, action)` — блок LONG при `hour <= longBlockUntilHour`, блок
+SHORT при `hour in shortBlockStart..shortBlockEnd` + query-оверрайды `timeDirectionEnabled/
+timeDirectionLongBlockUntilHour/timeDirectionShortBlockStartHour/timeDirectionShortBlockEndHour`
+на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ORB;
+в `LiveStrategyBacktestSignalGenerator` после session/pullback+ORB, до ML-фильтра; `bt.time-direction-*`
+env `BT_TIME_DIRECTION_*`; тесты `EntryFiltersTest` 2 кейса). Прогон на live-стеке, скрипт
+`research_wfa_timedirection.ps1`, conf 0.60, калибровочный риск-профиль risk 30%/maxC 100.
+
+| Конфиг | OOS Ret | OOS PF | OOS Trades | Consistency | P(noEdge) | robust |
+|--------|---------|--------|-----------|-------------|-----------|--------|
+| baseline (off) | +33.8% | 1.27 | 27 | 0.500 | 0.322 | false |
+| long<=11 | +46.6% | 1.58 | 24 | 0.500 | 0.210 | false |
+| **long<=9** | **+100.1%** | **1.97** | 24 | **0.667** | **0.088** | false |
+| short 13–16 | +46.6% | 1.58 | 24 | 0.500 | 0.210 | false |
+| long11 \| short13-16 | +46.6% | 1.58 | 24 | 0.500 | 0.210 | false |
+| long9 \| short13-16 | +100.1% | 1.97 | 24 | 0.667 | 0.088 | false |
+
+- **Вывод: time-direction фильтр как направленный edge НЕ даёт.** Блок длинных до 09ч улучшает OOS
+  (PF 1.97 vs 1.27, ret +100.1% vs +33.8%, P=0.088 близко к значимости, consistency 0.667), но
+  24 OOS-сделки << 100, P=0.088 > 0.05 → статистически НЕ значим. Блок SHORT 13–16ч идемпотентен
+  (SELL-входы в этом окне на выборке не встречались — результат идентичен long-конфигам).
+- **Deployment-gate long<=9 = REJECTED (формальный вердикт)**: полный пайплайн (long<=9,
+  risk 30%/maxC 100, conf 0.60, 365д folds=6): backtest PF 1.454/MDD 45.8%/20 сделок, но
+  **WFA OOS PF 0.840**/consistency 0.667 (20 сделок < 100), edge P(noEdge)=**0.629**, holdout
+  6 сделок < 30, MC p5=−0.44%/stressFailed 5. **Тот же паттерн, что у max-hold/ORB: плато
+  `P=0.088` из `/validate` было артефактом подбора на полной истории; dev-часть OOS PF 0.84.**
+  Время-фильтр не создаёт устойчивый edge вне исторической перестройки.
+- **Решение: `bt.time-direction-enabled` остаётся off** (default); фильтр и скрипт остаются
+  research-инструментом. Декомпозиция трейд-лога (по часам/дням недели/ATR/hold) фиксирует
+  структуру P&L, но входной фильтр на ней показал OOS-развал (консистентно с funding-veto/ML/
+  session/pullback/ORB). Цель «100%/год» по-прежнему недостижима.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -674,6 +711,7 @@ query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnU
 | 2026-09-22 | Праздничный календарь MOEX (`moex-holiday-calendar`, P1) | **`MoexHolidayCalendar`**: нерабочие дни = выходные + гос. праздники РФ (новогодние 1–8 янв, 23 фев, 8 мар, 1/9 мая, 12 июн, 4 ноя) + переносы/спец-дни из `funding.holidays` (env `FUNDING_HOLIDAYS`, yyyy-MM-dd); `FundingCosts.clearingDates/clearingsCrossed` принимают `isTradingDay`-предикат (дефолт = будни, обратная совместимость), календарь подключён в LIVE P&L futures (`FuturesTradingBotService`/`PnlCalculator.futures`) и backtest (`BacktestEngine`, бин `RiskBeansConfig.moexHolidayCalendar`); переносы производственного календаря задаются явно через `funding.holidays`; тесты `MoexHolidayCalendarTest` + 2 кейса в `FundingCostsTest` | test+int+ktlint |
 | 2026-09-21 | Kimi K3 LLM-сигналы (`llm-signal-kimi`) | **WFA 180д MINUTE_10 folds=6 sample-every=240 aggressive/th=0.40 RouterAI `moonshotai/kimi-k3` (`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`): OOS 33 сделки, −0.53%/PF 0.71/Sharpe −0.74/consistency 0.500/P(noEdge)=0.77/CI [−56.5;+26.5] — edge НЕТ**; 365д×folds=6 идёт >3 ч не влезает в async-таймаут; конвейер работает (892+ Agent 5 FINAL BUY/SELL/HOLD); баги research-прогона: дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA (отключать `LLM_BUDGET_ENABLED=false`); скрипт `research_wfa_kimi.ps1` | test+int+ktlint |
 | 2026-09-23 | ORB-фильтр входа (`orb-entry-filter`) | **`EntryFilters.orbDirection`** (opening range = High/Low первых `orbWindowBars` баров дня, `time.toLocalDate()`; пробой вверх→LONG, вниз→SHORT) + query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnUnknown` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ML; в `LiveStrategyBacktestSignalGenerator` после session/pullback, до ML-фильтра; strict=true — внутри диапазона HOLD, strict=false — пропуск; `bt.orb-*`/env `BT_ORB_*`; тесты `EntryFiltersTest` 7 кейсов + 1 тест генератора); **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +0.34%/PF 1.27/P=0.32; strict убыточен (w6 −9.35%/P=0.57, w12/w24 −51.4%/P=0.83); loose w12 +66.8%/PF 1.55/P=0.19; комбо w12loose+fv 9/1.5 +89.4%/PF 1.87/P=0.117 (плато, 23 сделки, robust=false); deployment-gate = REJECTED (OOS PF 0.78/consistency 0.5/P=0.665, holdout 5 сделок, MC p5=−0.32) — плато P=0.117 артефакт подбора на полной истории** → ORB edge НЕ даёт, `bt.orb-enabled` остаётся off; скрипт `research_wfa_orb.ps1` | test+int+ktlint |
+| 2026-09-24 | Time-direction фильтр входа (`time-direction-filter`) | **`EntryFilters.blocksDirection(time, action)`** — блок LONG при `hour <= longBlockUntilHour`, SHORT при `hour in start..end` + query-оверрайды `timeDirectionEnabled/timeDirectionLongBlockUntilHour/timeDirectionShortBlockStartHour/timeDirectionShortBlockEndHour` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ORB; в `LiveStrategyBacktestSignalGenerator` после session/pullback+ORB; `bt.time-direction-*`/env `BT_TIME_DIRECTION_*`; тесты `EntryFiltersTest` 2 кейса, всего 11); триггер — декомпозиция трейд-лога 730д IS (maxC=1, `includeTrades=true`): утренние LONG 7–11ч −319 ₽/15 сд. (TP 1/15), дневные SHORT 13–16ч −358 ₽/10 сд. (TP 0/10), вечер 18–23ч +688 ₽/22 сд.; **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +33.8%/PF 1.27/P=0.322; long<=9 +100.1%/PF 1.97/P=0.088/consistency 0.667 но 24 сделки (robust=false); short 13–16 идемпотентен (SELL-входы в окне не встречались); deployment-gate = REJECTED (OOS PF 0.84/consistency 0.667/P=0.629, holdout 6 сделок, MC p5=−0.44/stressFailed 5) — плато P=0.088 артефакт подбора на полной истории** → время-фильтр edge не создаёт, `bt.time-direction-enabled` остаётся off; трейд-лог (`BacktestTradeRecord`/`includeTrades=true`) — рабочий инструмент декомпозиции; скрипт `research_wfa_timedirection.ps1` | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).

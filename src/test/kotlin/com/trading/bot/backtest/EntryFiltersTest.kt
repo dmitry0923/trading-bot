@@ -31,6 +31,10 @@ class EntryFiltersTest {
         orbWindowBars: Int = 6,
         orbStrictBreakout: Boolean = true,
         orbBlockOnUnknown: Boolean = false,
+        timeDirectionEnabled: Boolean = false,
+        timeDirectionLongBlockUntilHour: Int = 11,
+        timeDirectionShortBlockStartHour: Int = 13,
+        timeDirectionShortBlockEndHour: Int = 16,
     ): EntryFilters =
         EntryFilters(
             sessionEnabled = sessionEnabled,
@@ -44,6 +48,10 @@ class EntryFiltersTest {
             orbWindowBars = orbWindowBars,
             orbStrictBreakout = orbStrictBreakout,
             orbBlockOnUnknown = orbBlockOnUnknown,
+            timeDirectionEnabled = timeDirectionEnabled,
+            timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
+            timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
+            timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
         )
 
     @Test
@@ -188,6 +196,33 @@ class EntryFiltersTest {
 
         // Первый день: внутри диапазона → HOLD (strict), пробой 2-го дня не «затекает».
         assertEquals(StrategyAction.HOLD, f.orbDirection(firstDay, firstDay.lastIndex))
+    }
+
+    @Test
+    fun `timeDirection blocks morning long and midday short`() {
+        val f =
+            filter(
+                timeDirectionEnabled = true,
+                timeDirectionLongBlockUntilHour = 11,
+                timeDirectionShortBlockStartHour = 13,
+                timeDirectionShortBlockEndHour = 16,
+            )
+        assertTrue(f.blocksDirection(LocalTime.of(10, 0), StrategyAction.BUY))
+        assertTrue(f.blocksDirection(LocalTime.of(11, 0), StrategyAction.BUY))
+        assertFalse(f.blocksDirection(LocalTime.of(12, 0), StrategyAction.BUY))
+        assertFalse(f.blocksDirection(LocalTime.of(13, 0), StrategyAction.BUY))
+        assertTrue(f.blocksDirection(LocalTime.of(13, 0), StrategyAction.SELL))
+        assertTrue(f.blocksDirection(LocalTime.of(16, 0), StrategyAction.SELL))
+        assertFalse(f.blocksDirection(LocalTime.of(12, 0), StrategyAction.SELL))
+        assertFalse(f.blocksDirection(LocalTime.of(17, 0), StrategyAction.SELL))
+    }
+
+    @Test
+    fun `timeDirection disabled never blocks`() {
+        val f = filter()
+        assertFalse(f.blocksDirection(LocalTime.of(9, 0), StrategyAction.BUY))
+        assertFalse(f.blocksDirection(LocalTime.of(14, 0), StrategyAction.SELL))
+        assertFalse(f.blocksDirection(LocalTime.of(10, 0), StrategyAction.HOLD))
     }
 
     private val dayBase = LocalDate.of(2026, 1, 5)

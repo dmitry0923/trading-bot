@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.model.PositionDirection
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDateTime
@@ -7,6 +8,50 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.sqrt
+
+/**
+ * Запись одной закрытой сделки бэктеста (research, 2026-09-23): полный трейд-лог
+ * с фичами на входе (час/день недели, ATR%, волатильность), направлением,
+ * close-причиной и P&L — для декомпозиции прибыльных/убыточных входов.
+ */
+data class BacktestTradeRecord(
+    val ticker: String,
+    val direction: PositionDirection,
+    val quantity: Int,
+    val entryPrice: BigDecimal,
+    val exitPrice: BigDecimal,
+    val entryTime: LocalDateTime?,
+    val exitTime: LocalDateTime?,
+    val closeReason: String,
+    val pnl: Double,
+    val commission: Double,
+    val funding: Double,
+    val holdBars: Int,
+    val hourOfDay: Int? = null,
+    val dayOfWeek: String? = null,
+    val atrPercent: Double? = null,
+    val volatilityPercent: Double? = null,
+) {
+    fun toMap(): Map<String, Any?> =
+        mapOf(
+            "ticker" to ticker,
+            "direction" to direction.name,
+            "quantity" to quantity,
+            "entryPrice" to entryPrice,
+            "exitPrice" to exitPrice,
+            "entryTime" to entryTime?.toString(),
+            "exitTime" to exitTime?.toString(),
+            "closeReason" to closeReason,
+            "pnl" to pnl,
+            "commission" to commission,
+            "funding" to funding,
+            "holdBars" to holdBars,
+            "hourOfDay" to hourOfDay,
+            "dayOfWeek" to dayOfWeek,
+            "atrPercent" to atrPercent,
+            "volatilityPercent" to volatilityPercent,
+        )
+}
 
 /**
  * Метрики результата бэктеста (C-002).
@@ -54,6 +99,8 @@ data class BacktestResult(
     val edgeStatisticallySignificant: Boolean = false,
     /** Число bootstrap-итераций для оценки значимости. */
     val significanceSimulations: Int = 0,
+    /** Полный трейд-лог сделок (research; пуст если `includeTrades=false`). */
+    val trades: List<BacktestTradeRecord> = emptyList(),
 ) {
     /**
      * Критерии приёма стратегии в прод, зависят от класса инструмента.

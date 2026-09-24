@@ -28,6 +28,7 @@ import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
+import kotlin.math.sqrt
 
 /**
  * Движок бэктеста.
@@ -96,6 +97,10 @@ class BacktestEngine(
         val entryBars: Int,
         val liquidationPrice: BigDecimal? = null,
         val entryTime: LocalDateTime? = null,
+        val hourOfDay: Int? = null,
+        val dayOfWeek: String? = null,
+        val atrPercent: Double? = null,
+        val volatilityPercent: Double? = null,
     )
 
     /** Результат определения размера позиции: кол-во и (для фьючерсов) liq-цена. */
@@ -261,6 +266,7 @@ class BacktestEngine(
         val equityTimestamps = ArrayList<LocalDateTime>()
         val tradeReturns = ArrayList<Double>()
         val tradeHoldBars = ArrayList<Int>()
+        val tradeLog = ArrayList<BacktestTradeRecord>()
         val commissionAccumulator = mutableListOf(BigDecimal.ZERO)
         val cycleId = "backtest-$ticker-${UUID.randomUUID()}"
         var mlBlockedCount = 0
@@ -337,6 +343,7 @@ class BacktestEngine(
                             current,
                             applySlippage = !backtestConfig.realisticExecution,
                             fundingHistory = fundingHistory,
+                            tradeLog = tradeLog,
                         )
                     recordRiskSimClose(ticker, liqPos, "LIQUIDATION", liq, i, sorted, cash)
                     position = null
@@ -364,6 +371,7 @@ class BacktestEngine(
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
                                 fundingHistory = fundingHistory,
+                                tradeLog = tradeLog,
                             )
                         recordRiskSimClose(ticker, pos0, "STOP_LOSS", pos0.stopLoss, i, sorted, cash)
                         position = null
@@ -386,6 +394,7 @@ class BacktestEngine(
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
                                 fundingHistory = fundingHistory,
+                                tradeLog = tradeLog,
                             )
                         recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, i, sorted, cash)
                         position = null
@@ -418,6 +427,7 @@ class BacktestEngine(
                         slippageMultiplier,
                         current,
                         fundingHistory = fundingHistory,
+                        tradeLog = tradeLog,
                     )
                 recordRiskSimClose(ticker, maxHoldPosition, "MAX_HOLD", current.closePrice, i, sorted, cash)
                 position = null
@@ -457,6 +467,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 fundingHistory = fundingHistory,
+                                tradeLog = tradeLog,
                             )
                         recordRiskSimClose(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -499,6 +510,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 fundingHistory = fundingHistory,
+                                tradeLog = tradeLog,
                             )
                         recordRiskSimClose(ticker, curPos, "MTF_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -556,6 +568,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 fundingHistory = fundingHistory,
+                                tradeLog = tradeLog,
                             )
                         recordRiskSimClose(ticker, curPos, "FUNDING_VETO_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -608,6 +621,7 @@ class BacktestEngine(
                             slippageMultiplier,
                             current,
                             fundingHistory = fundingHistory,
+                            tradeLog = tradeLog,
                         )
                     recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
                     position =
@@ -682,13 +696,14 @@ class BacktestEngine(
                     slippageMultiplier,
                     sorted.last(),
                     fundingHistory = fundingHistory,
+                    tradeLog = tradeLog,
                 )
             recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
         equityCurve.add(cash)
         if (sorted.isNotEmpty()) equityTimestamps.add(sorted.last().time)
 
-        val result =
+        val metricsResult =
             BacktestMetrics.compute(
                 ticker,
                 equityCurve,
@@ -698,6 +713,7 @@ class BacktestEngine(
                 commissionAccumulator[0],
                 instrumentsConfig.isFutures(ticker),
             )
+        val result = metricsResult.copy(trades = tradeLog)
         logger.info {
             "Backtest $ticker: return=${String.format("%.2f%%", result.totalReturn * 100)}, " +
                 "Sharpe=${String.format("%.2f", result.sharpeRatio)}, Sortino=${String.format("%.2f", result.sortinoRatio)}, " +
@@ -892,6 +908,14 @@ class BacktestEngine(
                 slippageMultiplier,
                 candle,
             )
+        val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod)
+        val atrPercent =
+            if (atr != null && fill.price > BigDecimal.ZERO) {
+                atr.divide(fill.price, 6, RoundingMode.HALF_UP).multiply(BigDecimal(100)).toDouble()
+            } else {
+                null
+            }
+        val volatilityPercent = volatility20(history)
         return PositionSim(
             direction = direction,
             quantity = sized.quantity,
@@ -901,7 +925,28 @@ class BacktestEngine(
             entryBars = bar,
             liquidationPrice = sized.liquidationPrice,
             entryTime = candle?.time,
+            hourOfDay = candle?.time?.hour,
+            dayOfWeek = candle?.time?.dayOfWeek?.name,
+            atrPercent = atrPercent,
+            volatilityPercent = volatilityPercent,
         )
+    }
+
+    /** Волатильность по closing-returns последних 20 баров (%, стандартное отклонение). */
+    private fun volatility20(history: List<Candle>): Double? {
+        if (history.size < 21) return null
+        val closes = history.takeLast(20).map { it.closePrice.toDouble() }
+        var prev = closes[0]
+        val returns = ArrayList<Double>(closes.size - 1)
+        for (c in closes.drop(1)) {
+            val r = (c - prev) / prev
+            returns.add(r)
+            prev = c
+        }
+        val mean = returns.average()
+        val variance = returns.map { (it - mean) * (it - mean) }.average()
+        val std = sqrt(variance)
+        return std * 100
     }
 
     /**
@@ -1089,6 +1134,7 @@ class BacktestEngine(
         candle: Candle? = null,
         applySlippage: Boolean = true,
         fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
+        tradeLog: MutableList<BacktestTradeRecord>? = null,
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill =
@@ -1145,6 +1191,26 @@ class BacktestEngine(
 
         tradeReturns.add(pnl.toDouble())
         tradeHoldBars.add((closeBar - pos.entryBars).coerceAtLeast(0))
+        tradeLog?.add(
+            BacktestTradeRecord(
+                ticker = ticker,
+                direction = pos.direction,
+                quantity = pos.quantity,
+                entryPrice = pos.entryPrice,
+                exitPrice = fill.price,
+                entryTime = pos.entryTime,
+                exitTime = candle?.time,
+                closeReason = reason,
+                pnl = pnl.toDouble(),
+                commission = commissionEntry.add(commissionExit).toDouble(),
+                funding = funding.toDouble(),
+                holdBars = (closeBar - pos.entryBars).coerceAtLeast(0),
+                hourOfDay = pos.hourOfDay,
+                dayOfWeek = pos.dayOfWeek,
+                atrPercent = pos.atrPercent,
+                volatilityPercent = pos.volatilityPercent,
+            ),
+        )
         // Комиссия входа уже списана при открытии; здесь добавляется gross за вычетом
         // комиссии выхода и funding.
         val newCash = cash.add(gross).subtract(commissionExit).subtract(funding)

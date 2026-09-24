@@ -469,7 +469,12 @@ class ApiController(
         @RequestParam(required = false) orbWindowBars: Int?,
         @RequestParam(required = false) orbStrictBreakout: Boolean?,
         @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) timeDirectionEnabled: Boolean?,
+        @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(defaultValue = "false") includeTrades: Boolean,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -504,6 +509,10 @@ class ApiController(
                 orbWindowBars = orbWindowBars,
                 orbStrictBreakout = orbStrictBreakout,
                 orbBlockOnUnknown = orbBlockOnUnknown,
+                timeDirectionEnabled = timeDirectionEnabled,
+                timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
+                timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
+                timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
             )
         val result =
             backtestEngine.run(
@@ -535,6 +544,7 @@ class ApiController(
             "meanTradeCI95High" to result.meanTradeCI95High,
             "passable" to result.isPassable(),
             "equityCurve" to result.equityCurve,
+            "trades" to if (includeTrades) result.trades.map { it.toMap() } else emptyList(),
             "timestamp" to
                 LocalDateTime
                     .now()
@@ -743,6 +753,10 @@ class ApiController(
         @RequestParam(required = false) orbWindowBars: Int?,
         @RequestParam(required = false) orbStrictBreakout: Boolean?,
         @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) timeDirectionEnabled: Boolean?,
+        @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -786,6 +800,10 @@ class ApiController(
                 orbWindowBars = orbWindowBars,
                 orbStrictBreakout = orbStrictBreakout,
                 orbBlockOnUnknown = orbBlockOnUnknown,
+                timeDirectionEnabled = timeDirectionEnabled,
+                timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
+                timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
+                timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
             )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
@@ -872,6 +890,10 @@ class ApiController(
         @RequestParam(required = false) orbWindowBars: Int?,
         @RequestParam(required = false) orbStrictBreakout: Boolean?,
         @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) timeDirectionEnabled: Boolean?,
+        @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -929,6 +951,10 @@ class ApiController(
                 orbWindowBars = orbWindowBars,
                 orbStrictBreakout = orbStrictBreakout,
                 orbBlockOnUnknown = orbBlockOnUnknown,
+                timeDirectionEnabled = timeDirectionEnabled,
+                timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
+                timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
+                timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
             )
         val report =
             monteCarloAnalyzer.analyze(
@@ -1025,6 +1051,10 @@ class ApiController(
         @RequestParam(required = false) orbWindowBars: Int?,
         @RequestParam(required = false) orbStrictBreakout: Boolean?,
         @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) timeDirectionEnabled: Boolean?,
+        @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1063,6 +1093,10 @@ class ApiController(
                 orbWindowBars = orbWindowBars,
                 orbStrictBreakout = orbStrictBreakout,
                 orbBlockOnUnknown = orbBlockOnUnknown,
+                timeDirectionEnabled = timeDirectionEnabled,
+                timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
+                timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
+                timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
             )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
@@ -1149,6 +1183,10 @@ class ApiController(
         @RequestParam(required = false) orbWindowBars: Int?,
         @RequestParam(required = false) orbStrictBreakout: Boolean?,
         @RequestParam(required = false) orbBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) timeDirectionEnabled: Boolean?,
+        @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
+        @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1194,6 +1232,10 @@ class ApiController(
                         orbWindowBars = orbWindowBars,
                         orbStrictBreakout = orbStrictBreakout,
                         orbBlockOnUnknown = orbBlockOnUnknown,
+                        timeDirectionEnabled = timeDirectionEnabled,
+                        timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
+                        timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
+                        timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
                     ),
             )
 

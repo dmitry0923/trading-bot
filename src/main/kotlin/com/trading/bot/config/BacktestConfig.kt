@@ -193,4 +193,21 @@ class BacktestConfig {
     /** Fail-closed для ORB: при невозможности определить opening range (данные
      *  начинаются не с начала дня) БЛОКИРОВАТЬ вход (true) или пропускать (false). */
     var orbBlockOnUnknown: Boolean = false
+
+    /** Time×direction фильтр входа (research, pt.4): блокирует LONG в утренние
+     *  часы (≤ [timeDirectionLongBlockUntilHour]) и SHORT в дневное окно
+     *  ([timeDirectionShortBlockStartHour]..[timeDirectionShortBlockEndHour]).
+     *  Гипотеза из декомпозиции сделок CNYRUBF (2026-09-23): утренние LONG и
+     *  дневные SHORT генерируют основную часть убытка. research-инструмент,
+     *  по умолчанию off (на live-входы не влияет). */
+    var timeDirectionEnabled: Boolean = false
+
+    /** LONG запрещён до этого часа включительно. */
+    var timeDirectionLongBlockUntilHour: Int = 11
+
+    /** SHORT запрещён с этого часа (включительно). */
+    var timeDirectionShortBlockStartHour: Int = 13
+
+    /** SHORT запрещён до этого часа включительно. */
+    var timeDirectionShortBlockEndHour: Int = 16
 }

@@ -39,6 +39,10 @@ data class EntryFilterOverrides(
     val orbWindowBars: Int? = null,
     val orbStrictBreakout: Boolean? = null,
     val orbBlockOnUnknown: Boolean? = null,
+    val timeDirectionEnabled: Boolean? = null,
+    val timeDirectionLongBlockUntilHour: Int? = null,
+    val timeDirectionShortBlockStartHour: Int? = null,
+    val timeDirectionShortBlockEndHour: Int? = null,
 ) {
     val anyProvided: Boolean
         get() =
@@ -52,7 +56,11 @@ data class EntryFilterOverrides(
                 orbEnabled != null ||
                 orbWindowBars != null ||
                 orbStrictBreakout != null ||
-                orbBlockOnUnknown != null
+                orbBlockOnUnknown != null ||
+                timeDirectionEnabled != null ||
+                timeDirectionLongBlockUntilHour != null ||
+                timeDirectionShortBlockStartHour != null ||
+                timeDirectionShortBlockEndHour != null
 }
 
 /**
@@ -72,6 +80,10 @@ class EntryFilters(
     val orbWindowBars: Int,
     val orbStrictBreakout: Boolean,
     val orbBlockOnUnknown: Boolean,
+    val timeDirectionEnabled: Boolean,
+    val timeDirectionLongBlockUntilHour: Int,
+    val timeDirectionShortBlockStartHour: Int,
+    val timeDirectionShortBlockEndHour: Int,
 ) {
     companion object {
         fun from(
@@ -94,10 +106,19 @@ class EntryFilters(
                 orbWindowBars = overrides?.orbWindowBars ?: config.orbWindowBars,
                 orbStrictBreakout = overrides?.orbStrictBreakout ?: config.orbStrictBreakout,
                 orbBlockOnUnknown = overrides?.orbBlockOnUnknown ?: config.orbBlockOnUnknown,
+                timeDirectionEnabled =
+                    overrides?.timeDirectionEnabled ?: config.timeDirectionEnabled,
+                timeDirectionLongBlockUntilHour =
+                    overrides?.timeDirectionLongBlockUntilHour ?: config.timeDirectionLongBlockUntilHour,
+                timeDirectionShortBlockStartHour =
+                    overrides?.timeDirectionShortBlockStartHour ?: config.timeDirectionShortBlockStartHour,
+                timeDirectionShortBlockEndHour =
+                    overrides?.timeDirectionShortBlockEndHour ?: config.timeDirectionShortBlockEndHour,
             )
 
         /** Фильтры выключены — не влияют на входы. */
-        val PASS_THROUGH = EntryFilters(false, 600, 1080, false, 20, 1.0, false, false, 6, true, false)
+        val PASS_THROUGH =
+            EntryFilters(false, 600, 1080, false, 20, 1.0, false, false, 6, true, false, false, 11, 13, 16)
     }
 
     /** true → вход в бар [barTime] блокирован (вне окна сессии / вне полосы отката). */
@@ -162,6 +183,27 @@ class EntryFilters(
             bar.closePrice < rangeLow -> StrategyAction.SELL
             orbStrictBreakout -> StrategyAction.HOLD
             else -> null
+        }
+    }
+
+    /**
+     * Time×direction фильтр (research, pt.4): блокирует LONG в утренние часы
+     * (≤ [timeDirectionLongBlockUntilHour]) и SHORT в дневное окно
+     * ([timeDirectionShortBlockStartHour]..[timeDirectionShortBlockEndHour]).
+     * Гипотеза из декомпозиции сделок CNYRUBF (2026-09-23, 730д IS): утренние
+     * LONG (avg −21.3, TP 1/15) и дневные SHORT (avg −35.8, TP 0/10) генерируют
+     * основную часть убытка. true → данный вход [action] в бар [barTime] блокирован.
+     */
+    fun blocksDirection(
+        barTime: LocalTime,
+        action: StrategyAction,
+    ): Boolean {
+        if (!timeDirectionEnabled) return false
+        val hour = barTime.hour
+        return when (action) {
+            StrategyAction.BUY -> hour <= timeDirectionLongBlockUntilHour
+            StrategyAction.SELL -> hour in timeDirectionShortBlockStartHour..timeDirectionShortBlockEndHour
+            else -> false
         }
     }
 }
@@ -336,6 +378,18 @@ class LiveStrategyBacktestSignalGenerator(
                 }
             if (orb == StrategyAction.HOLD) return StrategyAction.HOLD
             if (orb != null && orb != bestAction) return StrategyAction.HOLD
+        }
+
+        // Time×direction фильтр (research, pt.4): блокирует LONG в утренние часы
+        // и SHORT в дневное окно (см. декомпозицию сделок CNYRUBF 2026-09-23).
+        entryFilters?.let { filters ->
+            val tdBlocked =
+                try {
+                    filters.blocksDirection(bar.time.toLocalTime(), bestAction)
+                } catch (_: Exception) {
+                    false
+                }
+            if (tdBlocked) return StrategyAction.HOLD
         }
 
         // ML-фильтр направления: veto против направления победителя.

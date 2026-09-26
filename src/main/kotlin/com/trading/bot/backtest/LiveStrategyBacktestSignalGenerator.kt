@@ -533,7 +533,7 @@ class LiveStrategyBacktestSignalGenerator(
                         val session = sessionBars(candles, index)
                         val higher =
                             CandleResampler.resample(
-                                candles.subList(0, index + 1),
+                                higherTimeframeLookback(candles, index, filters.vwapMrTimeframe),
                                 filters.vwapMrTimeframe,
                                 completedBefore = bar.time,
                             )
@@ -584,6 +584,38 @@ class LiveStrategyBacktestSignalGenerator(
     }
 
     private companion object {
+        /** Базовый таймфрейм ресемплинга (MINUTE_10) — бар на 10 минут. */
+        private const val BASE_BAR_MINUTES = 10L
+
+        /** Жёсткий потолок lookback для ADX старшего ТФ: ресемплинг всего
+         *  префикса истории даёт O(n²) на длинных прогонах (46k свечей), а ADX
+         *  нуждается лишь в десятках завершённых баров старшего ТФ. */
+        private const val MAX_ADX_LOOKBACK_BARS = 600
+
+        /** Минимум баров старшего ТФ для расчёта ADX: 2·period + запас. */
+        private const val ADX_HIGHER_TF_BARS = 32
+
+        /**
+         * Срез свечей для расчёта ADX старшего ТФ: столько базовых баров,
+         * сколько нужно для [ADX_HIGHER_TF_BARS] завершённых баров старшего
+         * ТФ, но не больше [MAX_ADX_LOOKBACK_BARS]. Неизвестный таймфрейм →
+         * пустой список (ADX = 0, фильтр тренда не блокирует).
+         */
+        fun higherTimeframeLookback(
+            candles: List<Candle>,
+            index: Int,
+            timeframe: String,
+        ): List<Candle> {
+            val duration =
+                runCatching { CandleResampler.durationMinutes(timeframe) }.getOrNull()
+                    ?: return emptyList()
+            val barsPerBucket = (duration / BASE_BAR_MINUTES).coerceAtLeast(1L)
+            val needed =
+                (ADX_HIGHER_TF_BARS * barsPerBucket).coerceAtMost(MAX_ADX_LOOKBACK_BARS.toLong())
+            val from = (index + 1 - needed).coerceAtLeast(0L)
+            return candles.subList(from.toInt(), index + 1)
+        }
+
         /**
          * Бары текущей торговой сессии (день) до и включая [index] — окно для
          * сессионного VWAP в фильтре VWAP-MR.

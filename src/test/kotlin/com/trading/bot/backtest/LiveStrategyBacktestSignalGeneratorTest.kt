@@ -464,6 +464,47 @@ class LiveStrategyBacktestSignalGeneratorTest {
         assertTrue(orbNonHold > 0, "ORB-фильтр не должен вырезать все входы на пробое, orbNonHold=$orbNonHold")
     }
 
+    @Test
+    fun `vwapMr filter never increases entries versus baseline`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genVwapMr =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            vwapMrEnabled = true
+                            vwapMrDeviationSigma = 0.5
+                            vwapMrMinSessionBars = 3
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 100.0, step = 2.0, wick = 0.2)
+        val baseEntries = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val mrEntries = collectSignalsWith(genVwapMr, candles).count { it != StrategyAction.HOLD }
+        // Фильтр только блокирует входы, поэтому не может увеличить их число.
+        assertTrue(mrEntries <= baseEntries, "vwapMr дал больше входов, чем baseline: $mrEntries > $baseEntries")
+    }
+
+    @Test
+    fun `vwapMr fail-closed blocks everything on short history`() {
+        val genVwapMr =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            vwapMrEnabled = true
+                            vwapMrMinSessionBars = 50
+                            vwapMrBlockOnUnknown = true
+                        },
+                    ),
+            )
+        // 40 баров < minSessionBars 50 → сессия не набрала данных → HOLD везде,
+        // где вход дошёл до VWAP-фильтра.
+        val candles = rampCandles(count = 40, start = 100.0, step = 2.0, wick = 0.2)
+        val signals = collectSignalsWith(genVwapMr, candles)
+        assertEquals(signals.size, signals.count { it == StrategyAction.HOLD })
+    }
+
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)
     }

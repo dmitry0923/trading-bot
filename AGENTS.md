@@ -739,6 +739,33 @@ GLDRUBF), частично 2 (№4 overnight SBER, №8 обедный MR на R
 нужен `bt.agent.timeout-injection-rate`. Реализуемые ядра требуют новых research-фильтров
 по отработанному шаблону (`bt.*` + query-override + тесты, дефолт off).
 
+### Реализация стратегий №7 ORB-окно и №1 VWAP-MR (2026-09-26)
+
+Обе реализуемые стратегии реализованы, дефолт **off**, live-путь не затронут.
+
+**№7 ORB на золоте** (`8139342`): `EntryFilters.orbDirection` получил окно диапазона
+`bt.orb-window-start-minutes`/`bt.orb-window-end-minutes` (query `orbWindowStartMinutes`/
+`orbWindowEndMinutes`, минуты от полуночи). Диапазон = первые `orbWindowBars` баров дня
+с первого бара ≥ start; проверка пробоя — только на барах ≥ end. Дефолт `0..1440` =
+исходное поведение (обратная совместимость). Под стратегию: start=930, end=960,
+bars=3 (MINUTE_10) → диапазон 15:30–16:00 МСК, вход на пробое после 16:00.
+
+**№1 VWAP-MR** (`1af7944`, `ce684dc`): `IndicatorCalculator.vwap` (сессионный VWAP со
+сбросом по дате), `.vwapStdDevPercent` (σ типичной цены в % от VWAP), `.adx` (по Уайлдеру).
+`EntryFilters.vwapMrDirection`: вход только при |close−VWAP| ≥ `vwapMrDeviationSigma`·σ
+И ADX(`vwapMrTimeframe`, HOUR_1) ≤ `vwapMrMaxAdx`; HOLD при отклонении < Nσ, высоком ADX,
+нехватке данных/σ≈0 (fail-closed). Старший ТФ через `CandleResampler` c
+`completedBefore = bar.time` (без lookahead) и **ограниченным lookback** (32 бара ТФ,
+потолок 600 базовых баров — иначе O(n²) на 46k свечах).
+
+**Найденный баг (важно для индикаторов):** на полностью плоской сессии σ ≈ 1e-14
+(float-шум), а не 0 — деление отклонения на такую σ давало ложные BUY/SELL в тысячи σ.
+Отсёк порогом `IndicatorCalculator.MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6` +
+регрессионный тест. Для любых новых σ-метрик проверять вырожденный случай.
+
+Не сделано: выход «возврат к VWAP» — движок позиций не имеет такого exit-типа (на текущих
+прогонах выход = SL/TP grid бэктеста). WFA-прогоны №1/№7 — отдельная задача.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |

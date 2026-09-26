@@ -31,6 +31,8 @@ class EntryFiltersTest {
         orbWindowBars: Int = 6,
         orbStrictBreakout: Boolean = true,
         orbBlockOnUnknown: Boolean = false,
+        orbWindowStartMinutes: Int = 0,
+        orbWindowEndMinutes: Int = 1440,
         timeDirectionEnabled: Boolean = false,
         timeDirectionLongBlockUntilHour: Int = 11,
         timeDirectionShortBlockStartHour: Int = 13,
@@ -48,6 +50,8 @@ class EntryFiltersTest {
             orbWindowBars = orbWindowBars,
             orbStrictBreakout = orbStrictBreakout,
             orbBlockOnUnknown = orbBlockOnUnknown,
+            orbWindowStartMinutes = orbWindowStartMinutes,
+            orbWindowEndMinutes = orbWindowEndMinutes,
             timeDirectionEnabled = timeDirectionEnabled,
             timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
             timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
@@ -196,6 +200,160 @@ class EntryFiltersTest {
 
         // Первый день: внутри диапазона → HOLD (strict), пробой 2-го дня не «затекает».
         assertEquals(StrategyAction.HOLD, f.orbDirection(firstDay, firstDay.lastIndex))
+    }
+
+    @Test
+    fun `orb window skips bars before window and tests breakout after it`() {
+        // Окно диапазона 15:30-16:00 МСК = минуты 930..960.
+        // Бары тестового дня начинаются в 06:00 с шагом 10 мин, поэтому
+        // idx 57 = 15:30, idx 60 = 16:00, idx 62 = 16:20.
+        val start = 15 * 60 + 30
+        val end = 16 * 60
+        val f =
+            filter(
+                orbEnabled = true,
+                orbWindowBars = 3,
+                orbStrictBreakout = true,
+                orbWindowStartMinutes = start,
+                orbWindowEndMinutes = end,
+            )
+        val bars = mutableListOf<Candle>()
+        // Бары до окна: плоские 100 (High=101, Low=99) — в High/Low диапазона
+        // не попадают.
+        repeat(70) { bars += candle(0, it, 100.0, 101.0, 99.0, 100.0) }
+        // Окно (idx 57..59): узкий диапазон 200±1 → High=201, Low=199.
+        repeat(3) { i ->
+            bars[57 + i] = candle(0, 57 + i, 200.0, 201.0, 199.0, 200.0)
+        }
+
+        // До окна (утро) — ORB не применяется.
+        assertNull(f.orbDirection(bars, 10))
+        assertNull(f.orbDirection(bars, 56))
+        // Внутри окна (диапазон не закрыт, blockOnUnknown=false → пропуск).
+        assertNull(f.orbDirection(bars, 57))
+        assertNull(f.orbDirection(bars, 58))
+        assertNull(f.orbDirection(bars, 59))
+        // После окна: close 100 < Low 199 → SELL (пробой вниз).
+        assertEquals(StrategyAction.SELL, f.orbDirection(bars, 60))
+        assertEquals(StrategyAction.SELL, f.orbDirection(bars, 62))
+
+        // Пробой вверх после окна (close 250 > High 201) → BUY.
+        val up = bars.toMutableList()
+        up[62] = candle(0, 62, 250.0, 251.0, 249.0, 250.0)
+        assertEquals(StrategyAction.BUY, f.orbDirection(up, 62))
+
+        // Внутри диапазона после окна при strict → HOLD, при loose → пропуск.
+        val inside = bars.toMutableList()
+        inside[62] = candle(0, 62, 200.0, 201.0, 199.0, 200.0)
+        assertEquals(StrategyAction.HOLD, f.orbDirection(inside, 62))
+        val loose =
+            filter(
+                orbEnabled = true,
+                orbWindowBars = 3,
+                orbStrictBreakout = false,
+                orbWindowStartMinutes = start,
+                orbWindowEndMinutes = end,
+            )
+        assertNull(loose.orbDirection(inside, 62))
+    }
+
+    @Test
+    fun `orb window formation is fail-closed with blockOnUnknown`() {
+        val start = 15 * 60 + 30
+        val end = 16 * 60
+        val f =
+            filter(
+                orbEnabled = true,
+                orbWindowBars = 3,
+                orbBlockOnUnknown = true,
+                orbWindowStartMinutes = start,
+                orbWindowEndMinutes = end,
+            )
+        val bars = mutableListOf<Candle>()
+        repeat(70) { bars += candle(0, it, 200.0, 201.0, 199.0, 200.0) }
+        // Внутри окна диапазон ещё не набрал 3 бара → HOLD (fail-closed).
+        assertEquals(StrategyAction.HOLD, f.orbDirection(bars, 58))
+        // Утро до окна — пропуск даже при blockOnUnknown.
+        assertNull(f.orbDirection(bars, 30))
+        // После окна и после полного диапазона — проверка пробоя: close 200 внутри
+        // 199..201 при strict → HOLD.
+        assertEquals(StrategyAction.HOLD, f.orbDirection(bars, 60))
+    }
+
+    @Test
+    fun `orb day starting after window start is undefined`() {
+        // Данные дня начинаются в 14:00 (idx 0 = 14:00), первый бар окна (15:30) =
+        // idx 9. Диапазон не успевает закрыться в первый бар окна → undefined.
+        val start = 15 * 60 + 30
+        val end = 16 * 60
+        val late =
+            filter(
+                orbEnabled = true,
+                orbWindowBars = 3,
+                orbWindowStartMinutes = start,
+                orbWindowEndMinutes = end,
+            )
+        val strict =
+            filter(
+                orbEnabled = true,
+                orbWindowBars = 3,
+                orbBlockOnUnknown = true,
+                orbWindowStartMinutes = start,
+                orbWindowEndMinutes = end,
+            )
+        val bars = mutableListOf<Candle>()
+        repeat(30) { i ->
+            val time = dayBase.atTime(14, 0).plusMinutes(10L * i)
+            bars +=
+                Candle(
+                    ticker = "TEST",
+                    timeframe = "MINUTE_10",
+                    openPrice = BigDecimal.valueOf(200.0),
+                    highPrice = BigDecimal.valueOf(201.0),
+                    lowPrice = BigDecimal.valueOf(199.0),
+                    closePrice = BigDecimal.valueOf(200.0),
+                    volume = 100,
+                    time = time,
+                )
+        }
+        // idx 9 = 15:30 — первый бар окна, диапазон не закрыт.
+        assertNull(late.orbDirection(bars, 9))
+        assertEquals(StrategyAction.HOLD, strict.orbDirection(bars, 9))
+    }
+
+    @Test
+    fun `orb range longer than window extends past window end`() {
+        // orbWindowBars=6 (60 мин) при окне 15:30-16:00: диапазон не помещается в
+        // окно и продлевается за его конец; вход разрешён только после orbWindowEnd.
+        val start = 15 * 60 + 30
+        val end = 16 * 60
+        val f =
+            filter(
+                orbEnabled = true,
+                orbWindowBars = 6,
+                orbWindowStartMinutes = start,
+                orbWindowEndMinutes = end,
+            )
+        val bars = mutableListOf<Candle>()
+        repeat(70) { bars += candle(0, it, 200.0, 201.0, 199.0, 200.0) }
+        // Диапазон = idx 57..62 (последний бар 16:20) → на нём самом пробой не
+        // проверяется.
+        assertNull(f.orbDirection(bars, 62))
+        // Следующий бар (16:30) — диапазон закрыт, close внутри → strict HOLD.
+        assertEquals(StrategyAction.HOLD, f.orbDirection(bars, 63))
+    }
+
+    @Test
+    fun `orb default window keeps full day behaviour`() {
+        // Дефолт 0..1440: диапазон = первые бары дня, пробой — в любом баре
+        // после окна (как в исходной реализации).
+        val f = filter(orbEnabled = true, orbWindowBars = 6, orbStrictBreakout = true)
+        val day = dayCandles(100.0, windowBars = 6, postBars = 4)
+        assertEquals(StrategyAction.HOLD, f.orbDirection(day, day.lastIndex))
+        val broken =
+            day.dropLast(1) +
+                candle(0, 9, 111.0, 117.0, 110.0, 116.0)
+        assertEquals(StrategyAction.BUY, f.orbDirection(broken, broken.lastIndex))
     }
 
     @Test

@@ -39,6 +39,8 @@ data class EntryFilterOverrides(
     val orbWindowBars: Int? = null,
     val orbStrictBreakout: Boolean? = null,
     val orbBlockOnUnknown: Boolean? = null,
+    val orbWindowStartMinutes: Int? = null,
+    val orbWindowEndMinutes: Int? = null,
     val timeDirectionEnabled: Boolean? = null,
     val timeDirectionLongBlockUntilHour: Int? = null,
     val timeDirectionShortBlockStartHour: Int? = null,
@@ -57,6 +59,8 @@ data class EntryFilterOverrides(
                 orbWindowBars != null ||
                 orbStrictBreakout != null ||
                 orbBlockOnUnknown != null ||
+                orbWindowStartMinutes != null ||
+                orbWindowEndMinutes != null ||
                 timeDirectionEnabled != null ||
                 timeDirectionLongBlockUntilHour != null ||
                 timeDirectionShortBlockStartHour != null ||
@@ -80,12 +84,18 @@ class EntryFilters(
     val orbWindowBars: Int,
     val orbStrictBreakout: Boolean,
     val orbBlockOnUnknown: Boolean,
+    val orbWindowStartMinutes: Int,
+    val orbWindowEndMinutes: Int,
     val timeDirectionEnabled: Boolean,
     val timeDirectionLongBlockUntilHour: Int,
     val timeDirectionShortBlockStartHour: Int,
     val timeDirectionShortBlockEndHour: Int,
 ) {
     companion object {
+        /** Минут в сутках — [EntryFilters.orbWindowEndMinutes] ≥ этого значения
+         *  означает «окно не сужено» (вход разрешён сразу после закрытия диапазона). */
+        private const val MINUTES_PER_DAY = 1440
+
         fun from(
             config: BacktestConfig,
             overrides: EntryFilterOverrides? = null,
@@ -105,7 +115,12 @@ class EntryFilters(
                 orbEnabled = overrides?.orbEnabled ?: config.orbEnabled,
                 orbWindowBars = overrides?.orbWindowBars ?: config.orbWindowBars,
                 orbStrictBreakout = overrides?.orbStrictBreakout ?: config.orbStrictBreakout,
-                orbBlockOnUnknown = overrides?.orbBlockOnUnknown ?: config.orbBlockOnUnknown,
+                orbBlockOnUnknown =
+                    overrides?.orbBlockOnUnknown ?: config.orbBlockOnUnknown,
+                orbWindowStartMinutes =
+                    overrides?.orbWindowStartMinutes ?: config.orbWindowStartMinutes,
+                orbWindowEndMinutes =
+                    overrides?.orbWindowEndMinutes ?: config.orbWindowEndMinutes,
                 timeDirectionEnabled =
                     overrides?.timeDirectionEnabled ?: config.timeDirectionEnabled,
                 timeDirectionLongBlockUntilHour =
@@ -118,7 +133,25 @@ class EntryFilters(
 
         /** Фильтры выключены — не влияют на входы. */
         val PASS_THROUGH =
-            EntryFilters(false, 600, 1080, false, 20, 1.0, false, false, 6, true, false, false, 11, 13, 16)
+            EntryFilters(
+                sessionEnabled = false,
+                sessionStartMinutes = 600,
+                sessionEndMinutes = 1080,
+                pullbackEnabled = false,
+                pullbackEmaPeriod = 20,
+                pullbackMaxDeviationPercent = 1.0,
+                pullbackBlockOnUnknown = false,
+                orbEnabled = false,
+                orbWindowBars = 6,
+                orbStrictBreakout = true,
+                orbBlockOnUnknown = false,
+                orbWindowStartMinutes = 0,
+                orbWindowEndMinutes = 1440,
+                timeDirectionEnabled = false,
+                timeDirectionLongBlockUntilHour = 11,
+                timeDirectionShortBlockStartHour = 13,
+                timeDirectionShortBlockEndHour = 16,
+            )
     }
 
     /** true → вход в бар [barTime] блокирован (вне окна сессии / вне полосы отката). */
@@ -142,17 +175,33 @@ class EntryFilters(
     }
 
     /**
-     * Opening Range Breakout фильтр направления (research, pt.3). Считает
-     * opening range = High/Low первых [orbWindowBars] баров текущего торгового
-     * дня ([candles[0..index]]) и возвращает желаемую сторону:
+     * Opening Range Breakout фильтр направления (research, pt.3).
+     *
+     * Диапазон = High/Low [orbWindowBars] баров текущего торгового дня, начиная
+     * с первого бара с временем ≥ [orbWindowStartMinutes] (минуты от полуночи).
+     * Пробой проверяется на барах, где выполнены оба условия:
+     *  - диапазон закрыт (последний бар диапазона уже есть в истории);
+     *  - время бара ≥ [orbWindowEndMinutes] (вход разрешён только после закрытия
+     *    окна). При неп суженном окне (0..1440, дефолт) второе условие всегда
+     *    выполнено — это исходное поведение ORB: диапазон = первые бары дня,
+     *    пробой проверяется весь день.
+     *
+     * Возврат:
      *  - [StrategyAction.BUY] — close пробил верх диапазона (разрешён LONG);
      *  - [StrategyAction.SELL] — close пробил низ диапазона (разрешён SHORT);
-     *  - [StrategyAction.HOLD] — вход заблокирован: НЕ хватает баров дня до
-     *    закрытия диапазона ([barsInDay] ≤ [orbWindowBars]), день начинается не
-     *    с начала данных ([index] < [orbWindowBars] — нет начала дня), либо
-     *    внутри диапазона при [orbStrictBreakout]=true;
-     *  - null — фильтр off / пропуск (внутри диапазона при strict=false, либо
-     *    undefined-день при [orbBlockOnUnknown]=false).
+     *  - [StrategyAction.HOLD] — вход заблокирован: close внутри диапазона при
+     *    [orbStrictBreakout], либо диапазон undefined при [orbBlockOnUnknown];
+     *  - null — фильтр не блокирует: до начала окна, внутри окна (диапазон ещё
+     *    не закрыт) при [orbBlockOnUnknown]=false, либо close внутри диапазона
+     *    при [orbStrictBreakout]=false.
+     *
+     * undefined (данных не хватает: день в истории начинается позже окна, либо
+     * окно не содержит [orbWindowBars] баров) → HOLD при [orbBlockOnUnknown]
+     * (fail-closed), иначе null.
+     *
+     * Стратегия «ORB на золоте» (research 2026-09-26): окно 15:30–16:00 МСК
+     * ([orbWindowStartMinutes]=930, [orbWindowEndMinutes]=960, [orbWindowBars]=3
+     * для MINUTE_10), вход на пробое после 16:00.
      */
     fun orbDirection(
         candles: List<Candle>,
@@ -160,20 +209,32 @@ class EntryFilters(
     ): StrategyAction? {
         if (!orbEnabled || index <= 0) return null
         val bar = candles[index]
+        val barMinutes = bar.time.toLocalTime().let { it.hour * 60 + it.minute }
+        // До начала окна ORB не применяется (утренние бары не фильтруются).
+        if (barMinutes < orbWindowStartMinutes) return null
         // Собираем бары текущего торгового дня назад от index, пока дата совпадает
-        // с датой бара. Opening range — первые orbWindowBars баров этого дня.
+        // с датой бара. Начало диапазона — первый бар дня в окне.
         var dayStart = index
         val day = bar.time.toLocalDate()
         while (dayStart > 0 && candles[dayStart - 1].time.toLocalDate() == day) {
             dayStart--
         }
-        val barsInDay = index - dayStart + 1
-        if (barsInDay <= orbWindowBars) {
-            // Диапазон ещё формируется (внутри окна открытия) или день начинается
-            // не с начала данных — undefined.
+        val rangeStart =
+            (dayStart..index).firstOrNull {
+                val m = candles[it].time.toLocalTime()
+                m.hour * 60 + m.minute >= orbWindowStartMinutes
+            }
+        if (rangeStart == null || rangeStart + orbWindowBars - 1 >= index) {
+            // Диапазон ещё формируется (включая его последний бар — пробой
+            // проверяется только на следующих барах) или день начинается не с
+            // начала данных — undefined.
             return if (orbBlockOnUnknown) StrategyAction.HOLD else null
         }
-        val rangeBars = candles.subList(dayStart, dayStart + orbWindowBars)
+        if (orbWindowEndMinutes < MINUTES_PER_DAY && barMinutes < orbWindowEndMinutes) {
+            // Суженное окно: диапазон ещё не закрыт — направление неизвестно.
+            return if (orbBlockOnUnknown) StrategyAction.HOLD else null
+        }
+        val rangeBars = candles.subList(rangeStart, rangeStart + orbWindowBars)
         val rangeHigh =
             rangeBars.maxOfOrNull { it.highPrice } ?: return if (orbBlockOnUnknown) StrategyAction.HOLD else null
         val rangeLow =

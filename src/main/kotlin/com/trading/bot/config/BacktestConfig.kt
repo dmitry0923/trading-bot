@@ -194,6 +194,17 @@ class BacktestConfig {
      *  начинаются не с начала дня) БЛОКИРОВАТЬ вход (true) или пропускать (false). */
     var orbBlockOnUnknown: Boolean = false
 
+    /** Начало окна opening range в минутах от полуночи (research, 2026-09-26,
+     *  стратегия «ORB на золоте»: фиксируется диапазон 15:30-16:00 МСК, пробой —
+     *  на открытии США). По умолчанию 0 — окно начинается с начала торгового дня
+     *  (поведение исходного ORB не меняется). */
+    var orbWindowStartMinutes: Int = 0
+
+    /** Конец окна opening range в минутах от полуночи. По умолчанию 1440 — весь
+     *  торговый день. [orbWindowBars] баров берутся внутри окна
+     *  [orbWindowStartMinutes]..[orbWindowEndMinutes]. */
+    var orbWindowEndMinutes: Int = 1440
+
     /** Time×direction фильтр входа (research, pt.4): блокирует LONG в утренние
      *  часы (≤ [timeDirectionLongBlockUntilHour]) и SHORT в дневное окно
      *  ([timeDirectionShortBlockStartHour]..[timeDirectionShortBlockEndHour]).

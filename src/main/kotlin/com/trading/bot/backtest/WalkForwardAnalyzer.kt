@@ -35,6 +35,18 @@ data class WfaConfig(
     val fundingVetoBlockOnUnknown: Boolean? = null,
     /** research max-hold override (выход по барам, паттерн funding-veto): null → bt.*. */
     val maxHoldBars: Int? = null,
+    /**
+     * Research override сетки SL/TP **в пунктах** для фьючерсов: null → штатная
+     * сетка `BacktestValidator.futuresGrid` (25/50…300/600 пт).
+     *
+     * Нужен для mean-reversion стратегий: контрттрендовый вход отклоняется на
+     * 1.5–2σ и требует узкого стопа, а штатная сетка для фьючерсов начинается
+     * от 25 пт и заканчивается 600 пт — выразить узкий MR-стоп в ней нельзя.
+     * Задаётся одним из двух: только SL (TP подбирается из сетки) или оба сразу
+     * (тогда сетка состоит из единственной пары).
+     */
+    val slPoints: Int? = null,
+    val tpPoints: Int? = null,
 )
 
 /**

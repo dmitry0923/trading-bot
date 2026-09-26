@@ -537,6 +537,80 @@ class BacktestValidatorTest {
         }
     }
 
+    @Test
+    fun `wfa slPoints override narrows in-sample grid to a single pair`() {
+        val slCaptured = ArrayList<Int?>()
+        val tpCaptured = ArrayList<Int?>()
+        mockSimulateCapturingParams(slCaptured, tpCaptured)
+        runBlocking {
+            BacktestValidator(engine).validate(
+                "CNYRUBF",
+                List(600) { mockCandle(it) },
+                folds = 3,
+                slPoints = 10,
+                tpPoints = 20,
+            )
+        }
+        assertTrue(slCaptured.isNotEmpty(), "engine.simulate не вызван")
+        assertEquals(listOf<Int?>(10), slCaptured.distinct(), "override SL должен быть единственной парой сетки")
+        assertEquals(listOf<Int?>(20), tpCaptured.distinct(), "override TP должен быть единственной парой сетки")
+    }
+
+    @Test
+    fun `wfa slPoints override ignored for stocks`() {
+        val slCaptured = ArrayList<Int?>()
+        val tpCaptured = ArrayList<Int?>()
+        mockSimulateCapturingParams(slCaptured, tpCaptured)
+        val result =
+            runBlocking {
+                BacktestValidator(engine).validate(
+                    "SBER",
+                    List(600) { mockCandle(it) },
+                    folds = 3,
+                    slPoints = 10,
+                    tpPoints = 20,
+                )
+            }
+        assertTrue(result.folds.isNotEmpty(), "валидация акций должна отработать штатно")
+        assertTrue(slCaptured.all { it == null }, "для акций SL/TP в пунктах не применяются: $slCaptured")
+    }
+
+    private fun mockSimulateCapturingParams(
+        slCaptured: MutableList<Int?>,
+        tpCaptured: MutableList<Int?>,
+    ) {
+        runBlocking {
+            whenever(
+                engine.simulate(
+                    anyString(),
+                    any(),
+                    any(),
+                    anyInt(),
+                    any(),
+                    any(),
+                    any(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenAnswer {
+                slCaptured.add(it.getArgument(8))
+                tpCaptured.add(it.getArgument(9))
+                result()
+            }
+        }
+    }
+
     private companion object {
         const val OOS_TRADES = 3
     }

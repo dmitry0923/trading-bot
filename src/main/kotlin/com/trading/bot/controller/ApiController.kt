@@ -782,6 +782,8 @@ class ApiController(
         @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
         @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) wfaSlPoints: Int?,
+        @RequestParam(required = false) wfaTpPoints: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -861,6 +863,8 @@ class ApiController(
                     fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                     fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                     maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars.takeIf { it > 0 },
+                    slPoints = wfaSlPoints,
+                    tpPoints = wfaTpPoints,
                 ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)

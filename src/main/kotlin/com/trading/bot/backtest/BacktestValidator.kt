@@ -126,6 +126,8 @@ class BacktestValidator(
             fundingVetoShortThresholdRub = config.fundingVetoShortThresholdRub,
             fundingVetoBlockOnUnknown = config.fundingVetoBlockOnUnknown,
             maxHoldBars = config.maxHoldBars,
+            slPoints = config.slPoints,
+            tpPoints = config.tpPoints,
         )
 
     /**
@@ -150,7 +152,27 @@ class BacktestValidator(
             GridParams(slPoints = 300, tpPoints = 600),
         )
 
-    private fun gridFor(ticker: String): List<GridParams> = if (instrumentsConfig.isFutures(ticker)) futuresGrid else stockGrid
+    /**
+     * Сетка in-sample настройки для тикера.
+     *
+     * Research override [slPoints]/[tpPoints] (см. [WfaConfig]) сужает сетку до
+     * указанной пары — это единственный способ выразить узкий стоп
+     * mean-reversion стратегии: штатная [futuresGrid] начинается от 25 пт.
+     * Задан только SL → TP перебирается из штатной сетки. Для акций override
+     * игнорируется (проценты, не пункты).
+     */
+    private fun gridFor(
+        ticker: String,
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
+    ): List<GridParams> {
+        if (!instrumentsConfig.isFutures(ticker) || (slPoints == null && tpPoints == null)) {
+            return if (instrumentsConfig.isFutures(ticker)) futuresGrid else stockGrid
+        }
+        val sl = slPoints ?: return futuresGrid
+        val tp = tpPoints ?: (futuresGrid.firstOrNull { it.slPoints == sl }?.tpPoints ?: sl * 2)
+        return listOf(GridParams(slPoints = sl, tpPoints = tp))
+    }
 
     /**
      * Walk-forward прогон по свечам тикера.
@@ -184,6 +206,8 @@ class BacktestValidator(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
     ): ValidationResult {
         val sorted = candles.sortedBy { it.time }
         if (folds < 2 || sorted.size < minBarsForSignal * (folds + 1)) {
@@ -232,9 +256,11 @@ class BacktestValidator(
                             fundingVetoShortThresholdRub,
                             fundingVetoBlockOnUnknown,
                             maxHoldBars,
+                            slPoints,
+                            tpPoints,
                         )
                     } else {
-                        gridFor(ticker).first()
+                        gridFor(ticker, slPoints, tpPoints).first()
                     }
                 val inSample =
                     simulateWith(
@@ -348,9 +374,11 @@ class BacktestValidator(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
     ): GridParams {
         val candidates =
-            gridFor(ticker).map { params ->
+            gridFor(ticker, slPoints, tpPoints).map { params ->
                 Candidate(
                     params,
                     simulateWith(
@@ -379,7 +407,7 @@ class BacktestValidator(
                     { it.result.sharpeRatio },
                 ),
             )
-        return best?.params ?: gridFor(ticker).first()
+        return best?.params ?: gridFor(ticker, slPoints, tpPoints).first()
     }
 
     /**

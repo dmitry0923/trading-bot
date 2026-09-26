@@ -205,6 +205,29 @@ class BacktestConfig {
      *  [orbWindowStartMinutes]..[orbWindowEndMinutes]. */
     var orbWindowEndMinutes: Int = 1440
 
+    /** VWAP mean reversion (research, стратегия №1 «Контртрендовый отскок от
+     *  VWAP», 2026-09-26): контрттрендовый вход только при отклонении цены от
+     *  сессионного VWAP не меньше [vwapMrDeviationSigma] стандартных отклонений
+     *  и при ADX старшего таймфрейма ≤ [vwapMrMaxAdx]. По умолчанию выключен. */
+    var vwapMrEnabled: Boolean = false
+
+    /** Порог входа в σ отклонения от сессионного VWAP (research, default 1.5). */
+    var vwapMrDeviationSigma: Double = 1.5
+
+    /** Максимальный ADX старшего таймфрейма, выше которого mean reversion
+     *  не используется (тренд силён — отскок не сработает). */
+    var vwapMrMaxAdx: Double = 25.0
+
+    /** Таймфрейм для ADX-фильтра VWAP-MR (research, по умолчанию HOUR_1). */
+    var vwapMrTimeframe: String = "HOUR_1"
+
+    /** Минимум баров в сессии для расчёта σ (research, default 6). */
+    var vwapMrMinSessionBars: Int = 6
+
+    /** Fail-closed для VWAP-MR: при нехватке данных (сессия не набрала минимум,
+     *  σ = 0) БЛОКИРОВАТЬ вход (true) или пропускать (false). */
+    var vwapMrBlockOnUnknown: Boolean = true
+
     /** Time×direction фильтр входа (research, pt.4): блокирует LONG в утренние
      *  часы (≤ [timeDirectionLongBlockUntilHour]) и SHORT в дневное окно
      *  ([timeDirectionShortBlockStartHour]..[timeDirectionShortBlockEndHour]).

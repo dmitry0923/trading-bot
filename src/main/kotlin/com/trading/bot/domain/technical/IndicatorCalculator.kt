@@ -16,6 +16,13 @@ import kotlin.math.sqrt
 object IndicatorCalculator {
     private const val MACD_SIGNAL_EMA_PERIOD = 9
 
+    /**
+     * Минимально значимая σ в % от VWAP: ниже этого значения сессия считается
+     * безвольной (flat). Нужен из-за float-шума: на полностью плоской сессии
+     * σ ≈ 1e-14 вместо 0, и деление на неё даёт ложные отклонения в тысячи σ.
+     */
+    const val MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6
+
     data class Indicators(
         val rsi: Double,
         val atr: Double,
@@ -193,6 +200,120 @@ object IndicatorCalculator {
         val macdLine = e12.zip(e26).map { it.first - it.second }
         val signal = emaFromDoubles(macdLine)
         return Triple(macdLine.last(), signal.last(), macdLine.last() - signal.last())
+    }
+
+    /**
+     * VWAP (Volume Weighted Average Price) с сессионным сбросом.
+     *
+     * Типичный (anchored) VWAP торговой сессии: накопление объёмов и
+     * (typical price × объём) сбрасывается при смене даты свечи. Для
+     * фьючерсного контракта сессия = один торговый день MOEX.
+     *
+     * @param candles исторические свечи (ожидаются в хронологическом порядке)
+     * @return значение VWAP последней свечи или null, если свечей нет
+     */
+    fun vwap(candles: List<Candle>): Double? {
+        if (candles.isEmpty()) return null
+        var cumVolume = 0.0
+        var cumPv = 0.0
+        var currentDay: java.time.LocalDate? = null
+        var last = 0.0
+        for (c in candles) {
+            val day = c.time.toLocalDate()
+            if (currentDay != day) {
+                currentDay = day
+                cumVolume = 0.0
+                cumPv = 0.0
+            }
+            val typical =
+                (c.highPrice.toDouble() + c.lowPrice.toDouble() + c.closePrice.toDouble()) / 3.0
+            val vol = c.volume.toDouble()
+            cumVolume += vol
+            cumPv += typical * vol
+            last = if (cumVolume > 0.0) cumPv / cumVolume else typical
+        }
+        return last
+    }
+
+    /**
+     * Стандартное отклонение (σ) typical price, накопленного в текущей сессии,
+     * в процентах от VWAP. Используется как «ширина» коридора mean reversion:
+     * вход по отклонению ≥ [deviationSigma]σ, цель — возврат к VWAP.
+     *
+     * @param candles исторические свечи текущей сессии
+     * @return σ в % от VWAP либо null при недостатке данных (< 2 свечей)
+     */
+    fun vwapStdDevPercent(candles: List<Candle>): Double? {
+        if (candles.size < 2) return null
+        val typicals =
+            candles.map {
+                (it.highPrice.toDouble() + it.lowPrice.toDouble() + it.closePrice.toDouble()) / 3.0
+            }
+        val mean = typicals.average()
+        val variance = typicals.map { (it - mean) * (it - mean) }.average()
+        val sd = sqrt(variance)
+        return if (mean > 0.0) sd / mean * 100.0 else null
+    }
+
+    /**
+     * ADX (Average Directional Index) по Уайлдеру — трендовый фильтр для
+     * контрттрендовых (mean reversion) входов: вход разрешён при ADX < порога.
+     *
+     * @param candles исторические свечи
+     * @param period период (по умолчанию 14)
+     * @return ADX; 0 при недостатке данных (нет тренда → фильтр не блокирует)
+     */
+    fun adx(
+        candles: List<Candle>,
+        period: Int = 14,
+    ): Double {
+        if (candles.size < period * 2) return 0.0
+        val tr = ArrayList<Double>()
+        val plusDm = ArrayList<Double>()
+        val minusDm = ArrayList<Double>()
+        for (i in 1 until candles.size) {
+            val h = candles[i].highPrice.toDouble()
+            val l = candles[i].lowPrice.toDouble()
+            val prevH = candles[i - 1].highPrice.toDouble()
+            val prevL = candles[i - 1].lowPrice.toDouble()
+            val prevC = candles[i - 1].closePrice.toDouble()
+            tr.add(maxOf(h - l, kotlin.math.abs(h - prevC), kotlin.math.abs(l - prevC)))
+            val upMove = h - prevH
+            val downMove = prevL - l
+            plusDm.add(if (upMove > downMove && upMove > 0) upMove else 0.0)
+            minusDm.add(if (downMove > upMove && downMove > 0) downMove else 0.0)
+        }
+
+        fun wilder(values: List<Double>): List<Double> {
+            var acc = values.take(period).sum()
+            val out = ArrayList<Double>()
+            out.add(acc)
+            for (i in period until values.size) {
+                acc = acc - acc / period + values[i]
+                out.add(acc)
+            }
+            return out
+        }
+        val trS = wilder(tr)
+        val plusS = wilder(plusDm)
+        val minusS = wilder(minusDm)
+        val dx = ArrayList<Double>()
+        for (i in 0 until minOf(trS.size, plusS.size, minusS.size)) {
+            if (trS[i] <= 0.0) {
+                dx.add(0.0)
+            } else {
+                val pdi = 100.0 * plusS[i] / trS[i]
+                val mdi = 100.0 * minusS[i] / trS[i]
+                val sum = pdi + mdi
+                dx.add(if (sum > 0.0) 100.0 * kotlin.math.abs(pdi - mdi) / sum else 0.0)
+            }
+        }
+        if (dx.size < period) return 0.0
+        var adx = dx.take(period).average()
+        for (i in period until dx.size) {
+            adx = (adx * (period - 1) + dx[i]) / period
+        }
+        return adx
     }
 
     /**

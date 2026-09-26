@@ -37,6 +37,12 @@ class EntryFiltersTest {
         timeDirectionLongBlockUntilHour: Int = 11,
         timeDirectionShortBlockStartHour: Int = 13,
         timeDirectionShortBlockEndHour: Int = 16,
+        vwapMrEnabled: Boolean = false,
+        vwapMrDeviationSigma: Double = 1.5,
+        vwapMrMaxAdx: Double = 25.0,
+        vwapMrTimeframe: String = "HOUR_1",
+        vwapMrMinSessionBars: Int = 6,
+        vwapMrBlockOnUnknown: Boolean = true,
     ): EntryFilters =
         EntryFilters(
             sessionEnabled = sessionEnabled,
@@ -56,6 +62,12 @@ class EntryFiltersTest {
             timeDirectionLongBlockUntilHour = timeDirectionLongBlockUntilHour,
             timeDirectionShortBlockStartHour = timeDirectionShortBlockStartHour,
             timeDirectionShortBlockEndHour = timeDirectionShortBlockEndHour,
+            vwapMrEnabled = vwapMrEnabled,
+            vwapMrDeviationSigma = vwapMrDeviationSigma,
+            vwapMrMaxAdx = vwapMrMaxAdx,
+            vwapMrTimeframe = vwapMrTimeframe,
+            vwapMrMinSessionBars = vwapMrMinSessionBars,
+            vwapMrBlockOnUnknown = vwapMrBlockOnUnknown,
         )
 
     @Test
@@ -354,6 +366,92 @@ class EntryFiltersTest {
             day.dropLast(1) +
                 candle(0, 9, 111.0, 117.0, 110.0, 116.0)
         assertEquals(StrategyAction.BUY, f.orbDirection(broken, broken.lastIndex))
+    }
+
+    /** Свеча сессии для VWAP-MR: значения low/open/close совпадают, high = low + 2. */
+    private fun vwapCandle(
+        idx: Int,
+        price: Double,
+    ): Candle = candle(0, idx, price, price + 2.0, price, price)
+
+    @Test
+    fun `vwapMr disabled never blocks`() {
+        val f = filter()
+        assertNull(f.vwapMrDirection(emptyList(), emptyList()))
+    }
+
+    @Test
+    fun `vwapMr blocks when session too short and fail-closed`() {
+        val f = filter(vwapMrEnabled = true, vwapMrMinSessionBars = 6, vwapMrBlockOnUnknown = true)
+        val short = (0 until 3).map { i -> vwapCandle(i, 100.0) }
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(short, emptyList()))
+        val open = filter(vwapMrEnabled = true, vwapMrMinSessionBars = 6, vwapMrBlockOnUnknown = false)
+        assertNull(open.vwapMrDirection(short, emptyList()))
+    }
+
+    @Test
+    fun `vwapMr blocks flat session with zero sigma when fail-closed`() {
+        val f = filter(vwapMrEnabled = true, vwapMrBlockOnUnknown = true)
+        val flat = (0 until 10).map { i -> vwapCandle(i, 100.0) }
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(flat, emptyList()))
+    }
+
+    @Test
+    fun `vwapMr holds when price near vwap`() {
+        val f = filter(vwapMrEnabled = true, vwapMrDeviationSigma = 1.5, vwapMrMinSessionBars = 4)
+        // Сессия колеблется вокруг 100, последний бар = VWAP → отклонение ~0.
+        val session =
+            listOf(
+                vwapCandle(0, 100.0),
+                vwapCandle(1, 100.0),
+                vwapCandle(2, 100.0),
+                vwapCandle(3, 100.0),
+            )
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(session, emptyList()))
+    }
+
+    @Test
+    fun `vwapMr allows buy below vwap and sell above`() {
+        val f = filter(vwapMrEnabled = true, vwapMrDeviationSigma = 1.0, vwapMrMinSessionBars = 4)
+        // Балансирующие бары дают VWAP ≈ 100 и заметную σ, затем резкое отклонение.
+        val base =
+            listOf(
+                vwapCandle(0, 100.0),
+                vwapCandle(1, 100.0),
+                vwapCandle(2, 100.0),
+            )
+        // Сильное просадение: close 90 при VWAP ~100 → ожидаем отскок вверх (BUY).
+        val down = base + vwapCandle(3, 90.0)
+        assertEquals(StrategyAction.BUY, f.vwapMrDirection(down, emptyList()))
+        // Сильный рост: close 110 → ожидаем возврат вниз (SELL).
+        val up = base + vwapCandle(3, 110.0)
+        assertEquals(StrategyAction.SELL, f.vwapMrDirection(up, emptyList()))
+    }
+
+    @Test
+    fun `vwapMr blocks on high adx trend`() {
+        val f = filter(vwapMrEnabled = true, vwapMrDeviationSigma = 0.1, vwapMrMinSessionBars = 2, vwapMrMaxAdx = 20.0)
+        // Сильный тренд на старшем ТФ: ADX > 20 → mean reversion запрещён.
+        val trend =
+            (0 until 40).map { i ->
+                val p = 100.0 + i
+                Candle(
+                    ticker = "TEST",
+                    timeframe = "HOUR_1",
+                    openPrice = BigDecimal.valueOf(p),
+                    highPrice = BigDecimal.valueOf(p + 1.0),
+                    lowPrice = BigDecimal.valueOf(p - 1.0),
+                    closePrice = BigDecimal.valueOf(p),
+                    volume = 100,
+                    time = dayBase.atTime(0, 0).plusHours(i.toLong()),
+                )
+            }
+        val session =
+            listOf(
+                vwapCandle(0, 100.0),
+                vwapCandle(1, 120.0),
+            )
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(session, trend))
     }
 
     @Test

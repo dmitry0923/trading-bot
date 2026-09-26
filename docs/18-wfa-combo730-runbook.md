@@ -201,6 +201,45 @@ OOS PF 0.92 при `/validate` > 2 на полной. Поэтому «+193% / P
 шаг — прогнать `deployment-gate` для `td-fv6-ctl` на dev-части и сравнить с
 holdout/MC; live-параметры (maxC=1, Kelly, LIVE-guard CNYRUBF) не меняются.
 
+### Deployment-gate для `td-fv6-ctl` — RESEARCH_ONLY (2026-09-26, 2701 с = 45 мин)
+
+Прогон на dev-части (80% от 730д, folds=8, conf 0.60 из `--bt.adaptive-confidence-threshold`,
+риск-профиль 30%/maxC 100, `maxHoldBars=368`, `timeDirectionLongBlockUntilHour=9`,
+fundingVeto 6/6). Лог: `%TEMP%\opencode\combo730\gate\gate-fv6-ctl.status.log`
+(5-минутный heartbeat), результат `gate-fv6-ctl.json`.
+
+| Проверка | Итог | Детали |
+|---|---|---|
+| backtest (dev) | **PASS** | Sharpe 2.375, MDD 11.0%, PF 1.930, 38 сделок |
+| Walk-forward OOS | FAIL (по выборке) | consistency **0.625** (PASS), oosTrades 31 (<100), oosSharpe 1.113, **oosPF 1.651** |
+| Значимость edge | FAIL | P(noEdge)=**0.171**, significant=false |
+| Финальный holdout | FAIL | **−17.6%**, 13 сделок (<30), passable=false |
+| Monte Carlo + stress | FAIL | mcRobust=true, p5=**+12.6%**, pLoss 2.3%, но **stressFailed=1** |
+| **Вердикт** | **RESEARCH_ONLY** | `liveAllowed=false`, `liveApprovalActive=false` |
+
+**Главный результат прогона: подозрение на selection для этого конфига НЕ
+подтвердилось.** Dev-WFA OOS PF = 1.651 против 0.78-0.92 у близких комбинаций
+(max-hold и time-direction по отдельности, 2026-09-22/24). Синергия
+`tdL9 + mh368 + fv6/6` удерживается и вне полной истории, на которой шёл подбор.
+Consistency 0.625 выше порога 0.600, MC p5 = +12.6% (не просадка).
+
+**Почему всё равно не LIVE:** (1) 31 OOS-сделка против порога 100 и 13 holdout-сделок
+против 30 — статистическая база не набрана; (2) P(noEdge)=0.171 — edge не значим;
+(3) финальный holdout отрицательный (−17.6%) — на самом свежем отрезке истории
+конфиг убыточен, то есть подтверждения на будущем не прослеживается; (4) один
+стресс-сценарий MC не прошёл. Вывод: **комбинация остаётся кандидатом в research,
+но перенос в live не обоснован**; для live-режима (maxC=1, Kelly) она тем более
+не применима — калибровочная маржа 30%/maxC 100 в live не воспроизводится.
+
+**Инфраструктурный фикс, без которого гейт нельзя было запустить:** `/deployment-gate`
+и `/holdout` НЕ принимали `maxHoldBars` (только `/backtest`, `/validate`, `/robustness`).
+Для лидера калибровки max-hold — часть стратегии, поэтому гейт проверял бы другой
+конфиг. Добавлен query-параметр `maxHoldBars` в оба эндпоинта и проброс в
+`FinalHoldoutValidator.validate` → `WfaConfig` + оба прогона `BacktestEngine.simulate`
+(dev и holdout) единым значением; fallback на `bt.max-hold-bars`. Регресс-тесты
+`FinalHoldoutValidatorTest` (override + fallback, captor на WfaConfig и на обоих
+simulate). Раннер гейта с 5-минутным heartbeat: `scripts/research_gate.ps1`.
+
 
 ### Автодокументирование (вместо ручного вноса)
 

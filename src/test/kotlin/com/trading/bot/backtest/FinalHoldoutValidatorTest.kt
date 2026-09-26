@@ -1,5 +1,6 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.model.entity.Candle
 import com.trading.bot.service.BuildIdentity
@@ -17,6 +18,7 @@ import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
@@ -242,5 +244,124 @@ class FinalHoldoutValidatorTest {
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking { validatorUnderTest.validate("SBER", List(100) { mockCandle(it) }, holdoutFraction = 1.0) }
         }
+    }
+
+    /**
+     * Гейт обязан проверять ТОТ ЖЕ конфиг, который отобран калибровкой. Для лидера
+     * combo730 (tdL9 + maxHoldBars=368 + fundingVeto 6/6) max-hold — часть стратегии,
+     * поэтому override должен доходить и до WFA-фолдов, и до обоих прогонов
+     * backtest (dev и holdout) единым значением.
+     */
+    @Test
+    fun `max hold bars override reaches walk forward config and both backtests`() {
+        assertMaxHoldBarsPropagated(explicit = 368, configValue = 0)
+    }
+
+    @Test
+    fun `max hold bars falls back to backtest config when not overridden`() {
+        assertMaxHoldBarsPropagated(explicit = null, configValue = 184)
+    }
+
+    private fun assertMaxHoldBarsPropagated(
+        explicit: Int?,
+        configValue: Int,
+    ) {
+        val analyzer = Mockito.mock(WalkForwardAnalyzer::class.java)
+        val engine = mock<BacktestEngine> {}
+        val aggregate = strongResult(120)
+        val folds =
+            (0 until 4).map { i ->
+                FoldValidation(
+                    foldIndex = i,
+                    inSample = aggregate,
+                    outOfSample = aggregate.copy(totalReturn = 0.02),
+                    chosenSlPercent = 0.02,
+                    chosenTpPercent = 0.04,
+                )
+            }
+        runBlocking {
+            whenever(analyzer.run(eq("SBER"), any(), any())).thenReturn(ValidationResult(folds, aggregate))
+            whenever(
+                engine.simulate(
+                    anyString(),
+                    any<List<Candle>>(),
+                    any(),
+                    anyInt(),
+                    any<Double>(),
+                    any<Double>(),
+                    any<Double>(),
+                    any<Double>(),
+                    anyOrNull<Int>(),
+                    anyOrNull<Int>(),
+                    any<Double>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Int>(),
+                    anyOrNull<BacktestSignalGenerator>(),
+                    anyOrNull<Boolean>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Boolean>(),
+                    anyOrNull<Int>(),
+                ),
+            ).thenReturn(aggregate)
+        }
+
+        val validatorUnderTest =
+            FinalHoldoutValidator(
+                analyzer,
+                engine,
+                buildIdentity(),
+                fingerprintProvider(),
+                backtestConfig = BacktestConfig().apply { maxHoldBars = configValue },
+            )
+        runBlocking {
+            validatorUnderTest.validate(
+                "SBER",
+                List(300) { mockCandle(it) },
+                holdoutFraction = 0.2,
+                maxHoldBars = explicit,
+            )
+        }
+
+        val expected = explicit ?: configValue
+        val wfaCaptor = argumentCaptor<WfaConfig>()
+        runBlocking {
+            Mockito.verify(analyzer).run(eq("SBER"), any(), wfaCaptor.capture())
+        }
+        assertEquals(expected, wfaCaptor.firstValue.maxHoldBars)
+
+        // Оба прогона (dev + holdout) обязаны получить то же значение, иначе
+        // WFA-фолды и проверяемая стратегия расходятся.
+        val holdCaptor = argumentCaptor<Int>()
+        val verifyEngine = Mockito.verify(engine, Mockito.times(2))
+        runBlocking {
+            verifyEngine
+                .simulate(
+                    anyString(),
+                    any<List<Candle>>(),
+                    any(),
+                    anyInt(),
+                    any<Double>(),
+                    any<Double>(),
+                    any<Double>(),
+                    any<Double>(),
+                    anyOrNull<Int>(),
+                    anyOrNull<Int>(),
+                    any<Double>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Int>(),
+                    anyOrNull<BacktestSignalGenerator>(),
+                    anyOrNull<Boolean>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Double>(),
+                    anyOrNull<Boolean>(),
+                    holdCaptor.capture(),
+                )
+        }
+        val holds = holdCaptor.allValues
+        assertEquals(2, holds.size)
+        assertTrue(holds.all { it == expected }, "maxHoldBars in backtests: $holds, expected $expected")
     }
 }

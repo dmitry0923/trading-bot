@@ -750,6 +750,28 @@ consistency 0.88, P(noEdge)=0.01** (было +187.51% на 5 суток мень
 Формальный следующий шаг — `deployment-gate` для `td-fv6-ctl`; live-параметры не
 меняются.
 
+**Deployment-gate для `td-fv6-ctl` = RESEARCH_ONLY (2026-09-26, 45 мин).** Dev-часть
+(80% от 730д, folds=8, conf 0.60, risk 30%/maxC 100, maxHold 368, tdL9, fv 6/6):
+backtest PASS (Sharpe 2.375, MDD 11.0%, PF 1.930, 38 сделок); WFA OOS — **oosPF 1.651**,
+oosSharpe 1.113, consistency **0.625** (PASS), но 31 сделка < 100 (FAIL по выборке);
+edge P(noEdge)=**0.171** — не значим; **holdout −17.6%** на 13 сделках (<30) — FAIL;
+MC mcRobust=true, p5=**+12.6%**, pLoss 2.3%, но stressFailed=1 → FAIL. Вердикт
+`RESEARCH_ONLY`, `liveAllowed=false`.
+
+- **Главное: подозрение на selection для этой комбинации НЕ подтвердилось** — dev-WFA
+  OOS PF 1.651 против 0.78–0.92 у близких одиночных комбинаций (2026-09-22/24).
+  Синергия `tdL9 + mh368 + fv6/6` держится и на отрезке, где подбора не было;
+  consistency 0.625 выше порога 0.600, MC p5 положительный.
+- **Всё равно не LIVE:** 31 OOS-сделка против 100 и 13 holdout против 30; P(noEdge)=0.171;
+  **holdout отрицательный (−17.6%)** — на свежем отрезке конфиг убыточен; один
+  стресс-сценарий MC не прошёл. Для live (maxC=1, Kelly) тем более неприменимо.
+- **Инфра-фикс (без него гейт не запустить):** `/deployment-gate` и `/holdout` не
+  принимали `maxHoldBars` — гейт проверял бы конфиг БЕЗ max-hold. Добавлен query-параметр
+  в оба эндпоинта + проброс в `FinalHoldoutValidator.validate` → `WfaConfig` и оба
+  `BacktestEngine.simulate` (dev + holdout) единым значением, fallback на `bt.max-hold-bars`;
+  тесты `FinalHoldoutValidatorTest` (override + fallback). Раннер с 5-минутным heartbeat:
+  `scripts/research_gate.ps1` (health 503 при поднятом API — не блокер; login работает).
+
 Ключевые выводы (730д, расширяют выводы 365д):
 
 - **Комбинация даёт переход из минуса в плюс: baseline OOS −17.1%/PF 0.90 → лучшие
@@ -860,6 +882,7 @@ bars=3 (MINUTE_10) → диапазон 15:30–16:00 МСК, вход на пр
 | 2026-09-23 | ORB-фильтр входа (`orb-entry-filter`) | **`EntryFilters.orbDirection`** (opening range = High/Low первых `orbWindowBars` баров дня, `time.toLocalDate()`; пробой вверх→LONG, вниз→SHORT) + query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnUnknown` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ML; в `LiveStrategyBacktestSignalGenerator` после session/pullback, до ML-фильтра; strict=true — внутри диапазона HOLD, strict=false — пропуск; `bt.orb-*`/env `BT_ORB_*`; тесты `EntryFiltersTest` 7 кейсов + 1 тест генератора); **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +0.34%/PF 1.27/P=0.32; strict убыточен (w6 −9.35%/P=0.57, w12/w24 −51.4%/P=0.83); loose w12 +66.8%/PF 1.55/P=0.19; комбо w12loose+fv 9/1.5 +89.4%/PF 1.87/P=0.117 (плато, 23 сделки, robust=false); deployment-gate = REJECTED (OOS PF 0.78/consistency 0.5/P=0.665, holdout 5 сделок, MC p5=−0.32) — плато P=0.117 артефакт подбора на полной истории** → ORB edge НЕ даёт, `bt.orb-enabled` остаётся off; скрипт `research_wfa_orb.ps1` | test+int+ktlint |
 | 2026-09-24 | Time-direction фильтр входа (`time-direction-filter`) | **`EntryFilters.blocksDirection(time, action)`** — блок LONG при `hour <= longBlockUntilHour`, SHORT при `hour in start..end` + query-оверрайды `timeDirectionEnabled/timeDirectionLongBlockUntilHour/timeDirectionShortBlockStartHour/timeDirectionShortBlockEndHour` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ORB; в `LiveStrategyBacktestSignalGenerator` после session/pullback+ORB; `bt.time-direction-*`/env `BT_TIME_DIRECTION_*`; тесты `EntryFiltersTest` 2 кейса, всего 11); триггер — декомпозиция трейд-лога 730д IS (maxC=1, `includeTrades=true`): утренние LONG 7–11ч −319 ₽/15 сд. (TP 1/15), дневные SHORT 13–16ч −358 ₽/10 сд. (TP 0/10), вечер 18–23ч +688 ₽/22 сд.; **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +33.8%/PF 1.27/P=0.322; long<=9 +100.1%/PF 1.97/P=0.088/consistency 0.667 но 24 сделки (robust=false); short 13–16 идемпотентен (SELL-входы в окне не встречались); deployment-gate = REJECTED (OOS PF 0.84/consistency 0.667/P=0.629, holdout 6 сделок, MC p5=−0.44/stressFailed 5) — плато P=0.088 артефакт подбора на полной истории** → время-фильтр edge не создаёт, `bt.time-direction-enabled` остаётся off; трейд-лог (`BacktestTradeRecord`/`includeTrades=true`) — рабочий инструмент декомпозиции; скрипт `research_wfa_timedirection.ps1` | test+int+ktlint |
 | 2026-09-26 | Стратегии №7 ORB-окно и №1 VWAP-MR (`strategies-impl-1-7`) | **`EntryFilters.orbDirection`** получил окно диапазона `bt.orb-window-start-minutes`/`bt.orb-window-end-minutes` (query `orbWindowStartMinutes`/`orbWindowEndMinutes`, минуты от полуночи; диапазон = первые `orbWindowBars` баров дня с первого >= start, проверка пробоя только на барах >= end; дефолт `0..1440` = исходное поведение) — под золото 930..960/3 бара = 15:30–16:00 МСК (`8139342`); **`IndicatorCalculator.vwap` (сессионный, сброс по дате) / `.vwapStdDevPercent` / `.adx` (Уайлдер)** + `EntryFilters.vwapMrDirection` (|close−VWAP| >= Nσ И ADX(H1) <= порога, HOLD при высоком ADX / нехватке данных, старший ТФ через `CandleResampler` c `completedBefore=bar.time` и **ограниченным lookback** 32 бара ТФ / потолок 600 — иначе O(n²) на 46k свечах) + query `vwapMr*` на 5 эндпоинтах, дефолт off (`1af7944`, `ce684dc`); **найден баг индикаторов: на плоской сессии σ ≈ 1e-14 (float-шум) → ложные BUY/SELL в тысячи σ, отсечено `MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6`**; **`wfaSlPoints`/`wfaTpPoints`** — override in-sample сетки SL/TP в пунктах (штатная futuresGrid 25–600 пт не выражает узкий MR-стоп) (`a92bdcb`); WFA-скрипты `research_wfa_vwapmr.ps1` (CNYRUBF) и `research_wfa_orb_window.ps1` (GLDRUBF) (`a0f2260`) → **не сделано: выход «возврат к VWAP»** (движок позиций не имеет такого exit-типа; выход = SL/TP grid), WFA-прогоны №1/№7 — отдельная задача | test+int+ktlint |
+| 2026-09-26 | Deployment-gate лидера combo730 (`combo730-gate`) | **Проброс `maxHoldBars` в holdout-путь**: `/deployment-gate` и `/holdout` его не принимали (только `/backtest`, `/validate`, `/robustness`) → гейт проверял бы конфиг БЕЗ max-hold, т.е. не тот, который отобран; добавлен query-параметр в оба эндпоинта + проброс в `FinalHoldoutValidator.validate` → `WfaConfig` и оба `BacktestEngine.simulate` (dev + holdout) единым значением, fallback на `bt.max-hold-bars`; тесты `FinalHoldoutValidatorTest` (override + fallback, captor на WfaConfig и на обоих simulate); раннер `scripts/research_gate.ps1` с 5-минутным heartbeat (PID/RSS/CPU сервера) — гейт 730д идёт 45 мин, foreground-ожидание неприемлемо; **прогон `td-fv6-ctl` на dev-части (80% от 730д, folds=8, conf 0.60, risk30/maxC100, mh368, tdL9, fv 6/6): RESEARCH_ONLY, liveAllowed=false** — backtest PASS (PF 1.930/38 сделок), dev-WFA OOS **PF 1.651**/consistency 0.625 (31 сделка < 100), edge P(noEdge)=0.171, holdout **−17.6%** (13 < 30), MC p5=+12.6%/stressFailed=1; **подозрение на selection для этой комбинации НЕ подтвердилось** (dev OOS PF 1.651 против 0.78–0.92 у одиночных комбинаций), но holdout отрицательный и база не набрана → live не обоснован | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).

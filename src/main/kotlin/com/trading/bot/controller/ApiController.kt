@@ -1115,6 +1115,7 @@ class ApiController(
         @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
         @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
         @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
+        @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1184,6 +1185,7 @@ class ApiController(
                 riskPerTradePercent = riskPerTradePercent,
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 signalGeneratorOverride = signalGeneratorOverride,
+                maxHoldBars = maxHoldBars,
             )
         return mapOf(
             "ticker" to ticker,
@@ -1263,6 +1265,7 @@ class ApiController(
         @RequestParam(required = false) timeDirectionLongBlockUntilHour: Int?,
         @RequestParam(required = false) timeDirectionShortBlockStartHour: Int?,
         @RequestParam(required = false) timeDirectionShortBlockEndHour: Int?,
+        @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1339,6 +1342,7 @@ class ApiController(
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                maxHoldBars = maxHoldBars,
             )
         // Базовый backtest и WFA берём из holdout-валидации (уже на dev-данных):
         // отдельный прогон на всей истории протекал бы holdout в edge-проверку.
@@ -1359,6 +1363,7 @@ class ApiController(
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                maxHoldBars = maxHoldBars,
             )
 
         val decision =

@@ -84,6 +84,13 @@ class FinalHoldoutValidator(
         fundingVetoLongThresholdRub: Double? = null,
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
+        /**
+         * Research max-hold override (выход по барам). null → [backtestConfig].
+         * Нужен гейту для проверки комбо-конфигов с max-hold: без него лидер
+         * калибровки (tdL9 + mh368 + fundingVeto 6/6) на гейте проверялся бы
+         * БЕЗ max-hold, то есть проверялся бы не тот конфиг, который отобран.
+         */
+        maxHoldBars: Int? = null,
     ): HoldoutValidation {
         require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
         val sorted = candles.sortedBy { it.time }
@@ -122,6 +129,7 @@ class FinalHoldoutValidator(
                     fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                     fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                     fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                    maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars,
                 ),
             )
 
@@ -156,6 +164,11 @@ class FinalHoldoutValidator(
                 gitCommitSha = buildIdentity.gitCommitSha(),
             )
 
+        // Resolved один раз: override из запроса, иначе bt.max-hold-bars. Оба
+        // backtest-а (dev и holdout) обязаны использовать одно и то же значение,
+        // иначе гейт проверяет не тот конфиг, который заморожен в WFA-фолдах.
+        val effectiveMaxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars
+
         // Базовый backtest на dev-данных (без holdout) с зафиксированными параметрами.
         val devBacktest =
             backtestEngine.simulate(
@@ -178,6 +191,7 @@ class FinalHoldoutValidator(
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                maxHoldBars = effectiveMaxHoldBars,
             )
 
         // Одноразовый финальный прогон на независимом holdout с зафиксированными параметрами.
@@ -202,6 +216,7 @@ class FinalHoldoutValidator(
                 fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                maxHoldBars = effectiveMaxHoldBars,
             )
 
         val result = HoldoutValidation(walkForward, holdout, paramsUsed, frozenStrategy, devBacktest)

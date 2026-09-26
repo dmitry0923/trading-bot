@@ -699,6 +699,57 @@ env `BT_TIME_DIRECTION_*`; тесты `EntryFiltersTest` 2 кейса). Прог
 | **baseline (без фильтров)** | **−17.1%** | **−8.9%** | **0.90** | 87 | 0.68 |
 | одиночный fv9-2 | −75.6% | −50.6% | 0.58 | 69 | 0.94 |
 
+**Волна 3 завершена 2026-09-26 15:52 (15/15, failed=0).** Лидер — контроль
+воспроизводимости `td-fv6-ctl` (тот же конфиг, что лидер волны 2, на истории со
+свечами до 2026-09-24): **+193.60% за 730д (annual +71.3%), PF 2.79, 42 сделки,
+consistency 0.88, P(noEdge)=0.01** (было +187.51% на 5 суток меньшей истории —
+лидер вырос, а не развалился).
+
+| Конфиг волны 3 | OOS Ret 730д | Annual | OOS PF | Сделок | Cons | P(noEdge) |
+|---|---|---|---|---|---|---|
+| **td-fv6-ctl (контроль = лидер волны 2)** | **+193.6%** | **+71.3%** | **2.79** | 42 | **0.88** | **0.01** |
+| td-fv7-7 | +191.4% | +70.7% | 2.70 | 45 | 0.62 | 0.01 |
+| td-fv6-mh1095 | +188.8% | +69.9% | 2.24 | 41 | 0.75 | 0.04 |
+| td-fv6-4 / td-fv6-8 | +187.5% | +69.6% | 2.73 | 40 | 0.88 | 0.01 |
+| td-fv6-orb12l (комбо + ORB) | +185.4% | +68.9% | 2.79 | 42 | 0.88 | 0.01 |
+| td-fv5-5 | +158.5% | +60.8% | 2.69 | 37 | 0.88 | 0.02 |
+| td-fv4-6 | +155.9% | +60.0% | 2.74 | 35 | 0.88 | 0.02 |
+| td-fv6-mh460 | +147.3% | +57.3% | 2.13 | 41 | 0.75 | 0.05 |
+| td-fv6-mh184 | +128.8% | +51.3% | 2.14 | 44 | 0.75 | 0.04 |
+| td-fv3-3 | +79.4% | +33.9% | 1.84 | 32 | 0.75 | 0.13 |
+| td-fv6-h1 (HOUR_1) | +57.2% | +25.4% | 1.93 | 14 | 0.25 | 0.17 |
+| td-fv4-mh1095 | +52.7% | +23.6% | 1.38 | 36 | 0.62 | 0.28 |
+| td-fv6-s1012 (SHORT-блок 10-12) | +39.1% | +18.0% | 1.28 | 49 | 0.25 | 0.29 |
+| td-fv6-mh644 | −56.8% | −34.3% | 0.63 | 48 | 0.50 | 0.91 |
+
+Что волна 3 изменила относительно волны 2:
+
+- **Результат воспроизводится на свежих данных** (+193.6 против +187.5 при догрузке
+  5 суток) — снимает подозрение на дрейф/перегрив, но НЕ снимает подозрение на
+  selection на полной истории.
+- **Funding-порог — широкое плато 5-8 ₽, не острый пик** (3/3 деградирует до +79.4,
+  P=0.13). Порог 6 ₽ — середина плато; симметрия 4/6 ≈ 6/4 ≈ 6/8 подтверждена.
+- **max-hold: поверхность НЕ гладкая** — 368 (+193.6) и 1095 (+188.8) плюсовые, но
+  между ними 460 (+147.3) и **644 (−56.8, PF 0.63)**. Провал между двумя плюсовыми
+  точками = разброс поверхности сопоставим с её перепадом; индивидуальные точки
+  оцениваются шумно, доводку mh продолжать бессмысленно.
+- **Вывод волны 2 про SHORT-окно 13-16 был ложным.** На 730д выборке блок 13-16
+  «не встречается», но сдвиг на 10-12 рушит результат (+39.1%, PF 1.28, cons 0.25) —
+  SHORT-входы в 10-12 есть и убыточны. Окно связывающее.
+- **ORB в лидер не добавляет** (тот же PF 2.79 при ret на 8 п.п. ниже) — как и в 365д.
+  **HOUR_1-ресемплинг не нужен** (PF 1.93, 14 сделок).
+
+**Итог трёх волн: 47 конфигов, все `robust=false`** (35-50 OOS-сделок против
+порога 100). Лучшая точка `tdL9 + maxHoldBars=368 + fundingVeto 6/6`: OOS +193.6%
+за 730д (≈ +71%/год), PF 2.79, P(noEdge)=0.01 — против baseline −17.1% / PF 0.90.
+Калибровочная маржа 30%/maxC 100 — НЕ live-параметры (live: maxC=1, Kelly).
+**Обязательная оговорка:** все три волны подбирали параметры на одной полной 730д
+истории; deployment-gate на dev-части этой же истории (2026-09-22) для близких
+комбинаций дал REJECTED (OOS PF 0.92 при `/validate` > 2 на полной). Поэтому
+«+193% / PF 2.79» — **upper bound с поправкой на selection**, а не оценка edge.
+Формальный следующий шаг — `deployment-gate` для `td-fv6-ctl`; live-параметры не
+меняются.
+
 Ключевые выводы (730д, расширяют выводы 365д):
 
 - **Комбинация даёт переход из минуса в плюс: baseline OOS −17.1%/PF 0.90 → лучшие
@@ -713,9 +764,10 @@ env `BT_TIME_DIRECTION_*`; тесты `EntryFiltersTest` 2 кейса). Прог
 - **Граница time-direction очень узкая**: блок LONG до 9ч — лучший, 8 — чуть хуже,
   **10 обнуляет P&L (0.00%, PF 1.00)**. Почти бинарный эффект — при переносе в live
   рискованно.
-- **`adaptiveConfidenceThreshold` 0.62/0.65 и SHORT-окно 13-16 не меняют набор сделок**
+- **`adaptiveConfidenceThreshold` 0.62/0.65 не меняют набор сделок**
   (результат тождественен базовому) — после жёстких входных фильтров confidence-gate
-  не связывает; дальше не калибровать.
+  не связывает; дальше не калибровать. (Вывод про SHORT-окно 13-16 в волне 2 был
+  ложным — см. итог волны 3 ниже: сдвиг блока на 10-12 рушит результат.)
 - ORB, pullback, ML, session-фильтры в лидер **не идут** (в 365д уже отброшены).
   HOUR_1-ресемплинг слабее (PF 1.11, 18 сделок).
 - **Все результаты `robust=false`** (35-87 OOS-сделок), годовой потолок ≈ +70% при
@@ -807,6 +859,7 @@ bars=3 (MINUTE_10) → диапазон 15:30–16:00 МСК, вход на пр
 | 2026-09-21 | Kimi K3 LLM-сигналы (`llm-signal-kimi`) | **WFA 180д MINUTE_10 folds=6 sample-every=240 aggressive/th=0.40 RouterAI `moonshotai/kimi-k3` (`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`): OOS 33 сделки, −0.53%/PF 0.71/Sharpe −0.74/consistency 0.500/P(noEdge)=0.77/CI [−56.5;+26.5] — edge НЕТ**; 365д×folds=6 идёт >3 ч не влезает в async-таймаут; конвейер работает (892+ Agent 5 FINAL BUY/SELL/HOLD); баги research-прогона: дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA (отключать `LLM_BUDGET_ENABLED=false`); скрипт `research_wfa_kimi.ps1` | test+int+ktlint |
 | 2026-09-23 | ORB-фильтр входа (`orb-entry-filter`) | **`EntryFilters.orbDirection`** (opening range = High/Low первых `orbWindowBars` баров дня, `time.toLocalDate()`; пробой вверх→LONG, вниз→SHORT) + query-оверрайды `orbEnabled/orbWindowBars/orbStrictBreakout/orbBlockOnUnknown` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ML; в `LiveStrategyBacktestSignalGenerator` после session/pullback, до ML-фильтра; strict=true — внутри диапазона HOLD, strict=false — пропуск; `bt.orb-*`/env `BT_ORB_*`; тесты `EntryFiltersTest` 7 кейсов + 1 тест генератора); **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +0.34%/PF 1.27/P=0.32; strict убыточен (w6 −9.35%/P=0.57, w12/w24 −51.4%/P=0.83); loose w12 +66.8%/PF 1.55/P=0.19; комбо w12loose+fv 9/1.5 +89.4%/PF 1.87/P=0.117 (плато, 23 сделки, robust=false); deployment-gate = REJECTED (OOS PF 0.78/consistency 0.5/P=0.665, holdout 5 сделок, MC p5=−0.32) — плато P=0.117 артефакт подбора на полной истории** → ORB edge НЕ даёт, `bt.orb-enabled` остаётся off; скрипт `research_wfa_orb.ps1` | test+int+ktlint |
 | 2026-09-24 | Time-direction фильтр входа (`time-direction-filter`) | **`EntryFilters.blocksDirection(time, action)`** — блок LONG при `hour <= longBlockUntilHour`, SHORT при `hour in start..end` + query-оверрайды `timeDirectionEnabled/timeDirectionLongBlockUntilHour/timeDirectionShortBlockStartHour/timeDirectionShortBlockEndHour` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн funding-veto/ORB; в `LiveStrategyBacktestSignalGenerator` после session/pullback+ORB; `bt.time-direction-*`/env `BT_TIME_DIRECTION_*`; тесты `EntryFiltersTest` 2 кейса, всего 11); триггер — декомпозиция трейд-лога 730д IS (maxC=1, `includeTrades=true`): утренние LONG 7–11ч −319 ₽/15 сд. (TP 1/15), дневные SHORT 13–16ч −358 ₽/10 сд. (TP 0/10), вечер 18–23ч +688 ₽/22 сд.; **WFA 365д folds=6 conf=0.60 risk30/maxC100: baseline +33.8%/PF 1.27/P=0.322; long<=9 +100.1%/PF 1.97/P=0.088/consistency 0.667 но 24 сделки (robust=false); short 13–16 идемпотентен (SELL-входы в окне не встречались); deployment-gate = REJECTED (OOS PF 0.84/consistency 0.667/P=0.629, holdout 6 сделок, MC p5=−0.44/stressFailed 5) — плато P=0.088 артефакт подбора на полной истории** → время-фильтр edge не создаёт, `bt.time-direction-enabled` остаётся off; трейд-лог (`BacktestTradeRecord`/`includeTrades=true`) — рабочий инструмент декомпозиции; скрипт `research_wfa_timedirection.ps1` | test+int+ktlint |
+| 2026-09-26 | Стратегии №7 ORB-окно и №1 VWAP-MR (`strategies-impl-1-7`) | **`EntryFilters.orbDirection`** получил окно диапазона `bt.orb-window-start-minutes`/`bt.orb-window-end-minutes` (query `orbWindowStartMinutes`/`orbWindowEndMinutes`, минуты от полуночи; диапазон = первые `orbWindowBars` баров дня с первого >= start, проверка пробоя только на барах >= end; дефолт `0..1440` = исходное поведение) — под золото 930..960/3 бара = 15:30–16:00 МСК (`8139342`); **`IndicatorCalculator.vwap` (сессионный, сброс по дате) / `.vwapStdDevPercent` / `.adx` (Уайлдер)** + `EntryFilters.vwapMrDirection` (|close−VWAP| >= Nσ И ADX(H1) <= порога, HOLD при высоком ADX / нехватке данных, старший ТФ через `CandleResampler` c `completedBefore=bar.time` и **ограниченным lookback** 32 бара ТФ / потолок 600 — иначе O(n²) на 46k свечах) + query `vwapMr*` на 5 эндпоинтах, дефолт off (`1af7944`, `ce684dc`); **найден баг индикаторов: на плоской сессии σ ≈ 1e-14 (float-шум) → ложные BUY/SELL в тысячи σ, отсечено `MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6`**; **`wfaSlPoints`/`wfaTpPoints`** — override in-sample сетки SL/TP в пунктах (штатная futuresGrid 25–600 пт не выражает узкий MR-стоп) (`a92bdcb`); WFA-скрипты `research_wfa_vwapmr.ps1` (CNYRUBF) и `research_wfa_orb_window.ps1` (GLDRUBF) (`a0f2260`) → **не сделано: выход «возврат к VWAP»** (движок позиций не имеет такого exit-типа; выход = SL/TP grid), WFA-прогоны №1/№7 — отдельная задача | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).

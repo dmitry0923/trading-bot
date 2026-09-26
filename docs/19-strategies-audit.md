@@ -53,16 +53,65 @@ RGBI, история Si/RI, стакан/тики) либо в новый data-�
 после confidence-gate → тесты. Новые фильтры не трогают live-путь (он идёт через
 `DecisionEngine`) и по умолчанию выключены.
 
-Для №1 (VWAP-MR) потребуется:
-- `bt.vwapMr*`: период/порог StdDev (1.5), ADX-период и порог (25), режим
-  (контртренд к VWAP), режим выхода «возврат к VWAP» (в бэктесте — через SL/TP grid
-  либо отдельный exit-тип), тренд-фильтр HOUR_1 (уже есть `CandleResampler`).
-- Учёт: существующий движок позиций не имеет «выхода по возврату к VWAP» — нужен
-  либо новый exit-тип, либо аппроксимация через узкий TP на ресемпле.
+## Реализовано в коде (2026-09-26)
 
-Для №7 (ORB на вечернем окне):
-- расширить `EntryFilters.orbDirection` параметром окна начала (сейчас — первые бары
-  суток), т.е. `bt.orbWindowStartMinutes/bt.orbWindowEndMinutes`.
+Обе реализуемые стратегии реализованы по общему шаблону research-фильтров
+(`BacktestConfig` → query-override → `EntryFilters` → тесты), **дефолт off**,
+live-путь не затронут.
+
+### №7 ORB на золоте — окно диапазона (commit `8139342`)
+
+`EntryFilters.orbDirection(candles, index)` получил окно диапазона:
+- `bt.orb-window-start-minutes` / `bt.orb-window-end-minutes` (query: `orbWindowStartMinutes`,
+  `orbWindowEndMinutes`) — минуты от полуночи;
+- диапазон = первые `orbWindowBars` баров текущего дня, начиная с первого бара
+  с временем ≥ `orbWindowStartMinutes`;
+- проверка пробоя — только на барах с временем ≥ `orbWindowEndMinutes`
+  (для суженного окна). Дефолт `0..1440` = исходное поведение (диапазон = первые
+  бары дня, проверка весь день) — обратная совместимость;
+- до начала окна и внутри окна (диапазон не закрыт) — пропуск либо HOLD при
+  `orbBlockOnUnknown` (fail-closed);
+- настройка под стратегию: `orbWindowStartMinutes=930`, `orbWindowEndMinutes=960`,
+  `orbWindowBars=3` (MINUTE_10 → диапазон 15:30–16:00 МСК, вход на пробое после 16:00).
+
+Тесты (`EntryFiltersTest`, +5 кейсов): до окна / внутри окна / после окна,
+пробой вверх и вниз, strict vs loose, fail-closed, день, начинающийся после
+начала окна, диаграмма длиннее окна, дефолтное поведение.
+
+### №1 VWAP-MR (commit `1af7944`)
+
+`IndicatorCalculator`:
+- `vwap(candles)` — сессионный VWAP по типичной цене с **сбросом по дате**
+  (типичная цена = (H+L+C)/3, объёмные веса);
+- `vwapStdDevPercent(candles)` — σ типичной цены в % от VWAP;
+- `adx(candles, period)` — ADX по Уайлдеру (для трендового фильтра);
+- `MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6` — **найденный баг**: на полностью
+  плоской сессии σ ≈ 1e-14 (float-шум), деление отклонения на такую σ давало
+  ложные отклонения в тысячи σ и ложные BUY/SELL на плоском рынке. Регрессионный
+  тест `flat session sigma is float noise...`.
+
+`EntryFilters.vwapMrDirection(session, higherTimeframeCandles)`:
+- вход только при отклонении |close − VWAP| ≥ `vwapMrDeviationSigma`·σ **и**
+  ADX(`vwapMrTimeframe`, по умолчанию HOUR_1) ≤ `vwapMrMaxAdx`;
+- close ниже VWAP на Nσ → BUY (возврат вверх), выше → SELL;
+- отклонение < Nσ → HOLD; ADX выше порога → HOLD (MR в тренде не работает);
+- сессия не набрала `vwapMrMinSessionBars` либо σ ≈ 0 → HOLD при
+  `vwapMrBlockOnUnknown` (fail-closed), иначе пропуск;
+- ADX старшего ТФ считается через `CandleResampler.resample(..., completedBefore = bar.time)` —
+  **без lookahead** (используются только завершённые часовые бары);
+- query-override: `vwapMrEnabled`, `vwapMrDeviationSigma`, `vwapMrMaxAdx`,
+  `vwapMrTimeframe`, `vwapMrMinSessionBars`, `vwapMrBlockOnUnknown` на 5 эндпоинтах.
+
+Дефолты: `vwapMrEnabled=false`, `vwapMrDeviationSigma=1.5`, `vwapMrMaxAdx=25.0`,
+`vwapMrTimeframe=HOUR_1`, `vwapMrMinSessionBars=6`, `vwapMrBlockOnUnknown=true`.
+
+Тесты: `IndicatorCalculatorVwapAdxTest` (11 кейсов: VWAP-веса, сброс сессии,
+σ, ADX на тренде/боковике, диапазон, регрессия float-шума) + 7 кейсов
+`vwapMr*` в `EntryFiltersTest`. Итого 36 тестов, `test` + `ktlintCheck` зелёные.
+
+**Что ещё не сделано для №1**: выход «возврат к VWAP» — движок позиций не имеет
+такого exit-типа; на текущем прогоне выход моделируется SL/TP grid бэктеста.
+Это отдельная задача и отдельное исследование (см. ниже).
 
 Требование пользователя «в 5% случаев симулировать таймаут LLM» — **отдельный
 нереализованный флаг**: сейчас есть только реальный таймаут

@@ -285,4 +285,6 @@ edge ~100%/год на детерминированной базе не найд
 <!-- AUTO-WAVE3:START -->
 - DONE  td-fv5-5 attempt=1 ret=158.52% pf=2.69 trades=37 consistency=0.875 secs=3961
 - DONE  td-fv7-7 attempt=1 ret=191.38% pf=2.7 trades=45 consistency=0.625 secs=4261
+- DONE  td-fv6-4 attempt=1 ret=187.51% pf=2.73 trades=40 consistency=0.875 secs=4141
+- DONE  td-fv4-6 attempt=1 ret=155.88% pf=2.74 trades=35 consistency=0.875 secs=4021
 <!-- AUTO-WAVE3:END -->

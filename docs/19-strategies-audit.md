@@ -45,6 +45,27 @@ IMOEXF. **Нет** SBERP (префы), BR (Brent), RGBI (ОФЗ-индекс), G
 частично — 2 (№4, №8). Остальные 6 упираются в отсутствие данных** (SBERP, BR,
 RGBI, история Si/RI, стакан/тики) либо в новый data-слой.
 
+### Решение пользователя (2026-09-26): подстановки + 3 новых ядра
+
+Вместо «сдаться» по нереализуемым инструментам принято: **тестировать ядро на
+доступном тикере, сохраняя экономику оригинала**, и честно называть это
+подстановкой в вердикте.
+
+| № | Оригинал | Реализуемое ядро (подстановка) | Инструмент |
+|---|---|---|---|
+| 2 | Календарный спред Si | **macro-trend вход в трендовой среде** (EMA20>EMA50 на H1 + откат) | CNYRUBF (2 года) |
+| 3 | Утренний аукцион + OBI (стакан) | **ORB-пробой** (открытие диапазона дня) | GLDRUBF (2 года) |
+| 7 | ORB на золоте | **panic-reversal** (перепроданность + разворот) | IMOEXF (2 года) |
+
+Три новых детерминированных ядра (все — входные research-фильтры, **дефолт off**):
+- **№8 squeeze-breakout** (CNYRUBF) — как ядро из п. «Обеденный MR»: канал
+  Кельтнера/Боллинджера, но логика «сжатие → импульс», а не возврат к среднему;
+- **№7 panic-reversal** (IMOEXF) — перепроданность по старшему ТФ + разворот;
+- **№1 macro-trend** (CNYRUBF) — тренд + откат, дополнено funding plateau 5–8 ₽
+  и выходом по времени.
+
+Подробности реализации — в разделе «Три новых детерминированных ядра» ниже.
+
 ## Что нужно добавить в код для тестируемых ядер (паттерн уже есть в репо)
 
 Все исследовательские входные фильтры сделаны по одному шаблону (см. `docs/16`,
@@ -122,3 +143,109 @@ LLM-роли ( veto по свопам/РЕПО, календарь США, ко�
 описывают внешние источники, которых в проекте нет: новости приходят только через
 `RgRuNewsProvider` (платная подпилка, `news.enabled`, дефолт выключен), макро —
 `macro_snapshots`. Парсинг сайта ЦБ и календаря EIA/CPI не реализован.
+
+## Три новых детерминированных ядра (2026-09-26)
+
+По шаблону research-фильтров: `BacktestConfig` (`bt.*`, env `BT_*`, дефолт off) →
+query-override на 5 эндпоинтах (`/backtest`, `/validate`, `/robustness`,
+`/holdout`, `/deployment-gate`) → `EntryFilters` → тесты. Live-путь не затронут.
+
+### №8 Squeeze-breakout (CNYRUBF) — `EntryFilters.squeezeDirection`
+
+Гипотеза: сжатие волатильности (Bollinger **внутри** Keltner) предшествует
+импульсу; вход — на выходе полосы за границу.
+
+`IndicatorCalculator`:
+- `KeltnerChannel(middle/upper/lower)` и `keltner(candles, emaPeriod, atrPeriod, multiplier)`
+  — EMA ± multiplier·ATR (по Уайлдеру), `null` при нехватке данных;
+- `isSqueeze(candles, ...)` — `bbUpper < kcUpper && bbLower > kcLower` (сжатие
+  «внутри», строгие неравенства: касание = сжатия нет);
+- константы `BOLLINGER_SQUEEZE_PERIOD=20`, `BOLLINGER_SQUEEZE_MULT=2.0`,
+  `KELTNER_EMA_PERIOD=20`, `KELTNER_ATR_PERIOD=10`, `KELTNER_MULT=1.5`.
+
+`EntryFilters.squeezeDirection`: пока BB внутри Keltner — HOLD; на первом баре,
+где сжатия нет И `close > bbUpper` → BUY, `close < bbLower` → SELL; иначе PASS.
+
+Query: `squeezeEnabled`, `squeezeBlockOnUnknown` (fail-closed при нехватке истории).
+
+**Найденная ловушка при тестировании** (зафиксировано, чтобы не повторить):
+линейный рост цены **не** даёт пробоя — σ Bollinger растёт вместе с ценой, и
+z-последней точки ≈ 1.65 < 2σ, т.е. `isSqueeze=false`, но `close < bbUpper` → HOLD.
+Корректный тест на пробой — «19 плоских баров + резкий импульс в последнем».
+Тест `EntryFiltersTest`: 19 плоских баров (100±1) + импульс 130/70.
+
+### №7 Panic-reversal (IMOEXF) — `EntryFilters.panicReversalDirection`
+
+Гипотеза: резкое падение сессии на фоне перепроданности по старшему ТФ разворачивается.
+Вход **только LONG** (панельный шорт такого сигнала не подтверждала — см. wave-2
+вывод про SHORT-окно 13–16 в AGENTS.md).
+
+Условия (все должны выполняться):
+- просадка текущей сессии (open → low) ≥ `panicMinSessionDropPercent`;
+- RSI(`panicRsiPeriod`) на `panicTimeframe` ≤ `panicMaxRsi`;
+- последний бар bullish (close > open), если `panicRequireBullishBar`;
+- сессия набрала ≥ `panicMinBars` баров, иначе HOLD при `panicBlockOnUnknown`.
+
+Старший ТФ — через `CandleResampler.resample(..., completedBefore = bar.time)`,
+**без lookahead**; RSI считается по завершённым барам.
+
+### №1 Macro-trend (CNYRUBF) — `EntryFilters.macroTrendDirection`
+
+Гипотеза: в трендовой среде вход по откату даёт лучше R:R, чем вход на пробое.
+
+Условия: EMA(`macroTrendFastEma`) > EMA(`macroTrendSlowEma`) на `macroTrendTimeframe`
+**и** отклонение базового close от EMA(`macroTrendPullbackEmaPeriod`) ≤
+`macroTrendMaxDeviationPercent` (иначе это разгон, а не откат). Пропуск
+(SELL) в шорт-тренде, HOLD — при нехватке данных старшего ТФ при
+`macroTrendBlockOnUnknown=true`.
+
+**Осознанное упрощение против исходной формулировки.** В постановке ядро
+описано как «EMA-тренд + VWAP-pullback + funding plateau 5–8 ₽ + maxHold 1095».
+Реализовано: EMA-тренд + откат к базовой EMA. VWAP-откат **не** добавлен, потому что
+он контртрендовый по природе (вход к среднему) и логически противоречит трендовому
+ядру; VWAP-MR исследуется отдельно (`research_wfa_vwapmr.ps1`). Funding plateau и
+max-hold — существующие механизмы, подключаются в WFA-сценарии, код не дублируется.
+Расхождение зафиксировано здесь, чтобы результат не выдавался за полный оригинал.
+
+### Общий для трёх ядер нюанс: warm-up старшего ТФ
+
+`higherTimeframeLookback` расширяет окно ресемплинга до `higherTfBarsNeeded` с
+1.5×-запасом (жёсткий потолок — иначе O(n²) на 46k свечей), затем
+`completedBefore = bar.time` исключает lookahead. Следствие: первые бары прогонa
+не имеют завершённых часовых баров → при `*BlockOnUnknown=true` они HOLD, и
+фильтр включается постепенно, а не с первого бара. Тест
+`panic reversal fail-closed blocks everything without higher timeframe history`
+фиксирует fail-closed на короткой истории.
+
+## Протокол честной валидации IS 70% / OOS 30% (`scripts/research_oos70.ps1`)
+
+Зачем отдельный инструмент: предыдущие калибровки подбирали параметры на
+**полной** истории, а формальный гейт гоняли на dev-части **той же** истории. Это
+не исключает selection bias — на combo730 плато `P(noEdge)=0.058` на полной
+истории дало OOS PF 0.78–0.92 на dev-части (см. AGENTS.md).
+
+Дисциплина нового протокола:
+- `holdoutFraction=0.30` → WFA обучается на первых 70%, последние 30% (holdout)
+  не участвуют ни в подборе, ни в walk-forward;
+- **вердикт только по holdout-сегменту**: `OOS PF < 1.3` → `REJECTED` независимо от
+  IS/dev-метрик; при `< 30` сделок holdout → `INCONCLUSIVE` (защита от вывода на
+  2–3 сделках, тот же принцип, что `MIN_WALK_FORWARD_TRADES=100` в
+  `DeploymentGate`);
+- IS/dev-колонки — диагностика, а не вердикт;
+- прогон не подбирает параметры: на вход подаются **замороженные** конфиги
+  (`-ConfigCsv "имя;query;…"`), сетку подбора гоняют `/validate`-скрипты.
+
+Порог 1.3 не выбран произвольно: `BacktestResult.isPassable()` уже использует
+`profitFactor > 1.3` как порог проходимости backtest, так что новый протокол
+применяет тот же критерий к независимому сегменту.
+
+Скрипты этого этапа:
+- `research_wfa_squeeze.ps1` / `research_wfa_panic.ps1` / `research_wfa_macrotrend.ps1`
+  — IS-скрининг и WFA-OOS по сетке параметров на `/validate`;
+- `research_oos70.ps1` — независимый holdout-вердикт для отобранных кандидатов
+  (`-RunGate` дополнительно зовёт `/deployment-gate` с Monte Carlo и стрессом).
+
+Порог 5–8 ₽ для funding-veto проверяется как **плато**, а не как пик: устойчивость
+(5/6/8 рядом) важнее максимума — именно на этом провалились max-hold, ORB и
+time-direction (см. AGENTS.md).
+

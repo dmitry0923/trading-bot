@@ -244,4 +244,71 @@ class BacktestConfig {
 
     /** SHORT запрещён до этого часа включительно. */
     var timeDirectionShortBlockEndHour: Int = 16
+
+    /** Bollinger Squeeze Breakout (research, стратегия №8 «Bollinger Squeeze
+     *  Breakout», 2026-09-26): вход только на пробое полосы Боллинджера
+     *  НАРУЖУ канала Кельтнера (сжатие закончилось). Внутри сжатия вход
+     *  заблокирован. research-инструмент, по умолчанию off. */
+    var squeezeEnabled: Boolean = false
+
+    /** Fail-closed для squeeze: при нехватке данных для Боллинджера/Кельтнера
+     *  БЛОКИРОВАТЬ вход (true) или пропускать (false). */
+    var squeezeBlockOnUnknown: Boolean = true
+
+    /** Panic Reversal (research, стратегия №7 «Panic & Reversal», 2026-09-26):
+     *  вход в LONG после падения текущей сессии ≥ [panicMinSessionDropPercent]%
+     *  при RSI([panicRsiPeriod]) на [panicTimeframe] < [panicMaxRsi] и текущем
+     *  баре, закрывшемся выше открытия. research, по умолчанию off. */
+    var panicReversalEnabled: Boolean = false
+
+    /** Минимальное падение сессии (close последнего бара vs open первого бара
+     *  дня) в % для входа в panic-reversal. */
+    var panicMinSessionDropPercent: Double = 3.0
+
+    /** Период RSI для panic-reversal (на старшем ТФ). */
+    var panicRsiPeriod: Int = 14
+
+    /** Порог RSI: перепродажа, вход разрешён при RSI < порога. */
+    var panicMaxRsi: Double = 25.0
+
+    /** Старший таймфрейм RSI для panic-reversal. */
+    var panicTimeframe: String = "HOUR_1"
+
+    /** Требовать, чтобы текущий бар закрылся выше открытия (подтверждение
+     *  отскока). true — обязательное условие, false — не проверять. */
+    var panicRequireBullishBar: Boolean = true
+
+    /** Минимум баров в истории для расчёта фильтра (иначе — нехватка данных). */
+    var panicMinBars: Int = 20
+
+    /** Fail-closed для panic-reversal: нехватка данных/таймфрейма → БЛОК. */
+    var panicBlockOnUnknown: Boolean = true
+
+    /** Macro-Trend Pullback (research, стратегия №1 «Macro-Trend», 2026-09-26):
+     *  контекст тренда по старшему ТФ (EMA[macroTrendFastEma] > EMA[macroTrendSlowEma])
+     *  И откат к базовой EMA на базовом ТФ. Вход разрешён только в LONG
+     *  (пробой вниз в растущем тренде запрещён). research, по умолчанию off. */
+    var macroTrendEnabled: Boolean = false
+
+    /** Старший таймфрейм контекста тренда. */
+    var macroTrendTimeframe: String = "HOUR_1"
+
+    /** Быстрая EMA контекста тренда (на [macroTrendTimeframe]). */
+    var macroTrendFastEma: Int = 20
+
+    /** Медленная EMA контекста тренда (на [macroTrendTimeframe]). */
+    var macroTrendSlowEma: Int = 50
+
+    /** Минимум завершённых баров старшего ТФ для расчёта медленной EMA. */
+    var macroTrendMinHigherBars: Int = 60
+
+    /** Откат: расстояние от базовой EMA([macroTrendPullbackEmaPeriod]) на
+     *  базовом ТФ не больше [macroTrendMaxDeviationPercent]%. */
+    var macroTrendPullbackEmaPeriod: Int = 20
+
+    /** Порог отката от EMA базового ТФ, %. */
+    var macroTrendMaxDeviationPercent: Double = 0.5
+
+    /** Fail-closed для macro-trend: нехватка данных/таймфрейма → БЛОК. */
+    var macroTrendBlockOnUnknown: Boolean = true
 }

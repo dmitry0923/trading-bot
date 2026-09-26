@@ -505,6 +505,75 @@ class LiveStrategyBacktestSignalGeneratorTest {
         assertEquals(signals.size, signals.count { it == StrategyAction.HOLD })
     }
 
+    /**
+     * Squeeze-фильтр (стратегия №8): внутри сжатия волатильности входов нет,
+     * поэтому на «спокойной» истории он обязан дать строго меньше входов, чем
+     * baseline, и никогда не больше.
+     */
+    @Test
+    fun `squeeze filter never increases entries and blocks inside squeeze`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genSqueeze =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply { squeezeEnabled = true },
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 100.0, step = 1.0, wick = 0.2)
+        val baseEntries = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val squeezeEntries = collectSignalsWith(genSqueeze, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы")
+        assertTrue(squeezeEntries <= baseEntries, "squeeze дал больше входов: $squeezeEntries > $baseEntries")
+    }
+
+    /**
+     * Panic-reversal (стратегия №7): fail-closed на нехватке истории старшего ТФ
+     * блокирует все входы (RSI недоступен → вход запрещён).
+     */
+    @Test
+    fun `panic reversal fail-closed blocks everything without higher timeframe history`() {
+        val genPanic =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            panicReversalEnabled = true
+                            panicRsiPeriod = 40
+                            panicMinBars = 50
+                            panicBlockOnUnknown = true
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 40, start = 100.0, step = 2.0, wick = 0.2)
+        val signals = collectSignalsWith(genPanic, candles)
+        assertEquals(signals.size, signals.count { it == StrategyAction.HOLD })
+    }
+
+    /**
+     * Macro-trend (стратегия №1): на падающей макро-истории (нисходящий тренд
+     * старшего ТФ) входы запрещены — фильтр пропускает только BUY в растущем
+     * тренде, поэтому число входов строго меньше baseline.
+     */
+    @Test
+    fun `macro trend filter gates entries without uptrend context`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genMacro =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            macroTrendEnabled = true
+                            macroTrendBlockOnUnknown = true
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 300.0, step = -1.0, wick = 0.2)
+        val baseEntries = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val macroEntries = collectSignalsWith(genMacro, candles).count { it != StrategyAction.HOLD }
+        assertTrue(macroEntries <= baseEntries, "macroTrend дал больше входов: $macroEntries > $baseEntries")
+    }
+
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)
     }

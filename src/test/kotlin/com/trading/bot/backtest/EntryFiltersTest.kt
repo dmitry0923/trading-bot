@@ -1,6 +1,7 @@
 package com.trading.bot.backtest
 
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -43,6 +44,22 @@ class EntryFiltersTest {
         vwapMrTimeframe: String = "HOUR_1",
         vwapMrMinSessionBars: Int = 6,
         vwapMrBlockOnUnknown: Boolean = true,
+        squeezeEnabled: Boolean = false,
+        squeezeBlockOnUnknown: Boolean = true,
+        panicReversalEnabled: Boolean = false,
+        panicMinSessionDropPercent: Double = 3.0,
+        panicRsiPeriod: Int = 14,
+        panicMaxRsi: Double = 25.0,
+        panicRequireBullishBar: Boolean = true,
+        panicMinBars: Int = 20,
+        panicBlockOnUnknown: Boolean = true,
+        macroTrendEnabled: Boolean = false,
+        macroTrendFastEma: Int = 20,
+        macroTrendSlowEma: Int = 50,
+        macroTrendMinHigherBars: Int = 60,
+        macroTrendPullbackEmaPeriod: Int = 20,
+        macroTrendMaxDeviationPercent: Double = 0.5,
+        macroTrendBlockOnUnknown: Boolean = true,
     ): EntryFilters =
         EntryFilters(
             sessionEnabled = sessionEnabled,
@@ -68,6 +85,24 @@ class EntryFiltersTest {
             vwapMrTimeframe = vwapMrTimeframe,
             vwapMrMinSessionBars = vwapMrMinSessionBars,
             vwapMrBlockOnUnknown = vwapMrBlockOnUnknown,
+            squeezeEnabled = squeezeEnabled,
+            squeezeBlockOnUnknown = squeezeBlockOnUnknown,
+            panicReversalEnabled = panicReversalEnabled,
+            panicMinSessionDropPercent = panicMinSessionDropPercent,
+            panicRsiPeriod = panicRsiPeriod,
+            panicMaxRsi = panicMaxRsi,
+            panicTimeframe = "HOUR_1",
+            panicRequireBullishBar = panicRequireBullishBar,
+            panicMinBars = panicMinBars,
+            panicBlockOnUnknown = panicBlockOnUnknown,
+            macroTrendEnabled = macroTrendEnabled,
+            macroTrendTimeframe = "HOUR_1",
+            macroTrendFastEma = macroTrendFastEma,
+            macroTrendSlowEma = macroTrendSlowEma,
+            macroTrendMinHigherBars = macroTrendMinHigherBars,
+            macroTrendPullbackEmaPeriod = macroTrendPullbackEmaPeriod,
+            macroTrendMaxDeviationPercent = macroTrendMaxDeviationPercent,
+            macroTrendBlockOnUnknown = macroTrendBlockOnUnknown,
         )
 
     @Test
@@ -481,6 +516,109 @@ class EntryFiltersTest {
         assertFalse(f.blocksDirection(LocalTime.of(10, 0), StrategyAction.HOLD))
     }
 
+    @Test
+    fun `squeeze blocks inside squeeze and allows breakout`() {
+        val f = filter(squeezeEnabled = true)
+        // Сжатие: крошечная осцилляция → Боллинджер внутри Кельтнера → входа нет.
+        val squeezed =
+            (0 until 30).map { i ->
+                candle(0, i, 100.0, 100.11, 99.99, if (i % 2 == 0) 100.1 else 100.0)
+            }
+        assertEquals(true, IndicatorCalculator.isSqueeze(squeezed))
+        assertEquals(StrategyAction.HOLD, f.squeezeDirection(squeezed))
+
+        // Пробой вверх: 19 баров без движения + резкий вынос в последнем баре.
+        // Линейный рост здесь НЕ подходит: дисперсия растёт вместе с ценой
+        // (z последней точки ≈ 1.65 < 2σ), т.е. полоса не пробивается.
+        val breakoutUp = flatThen(130.0)
+        assertEquals(false, IndicatorCalculator.isSqueeze(breakoutUp))
+        assertEquals(StrategyAction.BUY, f.squeezeDirection(breakoutUp))
+
+        // Зеркально: резкий провал → SELL.
+        val breakoutDown = flatThen(70.0)
+        assertEquals(false, IndicatorCalculator.isSqueeze(breakoutDown))
+        assertEquals(StrategyAction.SELL, f.squeezeDirection(breakoutDown))
+    }
+
+    @Test
+    fun `squeeze fail-closed on missing data`() {
+        val block = filter(squeezeEnabled = true, squeezeBlockOnUnknown = true)
+        assertEquals(StrategyAction.HOLD, block.squeezeDirection(candles(1, 2.0)))
+        val pass = filter(squeezeEnabled = true, squeezeBlockOnUnknown = false)
+        assertNull(pass.squeezeDirection(candles(1, 2.0)))
+        // Выключенный фильтр не влияет ни на что.
+        assertNull(filter().squeezeDirection(candles(30, 100.0)))
+    }
+
+    @Test
+    fun `panic reversal allows long after session drop`() {
+        val f = filter(panicReversalEnabled = true, panicMinBars = 20)
+        // Сессия падает на 3.6% (100 → 96.4), последний бар — бычий (отскок).
+        val session =
+            (0 until 20).map { i ->
+                val open = 100.0 - 0.2 * i
+                val close = if (i == 19) open + 0.2 else open - 0.2
+                candle(0, i, open, open + 0.2, open - 0.4, close)
+            }
+        val oversold = closes(100.0, -1.0, 20)
+        assertEquals(StrategyAction.BUY, f.panicReversalDirection(session, oversold))
+
+        // Медвежий последний бар — подтверждения отскока нет.
+        val bearish = session.dropLast(1) + candle(0, 19, 96.2, 96.3, 95.8, 95.9)
+        assertEquals(StrategyAction.HOLD, f.panicReversalDirection(bearish, oversold))
+
+        // Падение всего 1% — не паника.
+        val mild =
+            (0 until 20).map { i ->
+                val open = 100.0 - 0.05 * i
+                val close = if (i == 19) open + 0.02 else open - 0.05
+                candle(0, i, open, open + 0.05, open - 0.1, close)
+            }
+        assertEquals(StrategyAction.HOLD, f.panicReversalDirection(mild, oversold))
+    }
+
+    @Test
+    fun `panic reversal fail-closed on unknown rsi data`() {
+        val block = filter(panicReversalEnabled = true, panicMinBars = 5, panicBlockOnUnknown = true)
+        val session =
+            (0 until 20).map { i ->
+                val open = 100.0 - 0.2 * i
+                val close = if (i == 19) open + 0.2 else open - 0.2
+                candle(0, i, open, open + 0.2, open - 0.4, close)
+            }
+        // RSI старшего ТФ недоступен (мало баров) → fail-closed блок.
+        assertEquals(StrategyAction.HOLD, block.panicReversalDirection(session, closes(100.0, -1.0, 5)))
+        val pass = filter(panicReversalEnabled = true, panicMinBars = 5, panicBlockOnUnknown = false)
+        assertNull(pass.panicReversalDirection(session, closes(100.0, -1.0, 5)))
+    }
+
+    @Test
+    fun `macro trend allows long on pullback in uptrend only`() {
+        val f = filter(macroTrendEnabled = true, macroTrendMinHigherBars = 60)
+        val uptrend = closes(100.0, 1.0, 60)
+        val downtrend = closes(200.0, -1.0, 60)
+
+        // Откат: цена на базовой EMA20 (ряд постоянный) → BUY.
+        val flatBase = closes(100.0, 0.0, 25)
+        assertEquals(StrategyAction.BUY, f.macroTrendDirection(uptrend, flatBase))
+
+        // Слишком далеко от EMA (отклонение 2% > 0.5%) → HOLD.
+        val extended = closes(100.0, 0.0, 24) + listOf(BigDecimal("102"))
+        assertEquals(StrategyAction.HOLD, f.macroTrendDirection(uptrend, extended))
+
+        // Нисходящий макро-тренд → вход заблокирован (только BUY не разрешён).
+        assertEquals(StrategyAction.HOLD, f.macroTrendDirection(downtrend, flatBase))
+    }
+
+    @Test
+    fun `macro trend fail-closed on insufficient history`() {
+        val block = filter(macroTrendEnabled = true, macroTrendMinHigherBars = 60)
+        val short = closes(100.0, 1.0, 10)
+        assertEquals(StrategyAction.HOLD, block.macroTrendDirection(short, closes(100.0, 0.0, 25)))
+        val pass = filter(macroTrendEnabled = true, macroTrendMinHigherBars = 60, macroTrendBlockOnUnknown = false)
+        assertNull(pass.macroTrendDirection(short, closes(100.0, 0.0, 25)))
+    }
+
     private val dayBase = LocalDate.of(2026, 1, 5)
 
     private fun candle(
@@ -530,4 +668,26 @@ class EntryFiltersTest {
         step: Double,
         count: Int,
     ): List<BigDecimal> = (0 until count).map { i -> BigDecimal.valueOf(start + step * i) }
+
+    /**
+     * 19 баров без движения (100±1) и один импульсный бар с закрытием
+     * [lastClose] — окно для проверки пробоя из сжатия.
+     */
+    private fun flatThen(lastClose: Double): List<Candle> {
+        val bars = (0 until 19).map { i -> candle(0, i, 100.0, 101.0, 99.0, 100.0) }
+        return bars + candle(0, 19, 100.0, maxOf(101.0, lastClose + 1.0), minOf(99.0, lastClose - 1.0), lastClose)
+    }
+
+    /**
+     * Ряд свечей: линейный рост на [step] за бар от [start], диапазон бара ±1.
+     */
+    private fun candles(
+        count: Int,
+        start: Double,
+        step: Double = 1.0,
+    ): List<Candle> =
+        (0 until count).map { i ->
+            val p = start + step * i
+            candle(0, i, p, p + 1.0, p - 1.0, p)
+        }
 }

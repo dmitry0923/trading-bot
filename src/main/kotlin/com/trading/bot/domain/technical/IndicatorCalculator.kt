@@ -339,4 +339,72 @@ object IndicatorCalculator {
             BigDecimal(mid - mult * sd).setScale(4, RoundingMode.HALF_UP),
         )
     }
+
+    /**
+     * Канал Кельтнера: EMA(period) ± mult·ATR(atrPeriod).
+     *
+     * Отличие от Боллинджера: ширина задаётся волатильностью (ATR), а не
+     * дисперсией цены — отсюда «сжатие Боллинджера внутрь Кельтнера»
+     * ([isSqueeze]) как признак низкой волатильности перед импульсом.
+     *
+     * @return null при нехватке данных (нужно ≥ atrPeriod + 1 баров)
+     */
+    fun keltner(
+        candles: List<Candle>,
+        emaPeriod: Int = KELTNER_EMA_PERIOD,
+        atrPeriod: Int = KELTNER_ATR_PERIOD,
+        mult: Double = KELTNER_MULT,
+    ): KeltnerChannel? {
+        if (candles.size < maxOf(emaPeriod, atrPeriod + 1)) return null
+        val closes = candles.map { it.closePrice }
+        val middle = ema(closes, emaPeriod).last()
+        val width = mult * atr(candles, atrPeriod)
+        if (!middle.isFinite() || !width.isFinite() || middle <= 0.0 || width <= 0.0) return null
+        return KeltnerChannel(middle = middle, upper = middle + width, lower = middle - width)
+    }
+
+    /**
+     * Сжатие волатильности (squeeze): обе полосы Боллинджера лежат ВНУТРИ канала
+     * Кельтнера. Фильтр входа стратегии №8 («Bollinger Squeeze Breakout»):
+     * вход разрешается на пробое из сжатия, а не внутри него.
+     *
+     * @return true — сжатие, false — сжатия нет, null — данных не хватает
+     *   (fail-closed на стороне фильтра)
+     */
+    fun isSqueeze(
+        candles: List<Candle>,
+        bbPeriod: Int = BOLLINGER_SQUEEZE_PERIOD,
+        bbMult: Double = BOLLINGER_SQUEEZE_MULT,
+        kcEmaPeriod: Int = KELTNER_EMA_PERIOD,
+        kcAtrPeriod: Int = KELTNER_ATR_PERIOD,
+        kcMult: Double = KELTNER_MULT,
+    ): Boolean? {
+        if (candles.size < maxOf(bbPeriod, kcAtrPeriod + 1)) return null
+        val closes = candles.map { it.closePrice }
+        val (_, bbUpper, bbLower) = bollinger(closes, bbPeriod, bbMult)
+        val kc = keltner(candles, kcEmaPeriod, kcAtrPeriod, kcMult) ?: return null
+        return bbUpper.toDouble() < kc.upper && bbLower.toDouble() > kc.lower
+    }
+
+    /** Канал Кельтнера (средняя, верхняя, нижняя границы в цене). */
+    data class KeltnerChannel(
+        val middle: Double,
+        val upper: Double,
+        val lower: Double,
+    )
+
+    /** Периоды и множители по умолчанию для канала Кельтнера. */
+    const val KELTNER_EMA_PERIOD = 20
+
+    /** Период ATR для канала Кельтнера. */
+    const val KELTNER_ATR_PERIOD = 10
+
+    /** Ширина канала Кельтнера в ATR. */
+    const val KELTNER_MULT = 1.5
+
+    /** Окно Боллинджера для детекции сжатия. */
+    const val BOLLINGER_SQUEEZE_PERIOD = 20
+
+    /** Множитель σ Боллинджера для детекции сжатия. */
+    const val BOLLINGER_SQUEEZE_MULT = 2.0
 }

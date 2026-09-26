@@ -52,6 +52,24 @@ data class EntryFilterOverrides(
     val timeDirectionLongBlockUntilHour: Int? = null,
     val timeDirectionShortBlockStartHour: Int? = null,
     val timeDirectionShortBlockEndHour: Int? = null,
+    val squeezeEnabled: Boolean? = null,
+    val squeezeBlockOnUnknown: Boolean? = null,
+    val panicReversalEnabled: Boolean? = null,
+    val panicMinSessionDropPercent: Double? = null,
+    val panicRsiPeriod: Int? = null,
+    val panicMaxRsi: Double? = null,
+    val panicTimeframe: String? = null,
+    val panicRequireBullishBar: Boolean? = null,
+    val panicMinBars: Int? = null,
+    val panicBlockOnUnknown: Boolean? = null,
+    val macroTrendEnabled: Boolean? = null,
+    val macroTrendTimeframe: String? = null,
+    val macroTrendFastEma: Int? = null,
+    val macroTrendSlowEma: Int? = null,
+    val macroTrendMinHigherBars: Int? = null,
+    val macroTrendPullbackEmaPeriod: Int? = null,
+    val macroTrendMaxDeviationPercent: Double? = null,
+    val macroTrendBlockOnUnknown: Boolean? = null,
 ) {
     val anyProvided: Boolean
         get() =
@@ -77,7 +95,25 @@ data class EntryFilterOverrides(
                 timeDirectionEnabled != null ||
                 timeDirectionLongBlockUntilHour != null ||
                 timeDirectionShortBlockStartHour != null ||
-                timeDirectionShortBlockEndHour != null
+                timeDirectionShortBlockEndHour != null ||
+                squeezeEnabled != null ||
+                squeezeBlockOnUnknown != null ||
+                panicReversalEnabled != null ||
+                panicMinSessionDropPercent != null ||
+                panicRsiPeriod != null ||
+                panicMaxRsi != null ||
+                panicTimeframe != null ||
+                panicRequireBullishBar != null ||
+                panicMinBars != null ||
+                panicBlockOnUnknown != null ||
+                macroTrendEnabled != null ||
+                macroTrendTimeframe != null ||
+                macroTrendFastEma != null ||
+                macroTrendSlowEma != null ||
+                macroTrendMinHigherBars != null ||
+                macroTrendPullbackEmaPeriod != null ||
+                macroTrendMaxDeviationPercent != null ||
+                macroTrendBlockOnUnknown != null
 }
 
 /**
@@ -109,6 +145,24 @@ class EntryFilters(
     val timeDirectionLongBlockUntilHour: Int,
     val timeDirectionShortBlockStartHour: Int,
     val timeDirectionShortBlockEndHour: Int,
+    val squeezeEnabled: Boolean,
+    val squeezeBlockOnUnknown: Boolean,
+    val panicReversalEnabled: Boolean,
+    val panicMinSessionDropPercent: Double,
+    val panicRsiPeriod: Int,
+    val panicMaxRsi: Double,
+    val panicTimeframe: String,
+    val panicRequireBullishBar: Boolean,
+    val panicMinBars: Int,
+    val panicBlockOnUnknown: Boolean,
+    val macroTrendEnabled: Boolean,
+    val macroTrendTimeframe: String,
+    val macroTrendFastEma: Int,
+    val macroTrendSlowEma: Int,
+    val macroTrendMinHigherBars: Int,
+    val macroTrendPullbackEmaPeriod: Int,
+    val macroTrendMaxDeviationPercent: Double,
+    val macroTrendBlockOnUnknown: Boolean,
 ) {
     companion object {
         /** Минут в сутках — [EntryFilters.orbWindowEndMinutes] ≥ этого значения
@@ -157,6 +211,30 @@ class EntryFilters(
                     overrides?.timeDirectionShortBlockStartHour ?: config.timeDirectionShortBlockStartHour,
                 timeDirectionShortBlockEndHour =
                     overrides?.timeDirectionShortBlockEndHour ?: config.timeDirectionShortBlockEndHour,
+                squeezeEnabled = overrides?.squeezeEnabled ?: config.squeezeEnabled,
+                squeezeBlockOnUnknown = overrides?.squeezeBlockOnUnknown ?: config.squeezeBlockOnUnknown,
+                panicReversalEnabled = overrides?.panicReversalEnabled ?: config.panicReversalEnabled,
+                panicMinSessionDropPercent =
+                    overrides?.panicMinSessionDropPercent ?: config.panicMinSessionDropPercent,
+                panicRsiPeriod = overrides?.panicRsiPeriod ?: config.panicRsiPeriod,
+                panicMaxRsi = overrides?.panicMaxRsi ?: config.panicMaxRsi,
+                panicTimeframe = overrides?.panicTimeframe ?: config.panicTimeframe,
+                panicRequireBullishBar =
+                    overrides?.panicRequireBullishBar ?: config.panicRequireBullishBar,
+                panicMinBars = overrides?.panicMinBars ?: config.panicMinBars,
+                panicBlockOnUnknown = overrides?.panicBlockOnUnknown ?: config.panicBlockOnUnknown,
+                macroTrendEnabled = overrides?.macroTrendEnabled ?: config.macroTrendEnabled,
+                macroTrendTimeframe = overrides?.macroTrendTimeframe ?: config.macroTrendTimeframe,
+                macroTrendFastEma = overrides?.macroTrendFastEma ?: config.macroTrendFastEma,
+                macroTrendSlowEma = overrides?.macroTrendSlowEma ?: config.macroTrendSlowEma,
+                macroTrendMinHigherBars =
+                    overrides?.macroTrendMinHigherBars ?: config.macroTrendMinHigherBars,
+                macroTrendPullbackEmaPeriod =
+                    overrides?.macroTrendPullbackEmaPeriod ?: config.macroTrendPullbackEmaPeriod,
+                macroTrendMaxDeviationPercent =
+                    overrides?.macroTrendMaxDeviationPercent ?: config.macroTrendMaxDeviationPercent,
+                macroTrendBlockOnUnknown =
+                    overrides?.macroTrendBlockOnUnknown ?: config.macroTrendBlockOnUnknown,
             )
 
         /** Фильтры выключены — не влияют на входы. */
@@ -185,6 +263,24 @@ class EntryFilters(
                 timeDirectionLongBlockUntilHour = 11,
                 timeDirectionShortBlockStartHour = 13,
                 timeDirectionShortBlockEndHour = 16,
+                squeezeEnabled = false,
+                squeezeBlockOnUnknown = true,
+                panicReversalEnabled = false,
+                panicMinSessionDropPercent = 3.0,
+                panicRsiPeriod = 14,
+                panicMaxRsi = 25.0,
+                panicTimeframe = "HOUR_1",
+                panicRequireBullishBar = true,
+                panicMinBars = 20,
+                panicBlockOnUnknown = true,
+                macroTrendEnabled = false,
+                macroTrendTimeframe = "HOUR_1",
+                macroTrendFastEma = 20,
+                macroTrendSlowEma = 50,
+                macroTrendMinHigherBars = 60,
+                macroTrendPullbackEmaPeriod = 20,
+                macroTrendMaxDeviationPercent = 0.5,
+                macroTrendBlockOnUnknown = true,
             )
     }
 
@@ -327,6 +423,110 @@ class EntryFilters(
             deviation >= vwapMrDeviationSigma -> StrategyAction.SELL
             else -> StrategyAction.HOLD
         }
+    }
+
+    /**
+     * Bollinger Squeeze Breakout (research, стратегия №8, 2026-09-26).
+     *
+     * Сжатие = обе полосы Боллинджера внутри канала Кельтнера
+     * ([IndicatorCalculator.isSqueeze]). Вход разрешён только когда сжатие
+     * закончилось И текущий закрыл вышел за полосу Боллинджера:
+     *  - close > BB(upper) → [StrategyAction.BUY];
+     *  - close < BB(lower) → [StrategyAction.SELL];
+     *  - сжатие продолжается / цена внутри полос → [StrategyAction.HOLD].
+     *
+     * @param window бары до и включая текущий (базовый ТФ)
+     * @return HOLD — вход заблокирован; BUY/SELL — разрешённая сторона;
+     *   null — фильтр off либо undefined при [squeezeBlockOnUnknown]=false
+     */
+    fun squeezeDirection(window: List<Candle>): StrategyAction? {
+        if (!squeezeEnabled || window.isEmpty()) return null
+        val squeeze = IndicatorCalculator.isSqueeze(window)
+        if (squeeze == null) {
+            return if (squeezeBlockOnUnknown) StrategyAction.HOLD else null
+        }
+        // Внутри сжатия входа нет — ждём выхода из него.
+        if (squeeze) return StrategyAction.HOLD
+        val closes = window.map { it.closePrice }
+        val (_, bbUpper, bbLower) =
+            IndicatorCalculator.bollinger(
+                closes,
+                IndicatorCalculator.BOLLINGER_SQUEEZE_PERIOD,
+                IndicatorCalculator.BOLLINGER_SQUEEZE_MULT,
+            )
+        val close = window.last().closePrice
+        return when {
+            close > bbUpper -> StrategyAction.BUY
+            close < bbLower -> StrategyAction.SELL
+            else -> StrategyAction.HOLD
+        }
+    }
+
+    /**
+     * Panic & Reversal (research, стратегия №7, 2026-09-26).
+     *
+     * Вход в LONG после паники: текущая сессия (день) просела на
+     * ≥ [panicMinSessionDropPercent]% относительно открытия дня, RSI([panicRsiPeriod])
+     * на [panicTimeframe] < [panicMaxRsi] (перепродажа) и текущий бар закрылся
+     * выше открытия — подтверждение начала отскока.
+     *
+     * @param sessionBars бары текущего торгового дня до и включая текущий
+     * @param higherCloses закрытия завершённых баров [panicTimeframe]
+     * @return [StrategyAction.BUY] — вход разрешён; [StrategyAction.HOLD] —
+     *   заблокирован; null — фильтр off либо undefined при
+     *   [panicBlockOnUnknown]=false
+     */
+    fun panicReversalDirection(
+        sessionBars: List<Candle>,
+        higherCloses: List<BigDecimal>,
+    ): StrategyAction? {
+        if (!panicReversalEnabled || sessionBars.isEmpty()) return null
+        val unknown = if (panicBlockOnUnknown) StrategyAction.HOLD else null
+        val first = sessionBars.first()
+        if (first.openPrice <= BigDecimal.ZERO) return unknown
+        if (sessionBars.size < panicMinBars) return unknown
+        if (higherCloses.size < panicRsiPeriod + 1) return unknown
+        val last = sessionBars.last()
+        if (panicRequireBullishBar && last.closePrice <= last.openPrice) return StrategyAction.HOLD
+        val dropPercent = (last.closePrice.toDouble() - first.openPrice.toDouble()) / first.openPrice.toDouble() * 100.0
+        if (dropPercent > -panicMinSessionDropPercent) return StrategyAction.HOLD
+        val rsi = IndicatorCalculator.rsi(higherCloses, panicRsiPeriod)
+        if (!rsi.isFinite() || rsi >= panicMaxRsi) return StrategyAction.HOLD
+        return StrategyAction.BUY
+    }
+
+    /**
+     * Macro-Trend Pullback (research, стратегия №1, 2026-09-26).
+     *
+     * Контекст: восходящий тренд по старшему ТФ —
+     * EMA([macroTrendFastEma]) > EMA([macroTrendSlowEma]) на завершённых барах
+     * [macroTrendTimeframe]. Точка входа: откат к EMA базового ТФ — расстояние
+     * от EMA([macroTrendPullbackEmaPeriod]) ≤ [macroTrendMaxDeviationPercent]%.
+     * Разрешена только сторона BUY (пробой вниз в растущем тренде — не вход).
+     *
+     * @return [StrategyAction.BUY] — вход разрешён; [StrategyAction.HOLD] —
+     *   заблокирован; null — фильтр off либо undefined при
+     *   [macroTrendBlockOnUnknown]=false
+     */
+    fun macroTrendDirection(
+        higherCloses: List<BigDecimal>,
+        baseCloses: List<BigDecimal>,
+    ): StrategyAction? {
+        if (!macroTrendEnabled || baseCloses.isEmpty()) return null
+        val unknown = if (macroTrendBlockOnUnknown) StrategyAction.HOLD else null
+        if (higherCloses.size < macroTrendMinHigherBars) return unknown
+        if (baseCloses.size < macroTrendPullbackEmaPeriod) return unknown
+        val fast = IndicatorCalculator.ema(higherCloses, macroTrendFastEma).last()
+        val slow = IndicatorCalculator.ema(higherCloses, macroTrendSlowEma).last()
+        if (!fast.isFinite() || !slow.isFinite()) return unknown
+        // Тренд вверх: EMA20 > EMA50. Иначе (вниз/боковик) — вход заблокирован.
+        if (fast <= slow) return StrategyAction.HOLD
+        val ema = IndicatorCalculator.ema(baseCloses, macroTrendPullbackEmaPeriod).last()
+        if (!ema.isFinite() || ema <= 0.0) return unknown
+        val close = baseCloses.last().toDouble()
+        val deviation = Math.abs(close - ema) / ema * 100.0
+        if (deviation > macroTrendMaxDeviationPercent) return StrategyAction.HOLD
+        return StrategyAction.BUY
     }
 
     /**
@@ -509,6 +709,75 @@ class LiveStrategyBacktestSignalGenerator(
             } ?: false
         if (entryBlocked) return StrategyAction.HOLD
 
+        // Bollinger Squeeze Breakout (research, стратегия №8): вход только на
+        // пробое наружу из сжатия волатильности.
+        entryFilters?.let { filters ->
+            val sq =
+                try {
+                    filters.squeezeDirection(window)
+                } catch (_: Exception) {
+                    null
+                }
+            if (sq == StrategyAction.HOLD) return StrategyAction.HOLD
+            if (sq != null && sq != bestAction) return StrategyAction.HOLD
+        }
+
+        // Panic & Reversal (research, стратегия №7): LONG после падения сессии
+        // при перепродаже по RSI старшего ТФ и подтверждающем баре-отскоке.
+        entryFilters?.let { filters ->
+            if (filters.panicReversalEnabled) {
+                val pr =
+                    try {
+                        val session = sessionBars(candles, index)
+                        val higher =
+                            CandleResampler.resample(
+                                higherTimeframeLookback(
+                                    candles,
+                                    index,
+                                    filters.panicTimeframe,
+                                    higherTfBarsNeeded(filters.panicRsiPeriod + 1),
+                                ),
+                                filters.panicTimeframe,
+                                completedBefore = bar.time,
+                            )
+                        filters.panicReversalDirection(session, higher.map { it.closePrice })
+                    } catch (_: Exception) {
+                        null
+                    }
+                if (pr == StrategyAction.HOLD) return StrategyAction.HOLD
+                if (pr != null && pr != bestAction) return StrategyAction.HOLD
+            }
+        }
+
+        // Macro-Trend Pullback (research, стратегия №1): LONG на откате в
+        // восходящем тренде старшего ТФ.
+        entryFilters?.let { filters ->
+            if (filters.macroTrendEnabled) {
+                val mt =
+                    try {
+                        val higher =
+                            CandleResampler.resample(
+                                higherTimeframeLookback(
+                                    candles,
+                                    index,
+                                    filters.macroTrendTimeframe,
+                                    higherTfBarsNeeded(filters.macroTrendMinHigherBars),
+                                ),
+                                filters.macroTrendTimeframe,
+                                completedBefore = bar.time,
+                            )
+                        filters.macroTrendDirection(
+                            higher.map { it.closePrice },
+                            window.map { it.closePrice },
+                        )
+                    } catch (_: Exception) {
+                        null
+                    }
+                if (mt == StrategyAction.HOLD) return StrategyAction.HOLD
+                if (mt != null && mt != bestAction) return StrategyAction.HOLD
+            }
+        }
+
         // Opening Range Breakout (research, pt.3): вход разрешён только в направлении
         // пробоя дневного opening range. HOLD — вход заблокирован, BUY/SELL — только
         // эта сторона разрешена, null — фильтр off/пропуск.
@@ -596,25 +865,28 @@ class LiveStrategyBacktestSignalGenerator(
         private const val ADX_HIGHER_TF_BARS = 32
 
         /**
-         * Срез свечей для расчёта ADX старшего ТФ: столько базовых баров,
-         * сколько нужно для [ADX_HIGHER_TF_BARS] завершённых баров старшего
-         * ТФ, но не больше [MAX_ADX_LOOKBACK_BARS]. Неизвестный таймфрейм →
-         * пустой список (ADX = 0, фильтр тренда не блокирует).
+         * Срез свечей для расчёта индикатора старшего ТФ: столько базовых баров,
+         * сколько нужно для [bars] завершённых баров старшего ТФ, но не больше
+         * [MAX_ADX_LOOKBACK_BARS]. Неизвестный таймфрейм → пустой список
+         * (индикатор не определён, вызывающий код решает fail-closed/пропуск).
          */
         fun higherTimeframeLookback(
             candles: List<Candle>,
             index: Int,
             timeframe: String,
+            bars: Int = ADX_HIGHER_TF_BARS,
         ): List<Candle> {
             val duration =
                 runCatching { CandleResampler.durationMinutes(timeframe) }.getOrNull()
                     ?: return emptyList()
             val barsPerBucket = (duration / BASE_BAR_MINUTES).coerceAtLeast(1L)
-            val needed =
-                (ADX_HIGHER_TF_BARS * barsPerBucket).coerceAtMost(MAX_ADX_LOOKBACK_BARS.toLong())
+            val needed = (bars * barsPerBucket).coerceAtMost(MAX_ADX_LOOKBACK_BARS.toLong())
             val from = (index + 1 - needed).coerceAtLeast(0L)
             return candles.subList(from.toInt(), index + 1)
         }
+
+        /** Запас 1.5× к требуемому числу баров старшего ТФ (warmup индикатора). */
+        fun higherTfBarsNeeded(bars: Int): Int = (bars * 3 / 2).coerceAtLeast(bars)
 
         /**
          * Бары текущей торговой сессии (день) до и включая [index] — окно для

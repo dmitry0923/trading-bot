@@ -37,6 +37,9 @@
 | 15. Фьючерсный контур (Si) | `15-futures-trading.md` | FuturesTradingBotService, риск-движок, ликвидация, daily loss limit, e2e |
 | 16. Спецификации инструментов | `16-instrument-specifications.md` | GO, point value, комиссии, funding по фьючерсам/акциям |
 | 17. LLM как источник сигнала (ADR) | `17-llm-signal-source.md` | Переход от «LLM advisory-only» к «строго LLM»: флаги, IssuerDataProvider, rg.ru |
+| 18. Runbook WFA combo730 | `18-wfa-combo730-runbook.md` | Оркестратор и раннер комбо-прогонов 730д, методика, автодокументирование |
+| 19. Аудит стратегий | `19-strategies-audit.md` | Реализуемость стратегий №1–10, новые ядра squeeze/panic/macro, WFA 730д |
+| 20. Триаж гибридных стратегий | `20-hybrid-strategies-triage.md` | Сверка 10 LLM-стратегий с кодом/данными, инъекция таймаутов LLM в бэктесте |
 
 ## Как пользоваться
 

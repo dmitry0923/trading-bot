@@ -610,6 +610,273 @@ class LiveStrategyBacktestSignalGeneratorTest {
         assertTrue(macroEntries <= baseEntries, "macroTrend дал больше входов: $macroEntries > $baseEntries")
     }
 
+    /**
+     * Обратная совместимость: все research-фильтры 2026-09-28 выключены по
+     * умолчанию, поэтому конфиг без overrides обязан дать сигнал в точности
+     * равный baseline-генератору.
+     */
+    @Test
+    fun `new research filters are off by default and keep the baseline signals`() {
+        val genDefault = LiveStrategyBacktestSignalGenerator()
+        val genExplicit =
+            LiveStrategyBacktestSignalGenerator(entryFilters = EntryFilters.from(BacktestConfig()))
+        val candles = rampCandles(count = 240, start = 100.0, step = 1.0, wick = 0.2)
+        assertEquals(
+            collectSignalsWith(genDefault, candles),
+            collectSignalsWith(genExplicit, candles),
+        )
+    }
+
+    /**
+     * EMA-cross (стратегия №1): вход только в момент пересечения быстрой и
+     * медленной EMA. На ровном тренде пересечения нет ни разу, поэтому все
+     * входы запрещены, тогда как baseline на том же тренде входит.
+     */
+    @Test
+    fun `ema cross filter blocks entries on a steady trend without a crossover`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genEmaCross =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            emaCrossEnabled = true
+                            emaCrossFastPeriod = 10
+                            emaCrossSlowPeriod = 30
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 100.0, step = 1.0, wick = 0.2)
+        val baseEntries = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val crossEntries = collectSignalsWith(genEmaCross, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы на сильном тренде")
+        assertEquals(0, crossEntries, "на ровном тренде пересечения EMA нет — входов быть не должно")
+    }
+
+    /**
+     * EMA-cross fail-closed: без истории (меньше периода медленной EMA) вход
+     * запрещён при `emaCrossBlockOnUnknown=true` и не тронут при `false`.
+     */
+    @Test
+    fun `ema cross fail-closed blocks entry until slow ema history is enough`() {
+        val candles = rampCandles(count = 40, start = 100.0, step = 1.0, wick = 0.2)
+        val index = 12
+        val base = runBlocking { generator.signal("SBER", candles, index, 5, "test-cycle") }
+        val blocked =
+            runBlocking {
+                gen(EntryFilterOverrides(emaCrossEnabled = true, emaCrossSlowPeriod = 50, emaCrossBlockOnUnknown = true))
+                    .signal("SBER", candles, index, 5, "test-cycle")
+            }
+        val passed =
+            runBlocking {
+                gen(EntryFilterOverrides(emaCrossEnabled = true, emaCrossSlowPeriod = 50, emaCrossBlockOnUnknown = false))
+                    .signal("SBER", candles, index, 5, "test-cycle")
+            }
+        assertEquals(StrategyAction.HOLD, blocked, "emaCrossBlockOnUnknown=true обязан блокировать вход без истории")
+        assertEquals(base, passed, "emaCrossBlockOnUnknown=false обязан пропустить сигнал без изменений")
+    }
+
+    /**
+     * Volume-spike (стратегия №1): на истории с постоянным объёмом всплеска нет,
+     * поэтому фильтр обязан запретить все входы.
+     */
+    @Test
+    fun `volume spike filter blocks entries when volume never spikes`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genVolume =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            volumeSpikeEnabled = true
+                            volumeSpikePeriod = 20
+                            volumeSpikeMultiplier = 1.5
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 100.0, step = 1.0, wick = 0.2)
+        val baseEntries = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val volEntries = collectSignalsWith(genVolume, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы")
+        assertEquals(0, volEntries, "при постоянном объёме всплеска нет — входов быть не должно")
+    }
+
+    /**
+     * Volume-spike fail-closed: без достаточной истории объёма вход запрещён.
+     */
+    @Test
+    fun `volume spike fail-closed blocks entry without volume history`() {
+        val candles = rampCandles(count = 40, start = 100.0, step = 1.0, wick = 0.2)
+        val index = 12
+        val base = runBlocking { generator.signal("SBER", candles, index, 5, "test-cycle") }
+        val blocked =
+            runBlocking {
+                gen(EntryFilterOverrides(volumeSpikeEnabled = true, volumeSpikePeriod = 50, volumeSpikeBlockOnUnknown = true))
+                    .signal("SBER", candles, index, 5, "test-cycle")
+            }
+        val passed =
+            runBlocking {
+                gen(EntryFilterOverrides(volumeSpikeEnabled = true, volumeSpikePeriod = 50, volumeSpikeBlockOnUnknown = false))
+                    .signal("SBER", candles, index, 5, "test-cycle")
+            }
+        assertEquals(StrategyAction.HOLD, blocked, "volumeSpikeBlockOnUnknown=true обязан блокировать вход без истории")
+        assertEquals(base, passed, "volumeSpikeBlockOnUnknown=false обязан пропустить сигнал без изменений")
+    }
+
+    /**
+     * VWAP-MR в режиме ATR (стратегия №2): фильтр гейтит вход, поэтому порог в
+     * ATR обязан монотонно влиять на число входов, а оба режима — только резать
+     * его относительно baseline. Направление/порог в единицах ATR проверяется
+     * отдельно в [EntryFiltersTest] (там свечи полностью подконтрольны, а здесь
+     * вход дополнительно требует согласия направления с базовой стратегией).
+     */
+    @Test
+    fun `vwapMr in atr mode never increases entries and respects the multiplier`() {
+        val candles = sawtoothCandles(count = 240)
+        val baseEntries = collectSignalsWith(generator, candles).count { it != StrategyAction.HOLD }
+        val wide =
+            collectSignalsWith(
+                gen(
+                    EntryFilterOverrides(
+                        vwapMrEnabled = true,
+                        vwapMrDeviationAtr = 100.0,
+                        vwapMrMaxAdx = 1000.0,
+                        vwapMrMinSessionBars = 3,
+                    ),
+                ),
+                candles,
+            ).count { it != StrategyAction.HOLD }
+        val narrow =
+            collectSignalsWith(
+                gen(
+                    EntryFilterOverrides(
+                        vwapMrEnabled = true,
+                        vwapMrDeviationAtr = 0.5,
+                        vwapMrMaxAdx = 1000.0,
+                        vwapMrMinSessionBars = 3,
+                    ),
+                ),
+                candles,
+            ).count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы")
+        assertTrue(wide <= narrow, "широкий порог не может дать больше входов: $wide > $narrow")
+        assertTrue(narrow <= baseEntries, "ATR-порог не может увеличить число входов")
+    }
+
+    /**
+     * Panic-reversal без требования падения сессии (стратегия №3): на пиле с
+     * чистым импульсом требование падения запрещает все входы, а его отключение
+     * не может дать больше входов, чем baseline. Направление/ RSI-гейт
+     * проверяются отдельно в [EntryFiltersTest].
+     */
+    @Test
+    fun `panic session drop requirement gates entries on a rising session`() {
+        val candles = sawtoothCandles(count = 240)
+        val baseEntries = collectSignalsWith(generator, candles).count { it != StrategyAction.HOLD }
+        val noDrop =
+            collectSignalsWith(
+                gen(
+                    EntryFilterOverrides(
+                        panicReversalEnabled = true,
+                        panicUseSessionDrop = false,
+                        panicRsiPeriod = 5,
+                        panicMaxRsi = 99.0,
+                        panicMinBars = 3,
+                    ),
+                ),
+                candles,
+            ).count { it != StrategyAction.HOLD }
+        val withDrop =
+            collectSignalsWith(
+                gen(
+                    EntryFilterOverrides(
+                        panicReversalEnabled = true,
+                        panicUseSessionDrop = true,
+                        panicMinSessionDropPercent = 3.0,
+                        panicRsiPeriod = 5,
+                        panicMaxRsi = 99.0,
+                        panicMinBars = 3,
+                    ),
+                ),
+                candles,
+            ).count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы")
+        assertEquals(0, withDrop, "на растущей сессии требование падения запрещает все входы")
+        assertTrue(noDrop <= baseEntries, "отключение требования падения не может увеличить число входов")
+    }
+
+    /** Пила с чистым импульсом: бары вверх бычьи (+2), вниз медвежьи (-1); RSI держится < 99. */
+    private fun sawtoothCandles(
+        count: Int,
+        start: Double = 100.0,
+        up: Double = 2.0,
+        down: Double = 1.0,
+    ): List<Candle> {
+        var close = start
+        return (0 until count).map { i ->
+            val open = close
+            close = if (i % 3 == 2) close - down else close + up
+            makeCandle(
+                timeAt(i),
+                open,
+                maxOf(open, close) + 0.2,
+                minOf(open, close) - 0.2,
+                close,
+            )
+        }
+    }
+
+    /**
+     * Range-squeeze (стратегия №4): фильтр только блокирует входы, поэтому на
+     * ровном тренде их не может стать больше, чем у baseline.
+     */
+    @Test
+    fun `range squeeze filter never increases entries versus baseline`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genSqueeze =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            rangeSqueezeEnabled = true
+                            rangeSqueezeBlockOnUnknown = true
+                        },
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 100.0, step = 1.0, wick = 0.2)
+        val baseEntries = collectSignalsWith(genBaseline, candles).count { it != StrategyAction.HOLD }
+        val squeezeEntries = collectSignalsWith(genSqueeze, candles).count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы")
+        assertTrue(squeezeEntries <= baseEntries, "rangeSqueeze дал больше входов: $squeezeEntries > $baseEntries")
+    }
+
+    /**
+     * Range-squeeze fail-closed: пока не набрано 50 баров истории ATR сжатие не
+     * определено, поэтому вход запрещён (и не тронут при `false`).
+     */
+    @Test
+    fun `range squeeze fail-closed blocks entry until atr history is enough`() {
+        val candles = rampCandles(count = 40, start = 100.0, step = 1.0, wick = 0.2)
+        val index = 12
+        val base = runBlocking { generator.signal("SBER", candles, index, 5, "test-cycle") }
+        val blocked =
+            runBlocking {
+                gen(EntryFilterOverrides(rangeSqueezeEnabled = true, rangeSqueezeBlockOnUnknown = true))
+                    .signal("SBER", candles, index, 5, "test-cycle")
+            }
+        val passed =
+            runBlocking {
+                gen(EntryFilterOverrides(rangeSqueezeEnabled = true, rangeSqueezeBlockOnUnknown = false))
+                    .signal("SBER", candles, index, 5, "test-cycle")
+            }
+        assertEquals(StrategyAction.HOLD, blocked, "rangeSqueezeBlockOnUnknown=true обязан блокировать вход без истории")
+        assertEquals(base, passed, "rangeSqueezeBlockOnUnknown=false обязан пропустить сигнал без изменений")
+    }
+
+    /** Генератор с research-override — попутно проверяется проброс полей [EntryFilterOverrides]. */
+    private fun gen(overrides: EntryFilterOverrides): LiveStrategyBacktestSignalGenerator =
+        LiveStrategyBacktestSignalGenerator(entryFilters = EntryFilters.from(BacktestConfig(), overrides))
+
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)
     }

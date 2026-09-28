@@ -61,6 +61,24 @@ class EntryFiltersTest {
         macroTrendPullbackEmaPeriod: Int = 20,
         macroTrendMaxDeviationPercent: Double = 0.5,
         macroTrendBlockOnUnknown: Boolean = true,
+        emaCrossEnabled: Boolean = false,
+        emaCrossFastPeriod: Int = 20,
+        emaCrossSlowPeriod: Int = 50,
+        emaCrossBlockOnUnknown: Boolean = true,
+        volumeSpikeEnabled: Boolean = false,
+        volumeSpikePeriod: Int = 20,
+        volumeSpikeMultiplier: Double = 1.5,
+        volumeSpikeBlockOnUnknown: Boolean = true,
+        vwapMrDeviationAtr: Double = 0.0,
+        vwapMrAtrPeriod: Int = 14,
+        panicUseSessionDrop: Boolean = true,
+        rangeSqueezeEnabled: Boolean = false,
+        rangeSqueezeRangePeriod: Int = 20,
+        rangeSqueezeAtrPeriod: Int = 50,
+        rangeSqueezeMultiplier: Double = 0.5,
+        rangeSqueezeLookbackBars: Int = 5,
+        rangeSqueezeRequireVolume: Boolean = true,
+        rangeSqueezeBlockOnUnknown: Boolean = true,
     ): EntryFilters =
         EntryFilters(
             sessionEnabled = sessionEnabled,
@@ -105,6 +123,24 @@ class EntryFiltersTest {
             macroTrendPullbackEmaPeriod = macroTrendPullbackEmaPeriod,
             macroTrendMaxDeviationPercent = macroTrendMaxDeviationPercent,
             macroTrendBlockOnUnknown = macroTrendBlockOnUnknown,
+            emaCrossEnabled = emaCrossEnabled,
+            emaCrossFastPeriod = emaCrossFastPeriod,
+            emaCrossSlowPeriod = emaCrossSlowPeriod,
+            emaCrossBlockOnUnknown = emaCrossBlockOnUnknown,
+            volumeSpikeEnabled = volumeSpikeEnabled,
+            volumeSpikePeriod = volumeSpikePeriod,
+            volumeSpikeMultiplier = volumeSpikeMultiplier,
+            volumeSpikeBlockOnUnknown = volumeSpikeBlockOnUnknown,
+            vwapMrDeviationAtr = vwapMrDeviationAtr,
+            vwapMrAtrPeriod = vwapMrAtrPeriod,
+            panicUseSessionDrop = panicUseSessionDrop,
+            rangeSqueezeEnabled = rangeSqueezeEnabled,
+            rangeSqueezeRangePeriod = rangeSqueezeRangePeriod,
+            rangeSqueezeAtrPeriod = rangeSqueezeAtrPeriod,
+            rangeSqueezeMultiplier = rangeSqueezeMultiplier,
+            rangeSqueezeLookbackBars = rangeSqueezeLookbackBars,
+            rangeSqueezeRequireVolume = rangeSqueezeRequireVolume,
+            rangeSqueezeBlockOnUnknown = rangeSqueezeBlockOnUnknown,
         )
 
     @Test
@@ -665,6 +701,265 @@ class EntryFiltersTest {
         assertEquals(StrategyAction.HOLD, block.macroTrendDirection(short, closes(100.0, 0.0, 25)))
         val pass = filter(macroTrendEnabled = true, macroTrendMinHigherBars = 60, macroTrendBlockOnUnknown = false)
         assertNull(pass.macroTrendDirection(short, closes(100.0, 0.0, 25)))
+    }
+
+    /** Свеча с явным объёмом — для объёмного фильтра и объёмного подтверждения пробоя. */
+    private fun volCandle(
+        idx: Int,
+        close: Double,
+        range: Double = 0.2,
+        volume: Long = 100,
+    ): Candle =
+        Candle(
+            ticker = "TEST",
+            timeframe = "MINUTE_10",
+            openPrice = BigDecimal.valueOf(close),
+            highPrice = BigDecimal.valueOf(close + range),
+            lowPrice = BigDecimal.valueOf(close - range),
+            closePrice = BigDecimal.valueOf(close),
+            volume = volume,
+            time = dayBase.atTime(6, 0).plusMinutes(10L * idx),
+        )
+
+    private fun series(
+        closes: List<Double>,
+        volume: Long = 100,
+    ): List<Candle> = closes.mapIndexed { i, c -> volCandle(i, c, volume = volume) }
+
+    @Test
+    fun `ema cross is null when filter is off`() {
+        assertNull(filter().emaCrossDirection(series(listOf(10.0, 9.0, 8.0))))
+    }
+
+    @Test
+    fun `ema cross up allows buy and cross down allows sell`() {
+        val f = filter(emaCrossEnabled = true, emaCrossFastPeriod = 3, emaCrossSlowPeriod = 5)
+        val declining = (0 until 40).map { 10.0 - 0.05 * it } + 15.0
+        assertEquals(StrategyAction.BUY, f.emaCrossDirection(series(declining)))
+        val rising = (0 until 40).map { 10.0 + 0.05 * it } + 1.0
+        assertEquals(StrategyAction.SELL, f.emaCrossDirection(series(rising)))
+    }
+
+    @Test
+    fun `ema cross blocks entry between crossings`() {
+        val f = filter(emaCrossEnabled = true, emaCrossFastPeriod = 3, emaCrossSlowPeriod = 5)
+        val steadyUp = (0 until 60).map { 10.0 + 0.1 * it }
+        assertEquals(StrategyAction.HOLD, f.emaCrossDirection(series(steadyUp)))
+        val steadyDown = (0 until 60).map { 30.0 - 0.1 * it }
+        assertEquals(StrategyAction.HOLD, f.emaCrossDirection(series(steadyDown)))
+    }
+
+    @Test
+    fun `ema cross without enough bars is fail closed or skipped`() {
+        val bars = series(listOf(10.0))
+        assertEquals(StrategyAction.HOLD, filter(emaCrossEnabled = true).emaCrossDirection(bars))
+        val pass = filter(emaCrossEnabled = true, emaCrossBlockOnUnknown = false)
+        assertNull(pass.emaCrossDirection(bars))
+    }
+
+    @Test
+    fun `volume spike passes the entry and flat volume blocks it`() {
+        val quiet = series(List(25) { 10.0 }, volume = 100)
+        assertEquals(
+            StrategyAction.HOLD,
+            filter(volumeSpikeEnabled = true).volumeSpikeAllows(quiet),
+        )
+        val spike = quiet.dropLast(1) + volCandle(24, 10.0, volume = 400)
+        assertNull(filter(volumeSpikeEnabled = true).volumeSpikeAllows(spike))
+    }
+
+    @Test
+    fun `volume spike is null when filter is off and fail closed on unknown`() {
+        val bars = series(List(25) { 10.0 })
+        assertNull(filter().volumeSpikeAllows(bars))
+        assertEquals(StrategyAction.HOLD, filter(volumeSpikeEnabled = true).volumeSpikeAllows(bars.take(5)))
+        val pass = filter(volumeSpikeEnabled = true, volumeSpikeBlockOnUnknown = false)
+        assertNull(pass.volumeSpikeAllows(bars.take(5)))
+    }
+
+    @Test
+    fun `vwap mr in atr mode sells above the band and buys below it`() {
+        val f =
+            filter(
+                vwapMrEnabled = true,
+                vwapMrDeviationAtr = 1.5,
+                vwapMrAtrPeriod = 14,
+                vwapMrMaxAdx = 1000.0,
+                vwapMrMinSessionBars = 6,
+            )
+        val flat = (0 until 20).map { volCandle(it, 100.0, range = 1.0) }
+        val above = flat.dropLast(1) + volCandle(19, 130.0, range = 1.0)
+        assertEquals(StrategyAction.SELL, f.vwapMrDirection(above, emptyList()))
+        val below = flat.dropLast(1) + volCandle(19, 70.0, range = 1.0)
+        assertEquals(StrategyAction.BUY, f.vwapMrDirection(below, emptyList()))
+    }
+
+    @Test
+    fun `vwap mr in atr mode holds inside the band`() {
+        val f =
+            filter(
+                vwapMrEnabled = true,
+                vwapMrDeviationAtr = 1.5,
+                vwapMrAtrPeriod = 14,
+                vwapMrMaxAdx = 1000.0,
+                vwapMrMinSessionBars = 6,
+            )
+        val bars = (0 until 20).map { volCandle(it, 100.0, range = 1.0) }
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(bars, emptyList()))
+    }
+
+    @Test
+    fun `vwap mr keeps sigma behaviour when atr multiplier is zero`() {
+        val f =
+            filter(
+                vwapMrEnabled = true,
+                vwapMrDeviationAtr = 0.0,
+                vwapMrDeviationSigma = 2.0,
+                vwapMrMaxAdx = 1000.0,
+                vwapMrMinSessionBars = 6,
+            )
+        val flat = (0 until 20).map { volCandle(it, 100.0, range = 1.0) }
+        val above = flat.dropLast(1) + volCandle(19, 130.0, range = 1.0)
+        assertEquals(StrategyAction.SELL, f.vwapMrDirection(above, emptyList()))
+        // Волатильная сессия: 1.0 отклонения внутри 2σ, поэтому вход заблокирован.
+        val wiggly = (0 until 20).map { volCandle(it, if (it % 2 == 0) 98.0 else 102.0, range = 2.0) }
+        val near = wiggly.dropLast(1) + volCandle(19, 101.0, range = 2.0)
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(near, emptyList()))
+    }
+
+    /** Бычья свеча (close > open) — требуется panic-фильтру с bullish-подтверждением. */
+    private fun bullCandle(
+        idx: Int,
+        open: Double,
+        close: Double,
+    ): Candle =
+        Candle(
+            ticker = "TEST",
+            timeframe = "MINUTE_10",
+            openPrice = BigDecimal.valueOf(open),
+            highPrice = BigDecimal.valueOf(maxOf(open, close) + 0.5),
+            lowPrice = BigDecimal.valueOf(minOf(open, close) - 0.5),
+            closePrice = BigDecimal.valueOf(close),
+            volume = 100,
+            time = dayBase.atTime(6, 0).plusMinutes(10L * idx),
+        )
+
+    @Test
+    fun `panic reversal without session drop allows a buy on a rising session`() {
+        val f =
+            filter(
+                panicReversalEnabled = true,
+                panicUseSessionDrop = false,
+                panicRsiPeriod = 5,
+                panicMaxRsi = 99.0,
+                panicRequireBullishBar = true,
+                panicMinBars = 3,
+            )
+        val rising = (0 until 6).map { bullCandle(it, 100.0 + it, 100.5 + it) }
+        // RSI нужен на непостоянном ряду: на константе gain/loss = 0 и RSI не определён.
+        val higher = (0 until 20).map { BigDecimal.valueOf(if (it % 2 == 0) 98.0 else 102.0) }
+        assertEquals(StrategyAction.BUY, f.panicReversalDirection(rising, higher))
+    }
+
+    @Test
+    fun `panic reversal keeps the session drop requirement by default`() {
+        val f =
+            filter(
+                panicReversalEnabled = true,
+                panicUseSessionDrop = true,
+                panicMinSessionDropPercent = 3.0,
+                panicRsiPeriod = 5,
+                panicMaxRsi = 99.0,
+                panicMinBars = 3,
+            )
+        val rising = (0 until 6).map { volCandle(it, 100.0 + it) }
+        assertEquals(StrategyAction.HOLD, f.panicReversalDirection(rising, List(20) { BigDecimal.valueOf(100.0) }))
+    }
+
+    @Test
+    fun `range squeeze blocks the entry while the range is compressed`() {
+        val f =
+            filter(
+                rangeSqueezeEnabled = true,
+                rangeSqueezeRangePeriod = 20,
+                rangeSqueezeAtrPeriod = 50,
+                rangeSqueezeMultiplier = 0.5,
+            )
+        val bars = compressedSeries() + volCandle(59, 100.0, range = 0.05)
+        assertEquals(StrategyAction.HOLD, f.rangeSqueezeDirection(bars))
+    }
+
+    @Test
+    fun `range squeeze buys the confirmed breakout of a compressed range`() {
+        val f =
+            filter(
+                rangeSqueezeEnabled = true,
+                rangeSqueezeRangePeriod = 20,
+                rangeSqueezeAtrPeriod = 50,
+                rangeSqueezeMultiplier = 0.5,
+                rangeSqueezeLookbackBars = 2,
+                rangeSqueezeRequireVolume = true,
+                volumeSpikePeriod = 20,
+                volumeSpikeMultiplier = 1.5,
+            )
+        val breakout = compressedSeries().dropLast(1) + volCandle(59, 120.0, range = 0.05, volume = 400)
+        assertEquals(StrategyAction.BUY, f.rangeSqueezeDirection(breakout))
+    }
+
+    @Test
+    fun `range squeeze sells the breakdown of a compressed range`() {
+        val f =
+            filter(
+                rangeSqueezeEnabled = true,
+                rangeSqueezeRangePeriod = 20,
+                rangeSqueezeAtrPeriod = 50,
+                rangeSqueezeMultiplier = 0.5,
+                rangeSqueezeLookbackBars = 2,
+                rangeSqueezeRequireVolume = true,
+            )
+        val breakdown = compressedSeries().dropLast(1) + volCandle(59, 80.0, range = 0.05, volume = 400)
+        assertEquals(StrategyAction.SELL, f.rangeSqueezeDirection(breakdown))
+    }
+
+    @Test
+    fun `range squeeze rejects a breakout without volume confirmation`() {
+        val f =
+            filter(
+                rangeSqueezeEnabled = true,
+                rangeSqueezeRangePeriod = 20,
+                rangeSqueezeAtrPeriod = 50,
+                rangeSqueezeMultiplier = 0.5,
+                rangeSqueezeLookbackBars = 2,
+                rangeSqueezeRequireVolume = true,
+            )
+        val breakout = compressedSeries().dropLast(1) + volCandle(59, 120.0, range = 0.05, volume = 100)
+        assertEquals(StrategyAction.HOLD, f.rangeSqueezeDirection(breakout))
+    }
+
+    @Test
+    fun `range squeeze passes through when the range was never compressed`() {
+        val f =
+            filter(
+                rangeSqueezeEnabled = true,
+                rangeSqueezeRangePeriod = 20,
+                rangeSqueezeAtrPeriod = 50,
+                rangeSqueezeMultiplier = 0.5,
+                rangeSqueezeLookbackBars = 2,
+            )
+        val wide = (0 until 60).map { volCandle(it, 100.0 + it, range = 5.0) }
+        assertNull(f.rangeSqueezeDirection(wide))
+    }
+
+    @Test
+    fun `range squeeze is null when the filter is off`() {
+        assertNull(filter().rangeSqueezeDirection(compressedSeries() + volCandle(59, 100.0)))
+    }
+
+    /** 40 широких баров на одной цене (ATR раздут) + 19 узких: сжатие относительно ATR. */
+    private fun compressedSeries(): List<Candle> {
+        val wide = (0 until 40).map { volCandle(it, 100.0, range = 5.0) }
+        val tight = (40 until 59).map { volCandle(it, 100.0, range = 0.05) }
+        return wide + tight
     }
 
     private val dayBase = LocalDate.of(2026, 1, 5)

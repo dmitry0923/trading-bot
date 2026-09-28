@@ -1,0 +1,21 @@
+# S2/S3/S4 с инструмент-специфичными SL/TP (2026-09-28).
+# GLDRUBF SL 300 / TP 600 (5.5% SL), IMOEXF SL 200 / TP 400, CNYRUBF SL 40 / TP 80.
+# SL/TP заданы заранее, без in-sample-выбора: исключает подгонку и ускоряет
+# прогон ~x6 (in-sample грид 25-600 пт на GLDRUBF давал MDD 572% и 91 мин).
+# Размер сетки исходный пользователя: S2 9 + S3 3 + S4 3 = 15.
+
+s2-mh6-atr1.2-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.2&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=6&wfaSlPoints=300&wfaTpPoints=600
+s2-mh6-atr1.5-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.5&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=6&wfaSlPoints=300&wfaTpPoints=600
+s2-mh6-atr1.8-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.8&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=6&wfaSlPoints=300&wfaTpPoints=600
+s2-mh12-atr1.2-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.2&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=12&wfaSlPoints=300&wfaTpPoints=600
+s2-mh12-atr1.5-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.5&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=12&wfaSlPoints=300&wfaTpPoints=600
+s2-mh12-atr1.8-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.8&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=12&wfaSlPoints=300&wfaTpPoints=600
+s2-mh18-atr1.2-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.2&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=18&wfaSlPoints=300&wfaTpPoints=600
+s2-mh18-atr1.5-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.5&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=18&wfaSlPoints=300&wfaTpPoints=600
+s2-mh18-atr1.8-sl300-tp600;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.8&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=18&wfaSlPoints=300&wfaTpPoints=600
+s3-mh24-sl200-tp400;IMOEXF;timeframe=HOUR_1&panicReversalEnabled=true&panicUseSessionDrop=false&panicRsiPeriod=14&panicMaxRsi=30&panicTimeframe=HOUR_1&panicRequireBullishBar=true&panicBlockOnUnknown=true&maxHoldBars=24&wfaSlPoints=200&wfaTpPoints=400
+s3-mh48-sl200-tp400;IMOEXF;timeframe=HOUR_1&panicReversalEnabled=true&panicUseSessionDrop=false&panicRsiPeriod=14&panicMaxRsi=30&panicTimeframe=HOUR_1&panicRequireBullishBar=true&panicBlockOnUnknown=true&maxHoldBars=48&wfaSlPoints=200&wfaTpPoints=400
+s3-mh72-sl200-tp400;IMOEXF;timeframe=HOUR_1&panicReversalEnabled=true&panicUseSessionDrop=false&panicRsiPeriod=14&panicMaxRsi=30&panicTimeframe=HOUR_1&panicRequireBullishBar=true&panicBlockOnUnknown=true&maxHoldBars=72&wfaSlPoints=200&wfaTpPoints=400
+s4-mh12-sl40-tp80;CNYRUBF;rangeSqueezeEnabled=true&rangeSqueezeRangePeriod=20&rangeSqueezeAtrPeriod=50&rangeSqueezeMultiplier=0.5&rangeSqueezeLookbackBars=5&rangeSqueezeRequireVolume=true&rangeSqueezeBlockOnUnknown=true&volumeSpikePeriod=20&volumeSpikeMultiplier=1.5&maxHoldBars=12&wfaSlPoints=40&wfaTpPoints=80
+s4-mh24-sl40-tp80;CNYRUBF;rangeSqueezeEnabled=true&rangeSqueezeRangePeriod=20&rangeSqueezeAtrPeriod=50&rangeSqueezeMultiplier=0.5&rangeSqueezeLookbackBars=5&rangeSqueezeRequireVolume=true&rangeSqueezeBlockOnUnknown=true&volumeSpikePeriod=20&volumeSpikeMultiplier=1.5&maxHoldBars=24&wfaSlPoints=40&wfaTpPoints=80
+s4-mh36-sl40-tp80;CNYRUBF;rangeSqueezeEnabled=true&rangeSqueezeRangePeriod=20&rangeSqueezeAtrPeriod=50&rangeSqueezeMultiplier=0.5&rangeSqueezeLookbackBars=5&rangeSqueezeRequireVolume=true&rangeSqueezeBlockOnUnknown=true&volumeSpikePeriod=20&volumeSpikeMultiplier=1.5&maxHoldBars=36&wfaSlPoints=40&wfaTpPoints=80

@@ -474,4 +474,126 @@ object IndicatorCalculator {
 
     /** Множитель σ Боллинджера для детекции сжатия. */
     const val BOLLINGER_SQUEEZE_MULT = 2.0
+
+    /**
+     * Простое скользящее среднее объёма по последним [period] барам **включая
+     * текущий** — знаменатель для фильтра объёмного подтверждения
+     * `volume > SMA(Vol, period) * multiplier`.
+     *
+     * @param candles свечи до и включая текущую
+     * @param period окно усреднения
+     * @return средний объём или `null` при нехватке данных / нулевом объёме
+     */
+    fun volumeSma(
+        candles: List<Candle>,
+        period: Int,
+    ): Double? {
+        if (candles.size < period || period < 1) return null
+        val window = candles.takeLast(period)
+        val mean = window.map { it.volume.toDouble() }.average()
+        return if (mean > 0.0) mean else null
+    }
+
+    /**
+     * Сжатие по среднему внутрисвечному диапазону: среднее `(High-Low)` за
+     * [rangePeriod] баров строго меньше [multiplier] × ATR([atrPeriod]).
+     *
+     * Отличие от [isSqueeze]: там сжатие = полосы Боллинджера внутри канала
+     * Кельтнера, здесь — прямое сравнение средней ширины свечи с ATR. Обе
+     * величины в одной размерности (цена), поэтому сравнение осмысленно;
+     * вариант «(High-Low) последних 20 баров < 0.5×ATR(50)» из ТЗ интерпретируется
+     * именно как среднее по окну (сумма несопоставима с ATR, максимум почти
+     * никогда не меньше ATR).
+     *
+     * @return true — сжатие; false — сжатия нет; `null` — нехватка данных
+     */
+    fun isRangeSqueeze(
+        candles: List<Candle>,
+        rangePeriod: Int = RANGE_SQUEEZE_PERIOD,
+        atrPeriod: Int = RANGE_SQUEEZE_ATR_PERIOD,
+        multiplier: Double = RANGE_SQUEEZE_MULT,
+    ): Boolean? {
+        if (candles.size < maxOf(rangePeriod, atrPeriod + 1)) return null
+        val meanRange =
+            candles.takeLast(rangePeriod).map { it.highPrice.subtract(it.lowPrice).toDouble() }.average()
+        val atrValue = atr(candles, atrPeriod)
+        if (atrValue <= 0.0) return null
+        return meanRange < multiplier * atrValue
+    }
+
+    /**
+     * Предрассчитанный ряд сжатия для всех баров — O(n) вместо O(n·period)
+     * на длинных прогонах (46k свечей). Индекс `i` соответствует
+     * `isRangeSqueeze(candles[0..i])`.
+     *
+     * @return `null`, если на всём ряду не хватает данных для ATR
+     */
+    fun rangeSqueezeSeries(
+        candles: List<Candle>,
+        rangePeriod: Int = RANGE_SQUEEZE_PERIOD,
+        atrPeriod: Int = RANGE_SQUEEZE_ATR_PERIOD,
+        multiplier: Double = RANGE_SQUEEZE_MULT,
+    ): BooleanArray? {
+        if (rangePeriod < 1 || atrPeriod < 1) return null
+        val minBars = rangeSqueezeMinBars(rangePeriod, atrPeriod)
+        if (candles.size < minBars) return null
+        val n = candles.size
+        val states = BooleanArray(n)
+        val alpha = 1.0 / atrPeriod
+        // Посев ATR ровно как в [atr]: среднее первых atrPeriod true range
+        // (свечи 1..atrPeriod). Иначе при rangePeriod > atrPeriod + 1 ряд разошёлся
+        // бы с [isRangeSqueeze] на первых барах после минимума.
+        var atrAcc = 0.0
+        for (i in 1..atrPeriod) {
+            atrAcc += trueRange(candles, i)
+        }
+        atrAcc /= atrPeriod
+        // Скользящая сумма (High-Low) ровно по последним rangePeriod баром.
+        var rangeSum = 0.0
+        for (i in minBars - rangePeriod until minBars) {
+            rangeSum += candleRange(candles, i)
+        }
+        for (i in minBars - 1 until n) {
+            if (i > atrPeriod) {
+                atrAcc += alpha * (trueRange(candles, i) - atrAcc)
+            }
+            if (i > minBars - 1) {
+                rangeSum += candleRange(candles, i)
+                rangeSum -= candleRange(candles, i - rangePeriod)
+            }
+            val meanRange = rangeSum / rangePeriod
+            states[i] = atrAcc > 0.0 && meanRange < multiplier * atrAcc
+        }
+        return states
+    }
+
+    /** Минимум баров для расчёта сжатия по среднему диапазону. */
+    fun rangeSqueezeMinBars(
+        rangePeriod: Int = RANGE_SQUEEZE_PERIOD,
+        atrPeriod: Int = RANGE_SQUEEZE_ATR_PERIOD,
+    ): Int = maxOf(rangePeriod, atrPeriod + 1)
+
+    private fun candleRange(
+        candles: List<Candle>,
+        i: Int,
+    ): Double = candles[i].highPrice.subtract(candles[i].lowPrice).toDouble()
+
+    private fun trueRange(
+        candles: List<Candle>,
+        i: Int,
+    ): Double {
+        val h = candles[i].highPrice.toDouble()
+        val l = candles[i].lowPrice.toDouble()
+        val prevC = candles[i - 1].closePrice.toDouble()
+        return maxOf(h - l, kotlin.math.abs(h - prevC), kotlin.math.abs(l - prevC))
+    }
+
+    /** Окно усреднения диапазона для детекции сжатия по среднему (High-Low). */
+    const val RANGE_SQUEEZE_PERIOD = 20
+
+    /** Период ATR для детекции сжатия по среднему (High-Low). */
+    const val RANGE_SQUEEZE_ATR_PERIOD = 50
+
+    /** Порог сжатия: средний (High-Low) < [RANGE_SQUEEZE_MULT] × ATR. */
+    const val RANGE_SQUEEZE_MULT = 0.5
 }

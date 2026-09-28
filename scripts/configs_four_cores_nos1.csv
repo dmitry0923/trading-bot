@@ -1,0 +1,29 @@
+# S2/S3/S4 (без S1) - 15 конфигов + 3 baseline = 18 прогонов.
+# Четыре детерминированных ядра: 48 замороженных конфигов (2026-09-28).
+# Формат: Имя;Ticker;Query   (разделитель `;` обязателен)
+# WFA-OOS полных 730 дней, folds=8, conf=0.60, risk 30%, maxC 100.
+# maxHoldBars/SL/TP - только здесь (в базовом URL их быть НЕ должно).
+
+# S1 CNYRUBF MINUTE_10: EMA20 x EMA50 + Vol > SMA(Vol,20)*1.5.
+
+# S2 GLDRUBF MINUTE_10: VWAP-отклонение в ATR14 (dev 1.2/1.5/1.8), hold 6/12/18.
+# SL/TP не заданы -> in-sample сетка выбирает сама (честный IS/OOS).
+s2-mh6-atr1.2;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.2&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=6
+s2-mh6-atr1.5;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.5&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=6
+s2-mh6-atr1.8;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.8&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=6
+s2-mh12-atr1.2;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.2&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=12
+s2-mh12-atr1.5;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.5&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=12
+s2-mh12-atr1.8;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.8&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=12
+s2-mh18-atr1.2;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.2&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=18
+s2-mh18-atr1.5;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.5&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=18
+s2-mh18-atr1.8;GLDRUBF;timeframe=MINUTE_10&vwapMrEnabled=true&vwapMrDeviationAtr=1.8&vwapMrAtrPeriod=14&vwapMrBlockOnUnknown=true&maxHoldBars=18
+
+# S3 IMOEXF HOUR_1: panic-reversal БЕЗ session-drop - RSI(14)<30 + бычий бар, только LONG.
+s3-mh24;IMOEXF;timeframe=HOUR_1&panicReversalEnabled=true&panicUseSessionDrop=false&panicRsiPeriod=14&panicMaxRsi=30&panicTimeframe=HOUR_1&panicRequireBullishBar=true&panicBlockOnUnknown=true&maxHoldBars=24
+s3-mh48;IMOEXF;timeframe=HOUR_1&panicReversalEnabled=true&panicUseSessionDrop=false&panicRsiPeriod=14&panicMaxRsi=30&panicTimeframe=HOUR_1&panicRequireBullishBar=true&panicBlockOnUnknown=true&maxHoldBars=48
+s3-mh72;IMOEXF;timeframe=HOUR_1&panicReversalEnabled=true&panicUseSessionDrop=false&panicRsiPeriod=14&panicMaxRsi=30&panicTimeframe=HOUR_1&panicRequireBullishBar=true&panicBlockOnUnknown=true&maxHoldBars=72
+
+# S4 CNYRUBF MINUTE_10: range-squeeze R20 < 0.5*ATR50 + объёмный пробой (Vol > SMA20*1.5), hold 12/24/36.
+s4-mh12;CNYRUBF;rangeSqueezeEnabled=true&rangeSqueezeRangePeriod=20&rangeSqueezeAtrPeriod=50&rangeSqueezeMultiplier=0.5&rangeSqueezeLookbackBars=5&rangeSqueezeRequireVolume=true&rangeSqueezeBlockOnUnknown=true&volumeSpikePeriod=20&volumeSpikeMultiplier=1.5&maxHoldBars=12
+s4-mh24;CNYRUBF;rangeSqueezeEnabled=true&rangeSqueezeRangePeriod=20&rangeSqueezeAtrPeriod=50&rangeSqueezeMultiplier=0.5&rangeSqueezeLookbackBars=5&rangeSqueezeRequireVolume=true&rangeSqueezeBlockOnUnknown=true&volumeSpikePeriod=20&volumeSpikeMultiplier=1.5&maxHoldBars=24
+s4-mh36;CNYRUBF;rangeSqueezeEnabled=true&rangeSqueezeRangePeriod=20&rangeSqueezeAtrPeriod=50&rangeSqueezeMultiplier=0.5&rangeSqueezeLookbackBars=5&rangeSqueezeRequireVolume=true&rangeSqueezeBlockOnUnknown=true&volumeSpikePeriod=20&volumeSpikeMultiplier=1.5&maxHoldBars=36

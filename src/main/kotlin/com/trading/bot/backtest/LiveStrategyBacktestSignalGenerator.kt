@@ -71,6 +71,24 @@ data class EntryFilterOverrides(
     val macroTrendPullbackEmaPeriod: Int? = null,
     val macroTrendMaxDeviationPercent: Double? = null,
     val macroTrendBlockOnUnknown: Boolean? = null,
+    val emaCrossEnabled: Boolean? = null,
+    val emaCrossFastPeriod: Int? = null,
+    val emaCrossSlowPeriod: Int? = null,
+    val emaCrossBlockOnUnknown: Boolean? = null,
+    val volumeSpikeEnabled: Boolean? = null,
+    val volumeSpikePeriod: Int? = null,
+    val volumeSpikeMultiplier: Double? = null,
+    val volumeSpikeBlockOnUnknown: Boolean? = null,
+    val vwapMrDeviationAtr: Double? = null,
+    val vwapMrAtrPeriod: Int? = null,
+    val panicUseSessionDrop: Boolean? = null,
+    val rangeSqueezeEnabled: Boolean? = null,
+    val rangeSqueezeRangePeriod: Int? = null,
+    val rangeSqueezeAtrPeriod: Int? = null,
+    val rangeSqueezeMultiplier: Double? = null,
+    val rangeSqueezeLookbackBars: Int? = null,
+    val rangeSqueezeRequireVolume: Boolean? = null,
+    val rangeSqueezeBlockOnUnknown: Boolean? = null,
 ) {
     val anyProvided: Boolean
         get() =
@@ -115,7 +133,25 @@ data class EntryFilterOverrides(
                 macroTrendMinHigherBars != null ||
                 macroTrendPullbackEmaPeriod != null ||
                 macroTrendMaxDeviationPercent != null ||
-                macroTrendBlockOnUnknown != null
+                macroTrendBlockOnUnknown != null ||
+                emaCrossEnabled != null ||
+                emaCrossFastPeriod != null ||
+                emaCrossSlowPeriod != null ||
+                emaCrossBlockOnUnknown != null ||
+                volumeSpikeEnabled != null ||
+                volumeSpikePeriod != null ||
+                volumeSpikeMultiplier != null ||
+                volumeSpikeBlockOnUnknown != null ||
+                vwapMrDeviationAtr != null ||
+                vwapMrAtrPeriod != null ||
+                panicUseSessionDrop != null ||
+                rangeSqueezeEnabled != null ||
+                rangeSqueezeRangePeriod != null ||
+                rangeSqueezeAtrPeriod != null ||
+                rangeSqueezeMultiplier != null ||
+                rangeSqueezeLookbackBars != null ||
+                rangeSqueezeRequireVolume != null ||
+                rangeSqueezeBlockOnUnknown != null
 }
 
 /**
@@ -166,6 +202,24 @@ class EntryFilters(
     val macroTrendPullbackEmaPeriod: Int,
     val macroTrendMaxDeviationPercent: Double,
     val macroTrendBlockOnUnknown: Boolean,
+    val emaCrossEnabled: Boolean,
+    val emaCrossFastPeriod: Int,
+    val emaCrossSlowPeriod: Int,
+    val emaCrossBlockOnUnknown: Boolean,
+    val volumeSpikeEnabled: Boolean,
+    val volumeSpikePeriod: Int,
+    val volumeSpikeMultiplier: Double,
+    val volumeSpikeBlockOnUnknown: Boolean,
+    val vwapMrDeviationAtr: Double,
+    val vwapMrAtrPeriod: Int,
+    val panicUseSessionDrop: Boolean,
+    val rangeSqueezeEnabled: Boolean,
+    val rangeSqueezeRangePeriod: Int,
+    val rangeSqueezeAtrPeriod: Int,
+    val rangeSqueezeMultiplier: Double,
+    val rangeSqueezeLookbackBars: Int,
+    val rangeSqueezeRequireVolume: Boolean,
+    val rangeSqueezeBlockOnUnknown: Boolean,
 ) {
     companion object {
         /** Минут в сутках — [EntryFilters.orbWindowEndMinutes] ≥ этого значения
@@ -239,6 +293,33 @@ class EntryFilters(
                     overrides?.macroTrendMaxDeviationPercent ?: config.macroTrendMaxDeviationPercent,
                 macroTrendBlockOnUnknown =
                     overrides?.macroTrendBlockOnUnknown ?: config.macroTrendBlockOnUnknown,
+                emaCrossEnabled = overrides?.emaCrossEnabled ?: config.emaCrossEnabled,
+                emaCrossFastPeriod = overrides?.emaCrossFastPeriod ?: config.emaCrossFastPeriod,
+                emaCrossSlowPeriod = overrides?.emaCrossSlowPeriod ?: config.emaCrossSlowPeriod,
+                emaCrossBlockOnUnknown =
+                    overrides?.emaCrossBlockOnUnknown ?: config.emaCrossBlockOnUnknown,
+                volumeSpikeEnabled = overrides?.volumeSpikeEnabled ?: config.volumeSpikeEnabled,
+                volumeSpikePeriod = overrides?.volumeSpikePeriod ?: config.volumeSpikePeriod,
+                volumeSpikeMultiplier =
+                    overrides?.volumeSpikeMultiplier ?: config.volumeSpikeMultiplier,
+                volumeSpikeBlockOnUnknown =
+                    overrides?.volumeSpikeBlockOnUnknown ?: config.volumeSpikeBlockOnUnknown,
+                vwapMrDeviationAtr = overrides?.vwapMrDeviationAtr ?: config.vwapMrDeviationAtr,
+                vwapMrAtrPeriod = overrides?.vwapMrAtrPeriod ?: config.vwapMrAtrPeriod,
+                panicUseSessionDrop = overrides?.panicUseSessionDrop ?: config.panicUseSessionDrop,
+                rangeSqueezeEnabled = overrides?.rangeSqueezeEnabled ?: config.rangeSqueezeEnabled,
+                rangeSqueezeRangePeriod =
+                    overrides?.rangeSqueezeRangePeriod ?: config.rangeSqueezeRangePeriod,
+                rangeSqueezeAtrPeriod =
+                    overrides?.rangeSqueezeAtrPeriod ?: config.rangeSqueezeAtrPeriod,
+                rangeSqueezeMultiplier =
+                    overrides?.rangeSqueezeMultiplier ?: config.rangeSqueezeMultiplier,
+                rangeSqueezeLookbackBars =
+                    overrides?.rangeSqueezeLookbackBars ?: config.rangeSqueezeLookbackBars,
+                rangeSqueezeRequireVolume =
+                    overrides?.rangeSqueezeRequireVolume ?: config.rangeSqueezeRequireVolume,
+                rangeSqueezeBlockOnUnknown =
+                    overrides?.rangeSqueezeBlockOnUnknown ?: config.rangeSqueezeBlockOnUnknown,
             )
 
         /** Фильтры выключены — не влияют на входы. */
@@ -286,6 +367,24 @@ class EntryFilters(
                 macroTrendPullbackEmaPeriod = 20,
                 macroTrendMaxDeviationPercent = 0.5,
                 macroTrendBlockOnUnknown = true,
+                emaCrossEnabled = false,
+                emaCrossFastPeriod = 20,
+                emaCrossSlowPeriod = 50,
+                emaCrossBlockOnUnknown = true,
+                volumeSpikeEnabled = false,
+                volumeSpikePeriod = 20,
+                volumeSpikeMultiplier = 1.5,
+                volumeSpikeBlockOnUnknown = true,
+                vwapMrDeviationAtr = 0.0,
+                vwapMrAtrPeriod = 14,
+                panicUseSessionDrop = true,
+                rangeSqueezeEnabled = false,
+                rangeSqueezeRangePeriod = 20,
+                rangeSqueezeAtrPeriod = 50,
+                rangeSqueezeMultiplier = 0.5,
+                rangeSqueezeLookbackBars = 5,
+                rangeSqueezeRequireVolume = true,
+                rangeSqueezeBlockOnUnknown = true,
             )
     }
 
@@ -405,27 +504,167 @@ class EntryFilters(
         higherTimeframeCandles: List<Candle>,
     ): StrategyAction? {
         if (!vwapMrEnabled || window.isEmpty()) return null
-        val vwap = IndicatorCalculator.vwap(window)
-        val sigmaPercent = IndicatorCalculator.vwapStdDevPercent(window)
-        if (vwap == null ||
-            sigmaPercent == null ||
-            sigmaPercent < IndicatorCalculator.MIN_MEANINGFUL_VWAP_SIGMA_PERCENT
-        ) {
-            // Сессия безвольная (σ ≈ 0) — отклонение не определено.
-            return if (vwapMrBlockOnUnknown) StrategyAction.HOLD else null
-        }
+        val unknown = if (vwapMrBlockOnUnknown) StrategyAction.HOLD else null
+        val vwap = IndicatorCalculator.vwap(window) ?: return unknown
         if (window.size < vwapMrMinSessionBars) {
-            // Сессия ещё не набрала минимум баров для оценки σ.
-            return if (vwapMrBlockOnUnknown) StrategyAction.HOLD else null
+            // Сессия не набрала нужную длину — сигнал ещё не определён.
+            return unknown
         }
         val adx = IndicatorCalculator.adx(higherTimeframeCandles)
         if (adx > vwapMrMaxAdx) return StrategyAction.HOLD
         val close = window.last().closePrice.toDouble()
-        val sigmaValue = vwap * sigmaPercent / 100.0
-        val deviation = (close - vwap) / sigmaValue
+        // Порог отклонения: либо в ATR (стратегия №2 <GLDRUBF MR>, поле
+        // vwapMrDeviationAtr), либо в σ типичной цены (исходный режим). Ветки
+        // независимы: σ не нужен ATR-режиму и наоборот, иначе вырожденная σ
+        // (≈0 на «плоской» цене) блокировала бы вход, заданный через ATR.
+        val threshold =
+            if (vwapMrDeviationAtr > 0.0) {
+                val atrValue = IndicatorCalculator.atr(window, vwapMrAtrPeriod)
+                if (atrValue <= 0.0) return unknown
+                vwapMrDeviationAtr * atrValue
+            } else {
+                val sigmaPercent = IndicatorCalculator.vwapStdDevPercent(window) ?: return unknown
+                if (sigmaPercent < IndicatorCalculator.MIN_MEANINGFUL_VWAP_SIGMA_PERCENT) return unknown
+                vwapMrDeviationSigma * vwap * sigmaPercent / 100.0
+            }
+        if (threshold <= 0.0) return unknown
+        val deviation = close - vwap
         return when {
-            deviation <= -vwapMrDeviationSigma -> StrategyAction.BUY
-            deviation >= vwapMrDeviationSigma -> StrategyAction.SELL
+            deviation <= -threshold -> StrategyAction.BUY
+            deviation >= threshold -> StrategyAction.SELL
+            else -> StrategyAction.HOLD
+        }
+    }
+
+    /**
+     * EMA-crossover + объёмное подтверждение (research, 2026-09-28, стратегия №1
+     * «CNYRUBF Trend»).
+     *
+     * Вход разрешён **только на самом пересечении** EMA([emaCrossFastPeriod]) и
+     * EMA([emaCrossSlowPeriod]):
+     *  - быстрая пересекла медленную снизу вверх на этом баре → BUY;
+     *  - быстрая пересекла медленную сверху вниз → SELL;
+     *  - пересечения на этом баре нет → HOLD (между пересечениями входа нет);
+     *  - нехватка баров → fail-closed по [emaCrossBlockOnUnknown].
+     *
+     * Направление здесь не «состояние тренда», а именно событие пересечения:
+     * EMA20 > EMA50 без пересечения означает, что тренд уже идёт и ждать нового
+     * пересечения (как в [macroTrendDirection] — другое ядро, другой смысл).
+     *
+     * @param window бары до и включая текущий (базовый ТФ)
+     * @return HOLD — вход заблокирован; BUY/SELL — направление пересечения;
+     *   null — фильтр off либо undefined при [emaCrossBlockOnUnknown]=false
+     */
+    fun emaCrossDirection(window: List<Candle>): StrategyAction? {
+        if (!emaCrossEnabled) return null
+        val unknown = if (emaCrossBlockOnUnknown) StrategyAction.HOLD else null
+        if (window.size < 2 || emaCrossFastPeriod < 1 || emaCrossSlowPeriod < 1) return unknown
+        val closes = window.map { it.closePrice }
+        val fast = IndicatorCalculator.ema(closes, emaCrossFastPeriod)
+        val slow = IndicatorCalculator.ema(closes, emaCrossSlowPeriod)
+        val last = closes.size - 1
+        if (last < 1) return unknown
+        val diffNow = fast[last] - slow[last]
+        val diffPrev = fast[last - 1] - slow[last - 1]
+        return when {
+            diffPrev <= 0.0 && diffNow > 0.0 -> StrategyAction.BUY
+            diffPrev >= 0.0 && diffNow < 0.0 -> StrategyAction.SELL
+            else -> StrategyAction.HOLD
+        }
+    }
+
+    /**
+     * Объёмное подтверждение входа (research, 2026-09-28, часть стратегии №1):
+     * текущий объём > [volumeSpikeMultiplier] × SMA объёма [volumeSpikePeriod].
+     *
+     * Направление не ограничивает — только подтверждение или блокировка.
+     *
+     * @return HOLD — объём не подтверждает вход; null — подтверждает либо фильтр
+     *   выключен/не определён (fail-closed по [volumeSpikeBlockOnUnknown])
+     */
+    fun volumeSpikeAllows(window: List<Candle>): StrategyAction? {
+        if (!volumeSpikeEnabled) return null
+        val unknown = if (volumeSpikeBlockOnUnknown) StrategyAction.HOLD else null
+        val sma = IndicatorCalculator.volumeSma(window, volumeSpikePeriod) ?: return unknown
+        val volume = window.last().volume.toDouble()
+        if (volume <= 0.0) return unknown
+        return if (volume > volumeSpikeMultiplier * sma) null else StrategyAction.HOLD
+    }
+
+    /**
+     * Сжатие по среднему внутрисвечному диапазону (research, 2026-09-28,
+     * стратегия №4 «CNYRUBF Squeeze Baseline»): среднее (High-Low) за
+     * [rangeSqueezeRangePeriod] баров < [rangeSqueezeMultiplier] ×
+     * ATR([rangeSqueezeAtrPeriod]).
+     *
+     * Отличие от [squeezeDirection] (Боллинджер внутри Кельтнера) — другая
+     * формула сжатия, прямое сравнение ширины свечи с ATR.
+     *
+     * Сжатие измеряется на окне **до текущего бара**: ATR включает true range
+     * самого пробойного бара, поэтому при оценке «вместе с ним» широкий пробой
+     * одновременно раздувает и средний диапазон, и ATR, и сжатие не закончилось
+     * бы никогда. Поэтому: сжатие было (сейчас или не более
+     * [rangeSqueezeLookbackBars] баров назад) → вход разрешён только если текущий
+     * close пробивает максимум/минимум диапазона тех сжатых баров; сжатия не было
+     * → null (фильтр не вмешивается).
+     *
+     * @param squeezeStates предрассчитанный ряд сжатия (O(n)) — экономит
+     *   O(n·period) на длинных прогонах; индекс `i` соответствует состоянию на
+     *   окне, заканчивающемся баром `i`
+     */
+    fun rangeSqueezeDirection(
+        window: List<Candle>,
+        squeezeStates: BooleanArray? = null,
+    ): StrategyAction? {
+        if (!rangeSqueezeEnabled) return null
+        val unknown = if (rangeSqueezeBlockOnUnknown) StrategyAction.HOLD else null
+        val minBars = IndicatorCalculator.rangeSqueezeMinBars(rangeSqueezeRangePeriod, rangeSqueezeAtrPeriod)
+        // Нужен бар до текущего: сжатие оценивается на предыдущем окне.
+        if (window.size - 1 < minBars) return unknown
+        val prev = window.dropLast(1)
+        val lookback = rangeSqueezeLookbackBars.coerceAtLeast(0)
+        // Индекс последнего бара prev в candles: window — префикс candles,
+        // поэтому обе ветви (кэш/без кэша) обязаны считать индекс от window,
+        // иначе они разъезжаются на один бар.
+        val prevLast = window.size - 2
+        val wasSqueezed =
+            if (squeezeStates != null && prevLast >= 0 && prevLast < squeezeStates.size) {
+                val to = prevLast
+                val from = (to - lookback).coerceAtLeast(minBars - 1)
+                (from..to).any { squeezeStates[it] }
+            } else {
+                (0..lookback).any { back ->
+                    val idx = prev.size - 1 - back
+                    if (idx < minBars - 1) {
+                        false
+                    } else {
+                        IndicatorCalculator.isRangeSqueeze(
+                            prev.subList(0, idx + 1),
+                            rangeSqueezeRangePeriod,
+                            rangeSqueezeAtrPeriod,
+                            rangeSqueezeMultiplier,
+                        ) == true
+                    }
+                }
+            }
+        if (!wasSqueezed) return null
+        // Уровни пробоя — максимум/минимум диапазона сжатых баров (окно до текущего).
+        val base = prev.takeLast(rangeSqueezeRangePeriod)
+        if (base.size < rangeSqueezeRangePeriod) return unknown
+        val high = base.maxOf { it.highPrice.toDouble() }
+        val low = base.minOf { it.lowPrice.toDouble() }
+        val close = window.last().closePrice.toDouble()
+        if (rangeSqueezeRequireVolume) {
+            // SMA по окну ДО пробойного бара: иначе всплеск объёма сам себя
+            // раздувает в среднем и порог перестаёт быть проверкой всплеска.
+            val sma = IndicatorCalculator.volumeSma(prev, volumeSpikePeriod) ?: return unknown
+            if (window.last().volume.toDouble() <= volumeSpikeMultiplier * sma) {
+                return StrategyAction.HOLD
+            }
+        }
+        return when {
+            close > high -> StrategyAction.BUY
+            close < low -> StrategyAction.SELL
             else -> StrategyAction.HOLD
         }
     }
@@ -546,8 +785,11 @@ class EntryFilters(
         if (higherCloses.size < panicRsiPeriod + 1) return unknown
         val last = sessionBars.last()
         if (panicRequireBullishBar && last.closePrice <= last.openPrice) return StrategyAction.HOLD
-        val dropPercent = (last.closePrice.toDouble() - first.openPrice.toDouble()) / first.openPrice.toDouble() * 100.0
-        if (dropPercent > -panicMinSessionDropPercent) return StrategyAction.HOLD
+        if (panicUseSessionDrop) {
+            val dropPercent =
+                (last.closePrice.toDouble() - first.openPrice.toDouble()) / first.openPrice.toDouble() * 100.0
+            if (dropPercent > -panicMinSessionDropPercent) return StrategyAction.HOLD
+        }
         val rsi = IndicatorCalculator.rsi(higherCloses, panicRsiPeriod)
         if (!rsi.isFinite() || rsi >= panicMaxRsi) return StrategyAction.HOLD
         return StrategyAction.BUY
@@ -691,6 +933,34 @@ class LiveStrategyBacktestSignalGenerator(
         return series
     }
 
+    private var rangeSqueezeSeriesCandles: List<Candle>? = null
+    private var rangeSqueezeSeriesCache: BooleanArray? = null
+    private var rangeSqueezeSeriesComputed = false
+
+    /**
+     * Ряд сжатия по среднему (High-Low) для всего списка [candles], один проход
+     * на прогон с кэшем по идентичности списка — тот же приём, что и в
+     * [squeezeSeries] (иначе O(n·period) на 46k свечах).
+     */
+    private fun rangeSqueezeStates(candles: List<Candle>): BooleanArray? {
+        val filters = entryFilters
+        if (filters?.rangeSqueezeEnabled != true) return null
+        if (rangeSqueezeSeriesComputed && rangeSqueezeSeriesCandles === candles) {
+            return rangeSqueezeSeriesCache
+        }
+        val series =
+            IndicatorCalculator.rangeSqueezeSeries(
+                candles,
+                filters.rangeSqueezeRangePeriod,
+                filters.rangeSqueezeAtrPeriod,
+                filters.rangeSqueezeMultiplier,
+            )
+        rangeSqueezeSeriesCandles = candles
+        rangeSqueezeSeriesCache = series
+        rangeSqueezeSeriesComputed = true
+        return series
+    }
+
     override suspend fun signal(
         ticker: String,
         candles: List<Candle>,
@@ -789,6 +1059,36 @@ class LiveStrategyBacktestSignalGenerator(
             } ?: false
         if (entryBlocked) return StrategyAction.HOLD
 
+        // EMA-crossover (research, 2026-09-28, стратегия №1): вход только на самом
+        // пересечении быстрой и медленной EMA базового ТФ.
+        entryFilters?.let { filters ->
+            if (filters.emaCrossEnabled) {
+                val ec =
+                    try {
+                        filters.emaCrossDirection(window)
+                    } catch (_: Exception) {
+                        // fail-closed: сбой расчёта не должен превращаться в «фильтр выключен»
+                        if (filters.emaCrossBlockOnUnknown) StrategyAction.HOLD else null
+                    }
+                if (ec == StrategyAction.HOLD) return StrategyAction.HOLD
+                if (ec != null && ec != bestAction) return StrategyAction.HOLD
+            }
+        }
+
+        // Объёмное подтверждение (research, 2026-09-28, стратегия №1): текущий
+        // объём > множитель × SMA объёма.
+        entryFilters?.let { filters ->
+            if (filters.volumeSpikeEnabled) {
+                val vs =
+                    try {
+                        filters.volumeSpikeAllows(window)
+                    } catch (_: Exception) {
+                        if (filters.volumeSpikeBlockOnUnknown) StrategyAction.HOLD else null
+                    }
+                if (vs == StrategyAction.HOLD) return StrategyAction.HOLD
+            }
+        }
+
         // Bollinger Squeeze Breakout (research, strategy #8): entry only on a breakout
         // out of a volatility squeeze (does not veto when the setup is absent).
         entryFilters?.let { filters ->
@@ -802,6 +1102,21 @@ class LiveStrategyBacktestSignalGenerator(
                     }
                 if (sq == StrategyAction.HOLD) return StrategyAction.HOLD
                 if (sq != null && sq != bestAction) return StrategyAction.HOLD
+            }
+        }
+
+        // Сжатие по среднему (High-Low) (research, 2026-09-28, стратегия №4):
+        // вход только на пробое после сжатия.
+        entryFilters?.let { filters ->
+            if (filters.rangeSqueezeEnabled) {
+                val rs =
+                    try {
+                        filters.rangeSqueezeDirection(window, rangeSqueezeStates(candles))
+                    } catch (_: Exception) {
+                        if (filters.rangeSqueezeBlockOnUnknown) StrategyAction.HOLD else null
+                    }
+                if (rs == StrategyAction.HOLD) return StrategyAction.HOLD
+                if (rs != null && rs != bestAction) return StrategyAction.HOLD
             }
         }
 

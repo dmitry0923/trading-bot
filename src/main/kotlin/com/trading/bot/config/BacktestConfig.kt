@@ -315,4 +315,68 @@ class BacktestConfig {
 
     /** Fail-closed для macro-trend: нехватка данных/таймфрейма → БЛОК. */
     var macroTrendBlockOnUnknown: Boolean = true
+
+    /** EMA-crossover + объёмное подтверждение (research, 2026-09-28): вход только
+     *  на самом пересечении EMA([emaCrossFastPeriod]) и EMA([emaCrossSlowPeriod]);
+     *  между пересечениями вход заблокирован. research, по умолчанию off. */
+    var emaCrossEnabled: Boolean = false
+
+    /** Период быстрой EMA для детекции пересечения. */
+    var emaCrossFastPeriod: Int = 20
+
+    /** Период медленной EMA для детекции пересечения. */
+    var emaCrossSlowPeriod: Int = 50
+
+    /** Fail-closed для EMA-crossover: нехватка баров → БЛОК. */
+    var emaCrossBlockOnUnknown: Boolean = true
+
+    /** Объёмное подтверждение входа (research, 2026-09-28): текущий объём >
+     *  SMA объёма [volumeSpikePeriod] × [volumeSpikeMultiplier]. Вход без
+     *  подтверждения объёмом заблокирован. research, по умолчанию off. */
+    var volumeSpikeEnabled: Boolean = false
+
+    /** Окно усреднения объёма. */
+    var volumeSpikePeriod: Int = 20
+
+    /** Множитель к среднему объёму. */
+    var volumeSpikeMultiplier: Double = 1.5
+
+    /** Fail-closed для объёмного фильтра: нехватка данных/нулевой объём → БЛОК. */
+    var volumeSpikeBlockOnUnknown: Boolean = true
+
+    /** Множитель ATR для отклонения от VWAP (research, 2026-09-28). 0 — мерить
+     *  отклонение в σ (прежнее поведение `vwapMrDeviationSigma`), > 0 — в ATR. */
+    var vwapMrDeviationAtr: Double = 0.0
+
+    /** Период ATR для отклонения от VWAP. */
+    var vwapMrAtrPeriod: Int = 14
+
+    /** Требовать падение сессии ≥ [panicMinSessionDropPercent]% (research,
+     *  2026-09-28). false — чистый сетап «RSI перепродан + бычий бар» без
+     *  условия по падению сессии (стратегия №3 из ТЗ). */
+    var panicUseSessionDrop: Boolean = true
+
+    /** Сжатие по среднему диапазону (research, 2026-09-28, стратегия №4 из ТЗ):
+     *  вход только на пробое после сжатия, где среднее (High-Low) за
+     *  [rangeSqueezeRangePeriod] баров < [rangeSqueezeMultiplier] × ATR([rangeSqueezeAtrPeriod]).
+     *  В отличие от `squeezeEnabled` (Боллинджер в Кельтнере) — другая формула. */
+    var rangeSqueezeEnabled: Boolean = false
+
+    /** Окно усреднения (High-Low) для детекции сжатия. */
+    var rangeSqueezeRangePeriod: Int = 20
+
+    /** Период ATR для детекции сжатия. */
+    var rangeSqueezeAtrPeriod: Int = 50
+
+    /** Порог сжатия: средний (High-Low) < множитель × ATR. */
+    var rangeSqueezeMultiplier: Double = 0.5
+
+    /** Сколько баров назад сжатие ещё считается свежим для входа на пробое. */
+    var rangeSqueezeLookbackBars: Int = 5
+
+    /** Требовать объёмное подтверждение пробоя. */
+    var rangeSqueezeRequireVolume: Boolean = true
+
+    /** Fail-closed для сжатия по среднему диапазону: нехватка данных → БЛОК. */
+    var rangeSqueezeBlockOnUnknown: Boolean = true
 }

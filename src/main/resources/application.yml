@@ -461,6 +461,17 @@ bt:
     sample-every: ${BT_AGENT_SAMPLE_EVERY:20}
     temperature: ${BT_AGENT_TEMPERATURE:0.0}
     cache-namespace: ${BT_AGENT_CACHE_NAMESPACE:backtest}
+    # Бюджет LLM-цепочки в бэктесте (research, 0 = выключен): при превышении
+    # fail-closed HOLD + `backtest.agent.timeout{cause=budget}`, как в live
+    # (trading.llm-signal-budget-ms, docs/17 §17.8 R2). 0 оставлен по умолчанию,
+    # чтобы уже измеренные LLM-прогоны (DeepSeek/qwen3/Opus/kimi) не изменились.
+    signal-budget-ms: ${BT_AGENT_SIGNAL_BUDGET_MS:0}
+    # Доля сэмплов (0.0..1.0), где таймаут LLM имитируется реальной задержкой
+    # внутри бюджета; требует signal-budget-ms > 0. Нужно, чтобы доказать, что
+    # таймаут даёт HOLD, а не вход по детерминированному fallback'у, и измерить
+    # потерю сигналов. Карта инъекций детерминирована по (ticker, индекс бара) —
+    # повторный прогон воспроизводим. 0.05 = «5% таймаутов» из чек-листа research.
+    timeout-injection-rate: ${BT_AGENT_TIMEOUT_INJECTION_RATE:0.0}
 
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}

@@ -11,9 +11,13 @@ import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.dto.TechnicalReport
 import com.trading.bot.model.entity.Candle
+import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.mockito.kotlin.whenever
@@ -312,5 +316,84 @@ class AgentBacktestSignalGeneratorTest {
                 "backtest",
             )
         }
+    }
+
+    // --- Бюджет цепочки и fail-closed таймаут (research: 5% таймаутов) ---
+    //
+    // Таймаут-путь проверяется через реальный `delay` внутри `withTimeout`: это тот же
+    // `TimeoutCancellationException` из того же catch-блока, что и при медленном
+    // реальном LLM, но без гонок с потоковым `thenAnswer` (Mockito-стабы suspend-методов
+    // не умеют suspend- delay, а блокировка потока мешает таймеру `withTimeout`).
+
+    private fun budgetGenerator(
+        registry: SimpleMeterRegistry,
+        budgetMs: Long,
+        injectionRate: Double,
+    ): AgentBacktestSignalGenerator {
+        val cfg =
+            BacktestAgentConfig().apply {
+                sampleEvery = 20
+                temperature = 0.0
+                cacheNamespace = "backtest"
+                confidenceThreshold = 0.60
+                signalBudgetMs = budgetMs
+                timeoutInjectionRate = injectionRate
+            }
+        return AgentBacktestSignalGenerator(
+            techAgent,
+            fundAgent,
+            stratAgent,
+            contrAgent,
+            arbAgent,
+            cfg,
+            registry,
+        )
+    }
+
+    @Test
+    fun `injected timeout yields fail-closed HOLD without any agent call`() {
+        val registry = SimpleMeterRegistry()
+        val gen = budgetGenerator(registry, budgetMs = 50, injectionRate = 1.0)
+        runBlocking { stubChain() }
+
+        val signal = runBlocking { gen.signal("SBER", list, index = index, minBars = minBars, cycleId = cycleId) }
+
+        assertEquals(StrategyAction.HOLD, signal, "таймаут LLM обязан давать HOLD, а не вход")
+        Mockito.verifyNoInteractions(techAgent, fundAgent, stratAgent, contrAgent, arbAgent)
+        assertEquals(1.0, registry.counter("backtest.agent.timeout", Tags.of("ticker", "SBER", "cause", "injected")).count())
+    }
+
+    @Test
+    fun `chain runs normally when budget is set but injection is disabled`() {
+        val registry = SimpleMeterRegistry()
+        val gen = budgetGenerator(registry, budgetMs = 5_000, injectionRate = 0.0)
+        runBlocking { stubChain() }
+
+        val signal = runBlocking { gen.signal("SBER", list, index = index, minBars = minBars, cycleId = cycleId) }
+
+        assertEquals(StrategyAction.BUY, signal)
+        assertEquals(0.0, registry.find("backtest.agent.timeout").counters().sumOf { it.count() })
+    }
+
+    @Test
+    fun `chain is unwrapped when budget is disabled`() {
+        val registry = SimpleMeterRegistry()
+        val gen = budgetGenerator(registry, budgetMs = 0, injectionRate = 0.0)
+        runBlocking { stubChain() }
+
+        val signal = runBlocking { gen.signal("SBER", list, index = index, minBars = minBars, cycleId = cycleId) }
+
+        assertEquals(StrategyAction.BUY, signal, "budget=0 не должен менять поведение прогона")
+    }
+
+    @Test
+    fun `injection without budget is a configuration error`() {
+        val registry = SimpleMeterRegistry()
+        val gen = budgetGenerator(registry, budgetMs = 0, injectionRate = 0.05)
+        val error =
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { gen.signal("SBER", list, index = index, minBars = minBars, cycleId = cycleId) }
+            }
+        assertTrue(error.message!!.contains("signal-budget-ms"), "сообщение должно указывать на budget: ${error.message}")
     }
 }

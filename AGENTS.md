@@ -954,6 +954,62 @@ bar.time)` + окно `higherTimeframeLookback` (1.5×-запас, потоло�
 (регресс-тест `squeeze fail-closed blocks entry until bollinger keltner history is
 enough`). `test` (1588) + `integrationTest` (101) + `ktlintCheck` зелёные.
 
+### LLM-бюджет и инъекция таймаутов в бэктесте (research, 2026-09-28, docs/17 §17.8 R6)
+
+- `bt.agent.signal-budget-ms` (env `BT_AGENT_SIGNAL_BUDGET_MS`, **default 0 = выключен**):
+  LLM-цепочка `AgentBacktestSignalGenerator` под `withTimeout`; при превышении —
+  **fail-closed HOLD** + `backtest.agent.timeout{ticker,cause=budget}` (паритет с live
+  `trading.llm-signal-budget-ms`, R2). Default 0 намеренно: при нём поведение совпадает
+  с уже измеренными LLM-WFA (0.71–1.11), иначе числа выше перестали бы соответствовать коду.
+- `bt.agent.timeout-injection-rate` (env `BT_AGENT_TIMEOUT_INJECTION_RATE`,
+  **default 0.0**, диапазон 0.0…1.0): доля сэмплов с **реальной** задержкой
+  `delay(budgetMs)` внутри того же `withTimeout` → тот же `TimeoutCancellationException`,
+  что и при медленном LLM, без отдельной ветки; метрика
+  `backtest.agent.timeout{cause=injected}`. Требует `signal-budget-ms > 0`, иначе ошибка
+  конфигурации. Решение детерминировано по (ticker, индекс бара) — повторный прогон
+  воспроизводим, `rate` двигает порог, а не перетасовывает выборку.
+- Закрывает пункт research-чеклиста «5% таймаутов ⇒ fail-closed HOLD, а не вход по
+  умолчанию». До этого таймаут LLM в бэктесте тихо деградировал на детерминированные
+  fallback'и агентов, и отличить его от «слабого ответа» по результату прогона было нельзя.
+- **Искусственная задержка 1.5–3 с против look-ahead НЕ требуется и не реализуется:**
+  сигнал берётся на закрытии бара `i-1`, исполняется на открытии `i` — для MINUTE_10 строго
+  консервативнее. Инъекция моделирует отказ источника сигнала, а не задержку сделки.
+
+### Аудит списка из 10 «гибридных» LLM-стратегий (2026-09-28, `strategies-10-triage`)
+
+Список из 10 стратегий (с LLM как фильтром/арбитром) сверен с кодом и данными
+**до** реализации. Итог: **4 уже измерены и не проходят, 4 структурно невозможны
+на текущих данных, 1 требует нового data-слоя, 1 бессмысленна до подтверждения LLM-edge.**
+
+| № | Запрошено | Вердикт по коду/данным |
+|---|---|---|
+| 1 | CNYRUBF macro + funding-плато | **уже измерено: INCONCLUSIVE** (PF 1.397–3.17, но 11–23 OOS-сделки < 30) |
+| 2 | VWAP-MR на **Si** + OBI | OBI **невычислим**: `candles` = только OHLCV, bid/ask не хранится; `spreadBps` есть лишь в live-LLM-пути из runtime-стакана. Si — 2.5 мес истории |
+| 3 | ORB «10:00–10:30» / «930-960 мс» | **внутреннее противоречие ТЗ**: 930 мин от полуночи = 15:30 МСК |
+| 4 | GLDRUBF vs Si, Z-score | Z-score/парного движка в коде **нет** (0 совпадений) |
+| 5 | дивиденд-катализатор, LLM читает релизы за 2 года | YNDX нет в `InstrumentsConfig`; исторического новостного архива нет |
+| 6 | скальпинг клирингов по spreadBps+OBI | нужен тик/стакан — таких данных нет |
+| 7 | MX-реверс | MX нет (замена IMOEXF); **уже измерено: 0 сигналов** на 730д |
+| 8 | squeeze по Kельтнеру | **уже измерено: REJECTED** (OOS PF 0.84) |
+| 9 | SBER vs VTB, Z-score | парного движка нет; VTBR — 3 недели истории |
+| 10 | LLM-арбитр, shadow-аллокация по 3 стратегиям | три источника (№2/3/8) закрыты; LLM-арбитр как таковой edge не подтверждён (PF 0.71–0.81) |
+
+Попутно исправлены ошибочные посылки в постановке задачи (важно для будущих прогонов):
+
+- **`max-hold` измеряется в БАРАХ, не в минутах** (`bt.max-hold-bars`, MINUTE_10): 368 баров =
+  61 ч биржевого времени ≈ **8 торговых дней**, 1095 баров ≈ 18 дней. «1095 минут» = 18 часов —
+  другой результат, не измеренный.
+- **«Детерминированные стратегии имеют edge PF=2.15» — цифра 365д с funding-veto/max-hold.**
+  На полной 730д истории baseline даёт OOS **−14.82% / PF 0.92**, а deployment-gate лучшей
+  комбинации — REJECTED. Строить новые стратегии на «базовом edge 2.15» = строить на артефакте
+  короткого окна.
+- `normalizeTargetPrice()` существует, но это нормализация LLM-JSON (string→number) в
+  LLM-пайплайне, а не нормализация цены входа в бэктесте.
+- **Главный ограничитель «100%/год» — не фильтры, а глубина данных:** Si 2.5 мес, VTBR 3 недели,
+  BR/MX/YNDX/SBERP отсутствуют. Пока это так, любая стратегия на этих инструментах упирается в
+  порог 30 сделок и завершается `INCONCLUSIVE` по построению. Следующий содержательный шаг —
+  донакачка истории/инструментов либо новый data-слой (bid/ask) / парный движок.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -998,6 +1054,7 @@ enough`). `test` (1588) + `integrationTest` (101) + `ktlintCheck` зелёные
 | 2026-09-26 | Стратегии №7 ORB-окно и №1 VWAP-MR (`strategies-impl-1-7`) | **`EntryFilters.orbDirection`** получил окно диапазона `bt.orb-window-start-minutes`/`bt.orb-window-end-minutes` (query `orbWindowStartMinutes`/`orbWindowEndMinutes`, минуты от полуночи; диапазон = первые `orbWindowBars` баров дня с первого >= start, проверка пробоя только на барах >= end; дефолт `0..1440` = исходное поведение) — под золото 930..960/3 бара = 15:30–16:00 МСК (`8139342`); **`IndicatorCalculator.vwap` (сессионный, сброс по дате) / `.vwapStdDevPercent` / `.adx` (Уайлдер)** + `EntryFilters.vwapMrDirection` (|close−VWAP| >= Nσ И ADX(H1) <= порога, HOLD при высоком ADX / нехватке данных, старший ТФ через `CandleResampler` c `completedBefore=bar.time` и **ограниченным lookback** 32 бара ТФ / потолок 600 — иначе O(n²) на 46k свечах) + query `vwapMr*` на 5 эндпоинтах, дефолт off (`1af7944`, `ce684dc`); **найден баг индикаторов: на плоской сессии σ ≈ 1e-14 (float-шум) → ложные BUY/SELL в тысячи σ, отсечено `MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6`**; **`wfaSlPoints`/`wfaTpPoints`** — override in-sample сетки SL/TP в пунктах (штатная futuresGrid 25–600 пт не выражает узкий MR-стоп) (`a92bdcb`); WFA-скрипты `research_wfa_vwapmr.ps1` (CNYRUBF) и `research_wfa_orb_window.ps1` (GLDRUBF) (`a0f2260`) → **не сделано: выход «возврат к VWAP»** (движок позиций не имеет такого exit-типа; выход = SL/TP grid), WFA-прогоны №1/№7 — отдельная задача | test+int+ktlint |
 | 2026-09-26 | Deployment-gate лидера combo730 (`combo730-gate`) | **Проброс `maxHoldBars` в holdout-путь**: `/deployment-gate` и `/holdout` его не принимали (только `/backtest`, `/validate`, `/robustness`) → гейт проверял бы конфиг БЕЗ max-hold, т.е. не тот, который отобран; добавлен query-параметр в оба эндпоинта + проброс в `FinalHoldoutValidator.validate` → `WfaConfig` и оба `BacktestEngine.simulate` (dev + holdout) единым значением, fallback на `bt.max-hold-bars`; тесты `FinalHoldoutValidatorTest` (override + fallback, captor на WfaConfig и на обоих simulate); раннер `scripts/research_gate.ps1` с 5-минутным heartbeat (PID/RSS/CPU сервера) — гейт 730д идёт 45 мин, foreground-ожидание неприемлемо; **прогон `td-fv6-ctl` на dev-части (80% от 730д, folds=8, conf 0.60, risk30/maxC100, mh368, tdL9, fv 6/6): RESEARCH_ONLY, liveAllowed=false** — backtest PASS (PF 1.930/38 сделок), dev-WFA OOS **PF 1.651**/consistency 0.625 (31 сделка < 100), edge P(noEdge)=0.171, holdout **−17.6%** (13 < 30), MC p5=+12.6%/stressFailed=1; **подозрение на selection для этой комбинации НЕ подтвердилось** (dev OOS PF 1.651 против 0.78–0.92 у одиночных комбинаций), но holdout отрицательный и база не набрана → live не обоснован | test+int+ktlint |
 | 2026-09-26 | Три новых ядра + протокол IS70/OOS30 (`strategies-cores-70-30`) | Подстановки для нереализуемых инструментов (№2→macro-trend CNYRUBF, №3→ORB GLDRUBF, №7→panic-reversal IMOEXF, названы ПОДСТАНОВКОЙ в вердикте); три новых входных research-фильтра **дефолт off** с query-override на 5 эндпоинтах: `squeezeDirection` (+`IndicatorCalculator.keltner`/`isSqueeze`), `panicReversalDirection` (только LONG), `macroTrendDirection`; lookahead закрыт по коду (`subList(0,i)` + fill `current.openPrice` — консервативнее требуемых 1.5–3 с, отдельный delay не нужен); **ловушка теста**: линейный рост не даёт пробоя BB (z≈1.65<2σ) — нужен «19 плоских баров + импульс»; **протокол `scripts/research_oos70.ps1`**: `holdoutFraction=0.30`, вердикт только по holdout (`OOS PF<1.3`→REJECTED, `<30` сделок→INCONCLUSIVE, порог = `BacktestResult.isPassable()`), IS/dev — только диагностика; три `/validate`-скрипта сетки (`research_wfa_squeeze/panic/macrotrend`, в macro — funding plateau 5/6/8 ₽ + maxHoldBars=1095); зафиксировано расхождение: в №1 реализован откат к EMA, а не VWAP (контртрендовый, исследуется отдельно) | test+int+ktlint |
+| 2026-09-28 | Триаж 10 гибридных LLM-стратегий + инъекция таймаутов (`strategies-10-triage`) | Сверка списка с кодом/данными **до** реализации: 4 уже измерены и не проходят (macro INCONCLUSIVE, panic 0 сигналов, squeeze REJECTED, VWAP-MR на Si без OBI), 4 структурно невозможны (OBI — `candles` только OHLCV, bid/ask не хранится; Z-score/парного движка нет 0 совпадений; YNDX нет; MX нет), 1 требует нового data-слоя, 1 бессмысленна без подтверждённого LLM-edge; исправлены ошибочные посылки ТЗ (max-hold в **барах** не минутах; «edge PF 2.15» — цифра 365д, на 730д baseline PF 0.92; `normalizeTargetPrice` = нормализация LLM-JSON; 930 мин = 15:30 МСК) → **главный ограничитель «100%/год» — глубина данных, не фильтры**; **реализовано `bt.agent.signal-budget-ms` (default 0 = выключен) + `bt.agent.timeout-injection-rate` (default 0.0)** — цепочка под `withTimeout` с fail-closed HOLD, инъекция таймаутов реальной задержкой, детерминирована по (ticker, индекс бара), метрика `backtest.agent.timeout{cause=injected\|budget}`; закрыт пункт чек-листа «5% таймаутов ⇒ HOLD»; тесты `LlmTimeoutInjectionTest` (8) + 3 кейса генератора, включая «таймаут ⇒ HOLD без вызова агентов» | test + int + ktlint |
 | 2026-09-28 | WFA 730д трёх новых ядер + harness-фиксы (`strategies-cores-730d`) | **WFA 730д folds=8 conf 0.60 risk30/maxC100** (live-стек, `loadHistory=false`) на CNYRUBF/IMOEXF: squeeze (lookback 5) — **REJECTED** (PF 0.84 против baseline 0.92, consistency 0.25 против 0.50, 86→60 сделок; mh368 ничего не меняет −15.61→−15.55); panic на IMOEXF — **0 сигналов** при drop3%/RSI≤25 и при RSI≤30 (третий конфиг drop5%/RSI≤25 пропущен как provably 0), сам IMOEXF OOS −726%/PF 0.10; macro-trend — единственный развернувший baseline в плюс (PF 1.397–3.17, OOS +25.8…+146%, funding 5/6/8 ₽ = плато), но 11–23 OOS-сделки < 30 → **INCONCLUSIVE**, `robust=false` у всех → все три `bt.*` остаются off, live-параметры не менялись; **исправлены 5 harness-багов**: разделитель `имя;query` (без `;` был тихий baseline), дубль `maxHoldBars` в URL (Spring брал первое значение → max-hold молча выключен), неверное поле Sharpe (`oosSharpeRatio` → `oosSharpe`, колонка была 0), тайминг ORB-окна (930 мин = 15:30 МСК), повторный baseline (`-SkipBaseline`, у macro baseline = `-MaxHoldBars 0`); **fail-closed squeeze**: `catch (Exception)` при `squeezeBlockOnUnknown=true` даёт HOLD, а не «фильтр выключен» + регресс-тест | test (1588) + int (101) + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):

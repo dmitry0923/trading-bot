@@ -307,7 +307,57 @@ direction and target through` — signalStrength == решению арбитр�
 `trading.llm-signal-shadow=true` (+ `llm-signal-source=true`): LLM участвует в конкуренции,
 но его победа НЕ исполняется — `StrategyResult.shadowed` → в `StrategyService` сигнал не
 публикуется в order-admission и не пишется в Redis «последняя стратегия» (исполнение остаётся
-только у детерминированного входа). Решение при этом фиксируется (agent_logs → Strategy →
+только у утерминированного входа). Решение при этом фиксируется (agent_logs → Strategy →
 lineage — этап 2), метрика `llm.signal.shadow{ticker,strategy}`. Это A/B-наблюдение LLM-winner
 vs базлайн до включения `llm-signal-only`. Fail-safe: флаг без `llm-signal-source` неэффективен;
 `llm-signal-only` + shadow = чистое наблюдение (ордеров нет вообще).
+
+### R6. Таймаут-бюджет и инъекция таймаутов в бэктесте (research, 2026-09-28)
+
+R2 закрывал бюджет только в live. В бэктесте `AgentBacktestSignalGenerator` цепочка
+не была ограничена по времени: таймаут LLM приводил к тихой деградации на
+детерминированные fallback'ы агентов (INSUFFICIENT_DATA/NEUTRAL/HOLD), и отличить
+«LLM не ответил вовремя» от «LLM ответил слабым текстом» по результату прогона было
+невозможно. Для research-чеклиста («5% таймаутов ⇒ fail-closed HOLD») не хватало ни
+бюджета, ни способа воспроизвести таймаут.
+
+- `bt.agent.signal-budget-ms` (env `BT_AGENT_SIGNAL_BUDGET_MS`, **default 0 = выключен**):
+  цепочка обёрнута в `withTimeout`; при превышении — **fail-closed HOLD** +
+  `backtest.agent.timeout{ticker,cause=budget}`. Default 0 выбран намеренно: при нём
+  поведение прогона побайтово совпадает с уже измеренными LLM-WFA (DeepSeek 0.73,
+  qwen3-32b 0.81, Opus 1.11, kimi-k3 0.71), иначе числа в AGENTS.md перестали бы
+  соответствовать коду.
+- `bt.agent.timeout-injection-rate` (env `BT_AGENT_TIMEOUT_INJECTION_RATE`,
+  **default 0.0 = выключено**, 0.0…1.0): доля сэмплов, где таймаут имитируется
+  **реальной** задержкой `delay(budgetMs)` внутри того же `withTimeout` — то есть
+  поднимается тот же `TimeoutCancellationException`, что и при медленном реальном LLM,
+  без отдельной тестовой ветки. Метрика `backtest.agent.timeout{cause=injected}`.
+  Требует `signal-budget-ms > 0`, иначе — ошибка конфигурации (не молчаливый no-op).
+- Решение о таймауте **детерминировано по (ticker, индекс бара)**
+  ([LlmTimeoutInjection], FNV-1a по тикеру + splitmix по индексу, `cycleId` в хеш
+  не входит намеренно). Поэтому повторный прогон даёт ту же карту таймаутов, фолды
+  WFA сопоставимы, а изменение `rate` двигает порог, а не перетасовывает выборку.
+- Тесты: `LlmTimeoutInjectionTest` (rate 0/1, детерминизм, разные тикеры, монотонность,
+  наблюдаемая доля ≈ заданной, ошибка вне 0.0…1.0) и `AgentBacktestSignalGeneratorTest`
+  (`injected timeout yields fail-closed HOLD without any agent call` — таймаут ⇒ HOLD и
+  ни одного вызова агента; плюс что budget=0 и budget с выключенной инъекцией не меняют
+  результат цепочки).
+- Про look-ahead: отдельный механизм искусственной задержки 1.5–3 с НЕ нужен — сигнал
+  берётся на закрытии бара `i-1`, а исполняется на открытии `i`, что для MINUTE_10
+  строго консервативнее требуемой задержки. Инъекция таймаутов моделирует не задержку
+  сделки, а отказ источника сигнала.
+
+Запуск (флаг стартовый, как остальные `bt.agent.*`; требует `LLM_API_KEY`, без него
+агенты идут по детерминированным fallback'ам и таймаут-бюджет ничего не измеряет):
+
+```
+# baseline без инъекции (совпадает с ранее измеренными прогонами)
+java -jar trading-bot-2.0.0.jar --bt.agent.enabled=true --bt.agent.live-strategies=false
+
+# тот же прогон с бюджетом 2 с (паритет с live) и 5% таймаутов
+java -jar trading-bot-2.0.0.jar --bt.agent.enabled=true --bt.agent.live-strategies=false \
+  --bt.agent.signal-budget-ms=2000 --bt.agent.timeout-injection-rate=0.05
+```
+
+Сверять потерю сигналов: `backtest.agent.timeout{cause="injected"}` против
+`backtest.agent.evaluations`, плюс `backtest.agent.signal{action="HOLD"}`.

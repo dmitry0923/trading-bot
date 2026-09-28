@@ -29,6 +29,15 @@ import org.springframework.stereotype.Component
  *  передаёт одинаковое значение в `formulate` и `adjudicate`). Дефолт 0.60 =
  *  live-fallback без статистики (`stats == null`). В бэктесте нет истории сделок,
  *  поэтому адаптивный порог не вычисляется, а берётся из конфига.
+ * @property signalBudgetMs бюджет LLM-цепочки в мс (research, 0 = выключен).
+ *  При превышении — fail-closed HOLD + `backtest.agent.timeout{cause=budget}`,
+ *  как в live (`trading.llm-signal-budget-ms`, docs/17 §17.8 R2). По умолчанию 0,
+ *  чтобы уже измеренные LLM-прогоны не изменились.
+ * @property timeoutInjectionRate доля сэмплов (0.0…1.0), в которых таймаут LLM
+ *  имитируется реальной задержкой внутри бюджета (research, 0.0 = выключено).
+ *  Требует `signalBudgetMs > 0`. Нужен, чтобы доказать, что таймаут приводит
+ *  к HOLD, а не к входу по детерминированному fallback'у, и измерить потерю
+ *  сигналов; карта инъекций детерминирована по (ticker, индекс бара).
  */
 @Component
 @ConfigurationProperties(prefix = "bt.agent")
@@ -40,4 +49,6 @@ class BacktestAgentConfig {
     var techMinSignalStrength: Double = 0.0
     var promptVersion: String = PromptRegistry.DEFAULT_VERSION
     var confidenceThreshold: Double = 0.60
+    var signalBudgetMs: Long = 0
+    var timeoutInjectionRate: Double = 0.0
 }

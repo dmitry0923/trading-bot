@@ -29,9 +29,14 @@ param(
     [string]$Ticker = "CNYRUBF",
     [int]$MaxHoldBars = 0,
     [string]$OutCsv = "",
+    # Пропустить baseline (когда он уже измерен в этом же прогоне - экономит ~70 мин).
+    [switch]$SkipBaseline,
     # Конфиги squeeze через "|": "имя;squeezeEnabled=..&squeezeBlockOnUnknown=..&maxHoldBars=.."
     # (";" внутри разделяет имя и query, "|" — сами конфиги). Пусто = baseline + дефолтный squeeze.
-    [string]$ConfigCsv = "squeeze on|squeezeEnabled=true&squeezeBlockOnUnknown=true|squeeze on + mh368;squeezeEnabled=true&squeezeBlockOnUnknown=true&maxHoldBars=368"
+    # ВАЖНО: каждый элемент обязан содержать "имя;query". Элемент без ";" уходит как обычный
+    # baseline (был баг: строка "squeeze on" без query давала дубль baseline, и folds=8 выглядел
+    # как "фильтр не меняет число сделок" 84 = 84). baseline добавляется автоматически первым.
+    [string]$ConfigCsv = "squeeze on;squeezeEnabled=true&squeezeBlockOnUnknown=true&squeezeLookbackBars=5|squeeze on + mh368;squeezeEnabled=true&squeezeBlockOnUnknown=true&squeezeLookbackBars=5&maxHoldBars=368"
 )
 
 $ErrorActionPreference = "Stop"
@@ -62,17 +67,34 @@ function Get-Headers {
 $headers = Get-Headers
 
 $base = "$BaseUrl/api/v1/backtest/$Ticker/validate?days=$Days&folds=$Folds&adaptiveConfidenceThreshold=$Conf" +
-    "&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false&maxHoldBars=$MaxHoldBars"
+    "&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false"
+
+# maxHoldBars намеренно НЕ в $base: конфиг с "maxHoldBars=368" дал бы в URL два параметра
+# ("...&maxHoldBars=0&...&maxHoldBars=368"), а Spring берёт ПЕРВОЕ значение - max-hold молча
+# выключался во всех mh-конфигах. Ниже он добавляется, только если его нет в query.
+
+$configs = @($ConfigCsv.Split("|").Where({ $_ }))
+# Pre-flight: конфиг без ";" молча ушёл бы как обычный baseline (именно так строки squeeze
+# однажды оказались дублем baseline). Лучше упасть сразу, чем потратить часы машинного времени.
+$bad = @($configs | Where-Object { -not $_.Contains(";") })
+if ($bad.Count -gt 0) {
+    Write-Status ("FATAL: config entries without ';query' (would run as baseline): " + ($bad -join " | "))
+    throw "bad config entries: $($bad -join ' | ')"
+}
 
 $rows = @()
 $swAll = [System.Diagnostics.Stopwatch]::StartNew()
 Write-Status ("start: squeeze WFA ticker={0} days={1} folds={2}" -f $Ticker, $Days, $Folds)
 
-foreach ($cfg in @("baseline;") + @($ConfigCsv.Split("|").Where({ $_ }))) {
+$plan = if ($SkipBaseline) { $configs } else { @("baseline;") + $configs }
+foreach ($cfg in $plan) {
     $parts = $cfg.Split(";", 2)
     $name = $parts[0]
     $query = if ($parts.Count -gt 1) { $parts[1] } else { "" }
-    $url = if ($query) { "$base&$query" } else { $base }
+    $url =
+        if ($query -match "maxHoldBars=") { "$base&$query" }
+        elseif ($query) { "$base&maxHoldBars=$MaxHoldBars&$query" }
+        else { "$base&maxHoldBars=$MaxHoldBars" }
     Write-Status ("run: {0}" -f $name)
     Write-Status ("url: {0}" -f $url)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -87,7 +109,7 @@ foreach ($cfg in @("baseline;") + @($ConfigCsv.Split("|").Where({ $_ }))) {
     $rows += [pscustomobject]@{
         Config = $name
         Consistency = $r.consistency; OOS_RetPct = [math]::Round([double]$r.oosReturn * 100, 2)
-        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 3); OOS_Sharpe = [math]::Round([double]$r.oosSharpeRatio, 2)
+        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 3); OOS_Sharpe = [math]::Round([double]$r.oosSharpe, 2)
         OOS_Trades = $r.oosTrades
         P_NoEdge = [math]::Round([double]$r.oosProbabilityOfNoEdge, 3); Robust = $r.robust
         Secs = [math]::Round($sw.Elapsed.TotalSeconds, 0)

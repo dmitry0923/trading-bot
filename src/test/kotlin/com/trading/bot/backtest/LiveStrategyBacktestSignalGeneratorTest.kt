@@ -528,6 +528,42 @@ class LiveStrategyBacktestSignalGeneratorTest {
     }
 
     /**
+     * Squeeze fail-closed: пока для BB/Keltner не набрано истории, вход запрещён
+     * (squeezeBlockOnUnknown=true), при false — сигнал проходит без изменений.
+     */
+    @Test
+    fun `squeeze fail-closed blocks entry until bollinger keltner history is enough`() {
+        val candles = rampCandles(count = 40, start = 100.0, step = 1.0, wick = 0.2)
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genBlock =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            squeezeEnabled = true
+                            squeezeBlockOnUnknown = true
+                        },
+                    ),
+            )
+        val genPass =
+            LiveStrategyBacktestSignalGenerator(
+                entryFilters =
+                    EntryFilters.from(
+                        BacktestConfig().apply {
+                            squeezeEnabled = true
+                            squeezeBlockOnUnknown = false
+                        },
+                    ),
+            )
+        val index = 12
+        val base = runBlocking { genBaseline.signal("SBER", candles, index, 5, "test-cycle") }
+        val blocked = runBlocking { genBlock.signal("SBER", candles, index, 5, "test-cycle") }
+        val passed = runBlocking { genPass.signal("SBER", candles, index, 5, "test-cycle") }
+        assertEquals(StrategyAction.HOLD, blocked, "squeezeBlockOnUnknown=true обязан блокировать вход без истории")
+        assertEquals(base, passed, "squeezeBlockOnUnknown=false обязан пропустить сигнал без изменений")
+    }
+
+    /**
      * Panic-reversal (стратегия №7): fail-closed на нехватке истории старшего ТФ
      * блокирует все входы (RSI недоступен → вход запрещён).
      */

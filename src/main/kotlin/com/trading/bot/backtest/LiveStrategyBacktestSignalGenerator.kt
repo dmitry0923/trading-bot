@@ -54,6 +54,7 @@ data class EntryFilterOverrides(
     val timeDirectionShortBlockEndHour: Int? = null,
     val squeezeEnabled: Boolean? = null,
     val squeezeBlockOnUnknown: Boolean? = null,
+    val squeezeLookbackBars: Int? = null,
     val panicReversalEnabled: Boolean? = null,
     val panicMinSessionDropPercent: Double? = null,
     val panicRsiPeriod: Int? = null,
@@ -98,6 +99,7 @@ data class EntryFilterOverrides(
                 timeDirectionShortBlockEndHour != null ||
                 squeezeEnabled != null ||
                 squeezeBlockOnUnknown != null ||
+                squeezeLookbackBars != null ||
                 panicReversalEnabled != null ||
                 panicMinSessionDropPercent != null ||
                 panicRsiPeriod != null ||
@@ -147,6 +149,7 @@ class EntryFilters(
     val timeDirectionShortBlockEndHour: Int,
     val squeezeEnabled: Boolean,
     val squeezeBlockOnUnknown: Boolean,
+    val squeezeLookbackBars: Int,
     val panicReversalEnabled: Boolean,
     val panicMinSessionDropPercent: Double,
     val panicRsiPeriod: Int,
@@ -213,6 +216,7 @@ class EntryFilters(
                     overrides?.timeDirectionShortBlockEndHour ?: config.timeDirectionShortBlockEndHour,
                 squeezeEnabled = overrides?.squeezeEnabled ?: config.squeezeEnabled,
                 squeezeBlockOnUnknown = overrides?.squeezeBlockOnUnknown ?: config.squeezeBlockOnUnknown,
+                squeezeLookbackBars = overrides?.squeezeLookbackBars ?: config.squeezeLookbackBars,
                 panicReversalEnabled = overrides?.panicReversalEnabled ?: config.panicReversalEnabled,
                 panicMinSessionDropPercent =
                     overrides?.panicMinSessionDropPercent ?: config.panicMinSessionDropPercent,
@@ -265,6 +269,7 @@ class EntryFilters(
                 timeDirectionShortBlockEndHour = 16,
                 squeezeEnabled = false,
                 squeezeBlockOnUnknown = true,
+                squeezeLookbackBars = 5,
                 panicReversalEnabled = false,
                 panicMinSessionDropPercent = 3.0,
                 panicRsiPeriod = 14,
@@ -426,28 +431,49 @@ class EntryFilters(
     }
 
     /**
-     * Bollinger Squeeze Breakout (research, стратегия №8, 2026-09-26).
+     * Bollinger Squeeze Breakout (research, strategy #8, 2026-09-26).
      *
-     * Сжатие = обе полосы Боллинджера внутри канала Кельтнера
-     * ([IndicatorCalculator.isSqueeze]). Вход разрешён только когда сжатие
-     * закончилось И текущий закрыл вышел за полосу Боллинджера:
-     *  - close > BB(upper) → [StrategyAction.BUY];
-     *  - close < BB(lower) → [StrategyAction.SELL];
-     *  - сжатие продолжается / цена внутри полос → [StrategyAction.HOLD].
+     * Squeeze = both Bollinger bands inside the Keltner channel
+     * ([IndicatorCalculator.isSqueeze]). An entry is allowed only on a breakout that
+     * follows a squeeze:
+     *  - still inside the squeeze -> [StrategyAction.HOLD] (nothing to trade yet);
+     *  - close > BB(upper) and a squeeze was on within [squeezeLookbackBars] bars ->
+     *    [StrategyAction.BUY];
+     *  - close < BB(lower) and a squeeze was on within [squeezeLookbackBars] bars ->
+     *    [StrategyAction.SELL];
+     *  - no breakout, or a breakout without a preceding squeeze -> `null` (pass through:
+     *    the setup simply is not present, so the filter must not veto the entry).
      *
-     * @param window бары до и включая текущий (базовый ТФ)
-     * @return HOLD — вход заблокирован; BUY/SELL — разрешённая сторона;
-     *   null — фильтр off либо undefined при [squeezeBlockOnUnknown]=false
+     * The caller reads a returned BUY/SELL as "only this side is tradable" (the opposite
+     * side gets blocked) and HOLD as a veto.
+     *
+     * @param window bars up to and including the current one (base timeframe)
+     * @param squeezeSeries optional precomputed [IndicatorCalculator.squeezeSeries] for
+     *   the same candle list - saves one O(n) indicator pass per bar in the backtest
+     * @param seriesIndex index of the current bar inside the candle list (`-1` disables it)
+     * @return HOLD - entry vetoed; BUY/SELL - the only tradable side; null - filter off,
+     *   no breakout, no recent squeeze, or undefined with [squeezeBlockOnUnknown]=false
      */
-    fun squeezeDirection(window: List<Candle>): StrategyAction? {
+    fun squeezeDirection(
+        window: List<Candle>,
+        squeezeSeries: BooleanArray? = null,
+        seriesIndex: Int = -1,
+    ): StrategyAction? {
         if (!squeezeEnabled || window.isEmpty()) return null
-        val squeeze = IndicatorCalculator.isSqueeze(window)
+        val minBars = IndicatorCalculator.squeezeMinBars()
+        val series = squeezeSeries
+        val squeeze =
+            if (series != null && seriesIndex >= minBars - 1) {
+                series[seriesIndex]
+            } else {
+                IndicatorCalculator.isSqueeze(window)
+            }
         if (squeeze == null) {
             return if (squeezeBlockOnUnknown) StrategyAction.HOLD else null
         }
-        // Внутри сжатия входа нет — ждём выхода из него.
+        // Inside the squeeze there is no entry - wait for the exit from it.
         if (squeeze) return StrategyAction.HOLD
-        val closes = window.map { it.closePrice }
+        val closes = window.takeLast(IndicatorCalculator.BOLLINGER_SQUEEZE_PERIOD).map { it.closePrice }
         val (_, bbUpper, bbLower) =
             IndicatorCalculator.bollinger(
                 closes,
@@ -455,11 +481,43 @@ class EntryFilters(
                 IndicatorCalculator.BOLLINGER_SQUEEZE_MULT,
             )
         val close = window.last().closePrice
-        return when {
-            close > bbUpper -> StrategyAction.BUY
-            close < bbLower -> StrategyAction.SELL
-            else -> StrategyAction.HOLD
+        val direction =
+            when {
+                close > bbUpper -> StrategyAction.BUY
+                close < bbLower -> StrategyAction.SELL
+                else -> null
+            }
+        if (direction == null) return null
+        // A breakout only counts when a squeeze was present shortly before it.
+        if (!recentSqueeze(window, series, seriesIndex, minBars)) return null
+        return direction
+    }
+
+    /**
+     * True when a squeeze was active on the current bar or within [squeezeLookbackBars]
+     * bars before it. Uses the precomputed series when available (O(lookback)), otherwise
+     * re-evaluates [IndicatorCalculator.isSqueeze] on the truncated window.
+     */
+    private fun recentSqueeze(
+        window: List<Candle>,
+        squeezeSeries: BooleanArray?,
+        seriesIndex: Int,
+        minBars: Int,
+    ): Boolean {
+        val lookback = squeezeLookbackBars
+        if (lookback <= 0) return true
+        if (squeezeSeries != null && seriesIndex >= minBars - 1 && seriesIndex < squeezeSeries.size) {
+            for (i in maxOf(0, seriesIndex - lookback)..seriesIndex) {
+                if (squeezeSeries[i]) return true
+            }
+            return false
         }
+        // No series: re-evaluate on the window that ended `lookback` bars ago. Proving a
+        // recent squeeze needs enough history for Bollinger+Keltner there, so a shorter
+        // window yields false (fail-closed: no proven squeeze, no squeeze breakout).
+        val cutSize = window.size - lookback
+        if (cutSize < minBars) return false
+        return IndicatorCalculator.isSqueeze(window.subList(0, cutSize)) == true
     }
 
     /**
@@ -611,6 +669,28 @@ class LiveStrategyBacktestSignalGenerator(
 
     private val strategySelector = StrategySelector()
 
+    private var squeezeSeriesCandles: List<Candle>? = null
+    private var squeezeSeriesCache: BooleanArray? = null
+    private var squeezeSeriesComputed = false
+
+    /**
+     * Squeeze states for the whole [candles] list, computed once per run and cached by
+     * list identity.
+     *
+     * [signal] is invoked once per bar with the same list, and the squeeze filter only
+     * needs a per-bar lookup, so this turns the filter from one O(n) indicator pass per
+     * bar into a single O(n) pass per run.
+     */
+    private fun squeezeSeries(candles: List<Candle>): BooleanArray? {
+        if (entryFilters?.squeezeEnabled != true) return null
+        if (squeezeSeriesComputed && squeezeSeriesCandles === candles) return squeezeSeriesCache
+        val series = IndicatorCalculator.squeezeSeries(candles)
+        squeezeSeriesCandles = candles
+        squeezeSeriesCache = series
+        squeezeSeriesComputed = true
+        return series
+    }
+
     override suspend fun signal(
         ticker: String,
         candles: List<Candle>,
@@ -709,17 +789,20 @@ class LiveStrategyBacktestSignalGenerator(
             } ?: false
         if (entryBlocked) return StrategyAction.HOLD
 
-        // Bollinger Squeeze Breakout (research, стратегия №8): вход только на
-        // пробое наружу из сжатия волатильности.
+        // Bollinger Squeeze Breakout (research, strategy #8): entry only on a breakout
+        // out of a volatility squeeze (does not veto when the setup is absent).
         entryFilters?.let { filters ->
-            val sq =
-                try {
-                    filters.squeezeDirection(window)
-                } catch (_: Exception) {
-                    null
-                }
-            if (sq == StrategyAction.HOLD) return StrategyAction.HOLD
-            if (sq != null && sq != bestAction) return StrategyAction.HOLD
+            if (filters.squeezeEnabled) {
+                val sq =
+                    try {
+                        filters.squeezeDirection(window, squeezeSeries(candles), index)
+                    } catch (_: Exception) {
+                        // fail-closed: an error must not silently turn into "no filter"
+                        if (filters.squeezeBlockOnUnknown) StrategyAction.HOLD else null
+                    }
+                if (sq == StrategyAction.HOLD) return StrategyAction.HOLD
+                if (sq != null && sq != bestAction) return StrategyAction.HOLD
+            }
         }
 
         // Panic & Reversal (research, стратегия №7): LONG после падения сессии

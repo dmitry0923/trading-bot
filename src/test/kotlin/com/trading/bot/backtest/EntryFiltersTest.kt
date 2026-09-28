@@ -46,6 +46,7 @@ class EntryFiltersTest {
         vwapMrBlockOnUnknown: Boolean = true,
         squeezeEnabled: Boolean = false,
         squeezeBlockOnUnknown: Boolean = true,
+        squeezeLookbackBars: Int = 5,
         panicReversalEnabled: Boolean = false,
         panicMinSessionDropPercent: Double = 3.0,
         panicRsiPeriod: Int = 14,
@@ -87,6 +88,7 @@ class EntryFiltersTest {
             vwapMrBlockOnUnknown = vwapMrBlockOnUnknown,
             squeezeEnabled = squeezeEnabled,
             squeezeBlockOnUnknown = squeezeBlockOnUnknown,
+            squeezeLookbackBars = squeezeLookbackBars,
             panicReversalEnabled = panicReversalEnabled,
             panicMinSessionDropPercent = panicMinSessionDropPercent,
             panicRsiPeriod = panicRsiPeriod,
@@ -551,6 +553,52 @@ class EntryFiltersTest {
     }
 
     @Test
+    fun `squeeze breakout without a preceding squeeze passes through`() {
+        // Линейный разгон: полоса Боллинджера расходится с Кельтнером (сжатия нет и до
+        // пробоя тоже), последний бар выносит цену за BB - squeeze перед пробоем не было,
+        // поэтому фильтр обязан промолчать, а не заблокировать вход.
+        val ramp = (0 until 24).map { i -> candle(0, i, 100.0 + i, 101.0 + i, 99.0 + i, 100.0 + i) }
+        val breakout = ramp + candle(0, 24, 124.0, 201.0, 122.0, 200.0)
+        assertEquals(false, IndicatorCalculator.isSqueeze(breakout))
+        // Сжатия не было и в окне, закончившемся за 5 баров до пробоя.
+        assertEquals(false, IndicatorCalculator.isSqueeze(breakout.subList(0, breakout.size - 5)))
+        assertNull(filter(squeezeEnabled = true, squeezeLookbackBars = 5).squeezeDirection(breakout))
+        // При lookback=0 требование «сжатие было» снято - любой пробой BB разрешён.
+        assertEquals(StrategyAction.BUY, filter(squeezeEnabled = true, squeezeLookbackBars = 0).squeezeDirection(breakout))
+    }
+
+    @Test
+    fun `squeeze series matches per bar isSqueeze`() {
+        val bars = walk(80)
+        val series = IndicatorCalculator.squeezeSeries(bars) ?: error("squeezeSeries must be computable")
+        val minBars = IndicatorCalculator.squeezeMinBars()
+        var compared = 0
+        var squeezeBars = 0
+        for (i in 0 until bars.size) {
+            val direct = IndicatorCalculator.isSqueeze(bars.subList(0, i + 1)) ?: continue
+            assertTrue(i >= minBars - 1, "isSqueeze must be defined from bar ${minBars - 1}")
+            assertEquals(direct, series[i], "squeeze state mismatch at bar $i")
+            compared++
+            if (series[i]) squeezeBars++
+        }
+        assertTrue(compared > 0, "nothing compared")
+        assertTrue(squeezeBars > 0, "walk must contain squeeze bars for the test to mean anything")
+    }
+
+    @Test
+    fun `squeeze filter with precomputed series agrees with per bar path`() {
+        val up = flatThen(130.0)
+        val down = flatThen(70.0)
+        val f = filter(squeezeEnabled = true)
+        for (bars in listOf(up, down)) {
+            val series = IndicatorCalculator.squeezeSeries(bars) ?: error("squeezeSeries must be computable")
+            val idx = bars.size - 1
+            assertEquals(IndicatorCalculator.isSqueeze(bars), series[idx])
+            assertEquals(f.squeezeDirection(bars), f.squeezeDirection(bars, series, idx))
+        }
+    }
+
+    @Test
     fun `panic reversal allows long after session drop`() {
         val f = filter(panicReversalEnabled = true, panicMinBars = 20)
         // Сессия падает на 3.6% (100 → 96.4), последний бар — бычий (отскок).
@@ -670,12 +718,30 @@ class EntryFiltersTest {
     ): List<BigDecimal> = (0 until count).map { i -> BigDecimal.valueOf(start + step * i) }
 
     /**
-     * 19 баров без движения (100±1) и один импульсный бар с закрытием
-     * [lastClose] — окно для проверки пробоя из сжатия.
+     * 24 плоских бара (100±1) и один импульсный бар с закрытием [lastClose] — окно для
+     * проверки пробоя из сжатия. Плоских баров должно хватать, чтобы сжатие стало
+     * вычислимым ДО импульса (нужно 20 баров для Боллинджера/Кельтнера), иначе «сжатие
+     * перед пробоем» недоказуемо.
      */
     private fun flatThen(lastClose: Double): List<Candle> {
-        val bars = (0 until 19).map { i -> candle(0, i, 100.0, 101.0, 99.0, 100.0) }
-        return bars + candle(0, 19, 100.0, maxOf(101.0, lastClose + 1.0), minOf(99.0, lastClose - 1.0), lastClose)
+        val bars = (0 until 24).map { i -> candle(0, i, 100.0, 101.0, 99.0, 100.0) }
+        return bars + candle(0, 24, 100.0, maxOf(101.0, lastClose + 1.0), minOf(99.0, lastClose - 1.0), lastClose)
+    }
+
+    /**
+     * Seeded pseudo-random walk - keeps the squeeze-series regression test deterministic
+     * while producing both squeeze and non-squeeze stretches.
+     */
+    private fun walk(
+        count: Int,
+        seed: Int = 42,
+    ): List<Candle> {
+        val rnd = kotlin.random.Random(seed)
+        var p = 100.0
+        return (0 until count).map { i ->
+            p += (rnd.nextDouble() - 0.5) * 4.0
+            candle(0, i, p, p + 0.6 + rnd.nextDouble(), p - 0.6 - rnd.nextDouble(), p)
+        }
     }
 
     /**

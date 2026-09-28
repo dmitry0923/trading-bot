@@ -36,8 +36,12 @@ param(
     [string]$Timeframe = "HOUR_1",
     [int]$MaxHoldBars = 1095,
     [string]$OutCsv = "",
+    # Пропустить baseline (когда он уже измерен в этом же прогоне).
+    [switch]$SkipBaseline,
     # Конфиги через "|": "имя;query". Пусто = baseline + дефолтный macro-trend.
-    [string]$ConfigCsv = "macro ema20/50 dev0.5|macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095|macro ema20/50 dev0.5 + fv6|macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095&fundingVetoEnabled=true&fundingVetoLongThresholdRub=6&fundingVetoShortThresholdRub=6|macro ema20/50 dev0.5 + fv5|macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095&fundingVetoEnabled=true&fundingVetoLongThresholdRub=5&fundingVetoShortThresholdRub=5|macro ema20/50 dev0.5 + fv8|macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095&fundingVetoEnabled=true&fundingVetoLongThresholdRub=8&fundingVetoShortThresholdRub=8|macro ema20/50 dev1.0|macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=1.0&macroTrendBlockOnUnknown=true&maxHoldBars=1095"
+    # ВАЖНО: каждый элемент обязан содержать "имя;query" - без ";" элемент уходит как
+    # обычный baseline (иначе все конфиги дают дубль baseline). baseline добавляется первым.
+    [string]$ConfigCsv = "macro ema20/50 dev0.5;macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095|macro ema20/50 dev0.5 + fv6;macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095&fundingVetoEnabled=true&fundingVetoLongThresholdRub=6&fundingVetoShortThresholdRub=6|macro ema20/50 dev0.5 + fv5;macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095&fundingVetoEnabled=true&fundingVetoLongThresholdRub=5&fundingVetoShortThresholdRub=5|macro ema20/50 dev0.5 + fv8;macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=0.5&macroTrendBlockOnUnknown=true&maxHoldBars=1095&fundingVetoEnabled=true&fundingVetoLongThresholdRub=8&fundingVetoShortThresholdRub=8|macro ema20/50 dev1.0;macroTrendEnabled=true&macroTrendTimeframe=HOUR_1&macroTrendFastEma=20&macroTrendSlowEma=50&macroTrendMaxDeviationPercent=1.0&macroTrendBlockOnUnknown=true&maxHoldBars=1095"
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,17 +72,33 @@ function Get-Headers {
 $headers = Get-Headers
 
 $base = "$BaseUrl/api/v1/backtest/$Ticker/validate?days=$Days&folds=$Folds&adaptiveConfidenceThreshold=$Conf" +
-    "&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false&maxHoldBars=$MaxHoldBars"
+    "&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false"
+
+# maxHoldBars намеренно НЕ в $base: конфиг с "maxHoldBars=1095" дал бы в URL два параметра
+# ("...&maxHoldBars=0&...&maxHoldBars=1095"), а Spring берёт ПЕРВОЕ значение - max-hold молча
+# выключался во всех mh-конфигах. Ниже он добавляется, только если его нет в query.
+
+$configs = @($ConfigCsv.Split("|").Where({ $_ }))
+# Pre-flight: конфиг без ";" молча ушёл бы как обычный baseline. Лучше упасть сразу.
+$bad = @($configs | Where-Object { -not $_.Contains(";") })
+if ($bad.Count -gt 0) {
+    Write-Status ("FATAL: config entries without ';query' (would run as baseline): " + ($bad -join " | "))
+    throw "bad config entries: $($bad -join ' | ')"
+}
 
 $rows = @()
 $swAll = [System.Diagnostics.Stopwatch]::StartNew()
 Write-Status ("start: macro WFA ticker={0} days={1} folds={2} mh={3}" -f $Ticker, $Days, $Folds, $MaxHoldBars)
 
-foreach ($cfg in @("baseline;") + @($ConfigCsv.Split("|").Where({ $_ }))) {
+$plan = if ($SkipBaseline) { $configs } else { @("baseline;") + $configs }
+foreach ($cfg in $plan) {
     $parts = $cfg.Split(";", 2)
     $name = $parts[0]
     $query = if ($parts.Count -gt 1) { $parts[1] } else { "" }
-    $url = if ($query) { "$base&$query" } else { $base }
+    $url =
+        if ($query -match "maxHoldBars=") { "$base&$query" }
+        elseif ($query) { "$base&maxHoldBars=$MaxHoldBars&$query" }
+        else { "$base&maxHoldBars=$MaxHoldBars" }
     Write-Status ("run: {0}" -f $name)
     Write-Status ("url: {0}" -f $url)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -93,7 +113,7 @@ foreach ($cfg in @("baseline;") + @($ConfigCsv.Split("|").Where({ $_ }))) {
     $rows += [pscustomobject]@{
         Config = $name
         Consistency = $r.consistency; OOS_RetPct = [math]::Round([double]$r.oosReturn * 100, 2)
-        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 3); OOS_Sharpe = [math]::Round([double]$r.oosSharpeRatio, 2)
+        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 3); OOS_Sharpe = [math]::Round([double]$r.oosSharpe, 2)
         OOS_Trades = $r.oosTrades
         P_NoEdge = [math]::Round([double]$r.oosProbabilityOfNoEdge, 3); Robust = $r.robust
         Secs = [math]::Round($sw.Elapsed.TotalSeconds, 0)

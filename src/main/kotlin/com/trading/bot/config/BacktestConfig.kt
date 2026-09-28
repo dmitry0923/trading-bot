@@ -255,6 +255,10 @@ class BacktestConfig {
      *  БЛОКИРОВАТЬ вход (true) или пропускать (false). */
     var squeezeBlockOnUnknown: Boolean = true
 
+    /** How many bars back a squeeze may have been active for the current close to count
+     *  as a squeeze breakout. 0 disables the requirement (any BB breakout qualifies). */
+    var squeezeLookbackBars: Int = 5
+
     /** Panic Reversal (research, стратегия №7 «Panic & Reversal», 2026-09-26):
      *  вход в LONG после падения текущей сессии ≥ [panicMinSessionDropPercent]%
      *  при RSI([panicRsiPeriod]) на [panicTimeframe] < [panicMaxRsi] и текущем

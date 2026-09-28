@@ -60,7 +60,7 @@ $sw.Stop()
 $rows += [pscustomobject]@{
         Config = "baseline (off)"; Window = ""; Bars = ""; Strict = ""
         Consistency = $r.consistency; OOS_RetPct = [math]::Round([double]$r.oosReturn * 100, 2)
-        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 2); OOS_Sharpe = [math]::Round([double]$r.oosSharpeRatio, 2)
+        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 2); OOS_Sharpe = [math]::Round([double]$r.oosSharpe, 2)
         OOS_Trades = $r.oosTrades
         P_NoEdge = [math]::Round([double]$r.oosProbabilityOfNoEdge, 3); Robust = $r.robust
         Secs = [math]::Round($sw.Elapsed.TotalSeconds, 0)
@@ -87,7 +87,7 @@ foreach ($cfg in $ConfigCsv.Split(";").Where({ $_ })) {
     $rows += [pscustomobject]@{
         Config = "orb $start-$end/$bars strict=$strict"; Window = "$start-$end"; Bars = $bars; Strict = $strict
         Consistency = $r.consistency; OOS_RetPct = [math]::Round([double]$r.oosReturn * 100, 2)
-        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 2); OOS_Sharpe = [math]::Round([double]$r.oosSharpeRatio, 2)
+        OOS_PF = [math]::Round([double]$r.oosProfitFactor, 2); OOS_Sharpe = [math]::Round([double]$r.oosSharpe, 2)
         OOS_Trades = $r.oosTrades
         P_NoEdge = [math]::Round([double]$r.oosProbabilityOfNoEdge, 3); Robust = $r.robust
         Secs = [math]::Round($sw.Elapsed.TotalSeconds, 0)

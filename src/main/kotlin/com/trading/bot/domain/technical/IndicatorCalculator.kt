@@ -386,6 +386,73 @@ object IndicatorCalculator {
         return bbUpper.toDouble() < kc.upper && bbLower.toDouble() > kc.lower
     }
 
+    /**
+     * Bollinger-inside-Keltner (squeeze) state for every bar, computed in one forward pass.
+     *
+     * [ema], [atr] and [bollinger] are causal: a value at bar `i` depends only on bars
+     * `0..i`. One forward scan therefore yields exactly the same states as calling
+     * [isSqueeze] on every growing prefix, but in O(n) instead of O(n^2). The backtest
+     * engine evaluates the squeeze filter once per bar, so the per-bar prefix variant
+     * costs one extra O(n) pass each time (and each extra lookback bar another one).
+     *
+     * Bollinger bands are still computed through [bollinger] (over a `bbPeriod` slice)
+     * so the values are bit-identical to [isSqueeze], and `null` is returned for the whole
+     * series when the Keltner guard rejects a bar, forcing the caller back onto [isSqueeze].
+     *
+     * @return array indexed by bar, meaningful from [squeezeMinBars] onwards; `null` when
+     *   the series cannot be computed (too few bars, or a non-finite Keltner value).
+     */
+    fun squeezeSeries(
+        candles: List<Candle>,
+        bbPeriod: Int = BOLLINGER_SQUEEZE_PERIOD,
+        bbMult: Double = BOLLINGER_SQUEEZE_MULT,
+        kcEmaPeriod: Int = KELTNER_EMA_PERIOD,
+        kcAtrPeriod: Int = KELTNER_ATR_PERIOD,
+        kcMult: Double = KELTNER_MULT,
+    ): BooleanArray? {
+        val minBars = squeezeMinBars(bbPeriod, kcEmaPeriod, kcAtrPeriod)
+        if (candles.size < minBars) return null
+        val n = candles.size
+        val closes = DoubleArray(n) { candles[it].closePrice.toDouble() }
+        val states = BooleanArray(n)
+        val emaK = 2.0 / (kcEmaPeriod + 1)
+        var emaPrev = closes[0]
+        var atr = 0.0
+        var trSum = 0.0
+        for (i in 0 until n) {
+            if (i > 0) {
+                emaPrev = closes[i] * emaK + emaPrev * (1 - emaK)
+                val h = candles[i].highPrice.toDouble()
+                val l = candles[i].lowPrice.toDouble()
+                val prevClose = closes[i - 1]
+                val tr = maxOf(h - l, kotlin.math.abs(h - prevClose), kotlin.math.abs(l - prevClose))
+                if (i <= kcAtrPeriod) {
+                    trSum += tr
+                    if (i == kcAtrPeriod) atr = trSum / kcAtrPeriod
+                } else {
+                    atr = (atr * (kcAtrPeriod - 1) + tr) / kcAtrPeriod
+                }
+            }
+            if (i < minBars - 1) continue
+            val width = kcMult * atr
+            if (!emaPrev.isFinite() || !width.isFinite() || emaPrev <= 0.0 || width <= 0.0) return null
+            val bbCloses = (i - bbPeriod + 1..i).map { candles[it].closePrice }
+            val (_, bbUpper, bbLower) = bollinger(bbCloses, bbPeriod, bbMult)
+            states[i] = bbUpper.toDouble() < emaPrev + width && bbLower.toDouble() > emaPrev - width
+        }
+        return states
+    }
+
+    /**
+     * Minimum bar count for [squeezeSeries]/[isSqueeze] to yield a state
+     * (Bollinger period, Keltner EMA period, `Keltner ATR period + 1`).
+     */
+    fun squeezeMinBars(
+        bbPeriod: Int = BOLLINGER_SQUEEZE_PERIOD,
+        kcEmaPeriod: Int = KELTNER_EMA_PERIOD,
+        kcAtrPeriod: Int = KELTNER_ATR_PERIOD,
+    ): Int = maxOf(bbPeriod, kcEmaPeriod, kcAtrPeriod + 1)
+
     /** Канал Кельтнера (средняя, верхняя, нижняя границы в цене). */
     data class KeltnerChannel(
         val middle: Double,

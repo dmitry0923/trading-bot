@@ -896,8 +896,63 @@ bar.time)` + окно `higherTimeframeLookback` (1.5×-запас, потоло�
 контртрендовый и противоречит трендовому ядру, он исследуется отдельно
 (`research_wfa_vwapmr.ps1`).
 
-**WFA-прогоны новых ядер НЕ выполнены** — код/скрипты готовы, вердикта по edge пока
-нет; live-параметры (maxC=1, Kelly, funding-veto off, LIVE-guard CNYRUBF) не менялись.
+**WFA-прогоны новых ядер выполнены 2026-09-27/28 (см. раздел ниже)**; live-параметры
+(maxC=1, Kelly, funding-veto off, LIVE-guard CNYRUBF) не менялись.
+
+### WFA 730д/folds=8 трёх новых ядер (2026-09-27/28, `strategies-cores-730d`)
+
+Прогон на live-стеке, conf 0.60, калибровочный риск-профиль risk30%/maxC 100
+(НЕ live-параметры), `loadHistory=false`. Подробности и полные таблицы — docs/19.
+
+| Ядро (тикер) | Конфиг | Cons | OOS Ret | OOS PF | Сделки | P(NoEdge) | Вердикт |
+|---|---|---|---|---|---|---|---|
+| baseline CNYRUBF | без фильтров, mh0 | 0.500 | −14.82% | 0.92 | 86 | 0.62 | — |
+| №8 squeeze | on, lookback 5, mh0 | 0.250 | −15.61% | 0.84 | 60 | 0.74 | **REJECTED** |
+| №8 squeeze | on, lookback 5, mh368 | 0.250 | −15.55% | 0.84 | 60 | 0.74 | **REJECTED** |
+| baseline IMOEXF | без фильтров, mh0 | 0.000 | −726.29% | 0.10 | 92 | 1.00 | — |
+| №7 panic | rsi25/drop3% | 0.000 | 0.00% | 0.00 | **0** | 1.00 | INCONCLUSIVE (нет сигналов) |
+| №7 panic | rsi30/drop3% | 0.000 | 0.00% | 0.00 | **0** | 1.00 | INCONCLUSIVE (нет сигналов) |
+| №1 macro | dev0.5%, mh1095 | 0.500 | +25.78% | 1.397 | 23 | 0.296 | INCONCLUSIVE |
+| №1 macro | dev0.5% + fv 6/6 | 0.375 | +110.7% | 2.272 | 13 | 0.124 | INCONCLUSIVE |
+| №1 macro | dev0.5% + fv 5/5 | 0.500 | +146.0% | **3.17** | 11 | 0.057 | INCONCLUSIVE |
+| №1 macro | dev0.5% + fv 8/8 | 0.500 | +113.32% | 2.246 | 15 | 0.116 | INCONCLUSIVE |
+| №1 macro | dev1.0%, mh1095 | 0.500 | +26.17% | 1.405 | 23 | 0.295 | INCONCLUSIVE |
+
+- **Squeeze отклонён формально**: хуже baseline по всем метрикам, consistency вдвое
+  ниже, сделки 86→60; «PF 3.0 на 365д (18 сделок)» не подтвердилось. `bt.squeeze-*` off.
+- **Panic на IMOEXF не генерирует сигналов** (0 сделок даже при RSI≤30): сетап
+  «просадка ≥3% + RSI(H1)≤30 + bullish-бар» на 2 годах не встречается; сам IMOEXF
+  OOS −726%/PF 0.10. Третий конфиг (drop5%/RSI≤25) пропущен как provably 0 (строже
+  обоих измеренных). `bt.panic-*` off.
+- **Macro-trend — единственное ядро, развернувшее baseline в плюс** (PF 0.92 →
+  1.4–3.17); funding 5/6/8 ₽ ведёт себя как плато (PF 2.25–3.17), т.е. устойчиво, а не
+  пик. Но 11–23 OOS-сделки < 30 → INCONCLUSIVE, live не обоснован. `bt.macro-*` off.
+- **OOS30-шаг протокола НЕ выполнен (решение пользователя 2026-09-28).** Под критерий
+  `OOS PF ≥ 1.3` подпадают все 5 macro-конфигов, но holdout = последние 30% от 730д
+  (≈219 дней), а во всём WFA у macro 11–23 сделки → в holdout ожидается 3–7 сделок,
+  т.е. `INCONCLUSIVE` по построению (порог 30), а прогон стоит 2–4 ч. Macro закрыт
+  как INCONCLUSIVE; squeeze — REJECTED (PF 0.84), panic — INCONCLUSIVE (0 сигналов).
+  Выход из этого класса требует дополнительной истории/других трендовых тикеров, а не
+  новых вычислений на тех же данных.
+- Ни одно ядро не даёт `robust=true`.
+
+**Harness-баги, найденные на этих прогонах (обязательны к учёту дальше):**
+1. `ConfigCsv` ждёт разделитель `имя;query`; элемент без `;` молча уходил в baseline
+   (выглядело как «фильтр не работает»: 84 = 84 сделки). Теперь pre-flight падает.
+2. **Дубль `maxHoldBars`**: `...&maxHoldBars=0&<query с maxHoldBars=1095>` → Spring
+   берёт ПЕРВОЕ значение, max-hold молча выключался. `maxHoldBars` убран из базового
+   URL, добавляется только если его нет в query.
+3. **Поле Sharpe**: API отдаёт `oosSharpe`, скрипты читали `oosSharpeRatio` → колонка
+   OOS Sharpe была 0 во всех отчётах (PF/trades/consistency/P(NoEdge) корректны).
+   Исправлено в 5 research-скриптах.
+4. ORB-окно: `orbWindowStartMinutes=930` = 15:30 МСК (не 10:00); под золото 930..960/3.
+5. Не перегонять baseline повторно: у скриптов есть `-SkipBaseline`, у macro
+   baseline выравнивается `-MaxHoldBars 0` (иначе несёт mh1095 и несопоставим).
+
+**Fail-closed squeeze доведён:** `catch (Exception)` в генераторе больше не
+превращается в «фильтр выключен» — при `squeezeBlockOnUnknown=true` ошибка даёт HOLD
+(регресс-тест `squeeze fail-closed blocks entry until bollinger keltner history is
+enough`). `test` (1588) + `integrationTest` (101) + `ktlintCheck` зелёные.
 
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
@@ -943,6 +998,7 @@ bar.time)` + окно `higherTimeframeLookback` (1.5×-запас, потоло�
 | 2026-09-26 | Стратегии №7 ORB-окно и №1 VWAP-MR (`strategies-impl-1-7`) | **`EntryFilters.orbDirection`** получил окно диапазона `bt.orb-window-start-minutes`/`bt.orb-window-end-minutes` (query `orbWindowStartMinutes`/`orbWindowEndMinutes`, минуты от полуночи; диапазон = первые `orbWindowBars` баров дня с первого >= start, проверка пробоя только на барах >= end; дефолт `0..1440` = исходное поведение) — под золото 930..960/3 бара = 15:30–16:00 МСК (`8139342`); **`IndicatorCalculator.vwap` (сессионный, сброс по дате) / `.vwapStdDevPercent` / `.adx` (Уайлдер)** + `EntryFilters.vwapMrDirection` (|close−VWAP| >= Nσ И ADX(H1) <= порога, HOLD при высоком ADX / нехватке данных, старший ТФ через `CandleResampler` c `completedBefore=bar.time` и **ограниченным lookback** 32 бара ТФ / потолок 600 — иначе O(n²) на 46k свечах) + query `vwapMr*` на 5 эндпоинтах, дефолт off (`1af7944`, `ce684dc`); **найден баг индикаторов: на плоской сессии σ ≈ 1e-14 (float-шум) → ложные BUY/SELL в тысячи σ, отсечено `MIN_MEANINGFUL_VWAP_SIGMA_PERCENT = 1e-6`**; **`wfaSlPoints`/`wfaTpPoints`** — override in-sample сетки SL/TP в пунктах (штатная futuresGrid 25–600 пт не выражает узкий MR-стоп) (`a92bdcb`); WFA-скрипты `research_wfa_vwapmr.ps1` (CNYRUBF) и `research_wfa_orb_window.ps1` (GLDRUBF) (`a0f2260`) → **не сделано: выход «возврат к VWAP»** (движок позиций не имеет такого exit-типа; выход = SL/TP grid), WFA-прогоны №1/№7 — отдельная задача | test+int+ktlint |
 | 2026-09-26 | Deployment-gate лидера combo730 (`combo730-gate`) | **Проброс `maxHoldBars` в holdout-путь**: `/deployment-gate` и `/holdout` его не принимали (только `/backtest`, `/validate`, `/robustness`) → гейт проверял бы конфиг БЕЗ max-hold, т.е. не тот, который отобран; добавлен query-параметр в оба эндпоинта + проброс в `FinalHoldoutValidator.validate` → `WfaConfig` и оба `BacktestEngine.simulate` (dev + holdout) единым значением, fallback на `bt.max-hold-bars`; тесты `FinalHoldoutValidatorTest` (override + fallback, captor на WfaConfig и на обоих simulate); раннер `scripts/research_gate.ps1` с 5-минутным heartbeat (PID/RSS/CPU сервера) — гейт 730д идёт 45 мин, foreground-ожидание неприемлемо; **прогон `td-fv6-ctl` на dev-части (80% от 730д, folds=8, conf 0.60, risk30/maxC100, mh368, tdL9, fv 6/6): RESEARCH_ONLY, liveAllowed=false** — backtest PASS (PF 1.930/38 сделок), dev-WFA OOS **PF 1.651**/consistency 0.625 (31 сделка < 100), edge P(noEdge)=0.171, holdout **−17.6%** (13 < 30), MC p5=+12.6%/stressFailed=1; **подозрение на selection для этой комбинации НЕ подтвердилось** (dev OOS PF 1.651 против 0.78–0.92 у одиночных комбинаций), но holdout отрицательный и база не набрана → live не обоснован | test+int+ktlint |
 | 2026-09-26 | Три новых ядра + протокол IS70/OOS30 (`strategies-cores-70-30`) | Подстановки для нереализуемых инструментов (№2→macro-trend CNYRUBF, №3→ORB GLDRUBF, №7→panic-reversal IMOEXF, названы ПОДСТАНОВКОЙ в вердикте); три новых входных research-фильтра **дефолт off** с query-override на 5 эндпоинтах: `squeezeDirection` (+`IndicatorCalculator.keltner`/`isSqueeze`), `panicReversalDirection` (только LONG), `macroTrendDirection`; lookahead закрыт по коду (`subList(0,i)` + fill `current.openPrice` — консервативнее требуемых 1.5–3 с, отдельный delay не нужен); **ловушка теста**: линейный рост не даёт пробоя BB (z≈1.65<2σ) — нужен «19 плоских баров + импульс»; **протокол `scripts/research_oos70.ps1`**: `holdoutFraction=0.30`, вердикт только по holdout (`OOS PF<1.3`→REJECTED, `<30` сделок→INCONCLUSIVE, порог = `BacktestResult.isPassable()`), IS/dev — только диагностика; три `/validate`-скрипта сетки (`research_wfa_squeeze/panic/macrotrend`, в macro — funding plateau 5/6/8 ₽ + maxHoldBars=1095); зафиксировано расхождение: в №1 реализован откат к EMA, а не VWAP (контртрендовый, исследуется отдельно) | test+int+ktlint |
+| 2026-09-28 | WFA 730д трёх новых ядер + harness-фиксы (`strategies-cores-730d`) | **WFA 730д folds=8 conf 0.60 risk30/maxC100** (live-стек, `loadHistory=false`) на CNYRUBF/IMOEXF: squeeze (lookback 5) — **REJECTED** (PF 0.84 против baseline 0.92, consistency 0.25 против 0.50, 86→60 сделок; mh368 ничего не меняет −15.61→−15.55); panic на IMOEXF — **0 сигналов** при drop3%/RSI≤25 и при RSI≤30 (третий конфиг drop5%/RSI≤25 пропущен как provably 0), сам IMOEXF OOS −726%/PF 0.10; macro-trend — единственный развернувший baseline в плюс (PF 1.397–3.17, OOS +25.8…+146%, funding 5/6/8 ₽ = плато), но 11–23 OOS-сделки < 30 → **INCONCLUSIVE**, `robust=false` у всех → все три `bt.*` остаются off, live-параметры не менялись; **исправлены 5 harness-багов**: разделитель `имя;query` (без `;` был тихий baseline), дубль `maxHoldBars` в URL (Spring брал первое значение → max-hold молча выключен), неверное поле Sharpe (`oosSharpeRatio` → `oosSharpe`, колонка была 0), тайминг ORB-окна (930 мин = 15:30 МСК), повторный baseline (`-SkipBaseline`, у macro baseline = `-MaxHoldBars 0`); **fail-closed squeeze**: `catch (Exception)` при `squeezeBlockOnUnknown=true` даёт HOLD, а не «фильтр выключен» + регресс-тест | test (1588) + int (101) + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).

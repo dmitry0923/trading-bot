@@ -1,14 +1,18 @@
 package com.trading.bot.backtest
 
+import com.trading.bot.agent.ArbitratorAgent
+import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -876,6 +880,45 @@ class LiveStrategyBacktestSignalGeneratorTest {
     /** Генератор с research-override — попутно проверяется проброс полей [EntryFilterOverrides]. */
     private fun gen(overrides: EntryFilterOverrides): LiveStrategyBacktestSignalGenerator =
         LiveStrategyBacktestSignalGenerator(entryFilters = EntryFilters.from(BacktestConfig(), overrides))
+
+    /**
+     * LLM-veto (docs/20 §10) применяется последним и умеет только блокировать:
+     * число входов не может вырасти относительно baseline.
+     *
+     * Конфигурация veto здесь намеренно «сломанная» (`budgetMs = 0`): бюджет пары
+     * LLM-вызовов исчерпан мгновенно, ни один агент не успевает ответить ⇒ fail-closed
+     * блок. Именно этот путь и должен гасить детерминированные входы, не завися от
+     * текста ответа модели.
+     */
+    @Test
+    fun `llm veto only removes entries and default generator is untouched`() {
+        val genBaseline = LiveStrategyBacktestSignalGenerator()
+        val genVetoed =
+            LiveStrategyBacktestSignalGenerator(
+                llmVeto =
+                    LlmVeto(
+                        contrarianAgent = Mockito.mock(ContrarianAgent::class.java),
+                        arbitratorAgent = Mockito.mock(ArbitratorAgent::class.java),
+                        settings = LlmVetoSettings(enabled = true, budgetMs = 0, blockOnUnknown = true),
+                        meterRegistry = SimpleMeterRegistry(),
+                    ),
+            )
+        val candles = rampCandles(count = 240, start = 100.0, step = 1.0, wick = 0.2)
+        val baseline = collectSignalsWith(genBaseline, candles)
+        val vetoed = collectSignalsWith(genVetoed, candles)
+
+        val baseEntries = baseline.count { it != StrategyAction.HOLD }
+        assertTrue(baseEntries > 0, "baseline должен давать входы")
+        assertTrue(
+            baseline.filterIndexed { i, action -> action != StrategyAction.HOLD && vetoed[i] != StrategyAction.HOLD }.isEmpty(),
+            "veto не может превратить HOLD вход и не может оставить вход, которого нет в baseline",
+        )
+        assertTrue(
+            vetoed.all { it == StrategyAction.HOLD },
+            "fail-closed veto (бюджет 0) обязан оставить только HOLD",
+        )
+        assertEquals(baseline, collectSignalsWith(genBaseline, candles), "baseline-генератор без veto не должен меняться")
+    }
 
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)

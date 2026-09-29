@@ -1,5 +1,7 @@
 package com.trading.bot.controller
 
+import com.trading.bot.agent.ArbitratorAgent
+import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.application.TradingGate
 import com.trading.bot.application.strategy.MlDirectionOverrides
 import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
@@ -13,6 +15,9 @@ import com.trading.bot.backtest.EntryFilters
 import com.trading.bot.backtest.FinalHoldoutValidator
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.backtest.LiveStrategyBacktestSignalGenerator
+import com.trading.bot.backtest.LlmVeto
+import com.trading.bot.backtest.LlmVetoOverrides
+import com.trading.bot.backtest.LlmVetoSettings
 import com.trading.bot.backtest.MoexFundingHistoryLoader
 import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
@@ -154,6 +159,8 @@ class ApiController(
     private val frozenStrategyStore: FrozenStrategyStore,
     private val moexFundingHistoryLoader: MoexFundingHistoryLoader,
     private val fundingHistoryRepository: FundingHistoryRepository,
+    private val contrarianAgent: ContrarianAgent,
+    private val arbitratorAgent: ArbitratorAgent,
 ) {
     private val logger =
         io.github.oshai.kotlinlogging.KotlinLogging
@@ -165,19 +172,39 @@ class ApiController(
      * → параметры из `bt.ml-direction-*`/`bt.session-filter-*`/`bt.pullback-filter-*`;
      * query-параметры `mlDirection*`/`sessionFilter*`/`pullbackFilter*` (паттерн
      * funding-veto) калибруют пороги без перезапуска.
+     *
+     * [vetoOverrides] — research-LLM-veto поверх детерминированного сигнала
+     * (docs/20 §10). Выключен (по умолчанию) → агенты не вызываются вовсе, live-путь
+     * не затронут. Включён — veto собирается из тех же Spring-бинов агентов, что и
+     * live-цепочка, поэтому fail-closed семантика не дублируется.
      */
     private fun buildSignalGenerator(
         adaptiveConfidenceThreshold: Double,
         overrides: MlDirectionOverrides?,
         entryOverrides: EntryFilterOverrides?,
-    ): BacktestSignalGenerator =
-        LiveStrategyBacktestSignalGenerator(
+        vetoOverrides: LlmVetoOverrides? = null,
+    ): BacktestSignalGenerator {
+        val vetoSettings = LlmVetoSettings.from(backtestConfig, vetoOverrides)
+        val veto =
+            if (vetoSettings.enabled) {
+                LlmVeto(
+                    contrarianAgent = contrarianAgent,
+                    arbitratorAgent = arbitratorAgent,
+                    settings = vetoSettings,
+                    meterRegistry = meterRegistry,
+                )
+            } else {
+                null
+            }
+        return LiveStrategyBacktestSignalGenerator(
             regimeConfig = if (backtestConfig.regimeDetectionEnabled) riskConfig.toRegimeDetectionConfig() else null,
             adaptiveConfidenceThreshold = adaptiveConfidenceThreshold,
             mlDirection = OnlineMlDirectionStrategy.from(backtestConfig, overrides ?: MlDirectionOverrides()),
             mlDirectionBlockOnUnknown = overrides?.blockOnUnknown ?: backtestConfig.mlDirectionBlockOnUnknown,
             entryFilters = EntryFilters.from(backtestConfig, entryOverrides),
+            llmVeto = veto,
         )
+    }
 
     @GetMapping("/settings")
     fun getSettings(): BotSettings = settingsService.getSettings()
@@ -518,6 +545,11 @@ class ApiController(
         @RequestParam(required = false) rangeSqueezeLookbackBars: Int?,
         @RequestParam(required = false) rangeSqueezeRequireVolume: Boolean?,
         @RequestParam(required = false) rangeSqueezeBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoEnabled: Boolean?,
+        @RequestParam(required = false) llmVetoBudgetMs: Long?,
+        @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoPromptVersion: String?,
+        @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(defaultValue = "false") includeTrades: Boolean,
     ): Map<String, Any> {
@@ -604,13 +636,31 @@ class ApiController(
                 rangeSqueezeRequireVolume = rangeSqueezeRequireVolume,
                 rangeSqueezeBlockOnUnknown = rangeSqueezeBlockOnUnknown,
             )
+        val vetoOverrides =
+            LlmVetoOverrides(
+                enabled = llmVetoEnabled,
+                budgetMs = llmVetoBudgetMs,
+                blockOnUnknown = llmVetoBlockOnUnknown,
+                promptVersion = llmVetoPromptVersion,
+                sampleEvery = llmVetoSampleEvery,
+            )
         val result =
             backtestEngine.run(
                 ticker,
                 effectiveDays,
                 signalGeneratorOverride =
-                    if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
-                        buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
+                    if (
+                        mlOverrides.anyProvided ||
+                        entryOverrides.anyProvided ||
+                        vetoOverrides.anyProvided ||
+                        backtestConfig.llmVetoEnabled
+                    ) {
+                        buildSignalGenerator(
+                            backtestConfig.adaptiveConfidenceThreshold,
+                            mlOverrides,
+                            entryOverrides,
+                            vetoOverrides,
+                        )
                     } else {
                         null
                     },
@@ -892,6 +942,11 @@ class ApiController(
         @RequestParam(required = false) rangeSqueezeLookbackBars: Int?,
         @RequestParam(required = false) rangeSqueezeRequireVolume: Boolean?,
         @RequestParam(required = false) rangeSqueezeBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoEnabled: Boolean?,
+        @RequestParam(required = false) llmVetoBudgetMs: Long?,
+        @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoPromptVersion: String?,
+        @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(required = false) wfaSlPoints: Int?,
         @RequestParam(required = false) wfaTpPoints: Int?,
@@ -987,11 +1042,24 @@ class ApiController(
                 rangeSqueezeRequireVolume = rangeSqueezeRequireVolume,
                 rangeSqueezeBlockOnUnknown = rangeSqueezeBlockOnUnknown,
             )
+        val vetoOverrides =
+            LlmVetoOverrides(
+                enabled = llmVetoEnabled,
+                budgetMs = llmVetoBudgetMs,
+                blockOnUnknown = llmVetoBlockOnUnknown,
+                promptVersion = llmVetoPromptVersion,
+                sampleEvery = llmVetoSampleEvery,
+            )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
-                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
-            } else if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
-                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
+                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
+            } else if (
+                mlOverrides.anyProvided ||
+                entryOverrides.anyProvided ||
+                vetoOverrides.anyProvided ||
+                backtestConfig.llmVetoEnabled
+            ) {
+                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
             } else {
                 null
             }
@@ -1123,6 +1191,11 @@ class ApiController(
         @RequestParam(required = false) rangeSqueezeLookbackBars: Int?,
         @RequestParam(required = false) rangeSqueezeRequireVolume: Boolean?,
         @RequestParam(required = false) rangeSqueezeBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoEnabled: Boolean?,
+        @RequestParam(required = false) llmVetoBudgetMs: Long?,
+        @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoPromptVersion: String?,
+        @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -1230,6 +1303,14 @@ class ApiController(
                 rangeSqueezeRequireVolume = rangeSqueezeRequireVolume,
                 rangeSqueezeBlockOnUnknown = rangeSqueezeBlockOnUnknown,
             )
+        val vetoOverrides =
+            LlmVetoOverrides(
+                enabled = llmVetoEnabled,
+                budgetMs = llmVetoBudgetMs,
+                blockOnUnknown = llmVetoBlockOnUnknown,
+                promptVersion = llmVetoPromptVersion,
+                sampleEvery = llmVetoSampleEvery,
+            )
         val report =
             monteCarloAnalyzer.analyze(
                 ticker,
@@ -1241,11 +1322,17 @@ class ApiController(
                 avgBlockLength = avgBlockLength ?: backtestConfig.mcAvgBlockLength,
                 blockLength = blockLength ?: backtestConfig.mcBlockLength,
                 signalGeneratorOverride =
-                    if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
+                    if (
+                        mlOverrides.anyProvided ||
+                        entryOverrides.anyProvided ||
+                        vetoOverrides.anyProvided ||
+                        backtestConfig.llmVetoEnabled
+                    ) {
                         buildSignalGenerator(
                             frozenParams?.confidenceThreshold ?: backtestConfig.adaptiveConfidenceThreshold,
                             mlOverrides,
                             entryOverrides,
+                            vetoOverrides,
                         )
                     } else {
                         null
@@ -1374,6 +1461,11 @@ class ApiController(
         @RequestParam(required = false) rangeSqueezeLookbackBars: Int?,
         @RequestParam(required = false) rangeSqueezeRequireVolume: Boolean?,
         @RequestParam(required = false) rangeSqueezeBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoEnabled: Boolean?,
+        @RequestParam(required = false) llmVetoBudgetMs: Long?,
+        @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoPromptVersion: String?,
+        @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -1463,11 +1555,24 @@ class ApiController(
                 rangeSqueezeRequireVolume = rangeSqueezeRequireVolume,
                 rangeSqueezeBlockOnUnknown = rangeSqueezeBlockOnUnknown,
             )
+        val vetoOverrides =
+            LlmVetoOverrides(
+                enabled = llmVetoEnabled,
+                budgetMs = llmVetoBudgetMs,
+                blockOnUnknown = llmVetoBlockOnUnknown,
+                promptVersion = llmVetoPromptVersion,
+                sampleEvery = llmVetoSampleEvery,
+            )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
-                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
-            } else if (mlOverrides.anyProvided || entryOverrides.anyProvided) {
-                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides)
+                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
+            } else if (
+                mlOverrides.anyProvided ||
+                entryOverrides.anyProvided ||
+                vetoOverrides.anyProvided ||
+                backtestConfig.llmVetoEnabled
+            ) {
+                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
             } else {
                 null
             }
@@ -1598,6 +1703,11 @@ class ApiController(
         @RequestParam(required = false) rangeSqueezeLookbackBars: Int?,
         @RequestParam(required = false) rangeSqueezeRequireVolume: Boolean?,
         @RequestParam(required = false) rangeSqueezeBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoEnabled: Boolean?,
+        @RequestParam(required = false) llmVetoBudgetMs: Long?,
+        @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) llmVetoPromptVersion: String?,
+        @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -1693,6 +1803,14 @@ class ApiController(
                         rangeSqueezeLookbackBars = rangeSqueezeLookbackBars,
                         rangeSqueezeRequireVolume = rangeSqueezeRequireVolume,
                         rangeSqueezeBlockOnUnknown = rangeSqueezeBlockOnUnknown,
+                    ),
+                vetoOverrides =
+                    LlmVetoOverrides(
+                        enabled = llmVetoEnabled,
+                        budgetMs = llmVetoBudgetMs,
+                        blockOnUnknown = llmVetoBlockOnUnknown,
+                        promptVersion = llmVetoPromptVersion,
+                        sampleEvery = llmVetoSampleEvery,
                     ),
             )
 

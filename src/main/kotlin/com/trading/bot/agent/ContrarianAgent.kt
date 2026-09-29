@@ -64,6 +64,10 @@ class ContrarianAgent(
      * @param temperature температура генерации (live-путь 0.1, бэктест — 0.0)
      * @param cacheNamespace изолирует semantic cache (бэктест: "backtest")
      * @param techDelta дельта-компрессия тех-отчёта (roadmap 13.8); null — полный текст
+     * @param bypassCache обходит semantic cache. Нужен research-замерам, где отпечаток
+     *   семантического кэпа грубый (цена до 1 знака, бакет RSI×10, `session` от
+     *   `LocalTime.now()`) и дал бы вердикт одного бара для другого и невоспроизводимый
+     *   прогон. В `ArbitratorAgent.adjudicate` параметр существует с той же причиной.
      * @return отчёт о валидности, уровне риска и критике
      */
     suspend fun challenge(
@@ -76,6 +80,7 @@ class ContrarianAgent(
         temperature: Double = 0.1,
         cacheNamespace: String? = null,
         techDelta: String? = null,
+        bypassCache: Boolean = false,
     ): ChallengeReport {
         val start = System.currentTimeMillis()
 
@@ -106,15 +111,20 @@ class ContrarianAgent(
                 "atr" to tech.atr,
             )
 
-        // Одинаковый сигнал при том же рынке -> одинаковый challenge (кэш)
+        // Одинаковый сигнал при том же рынке -> одинаковый challenge (кэш).
+        // bypassCache — для research-замеров, где кэш искажает выборку (см. KDoc).
         val fingerprint =
-            semanticCache.fingerprint(
-                snapshot.currentPrice,
-                tech.rsi,
-                tech.trend,
-                "contrarian",
-                macdHistogram = tech.macd,
-            )
+            if (bypassCache) {
+                null
+            } else {
+                semanticCache.fingerprint(
+                    snapshot.currentPrice,
+                    tech.rsi,
+                    tech.trend,
+                    "contrarian",
+                    macdHistogram = tech.macd,
+                )
+            }
 
         val prompt = promptRegistry.getTemplate("contrarian", version)
         val resp =

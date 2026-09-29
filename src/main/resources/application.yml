@@ -473,6 +473,23 @@ bt:
     # повторный прогон воспроизводим. 0.05 = «5% таймаутов» из чек-листа research.
     timeout-injection-rate: ${BT_AGENT_TIMEOUT_INJECTION_RATE:0.0}
 
+  # Бинарный veto LLM поверх детерминированного сигнала (research, 2026-09-29,
+  # docs/20 §10). LLM НЕ генерирует сигнал: получает draft детерминированного
+  # ансамбля (ContrarianAgent -> ArbitratorAgent) и может заблокировать вход.
+  # Гипотеза: LLM отсекает убыточные входы — как источник сигнала он edge не даёт
+  # (PF 0,71-0,81 на пяти моделях, docs/19). По умолчанию выключено.
+  llm-veto-enabled: ${BT_LLM_VETO_ENABLED:false}
+  # Бюджет пары LLM-вызовов veto, мс; превышение — fail-closed блок.
+  llm-veto-budget-ms: ${BT_LLM_VETO_BUDGET_MS:20000}
+  # Отказ LLM (недоступен/схема/парсинг/таймаут) — блок входа (fail-closed) или пропуск.
+  # Настоящий вердикт HOLD блокирует при любом значении.
+  llm-veto-block-on-unknown: ${BT_LLM_VETO_BLOCK_ON_UNKNOWN:true}
+  llm-veto-prompt-version: ${BT_LLM_VETO_PROMPT_VERSION:default}
+  # 0 — veto каждого бар-кандидата; N>1 — только каждого N-го (разбавленный veto).
+  llm-veto-sample-every: ${BT_LLM_VETO_SAMPLE_EVERY:0}
+  llm-veto-temperature: ${BT_LLM_VETO_TEMPERATURE:0.0}
+  llm-veto-cache-namespace: ${BT_LLM_VETO_CACHE_NAMESPACE:backtest-veto}
+
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
   max-leverage: ${LEVERAGE_MAX:3.0}

@@ -889,6 +889,11 @@ class EntryFilters(
  *     (причина `ML_DIRECTION_VETO`);
  *   - если ML HOLD (нехватка данных/warmup/нет уверенности) — зависит от
  *     [mlDirectionBlockOnUnknown] (true: fail-closed блок, false: пропуск).
+ *
+ * [llmVeto] — бинарный research-veto LLM поверх ИТОГОВОГО детерминированного
+ * сигнала (docs/20 §10, default off). Применяется последним: все фильтры входа
+ * уже отработали, LLM отвечает на вопрос «стоит ли вообще брать этот вход».
+ * Направление, вернувшееся от LLM, игнорируется — вход остаётся детерминированным.
  */
 class LiveStrategyBacktestSignalGenerator(
     private val regimeConfig: RegimeDetectionConfig? = null,
@@ -896,6 +901,7 @@ class LiveStrategyBacktestSignalGenerator(
     private val mlDirection: OnlineMlDirectionStrategy? = null,
     private val mlDirectionBlockOnUnknown: Boolean = false,
     private val entryFilters: EntryFilters? = null,
+    private val llmVeto: LlmVeto? = null,
 ) : BacktestSignalGenerator {
     private val strategies: List<Strategy> =
         listOf(
@@ -1227,27 +1233,44 @@ class LiveStrategyBacktestSignalGenerator(
 
         // ML-фильтр направления: veto против направления победителя.
         val mlAction = mlDecision?.action ?: StrategyAction.HOLD
-        return when {
-            mlDecision == null -> {
-                bestAction
-            }
+        val mlAdjusted =
+            when {
+                mlDecision == null -> {
+                    bestAction
+                }
 
-            mlAction == StrategyAction.HOLD -> {
-                if (mlDirectionBlockOnUnknown) {
+                mlAction == StrategyAction.HOLD -> {
+                    if (mlDirectionBlockOnUnknown) {
+                        StrategyAction.HOLD
+                    } else {
+                        bestAction
+                    }
+                }
+
+                mlAction != bestAction -> {
                     StrategyAction.HOLD
-                } else {
+                }
+
+                else -> {
                     bestAction
                 }
             }
 
-            mlAction != bestAction -> {
-                StrategyAction.HOLD
-            }
-
-            else -> {
-                bestAction
-            }
-        }
+        // Бинарный veto LLM (research, docs/20 §10): последний фильтр, применяется
+        // к итоговому детерминированному сигналу. LLM может только заблокировать
+        // вход — направление остаётся детерминированным.
+        if (llmVeto == null || mlAdjusted == StrategyAction.HOLD) return mlAdjusted
+        val verdict =
+            llmVeto.veto(
+                ticker = ticker,
+                action = mlAdjusted,
+                strength = bestStrength,
+                snapshot = snapshot,
+                indicators = indicators,
+                cycleId = cycleId,
+                barTime = bar.time,
+            )
+        return if (verdict.allow) mlAdjusted else StrategyAction.HOLD
     }
 
     private companion object {

@@ -379,4 +379,32 @@ class BacktestConfig {
 
     /** Fail-closed для сжатия по среднему диапазону: нехватка данных → БЛОК. */
     var rangeSqueezeBlockOnUnknown: Boolean = true
+
+    /** Бинарный veto LLM поверх детерминированного сигнала (research, 2026-09-29,
+     *  docs/20 §10). LLM не генерирует сигнал, а получает draft детерминированного
+     *  ансамбля ([com.trading.bot.backtest.LlmVeto]) и может его заблокировать.
+     *  Гипотеза: LLM отсекает убыточные входы (как источник сигнала edge не даёт,
+     *  docs/19). research-инструмент, по умолчанию off. */
+    var llmVetoEnabled: Boolean = false
+
+    /** Бюджет пары LLM-вызовов veto (контрариан + арбитр), мс. Превышение —
+     *  fail-closed блок (или пропуск при [llmVetoBlockOnUnknown]=false). */
+    var llmVetoBudgetMs: Long = 20_000
+
+    /** Отказ LLM (недоступен/схема/парсинг/таймаут) → БЛОК входа (fail-closed, true)
+     *  или пропуск кандидата (false). Настоящий вердикт HOLD блокирует всегда. */
+    var llmVetoBlockOnUnknown: Boolean = true
+
+    /** Версия шаблонов промптов агентов на veto-пути. */
+    var llmVetoPromptVersion: String = "default"
+
+    /** 0 — veto каждого бар-кандидата; N>1 — только каждого N-го (разбавленный veto —
+     *  отдельная гипотеза, её нельзя смешивать с veto на каждом кандидате). */
+    var llmVetoSampleEvery: Int = 0
+
+    /** Температура генерации на veto-пути: 0.0 = детерминизм прогонов. */
+    var llmVetoTemperature: Double = 0.0
+
+    /** Namespace кэша агентов veto-пути (изоляция от live-контура). */
+    var llmVetoCacheNamespace: String = "backtest-veto"
 }

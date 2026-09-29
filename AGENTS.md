@@ -1010,6 +1010,50 @@ enough`). `test` (1588) + `integrationTest` (101) + `ktlintCheck` зелёные
   порог 30 сделок и завершается `INCONCLUSIVE` по построению. Следующий содержательный шаг —
   донакачка истории/инструментов либо новый data-слой (bid/ask) / парный движок.
 
+### LLM-veto поверх детерминированного сигнала (research, 2026-09-29, `llm-veto`, docs/20 §10)
+
+Гипотеза: LLM полезен не как источник направления (это уже отброшено: PF 0.71–0.81,
+docs/19), а как **сокращатель плохих входов**. Реализован измеримый вето-фильтр,
+дефолт **off**, live-путь не затронут.
+
+- **Цепочка:** `ContrarianAgent.challenge` → `ArbitratorAgent.adjudicate`; блокирует
+  **только** `final.action == HOLD` с `overrideReason == null`. Направление, цена и
+  `signalStrength` арбитра игнорируются — иначе результат зависел бы от того, насколько
+  LLM «уверен», а не от того, отверг ли он вход.
+- **Порядок:** применяется последним, после confidence-gate, входных фильтров
+  (session/pullback/ORB/squeeze/panic/macro) и ML-фильтра направления. Отфильтрованный
+  детерминированный вход LLM не тратит (нет кандидата — нет вызова агентов).
+- **Fail-closed:** CRITICAL challenge, LLM-ошибка/таймаут/отказ и `HOLD без reason`
+  блокируют при `blockOnUnknown=true`; при `false` проходят. Отказ LLM **не** считается
+  veto — иначе залом сети выглядел бы как «осторожный LLM».
+- **Воспроизводимость (главное для интерпретируемости):** семантический кэш агентов
+  обходится (`bypassCache = true`, `temperature = 0.0`, `adaptiveConfidence = 0.0`,
+  namespace `backtest-veto`) — иначе вердикт кэшировался бы по грубому отпечатку (цена
+  до 1 знака, бакет `RSI×10`, `session` от `LocalTime.now()`), т.е. отвечал бы за ДРУГОЙ
+  бар. Дополнительно вердикт мемоизируется по `(ticker, barTime, action)`: WFA и
+  SL/TP-grid переигрывают одни и те же бары в каждом фолде, повторных платных вызовов
+  не будет, повторный прогон воспроизводим.
+- **Конфиг (research):** `bt.llm-veto-enabled` (**false**), `bt.llm-veto-budget-ms`
+  (20000), `bt.llm-veto-block-on-unknown` (true), `bt.llm-veto-prompt-version`,
+  `bt.llm-veto-sample-every` (0), `bt.llm-veto-temperature` (0.0),
+  `bt.llm-veto-cache-namespace`; env `BT_LLM_VETO_*`. Query-оверрайды
+  `llmVetoEnabled/llmVetoBudgetMs/llmVetoBlockOnUnknown/llmVetoPromptVersion/llmVetoSampleEvery`
+  на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` (паттерн
+  funding-veto/ML) — пороги калибруются без перезапуска.
+- **Метрики:** `bt_llm_veto_candidates_total`, `bt_llm_veto_blocked_total`,
+  `bt_llm_veto_allowed_total`, `bt_llm_veto_cache_hits_total` (тег `ticker`).
+- **Найденный при подключении баг:** условие создания кастомного генератора на четырёх
+  endpoint-ах учитывало только query-оверрайды, поэтому включение `llmVetoEnabled=true`
+  только в конфиге (без query-параметров) **молча не доходило** до veto — эндпоинты
+  возвращали результат детерминированной стратегии и выглядели как «фильтр не работает».
+  Теперь везде `|| backtestConfig.llmVetoEnabled`; регресс-тест на `LlmVetoSettings.from`
+  (config-fallback + перекрытие query).
+- **Статус:** код готов, юнит-тесты зелёные (veto 14, `bypassCache` 2, query-контракт,
+  wiring). **Реальный IS/WFA-прогон НЕ выполнен** — нет `LLM_API_KEY`. План: IS-прескрин
+  на CNYRUBF (baseline PF ≈ 0.93) → при ≥30 сделках и PF не хуже baseline WFA →
+  deployment gate. Вердикт об edge появится только после этого; до него `bt.llm-veto-*`
+  остаётся off, а `trading.*` veto-параметров не существует вовсе.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -1056,6 +1100,7 @@ enough`). `test` (1588) + `integrationTest` (101) + `ktlintCheck` зелёные
 | 2026-09-26 | Три новых ядра + протокол IS70/OOS30 (`strategies-cores-70-30`) | Подстановки для нереализуемых инструментов (№2→macro-trend CNYRUBF, №3→ORB GLDRUBF, №7→panic-reversal IMOEXF, названы ПОДСТАНОВКОЙ в вердикте); три новых входных research-фильтра **дефолт off** с query-override на 5 эндпоинтах: `squeezeDirection` (+`IndicatorCalculator.keltner`/`isSqueeze`), `panicReversalDirection` (только LONG), `macroTrendDirection`; lookahead закрыт по коду (`subList(0,i)` + fill `current.openPrice` — консервативнее требуемых 1.5–3 с, отдельный delay не нужен); **ловушка теста**: линейный рост не даёт пробоя BB (z≈1.65<2σ) — нужен «19 плоских баров + импульс»; **протокол `scripts/research_oos70.ps1`**: `holdoutFraction=0.30`, вердикт только по holdout (`OOS PF<1.3`→REJECTED, `<30` сделок→INCONCLUSIVE, порог = `BacktestResult.isPassable()`), IS/dev — только диагностика; три `/validate`-скрипта сетки (`research_wfa_squeeze/panic/macrotrend`, в macro — funding plateau 5/6/8 ₽ + maxHoldBars=1095); зафиксировано расхождение: в №1 реализован откат к EMA, а не VWAP (контртрендовый, исследуется отдельно) | test+int+ktlint |
 | 2026-09-28 | Триаж 10 гибридных LLM-стратегий + инъекция таймаутов (`strategies-10-triage`) | Сверка списка с кодом/данными **до** реализации: 4 уже измерены и не проходят (macro INCONCLUSIVE, panic 0 сигналов, squeeze REJECTED, VWAP-MR на Si без OBI), 4 структурно невозможны (OBI — `candles` только OHLCV, bid/ask не хранится; Z-score/парного движка нет 0 совпадений; YNDX нет; MX нет), 1 требует нового data-слоя, 1 бессмысленна без подтверждённого LLM-edge; исправлены ошибочные посылки ТЗ (max-hold в **барах** не минутах; «edge PF 2.15» — цифра 365д, на 730д baseline PF 0.92; `normalizeTargetPrice` = нормализация LLM-JSON; 930 мин = 15:30 МСК) → **главный ограничитель «100%/год» — глубина данных, не фильтры**; **реализовано `bt.agent.signal-budget-ms` (default 0 = выключен) + `bt.agent.timeout-injection-rate` (default 0.0)** — цепочка под `withTimeout` с fail-closed HOLD, инъекция таймаутов реальной задержкой, детерминирована по (ticker, индекс бара), метрика `backtest.agent.timeout{cause=injected\|budget}`; закрыт пункт чек-листа «5% таймаутов ⇒ HOLD»; тесты `LlmTimeoutInjectionTest` (8) + 3 кейса генератора, включая «таймаут ⇒ HOLD без вызова агентов» | test + int + ktlint |
 | 2026-09-28 | WFA 730д трёх новых ядер + harness-фиксы (`strategies-cores-730d`) | **WFA 730д folds=8 conf 0.60 risk30/maxC100** (live-стек, `loadHistory=false`) на CNYRUBF/IMOEXF: squeeze (lookback 5) — **REJECTED** (PF 0.84 против baseline 0.92, consistency 0.25 против 0.50, 86→60 сделок; mh368 ничего не меняет −15.61→−15.55); panic на IMOEXF — **0 сигналов** при drop3%/RSI≤25 и при RSI≤30 (третий конфиг drop5%/RSI≤25 пропущен как provably 0), сам IMOEXF OOS −726%/PF 0.10; macro-trend — единственный развернувший baseline в плюс (PF 1.397–3.17, OOS +25.8…+146%, funding 5/6/8 ₽ = плато), но 11–23 OOS-сделки < 30 → **INCONCLUSIVE**, `robust=false` у всех → все три `bt.*` остаются off, live-параметры не менялись; **исправлены 5 harness-багов**: разделитель `имя;query` (без `;` был тихий baseline), дубль `maxHoldBars` в URL (Spring брал первое значение → max-hold молча выключен), неверное поле Sharpe (`oosSharpeRatio` → `oosSharpe`, колонка была 0), тайминг ORB-окна (930 мин = 15:30 МСК), повторный baseline (`-SkipBaseline`, у macro baseline = `-MaxHoldBars 0`); **fail-closed squeeze**: `catch (Exception)` при `squeezeBlockOnUnknown=true` даёт HOLD, а не «фильтр выключен» + регресс-тест | test (1588) + int (101) + ktlint |
+| 2026-09-29 | LLM-veto поверх детерминированного сигнала (`llm-veto`) | **`LlmVeto`** (`ContrarianAgent.challenge` → `ArbitratorAgent.adjudicate`, блокирует только `final.action == HOLD` без `overrideReason`; направление/цена/сила арбитра игнорируются), применяется последним в `LiveStrategyBacktestSignalGenerator` (после session/pullback/ORB/squeeze/panic/macro и ML); fail-closed на CRITICAL/ошибке/таймауте/отказе по `blockOnUnknown` (отказ ≠ veto); обход семантического кэша агентов (`bypassCache` в `ContrarianAgent`, `temperature=0.0`, `adaptiveConfidence=0.0`, namespace `backtest-veto`) + мемоизация вердикта по `(ticker, barTime, action)` — без этого вердикт кэшировался бы по грубому отпечатку и отвечал бы за другой бар, а WFA переигрывал бы платные вызовы; конфиг `bt.llm-veto-*` (enabled **false**, budget 20000, blockOnUnknown true, sampleEvery 0) + query-оверрайды `llmVeto*` на 5 эндпоинтах; метрики `bt_llm_veto_{candidates,blocked,allowed,cache_hits}_total`; **найден баг подключения**: условие фабрики генератора учитывало только query-оверрайды, config-only `llmVetoEnabled=true` молча не доходил до veto (4 эндпоинта) — добавлено `|| backtestConfig.llmVetoEnabled` + регресс-тест `LlmVetoSettings.from`; **реальный IS/WFA-прогон НЕ выполнен (нет `LLM_API_KEY`)**, вердикта об edge нет, `bt.llm-veto-*` остаётся off, live-путь не затронут; тесты `LlmVetoTest` (14) + `ContrarianAgentBypassCacheTest` (2) + query-контракт + generator-wiring | test (1656) + int + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).

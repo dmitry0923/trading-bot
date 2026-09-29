@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -460,5 +461,82 @@ class LlmVetoTest {
             )
         assertEquals(false, fromQuery.enabled, "query-параметр перекрывает bt.llm-veto-enabled")
         assertEquals(7_777L, fromQuery.budgetMs, "непереданные query-поля остаются из config")
+    }
+
+    @Test
+    fun `settings carry minScore from config and query override`() {
+        val config = BacktestConfig().apply { llmVetoMinScore = 0.35 }
+
+        assertEquals(0.35, LlmVetoSettings.from(config).minScore)
+        assertEquals(0.7, LlmVetoSettings.from(config, LlmVetoOverrides(minScore = 0.7)).minScore)
+        assertEquals(null, LlmVetoSettings.from(BacktestConfig()).minScore, "по умолчанию score-режим выключен")
+        assertTrue(LlmVetoOverrides(minScore = 0.5).anyProvided, "minScore обязан включать фабрику кастомного генератора")
+    }
+
+    @Test
+    fun `settings validate minScore range`() {
+        assertThrows(IllegalArgumentException::class.java) { LlmVetoSettings(minScore = 1.5) }
+        assertThrows(IllegalArgumentException::class.java) { LlmVetoSettings(minScore = -0.1) }
+        LlmVetoSettings(minScore = 0.0)
+        LlmVetoSettings(minScore = 1.0)
+    }
+
+    @Test
+    fun `score mode blocks the entry when the arbitrator score is below minScore`() {
+        val scored = LlmVeto(contrarianAgent, arbitratorAgent, settings.copy(minScore = 0.5), registry)
+        runBlocking {
+            stubChallenge(challenge)
+            stubFinal(buyFinal.copy(signalStrength = 0.40))
+        }
+
+        val verdict = runBlocking { scored.veto("CNYRUBF", StrategyAction.BUY, 0.7, snapshot, indicators, "c1", barTime) }
+
+        assertEquals(false, verdict.allow)
+        assertEquals(LlmVeto.Reason.ARB_SCORE_LOW, verdict.reason)
+        assertEquals(1.0, registry.counter("bt_llm_veto_blocked_total", Tags.of("ticker", "CNYRUBF", "reason", "ARB_SCORE_LOW")).count())
+        assertEquals(0.40, registry.summary(LlmVeto.SCORE_METRIC, Tags.of("ticker", "CNYRUBF")).mean(), 1e-9)
+    }
+
+    @Test
+    fun `score mode allows the entry when the arbitrator score is at or above minScore`() {
+        val scored = LlmVeto(contrarianAgent, arbitratorAgent, settings.copy(minScore = 0.5), registry)
+        runBlocking {
+            stubChallenge(challenge)
+            stubFinal(buyFinal.copy(signalStrength = 0.50))
+        }
+
+        val verdict = runBlocking { scored.veto("CNYRUBF", StrategyAction.BUY, 0.7, snapshot, indicators, "c1", barTime) }
+
+        assertTrue(verdict.allow, "score == порог — вход пропускается (блок строго ниже порога)")
+        assertEquals(LlmVeto.Reason.ALLOWED, verdict.reason)
+        assertEquals(1.0, registry.counter("bt_llm_veto_allowed_total", Tags.of("ticker", "CNYRUBF", "reason", "ALLOWED")).count())
+    }
+
+    @Test
+    fun `binary semantics are preserved when minScore is not set`() {
+        runBlocking {
+            stubChallenge(challenge)
+            stubFinal(buyFinal.copy(signalStrength = 0.01))
+        }
+
+        val verdict = runBlocking { veto().veto("CNYRUBF", StrategyAction.BUY, 0.7, snapshot, indicators, "c1", barTime) }
+
+        assertTrue(verdict.allow, "без minScore оценка арбитра не влияет на вердикт — только action == HOLD")
+        assertEquals(LlmVeto.Reason.ALLOWED, verdict.reason)
+    }
+
+    @Test
+    fun `score is recorded for calibration even when the entry is allowed`() {
+        val scored = LlmVeto(contrarianAgent, arbitratorAgent, settings.copy(minScore = 0.5), registry)
+        runBlocking {
+            stubChallenge(challenge)
+            stubFinal(buyFinal.copy(signalStrength = 0.80))
+        }
+
+        runBlocking { scored.veto("CNYRUBF", StrategyAction.BUY, 0.7, snapshot, indicators, "c1", barTime) }
+
+        val summary = registry.summary(LlmVeto.SCORE_METRIC, Tags.of("ticker", "CNYRUBF"))
+        assertEquals(1L, summary.count())
+        assertEquals(0.80, summary.max(), 1e-9)
     }
 }

@@ -23,6 +23,7 @@ class ApiControllerLlmVetoQueryTest {
             "llmVetoBlockOnUnknown" to Boolean::class.javaObjectType,
             "llmVetoPromptVersion" to String::class.java,
             "llmVetoSampleEvery" to Integer::class.java,
+            "llmVetoMinScore" to java.lang.Double::class.java,
         )
 
     private val endpointMethods =

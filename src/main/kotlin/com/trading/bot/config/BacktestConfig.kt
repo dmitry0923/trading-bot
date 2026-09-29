@@ -402,6 +402,12 @@ class BacktestConfig {
      *  отдельная гипотеза, её нельзя смешивать с veto на каждом кандидате). */
     var llmVetoSampleEvery: Int = 0
 
+    /** Порог score-режима veto: `null` (дефолт) — бинарная семантика по `action == HOLD`.
+     *  Иначе вход блокируется при оценке арбитра `signalStrength < llmVetoMinScore`
+     *  (оценка качества входа 0..1). Нужен потому, что сама LLM на бинарный вопрос
+     *  «отвергнуть ли вход?» отвечает вырожденно — 0% или 100% блокировок. */
+    var llmVetoMinScore: Double? = null
+
     /** Температура генерации на veto-пути: 0.0 = детерминизм прогонов. */
     var llmVetoTemperature: Double = 0.0
 

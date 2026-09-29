@@ -290,14 +290,30 @@ class BacktestEngine(
         val fundingHistory: Map<LocalDate, BigDecimal> =
             try {
                 val repo = fundingHistoryRepository
-                if (repo == null) {
-                    emptyMap()
-                } else {
-                    repo.findValuesBetween(
-                        ticker,
-                        sorted.first().time.toLocalDate(),
-                        sorted.last().time.toLocalDate(),
-                    )
+                when {
+                    repo == null -> {
+                        emptyMap()
+                    }
+
+                    // Пустой срез (фолд без свечей) раньше ронял sorted.first() с
+                    // NoSuchElementException, который ловился здесь и логировался как
+                    // "funding history unavailable" - то есть реальная причина (нет данных)
+                    // маскировалась под funding. Теперь причина называется прямо.
+                    sorted.isEmpty() -> {
+                        logger.warn {
+                            "Backtest $ticker: empty candle slice (${candles.size} candles) - " +
+                                "прогон без сделок, результат не информативен"
+                        }
+                        emptyMap()
+                    }
+
+                    else -> {
+                        repo.findValuesBetween(
+                            ticker,
+                            sorted.first().time.toLocalDate(),
+                            sorted.last().time.toLocalDate(),
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 logger.warn(e) { "Backtest $ticker: funding history unavailable, fallback to configured rate" }

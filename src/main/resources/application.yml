@@ -487,6 +487,10 @@ bt:
   llm-veto-prompt-version: ${BT_LLM_VETO_PROMPT_VERSION:default}
   # 0 — veto каждого бар-кандидата; N>1 — только каждого N-го (разбавленный veto).
   llm-veto-sample-every: ${BT_LLM_VETO_SAMPLE_EVERY:0}
+  # Порог score-режима veto. Пусто (по умолчанию) - бинарная семантика veto по
+  # action == HOLD. Задаёт порог: вход блокируется при оценке арбитра
+  # signalStrength < порога (оценка качества входа 0..1), диапазон 0.0..1.0.
+  llm-veto-min-score: ${BT_LLM_VETO_MIN_SCORE:}
   llm-veto-temperature: ${BT_LLM_VETO_TEMPERATURE:0.0}
   llm-veto-cache-namespace: ${BT_LLM_VETO_CACHE_NAMESPACE:backtest-veto}
 

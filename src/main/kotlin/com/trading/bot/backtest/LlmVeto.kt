@@ -10,6 +10,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.dto.TechnicalReport
+import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.TimeoutCancellationException
@@ -26,6 +27,7 @@ data class LlmVetoOverrides(
     val blockOnUnknown: Boolean? = null,
     val promptVersion: String? = null,
     val sampleEvery: Int? = null,
+    val minScore: Double? = null,
 ) {
     val anyProvided: Boolean
         get() =
@@ -33,7 +35,8 @@ data class LlmVetoOverrides(
                 budgetMs != null ||
                 blockOnUnknown != null ||
                 promptVersion != null ||
-                sampleEvery != null
+                sampleEvery != null ||
+                minScore != null
 }
 
 /**
@@ -48,6 +51,14 @@ data class LlmVetoOverrides(
  * @property promptVersion версия шаблонов промптов агентов.
  * @property sampleEvery 0 — veto каждого кандидата; N>1 — только каждого N-го
  *   (разбавленный veto, отдельная гипотеза со своим размытием эффекта).
+ * @property minScore порог численного score входа (`null` = режим выключен).
+ *   Бинарная семантика (`final.action == HOLD`) на измерение вырождена: LLM на
+ *   вопрос «отвергнуть ли?» отвечает либо всегда HOLD, либо никогда (замер
+ *   2026-09-29, kimi-k3: `aggressive`/`signal` — 0% блокировок,
+ *   `default`/`conservative`/`veto` — 100%). Поэтому score-режим переносит
+ *   решение на порог: арбитр оценивает качество входа числом в
+ *   `signalStrength` (0..1), блок — при `score < minScore`. Направление и цена,
+ *   как и раньше, игнорируются: измеряется veto, а не генерация.
  * @property temperature детерминизм прогонов (0.0).
  * @property cacheNamespace изоляция кэша агентов от live-контура.
  */
@@ -57,12 +68,16 @@ data class LlmVetoSettings(
     val blockOnUnknown: Boolean = true,
     val promptVersion: String = PromptRegistry.DEFAULT_VERSION,
     val sampleEvery: Int = 0,
+    val minScore: Double? = null,
     val temperature: Double = 0.0,
     val cacheNamespace: String = "backtest-veto",
 ) {
     init {
         require(sampleEvery >= 0) { "bt.llm-veto-sample-every must be >= 0, got $sampleEvery" }
         require(budgetMs >= 0) { "bt.llm-veto-budget-ms must be >= 0, got $budgetMs" }
+        require(minScore == null || minScore in 0.0..1.0) {
+            "bt.llm-veto-min-score must be within 0.0..1.0, got $minScore"
+        }
     }
 
     companion object {
@@ -76,6 +91,7 @@ data class LlmVetoSettings(
                 blockOnUnknown = overrides?.blockOnUnknown ?: config.llmVetoBlockOnUnknown,
                 promptVersion = overrides?.promptVersion ?: config.llmVetoPromptVersion,
                 sampleEvery = overrides?.sampleEvery ?: config.llmVetoSampleEvery,
+                minScore = overrides?.minScore ?: config.llmVetoMinScore,
                 temperature = config.llmVetoTemperature,
                 cacheNamespace = config.llmVetoCacheNamespace,
             )
@@ -140,6 +156,7 @@ class LlmVeto(
         const val ALLOWED = "ALLOWED"
         const val SAMPLED_OUT = "SAMPLED_OUT"
         const val ARB_HOLD = "ARB_HOLD"
+        const val ARB_SCORE_LOW = "ARB_SCORE_LOW"
         const val CHALLENGE_CRITICAL = "CHALLENGE_CRITICAL"
         const val LLM_FAILURE = "LLM_FAILURE"
         const val LLM_FAILURE_PASSED = "LLM_FAILURE_PASSED"
@@ -263,13 +280,38 @@ class LlmVeto(
                 temperature = settings.temperature,
                 cacheNamespace = settings.cacheNamespace,
             )
-        if (final.action != StrategyAction.HOLD) return Verdict(allow = true, reason = Reason.ALLOWED)
+        if (final.action != StrategyAction.HOLD) return scoreVerdict(final.signalStrength, ticker)
         // overrideReason != null ⇒ это не вердикт, а отказ (LLM_UNAVAILABLE /
         // SCHEMA_REJECTED / PARSE_ERROR) — такие решает флаг, а не veto.
         return if (final.overrideReason != null) {
             unknown(Reason.LLM_FAILURE, ticker)
         } else {
             Verdict(allow = false, reason = Reason.ARB_HOLD)
+        }
+    }
+
+    /**
+     * Score-режим: арбитр оценил качество входа числом в `signalStrength`.
+     *
+     * `minScore == null` (дефолт) ⇒ бинарная семантика, вход пропускается —
+     * поведение не меняется. Иначе вход блокируется при `score < minScore`;
+     * порог калибруется сеткой, потому что сама LLM на этот вопрос отвечает
+     * вырожденно (см. [LlmVetoSettings.minScore]).
+     */
+    private fun scoreVerdict(
+        score: Double,
+        ticker: String,
+    ): Verdict {
+        DistributionSummary
+            .builder(SCORE_METRIC)
+            .tag("ticker", ticker)
+            .register(meterRegistry)
+            .record(score)
+        val minScore = settings.minScore ?: return Verdict(allow = true, reason = Reason.ALLOWED)
+        return if (score < minScore) {
+            Verdict(allow = false, reason = Reason.ARB_SCORE_LOW)
+        } else {
+            Verdict(allow = true, reason = Reason.ALLOWED)
         }
     }
 
@@ -295,6 +337,9 @@ class LlmVeto(
 
     companion object {
         private const val RISK_CRITICAL = "CRITICAL"
+
+        /** Распределение score входа (count/sum/min/max/mean) — диагностика калибровки порога. */
+        const val SCORE_METRIC = "bt_llm_veto_score"
 
         /** Тех-контекст, который видит LLM на veto-пути (детерминированные индикаторы). */
         const val TECH_REASONING = "Deterministic indicators (backtest: technical LLM agent is not used on the veto path)."

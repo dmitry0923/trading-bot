@@ -550,6 +550,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
         @RequestParam(required = false) llmVetoPromptVersion: String?,
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
+        @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(defaultValue = "false") includeTrades: Boolean,
     ): Map<String, Any> {
@@ -643,6 +644,7 @@ class ApiController(
                 blockOnUnknown = llmVetoBlockOnUnknown,
                 promptVersion = llmVetoPromptVersion,
                 sampleEvery = llmVetoSampleEvery,
+                minScore = llmVetoMinScore,
             )
         val result =
             backtestEngine.run(
@@ -947,6 +949,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
         @RequestParam(required = false) llmVetoPromptVersion: String?,
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
+        @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(required = false) wfaSlPoints: Int?,
         @RequestParam(required = false) wfaTpPoints: Int?,
@@ -1049,6 +1052,7 @@ class ApiController(
                 blockOnUnknown = llmVetoBlockOnUnknown,
                 promptVersion = llmVetoPromptVersion,
                 sampleEvery = llmVetoSampleEvery,
+                minScore = llmVetoMinScore,
             )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
@@ -1196,6 +1200,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
         @RequestParam(required = false) llmVetoPromptVersion: String?,
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
+        @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -1310,6 +1315,7 @@ class ApiController(
                 blockOnUnknown = llmVetoBlockOnUnknown,
                 promptVersion = llmVetoPromptVersion,
                 sampleEvery = llmVetoSampleEvery,
+                minScore = llmVetoMinScore,
             )
         val report =
             monteCarloAnalyzer.analyze(
@@ -1466,6 +1472,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
         @RequestParam(required = false) llmVetoPromptVersion: String?,
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
+        @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -1562,6 +1569,7 @@ class ApiController(
                 blockOnUnknown = llmVetoBlockOnUnknown,
                 promptVersion = llmVetoPromptVersion,
                 sampleEvery = llmVetoSampleEvery,
+                minScore = llmVetoMinScore,
             )
         val signalGeneratorOverride =
             if (adaptiveConfidenceThreshold != null) {
@@ -1708,6 +1716,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoBlockOnUnknown: Boolean?,
         @RequestParam(required = false) llmVetoPromptVersion: String?,
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
+        @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
     ): Map<String, Any> {
         meterRegistry
@@ -1811,6 +1820,7 @@ class ApiController(
                         blockOnUnknown = llmVetoBlockOnUnknown,
                         promptVersion = llmVetoPromptVersion,
                         sampleEvery = llmVetoSampleEvery,
+                        minScore = llmVetoMinScore,
                     ),
             )
 

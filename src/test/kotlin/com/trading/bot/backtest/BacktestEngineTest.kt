@@ -104,6 +104,29 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `empty candle slice does not query funding history and returns empty result`() {
+        // Регресс на баг, найденный на WFA 730д: фолд без свечей ронял sorted.first()
+        // (NoSuchElementException), исключение ловилось блоком funding и логировалось
+        // как "funding history unavailable" - реальная причина маскировалась. Теперь
+        // запрос к funding не выполняется вовсе, а прогон честно отдаёт 0 сделок.
+        val fundingRepo = Mockito.mock(FundingHistoryRepository::class.java)
+        val engineWithRepo =
+            BacktestEngine(
+                candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                fundingHistoryRepository = fundingRepo,
+            )
+
+        val result = runBlocking { engineWithRepo.simulate("SBER", emptyList()) }
+
+        assertEquals(0, result.totalTrades)
+        runBlocking {
+            Mockito
+                .verify(fundingRepo, Mockito.never())
+                .findValuesBetween(Mockito.anyString(), anyLocalDate(), anyLocalDate())
+        }
+    }
+
+    @Test
     fun `non empty funding history does not break simulation`() {
         // Исторический ряд присутствует → P&L вычитает фактические значения по датам
         // клирингов (нет NPE/исключений), метрики конечны.

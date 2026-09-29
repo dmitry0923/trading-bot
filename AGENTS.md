@@ -1049,10 +1049,52 @@ docs/19), а как **сокращатель плохих входов**. Реа
   Теперь везде `|| backtestConfig.llmVetoEnabled`; регресс-тест на `LlmVetoSettings.from`
   (config-fallback + перекрытие query).
 - **Статус:** код готов, юнит-тесты зелёные (veto 14, `bypassCache` 2, query-контракт,
-  wiring). **Реальный IS/WFA-прогон НЕ выполнен** — нет `LLM_API_KEY`. План: IS-прескрин
-  на CNYRUBF (baseline PF ≈ 0.93) → при ≥30 сделках и PF не хуже baseline WFA →
-  deployment gate. Вердикт об edge появится только после этого; до него `bt.llm-veto-*`
-  остаётся off, а `trading.*` veto-параметров не существует вовсе.
+  wiring). IS-прескрин выполнен 2026-09-29 на CNYRUBF 365д (скрипт
+  `scripts/research_llm_veto_is.ps1`): порог 0.35 → 23 сделки PF 1.489, 0.40 → 15 сделок
+  PF 1.945, 0.45 → 11 сделок PF 2.158 (return 0.208–0.235%, win 30–36%, MDD 0.16–0.20%)
+  против baseline PF ≈ 0.93. **Вердикт: score-порог edge не доказал** — «улучшение»
+  получено на 11–23 сделках и монотонно сходит к нулю при ослаблении фильтра, т.е. это
+  сокращение выборки, а не повышение качества; WFA/deployment-gate по score НЕ проводились.
+  `bt.llm-veto-*` остаётся off, `trading.*` veto-параметров не существует вовсе.
+- **Измерительный баг счётчика:** дельта `bt_llm_veto_blocked_total` между прогонами
+  давала отрицательные значения (сброс/подмена actuator-метрики) — колонка `blocked_run`
+  в свипе непригодна, в следующих прогонах скрипт пишет `n/a`.
+
+### Риск-сетка 730д: риск не создаёт доходность (2026-09-29, `risk-grid-730d`)
+
+Проверка гипотезы «100%/год достижима повышением риска». WFA 730д folds=8, conf 0.60,
+детерминированная стратегия CNYRUBF MINUTE_10 (без LLM-veto, чтобы не смешивать выбор
+edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, результаты
+`scripts/riskgrid_wfa_730d.csv`, формальный вердикт `scripts/riskgrid_gate_best.json`.
+
+| riskPerTrade | maxC | OOS Return | OOS PF | OOS Sharpe | Сделки | Consistency |
+|---|---|---|---|---|---|---|
+| **5%** | 20 | **−2.17%** | **0.954** | −0.14 | 85 | 0.500 |
+| 10% | 50 | −5.42% | 0.954 | −0.05 | 85 | 0.500 |
+| 15% | 75 | −12.05% | 0.926 | −0.10 | 85 | 0.500 |
+| 20% | 100 | −12.38% | 0.924 | −0.11 | 85 | 0.500 |
+| 30% | 100 | −11.40% | 0.930 | −0.08 | 86 | 0.500 |
+
+- **Вывод: рост риска ухудшает OOS монотонно** (−2.17% → −12.38%); ни один профиль не
+  даёт плюса, не говоря о 100%/год. **Число сделок одинаково (85–86) при любом риске** —
+  риск меняет только размер позиции, но не решения; леверидж умножает убыток, а не edge.
+- **Deployment-gate лучшего профиля (5%/20) = REJECTED, liveAllowed=false** — провалены
+  все 8 проверок: backtest Sharpe 0.206/PF 1.036 (67 сделок), WFA OOS PF 0.608/consistency
+  0.375/62 сделки, edge P(noEdge)=0.942, holdout −3.6% (17 сделок), MC p5=−15.9%/pLoss
+  46.3%/stressFailed=5.
+- **Цель «100% в год» на текущей детерминированной стратегии признана недостижимой**
+  и по риск-сетке, и по лидеру combo730 (+193.6% за 730д ≈ +71%/год на калибровочном
+  риске 30%/100, но gate RESEARCH_ONLY, holdout −17.6%). Дальнейшее масштабирование
+  риск-параметров не рассматривается; требуется смена стратегии/источника edge.
+- **Найден баг `BacktestEngine` (исправлен):** на пустом фолде `sorted.first()` бросал
+  `NoSuchElementException`, исключение проглатывалось и логировалось как «funding history
+  unavailable» — ложная диагностика маскировала реальный `NoSuchElementException` (3 `trades=0`
+  из 78 backtest-строк в старом прогоне). Теперь пустой срез логируется явно и не ходит в
+  funding repository; регресс-тест `empty candle slice does not query funding history and
+  returns empty result`. Выяснилось также, что тревога про funding была ложной: ряд
+  SWAPRATE в БД есть и читается. **Остаточный риск:** пустой срез всё ещё возвращает
+  формальный пустой `BacktestResult` (без invalid-флага), поэтому такие фолды входят в
+  агрегацию — при следующем изменении движка это нужно закрыть.
 
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
@@ -1100,7 +1142,8 @@ docs/19), а как **сокращатель плохих входов**. Реа
 | 2026-09-26 | Три новых ядра + протокол IS70/OOS30 (`strategies-cores-70-30`) | Подстановки для нереализуемых инструментов (№2→macro-trend CNYRUBF, №3→ORB GLDRUBF, №7→panic-reversal IMOEXF, названы ПОДСТАНОВКОЙ в вердикте); три новых входных research-фильтра **дефолт off** с query-override на 5 эндпоинтах: `squeezeDirection` (+`IndicatorCalculator.keltner`/`isSqueeze`), `panicReversalDirection` (только LONG), `macroTrendDirection`; lookahead закрыт по коду (`subList(0,i)` + fill `current.openPrice` — консервативнее требуемых 1.5–3 с, отдельный delay не нужен); **ловушка теста**: линейный рост не даёт пробоя BB (z≈1.65<2σ) — нужен «19 плоских баров + импульс»; **протокол `scripts/research_oos70.ps1`**: `holdoutFraction=0.30`, вердикт только по holdout (`OOS PF<1.3`→REJECTED, `<30` сделок→INCONCLUSIVE, порог = `BacktestResult.isPassable()`), IS/dev — только диагностика; три `/validate`-скрипта сетки (`research_wfa_squeeze/panic/macrotrend`, в macro — funding plateau 5/6/8 ₽ + maxHoldBars=1095); зафиксировано расхождение: в №1 реализован откат к EMA, а не VWAP (контртрендовый, исследуется отдельно) | test+int+ktlint |
 | 2026-09-28 | Триаж 10 гибридных LLM-стратегий + инъекция таймаутов (`strategies-10-triage`) | Сверка списка с кодом/данными **до** реализации: 4 уже измерены и не проходят (macro INCONCLUSIVE, panic 0 сигналов, squeeze REJECTED, VWAP-MR на Si без OBI), 4 структурно невозможны (OBI — `candles` только OHLCV, bid/ask не хранится; Z-score/парного движка нет 0 совпадений; YNDX нет; MX нет), 1 требует нового data-слоя, 1 бессмысленна без подтверждённого LLM-edge; исправлены ошибочные посылки ТЗ (max-hold в **барах** не минутах; «edge PF 2.15» — цифра 365д, на 730д baseline PF 0.92; `normalizeTargetPrice` = нормализация LLM-JSON; 930 мин = 15:30 МСК) → **главный ограничитель «100%/год» — глубина данных, не фильтры**; **реализовано `bt.agent.signal-budget-ms` (default 0 = выключен) + `bt.agent.timeout-injection-rate` (default 0.0)** — цепочка под `withTimeout` с fail-closed HOLD, инъекция таймаутов реальной задержкой, детерминирована по (ticker, индекс бара), метрика `backtest.agent.timeout{cause=injected\|budget}`; закрыт пункт чек-листа «5% таймаутов ⇒ HOLD»; тесты `LlmTimeoutInjectionTest` (8) + 3 кейса генератора, включая «таймаут ⇒ HOLD без вызова агентов» | test + int + ktlint |
 | 2026-09-28 | WFA 730д трёх новых ядер + harness-фиксы (`strategies-cores-730d`) | **WFA 730д folds=8 conf 0.60 risk30/maxC100** (live-стек, `loadHistory=false`) на CNYRUBF/IMOEXF: squeeze (lookback 5) — **REJECTED** (PF 0.84 против baseline 0.92, consistency 0.25 против 0.50, 86→60 сделок; mh368 ничего не меняет −15.61→−15.55); panic на IMOEXF — **0 сигналов** при drop3%/RSI≤25 и при RSI≤30 (третий конфиг drop5%/RSI≤25 пропущен как provably 0), сам IMOEXF OOS −726%/PF 0.10; macro-trend — единственный развернувший baseline в плюс (PF 1.397–3.17, OOS +25.8…+146%, funding 5/6/8 ₽ = плато), но 11–23 OOS-сделки < 30 → **INCONCLUSIVE**, `robust=false` у всех → все три `bt.*` остаются off, live-параметры не менялись; **исправлены 5 harness-багов**: разделитель `имя;query` (без `;` был тихий baseline), дубль `maxHoldBars` в URL (Spring брал первое значение → max-hold молча выключен), неверное поле Sharpe (`oosSharpeRatio` → `oosSharpe`, колонка была 0), тайминг ORB-окна (930 мин = 15:30 МСК), повторный baseline (`-SkipBaseline`, у macro baseline = `-MaxHoldBars 0`); **fail-closed squeeze**: `catch (Exception)` при `squeezeBlockOnUnknown=true` даёт HOLD, а не «фильтр выключен» + регресс-тест | test (1588) + int (101) + ktlint |
-| 2026-09-29 | LLM-veto поверх детерминированного сигнала (`llm-veto`) | **`LlmVeto`** (`ContrarianAgent.challenge` → `ArbitratorAgent.adjudicate`, блокирует только `final.action == HOLD` без `overrideReason`; направление/цена/сила арбитра игнорируются), применяется последним в `LiveStrategyBacktestSignalGenerator` (после session/pullback/ORB/squeeze/panic/macro и ML); fail-closed на CRITICAL/ошибке/таймауте/отказе по `blockOnUnknown` (отказ ≠ veto); обход семантического кэша агентов (`bypassCache` в `ContrarianAgent`, `temperature=0.0`, `adaptiveConfidence=0.0`, namespace `backtest-veto`) + мемоизация вердикта по `(ticker, barTime, action)` — без этого вердикт кэшировался бы по грубому отпечатку и отвечал бы за другой бар, а WFA переигрывал бы платные вызовы; конфиг `bt.llm-veto-*` (enabled **false**, budget 20000, blockOnUnknown true, sampleEvery 0) + query-оверрайды `llmVeto*` на 5 эндпоинтах; метрики `bt_llm_veto_{candidates,blocked,allowed,cache_hits}_total`; **найден баг подключения**: условие фабрики генератора учитывало только query-оверрайды, config-only `llmVetoEnabled=true` молча не доходил до veto (4 эндпоинта) — добавлено `|| backtestConfig.llmVetoEnabled` + регресс-тест `LlmVetoSettings.from`; **реальный IS/WFA-прогон НЕ выполнен (нет `LLM_API_KEY`)**, вердикта об edge нет, `bt.llm-veto-*` остаётся off, live-путь не затронут; тесты `LlmVetoTest` (14) + `ContrarianAgentBypassCacheTest` (2) + query-контракт + generator-wiring | test (1656) + int + ktlint |
+| 2026-09-29 | LLM-veto поверх детерминированного сигнала (`llm-veto`) | **`LlmVeto`** (`ContrarianAgent.challenge` → `ArbitratorAgent.adjudicate`, блокирует только `final.action == HOLD` без `overrideReason`; направление/цена/сила арбитра игнорируются), применяется последним в `LiveStrategyBacktestSignalGenerator` (после session/pullback/ORB/squeeze/panic/macro и ML); fail-closed на CRITICAL/ошибке/таймауте/отказе по `blockOnUnknown` (отказ ≠ veto); обход семантического кэша агентов (`bypassCache` в `ContrarianAgent`, `temperature=0.0`, `adaptiveConfidence=0.0`, namespace `backtest-veto`) + мемоизация вердикта по `(ticker, barTime, action)` — без этого вердикт кэшировался бы по грубому отпечатку и отвечал бы за другой бар, а WFA переигрывал бы платные вызовы; конфиг `bt.llm-veto-*` (enabled **false**, budget 20000, blockOnUnknown true, sampleEvery 0) + query-оверрайды `llmVeto*` на 5 эндпоинтах; метрики `bt_llm_veto_{candidates,blocked,allowed,cache_hits}_total`; **найден баг подключения**: условие фабрики генератора учитывало только query-оверрайды, config-only `llmVetoEnabled=true` молча не доходил до veto (4 эндпоинта) — добавлено `|| backtestConfig.llmVetoEnabled` + регресс-тест `LlmVetoSettings.from`; **IS-скрин выполнен 2026-09-29** (`research_llm_veto_is.ps1`, CNYRUBF 365д): score-порог 0.35 → 23 сделки PF 1.489, 0.40 → 15 сделок PF 1.945, 0.45 → 11 сделок PF 2.158 (return 0.208–0.235%, win 30–36%, MDD 0.16–0.20%) против baseline PF ≈ 0.93 — **score-порог edge не доказал** (монотонный сход к нулю при ослаблении фильтра = сокращение выборки, а не качество), WFA/gate по score не проводились; найден измерительный баг дельты `bt_llm_veto_blocked_total` (отрицательные значения при сбросе actuator-метрики) → колонка `blocked_run` непригодна, скрипт пишет `n/a`; `bt.llm-veto-*` остаётся off, live-путь не затронут; тесты `LlmVetoTest` (14) + `ContrarianAgentBypassCacheTest` (2) + query-контракт + generator-wiring | test (1656) + int + ktlint |
+| 2026-09-29 | Риск-сетка 730д (`risk-grid-730d`) | **Честная проверка «100%/год через риск»**: WFA 730д folds=8 conf 0.60 на детерминированной CNYRUBF MINUTE_10 (без LLM-veto, чтобы не смешивать выбор edge и риск), профили 5:20/10:50/15:75/20:100/30:100 — OOS **−2.17%/PF 0.954** … −12.38%/PF 0.924, **монотонная деградация с ростом риска, число сделок одинаково (85–86) при любом риске**; deployment-gate лучшего (5:20) = **REJECTED, liveAllowed=false** — провалены все 8 проверок (OOS PF 0.608, consistency 0.375, P(noEdge)=0.942, holdout −3.6%, MC p5=−15.9%, stressFailed=5); **цель 100%/год признана недостижимой на текущей стратегии** — риск не создаёт edge, леверидж умножает убыток; **исправлен баг `BacktestEngine`**: пустой фолд `sorted.first()` → `NoSuchElementException` проглатывался и логировался как «funding history unavailable» (ложная диагностика маскировала реальную ошибку, 3 `trades=0` из 78 строк) — теперь пустой срез логируется явно и не ходит в funding repository, регресс-тест `empty candle slice does not query funding history and returns empty result`; **остаточный риск**: пустой срез всё ещё возвращает формальный пустой `BacktestResult` (без invalid-флага) и входит в агрегацию; скрипты `research_risk_grid_730d.ps1` + `watch_research_job.ps1`, артефакты `riskgrid_wfa_730d.csv` + `riskgrid_gate_best.json` | test (1656) + int + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
@@ -1126,7 +1169,11 @@ docs/19), а как **сокращатель плохих входов**. Реа
   P(noEdge)=0.551, 21 сделка); перпетуалы (2026-09-22) — USDRUBF единственный положительный
   (OOS +1.6%/PF 1.03, но P=0.47/robust=false), EURRUBF/GLDRUBF/IMOEXF OOS убыточны (PF 0.65/0.05/0.12);
   сильнейший research-кандидат закрыт.
-  Кандидаты вне скоупа: иные тикеры/таймфреймы; решение за пользователем.
+  **ЗАКРЫТ 2026-09-29 (`risk-grid-730d`):** риск-сетка 730д доказала, что риск не создаёт
+  доходность — OOS монотонно ухудшается с ростом риска (−2.17% → −12.38%), число сделок
+  одинаково (85–86) при любом профиле, deployment-gate лучшего = REJECTED (8/8 проверок).
+  Итог: **цель «100% в год» на текущей детерминированной стратегии признана
+  недостижимой**; требуется смена стратегии/источника edge, а не новый фильтр или риск-параметр.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 
@@ -1155,8 +1202,10 @@ docs/19), а как **сокращатель плохих входов**. Реа
   список — NEUTRAL-база, ничего не ломается.
 - Бэктест «строго LLM»: профиль `backtest` + `bt.agent.enabled=true` +
   `bt.agent.live-strategies=false` (сейчас default `live-strategies=true`, LLM не гоняется).
-- Блокер валидации: **`LLM_API_KEY` в `.env` отсутствует** → все LLM-агенты на
-  детерминированных fallback (smoke-only до появления ключа).
+- Ключ провайдера в `.env` **есть** (не коммитить, ротировать — ключ уже засветился в
+  process arguments одного research-прогона). IS-скрины LLM (в т.ч. veto-score 2026-09-29)
+  выполнены; агентные WFA-прогоны требуют `LLM_DISABLE_REASONING=true` для thinking-моделей
+  и `LLM_BUDGET_ENABLED=false` (дефолтный `LLM_MAX_TOKENS_PER_MINUTE=4000` душит WFA).
 - `docs/03-llm-pipeline.md` описывает текущие 6 агентов и не менялся для этого дизайна.
 - Риск-аудит LLM-пути (этап 3, 2026-09-14; docs/17 §17.8): `trading.llm-signal-budget-ms=2000`
   (env `TRADING_LLM_SIGNAL_BUDGET_MS`) — `LlmSignalStrategy.evaluate` под `withTimeout` → при

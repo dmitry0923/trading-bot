@@ -460,34 +460,44 @@ futuresGrid SL/TP (пункты), цикл тот же `LiveStrategyBacktestSign
   edge не дала нигде; единственный значимый источник остаётся CNYRUBF MINUTE_10 детерминированный
   (PF 2.15, P=0.0425).
 
-### Диверсификация по фьючерсным перпетуалам (WFA 730д, 2026-09-22)
+### Диверсификация по фьючерсным перпетуалам (WFA 730д, 2026-09-22; ПЕРЕИЗМЕРЕНО 2026-09-30)
 
 Продолжение диверсификации (после акций/таймфреймов): проверка бессрочных фьючерсов MOEX
 (перпетуалы, LASTDELDATE 2100, SECID == ticker — загрузка истории работает без склейки контрактов).
 Скрипт `research_wfa_perps.ps1` (WFA 730д×folds=8 conf=0.60, калибровочный риск-профиль
 riskPerTradePercent=30&futuresMaxContractsPerPosition=100, futuresGrid). История загружена напрямую
 с MOEX ISS (interval=10): USDRUBF 46 140 свечей, EURRUBF 43 319, GLDRUBF 50 293, IMOEXF 50 385;
-funding_history донакачан (SWAPRATE, 508 дат/тикер). Новые spec в `InstrumentsConfig`+`application.yml`
+funding_history донакачан (SWAPRATE, 514 дат/тикер). Новые spec в `InstrumentsConfig`+`application.yml`
 (USDRUBF/EURRUBF/GLDRUBF/IMOEXF — research-вселенная, LIVE-guard оставляет вход только CNYRUBF).
 SLVRUBF исключён (полная история недоступна, контракт торгуется только с 2026-03).
 
-| Ticker | IS ret (maxC=1) | IS PF | IS trades | OOS Ret | OOS PF | OOS Sharpe | OOS Trades | Consistency | P(noEdge) | robust |
-|--------|-----------------|-------|-----------|---------|--------|------------|------------|-------------|-----------|--------|
-| USDRUBF | +7.27% | 1.68 | 79 | **+1.6%** | **1.03** | +0.19 | 74 | **0.5** | **0.47** | false |
-| EURRUBF | +3.23% | 1.22 | 100 | −49.9% | 0.65 | −1.21 | 81 | 0.25 | 0.93 | false |
-| GLDRUBF | −0.71% | 0.32 | 127 | −162.1% | 0.05 | −1.09 | 120 | 0.0 | 1.00 | false |
-| IMOEXF | +1.94% | 1.29 | 94 | −628.7% | 0.12 | −1.32 | 94 | 0.0 | 1.00 | false |
+> **ПРОГОН 2026-09-22 БЫЛ ИСПОРЧЕН БАГОМ МНОЖИТЕЛЯ ЛОТА (исправлено 2026-09-30, `funding-lot-size`).**
+> Для `GLDRUBF` (lotSize 1) и `IMOEXF` (lotSize 10) funding считался как `raw×1000` вместо
+> `raw×lotSize` — завышение ×1000 и ×100. Для `USDRUBF`/`EURRUBF` (lotSize 1000) значения
+> корректны, их дельта обусловлена догрузкой данных и изменениями кода между прогонами
+> (liq-симуляция, max-hold), а не багом.
 
-- **Вывод: фьючерсные перпетуалы edge НЕ дают.** USDRUBF — единственный положительный кандидат
-  (IS PF 1.68, OOS +1.6%/PF 1.03/consistency 0.5/74 сделки), но OOS P(noEdge)=0.47 (статистическая
-  нулёвка) и `robust=false` — тот же тонковатый профиль, что у PLZL/акций. EURRUBF/GLDRUBF/IMOEXF
-  OOS глубоко убыточны (PF 0.05–0.65) — конвейер на этих тикерах торгует в минус.
-- Характерно: все перпетуалы дают БОЛЬШЕ сделок, чем CNYRUBF (74–120 OOS против 21–26 у CNYRUBF),
-  но без edge — чаще входы = хуже PF (тот же паттерн, что у LLM/conf 0.50). IS-доходность не
-  выживает в OOS ни у одного тикера.
-- **Решение: перпетуалы в live НЕ включаются** (LIVE-guard allowlist остаётся только CNYRUBF);
-  research-вселенная и скрипт остаются в репозитории. CNYRUBF MINUTE_10 детерминированный остаётся
-  единственным значимым источником (PF 2.15, P=0.0425).
+**Корректные результаты (переизмерено 2026-09-30, тот же профиль 730д/folds=8/conf 0.60/риск 30%/100):**
+
+| Ticker | OOS Ret (было→стало) | OOS PF (было→стало) | OOS Sharpe | OOS Trades | Consistency | P(NoEdge) | robust |
+|--------|---------------------|--------------------|-----------|------------|-------------|-----------|--------|
+| USDRUBF | +1.6% → **+6.95%** | 1.03 → **1.11** | +0.51 | 74 | 0.38 | 0.35 | false |
+| EURRUBF | −49.9% → **−34.49%** | 0.65 → 0.83 | −0.45 | 79 | 0.38 | 0.75 | false |
+| GLDRUBF | −162.1% → **−7.00%** | **0.05 → 0.94** | −0.25 | 128 | 0.50 | 0.63 | false |
+| IMOEXF | −628.7% → **+27.38%** | **0.12 → 1.13** | +0.77 | **100** | **0.62** | 0.28 | **true** |
+
+- **Вывод: «глубоко убыточны PF 0.05–0.65» — ЭТО БЫЛ АРТЕФАКТ БАГА.** GLDRUBF из −162.1%/PF 0.05
+  превратился в −7.0%/PF 0.94 (не edge, но и не разрушение). IMOEXF **сменил знак** и впервые дал
+  `robust=true` при 100 OOS-сделках и consistency 0.62 (порог MIN_WALK_FORWARD_TRADES=100 пройден).
+- **Но edge НЕ подтверждён: IMOEXF = INCONCLUSIVE.** `P(NoEdge)=0.28` (порог 0.05), CI95 средней
+  сделки `[−590.3; +1177.2]` **содержит ноль**. `robust=true` здесь — устойчивость OOS-распределения
+  к MC-пертурбациям, а НЕ статистическая значимость edge; эти вещи не взаимозаменяемы.
+  USDRUBF (PF 1.11, P=0.35) и EURRUBF (PF 0.83) значимости также не имеют.
+- **Решение: перпетуалы в live НЕ включаются** (LIVE-guard allowlist остаётся только CNYRUBF).
+  Формальный следующий шаг для IMOEXF — `deployment-gate`/`holdout` по протоколу; с учётом истории
+  combo730 (плато P=0.058 на полной истории → REJECTED на dev-части) пляточный P=0.28 тем более
+  не является основанием. CNYRUBF MINUTE_10 детерминированный остаётся единственным источником
+  со значимым edge (PF 2.15, P=0.0425).
 - **Решение: старшие таймфреймы в research-цикл НЕ вводятся** (`bt.timeframe` не меняется,
   default MINUTE_10). HOUR_1 можно пересмотреть при большем горизонте/ином профиле сделок — вне
   текущего скоупа.
@@ -1133,7 +1143,7 @@ edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, резу�
 | 2026-09-20 | 730д WFA детерминированной стратегии (`wfa-730d`) | прогон на полной истории (46 124 свечи MINUTE_10 2024-09-19..2026-09-19, funding_history 509 дат); IS base (maxC=1): +0.2%/PF 1.11/86 сделок; **WFA folds=8 conf=0.60 + риск 30%/maxC 100: OOS −80.4%, PF 0.72, consistency 0.25, robust=false (77 OOS-сделок)** → детерминированная стратегия НЕ выживает на 730д, цель «100% в год» на ней недостижима; live-параметры НЕ менялись; скрипт `research_wfa730_cnyrubf.ps1` | test+int+ktlint |
 | 2026-09-21 | Диверсификация по акциям (`diversification-stocks`) | **WFA 365д folds=6 leverage x5 conf=0.60 stockGrid на GAZP/NVTK/PLZL/SBER (56k свечей с 2024-09-19): у 3 из 4 OOS убыточен (GAZP −20.2%/PF 0.59, NVTK −14.9%/0.78, SBER −8.3%/0.75), PLZL +19.0%/PF 1.26/Sharpe 0.92/70 сделок но P(noEdge)=0.21, robust=false** → диверсификация НЕ даёт устойчивый портфельный edge, PLZL в live не включается; скрипт `research_wfa_diversification.ps1` (TickerCsv, re-auth в catch) | test+int+ktlint |
 | 2026-09-21 | Таймфрейм-диверсификация CNYRUBF (`timeframe-resample`) | **WFA 365д folds=6 conf=0.60 futuresGrid через `CandleResampler` (MINUTE_10 → HOUR_1/DAY_1, `/validate?timeframe=`): HOUR_1 +0.69%/PF 1.57/Sharpe 0.68/18 сделок/P(noEdge)=0.24/consistency 0.667 но robust=false; DAY_1 −0.14%/1 сделка (неинформативно)** → старшие таймфреймы edge НЕ дают, `bt.timeframe` остаётся MINUTE_10; скрипт `research_wfa_diversification.ps1 -Timeframe` | test+int+ktlint |
-| 2026-09-22 | Диверсификация по фьючерсным перпетуалам (`perps-diversification`) | **WFA 730д×folds=8 conf=0.60 риск 30%/maxC 100 на USDRUBF/EURRUBF/GLDRUBF/IMOEXF (MOEX ISS interval=10: 46 140/43 319/50 293/50 385 свечей; funding_history 508 дат/тикер; новые spec в `InstrumentsConfig`/`application.yml`; SLVRUBF исключён — история с 2026-03): USDRUBF единственный положительный (IS PF 1.68/OOS +1.6%/PF 1.03/consistency 0.5/74 сделки но P(noEdge)=0.47, robust=false); EURRUBF/GLDRUBF/IMOEXF OOS убыточны (PF 0.65/0.05/0.12, P 0.93/1.0/1.0)** → перпетуалы edge НЕ дают, в live не включаются; скрипт `research_wfa_perps.ps1` | test+int+ktlint |
+| 2026-09-30 | **Переизмерение перпетуалов после фикса funding (`funding-lot-size`, `perps-rerun`)** | **Прогон 2026-09-22 был испорчен багом множителя лота (GLDRUBF lotSize 1 ×1000, IMOEXF lotSize 10 ×100). После пересборки jar, рестарта бота и пересчёта 1016 рядов `funding_history` — повторный WFA 730д×folds=8 conf 0.60 риск 30%/100 (4ч29м): GLDRUBF −162.1%/PF 0.05 → **−7.0%/PF 0.94**; IMOEXF −628.7%/PF 0.12 → **+27.38%/PF 1.13, 100 сделок, consistency 0.62, robust=true** (первый robust среди перпетуалов); USDRUBF +1.6% → +6.95%/PF 1.11; EURRUBF −49.9% → −34.49%/PF 0.83. Верификация фикса в рантайме: повторная донакачка оставила 6.90/23.05 ₽ (старый код записал бы 6903/230)** → «глубокая убыточность PF 0.05–0.65» была артефактом; но **edge не подтверждён** (IMOEXF P(NoEdge)=0.28, CI95 `[-590.3;+1177.2]` содержит ноль; `robust=true` = устойчивость к MC, не значимость) → **INCONCLUSIVE**, перпетуалы в live не включаются; формальный следующий шаг для IMOEXF — `deployment-gate`/`holdout` | test (1769) + int + ktlint |
 | 2026-09-21 | Max-hold (`max-hold-time-exit`) | **`bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) + query-оверрайд `maxHoldBars` на /backtest /validate /robustness (паттерн funding-veto; в `BacktestEngine` после SL/TP, приоритет ниже liq/SL/TP): WFA 365д folds=6 conf=0.60 сетка 30/46/92/184/368/736 баров — off (baseline) PF 1.63/P=0.15; 368 баров (8д) PF **2.15**/Sharpe **1.45**/P=**0.08**/consistency 0.667 но 27 сделок (robust=false); короткие 5ч–1д деградируют; комбо mh368+funding-veto 9/2 (risk30/maxC100) PF **2.27**/P=**0.065**; доводка порогов (2026-09-21,
   long 7–10 × short 0–1.5) — **плато PF 2.38–2.41/P=0.058/24 сделки** (устойчивый оптимум, не острый
   пик, но 0.05 не пробивается); conf 0.50 → выборка 26→208 сделок но OOS убыточен (baseline
@@ -1175,9 +1185,10 @@ edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, резу�
   P=0.21); таймфреймы (2026-09-21) — HOUR_1 +0.69%/PF 1.57 но 18 сделок/P=0.24, DAY_1 не торгует;
   max-hold 368 баров/8д (2026-09-21) — PF 2.15/Sharpe 1.45/P=0.08, но 27 сделок (robust=false);
   комбо mh368+funding-veto 9/2 (2026-09-22) — формальный deployment-gate REJECTED (OOS PF 0.92,
-  P(noEdge)=0.551, 21 сделка); перпетуалы (2026-09-22) — USDRUBF единственный положительный
-  (OOS +1.6%/PF 1.03, но P=0.47/robust=false), EURRUBF/GLDRUBF/IMOEXF OOS убыточны (PF 0.65/0.05/0.12);
-  сильнейший research-кандидат закрыт.
+  P(noEdge)=0.551, 21 сделка); перпетуалы (2026-09-22) — прогон был испорчен багом множителя
+  лота, **переизмерен 2026-09-30**: USDRUBF +6.95%/PF 1.11 (P=0.35), IMOEXF +27.38%/PF 1.13
+  (100 сделок, consistency 0.62, robust=true) — но P(NoEdge)=0.28 и CI95 содержит ноль →
+  **INCONCLUSIVE**, в live не идут;
   **ЗАКРЫТ 2026-09-29 (`risk-grid-730d`):** риск-сетка 730д доказала, что риск не создаёт
   доходность — OOS монотонно ухудшается с ростом риска (−2.17% → −12.38%), число сделок
   одинаково (85–86) при любом профиле, deployment-gate лучшего = REJECTED (8/8 проверок).

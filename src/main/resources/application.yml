@@ -853,6 +853,9 @@ lockbox:
 funding:
   moex-url: ${FUNDING_MOEX_URL:}
   moex-column: ${FUNDING_MOEX_COLUMN:SWAPRATE}
+  # НЕ УЧАСТВУЕТ в конвертации: RUB/контракт = raw(SWAPRATE) x lotSize ИНСТРУМЕНТА
+  # (CNY/USD/EUR=1000, IMOEXF=10, GLDRUBF=1). Оставлен для совместимости старых
+  # конфигов; как fallback НЕ применяется (он завышал funding по GLDRUBF/IMOEXF).
   moex-lot-multiplier: ${FUNDING_MOEX_LOT_MULTIPLIER:1000}
   moex-ttl-ms: ${FUNDING_MOEX_TTL_MS:300000}
   request-timeout-ms: ${FUNDING_REQUEST_TIMEOUT_MS:10000}

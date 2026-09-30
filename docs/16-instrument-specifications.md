@@ -64,13 +64,35 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
 - Встраивание: `PnlCalculator.futures` (live) и `BacktestEngine.closePosition` (бэктест) вычитают
   `fundingPerClearing × qty × clearings`. Значение отключено (`null`), если funding не задан.
 - **LIVE-источник (P0)**: перед входом `FuturesEntryProfile` вызывает `FundingSnapshotService.refresh(ticker)`
-  — MOEX-снапшот (`funding.moex-url`, столбец `funding.moex-column`, конвертация `raw × funding.moex-lot-multiplier`
-  = лот 1000 CNY → RUB/контракт/клиринг) с TTL `funding.moex-ttl-ms`. Поле funding — **`SWAPRATE`**
+  — MOEX-снапшот (`funding.moex-url`, столбец `funding.moex-column`, конвертация `raw × lotSize`
+  инструмента) с TTL `funding.moex-ttl-ms`. Поле funding — **`SWAPRATE`**
   (MOEX ISS, «Фандинг, руб.», RUB за 1 единицу базового актива; подтверждено по реальным данным
   CNYRUBF 2026-09-08..10: 0.00278 / 0.00256 — `LATESTFUNDING` в MOEX ISS НЕ существует, верифицировано 2026-09-10).
   Недоступность MOEX → **явный** provisional CONFIG-fallback с метрикой `funding.live.provider_unavailable`;
   устаревший MOEX-снапшот (> TTL) → fallback с метрикой `funding.live.snapshot_stale_config_fallback`.
-  Множитель: лот 1000 CNY.
+
+#### Множитель лота = `lotSize` инструмента (исправлено 2026-09-30)
+
+`SWAPRATE` публикуется как RUB за **1 единицу базового актива**, поэтому в RUB/контракт
+умножается на `instruments.lotSize` конкретного контракта, а не на константу:
+
+| тикер | lotSize | SWAPRATE (среднее) | RUB/контракт/клиринг |
+|---|---|---|---|
+| CNYRUBF, USDRUBF, EURRUBF | 1000 | 0.0057 / 0.0494 / 0.0363 | 5.66 / 49.39 / 36.35 |
+| IMOEXF | 10 | 2.3177 | 23.18 |
+| GLDRUBF | 1 | 6.9046 | 6.90 |
+
+Раньше `MoexFundingProvider` (LIVE) и `MoexFundingHistoryLoader` (backtest) применяли
+глобальный `funding.moex-lot-multiplier = 1000` ко **всем** тикерам. Для GLDRUBF это давало
+**6 904.6 ₽/клиринг вместо 6.9** (×1000), для IMOEXF — **2 317.7 вместо 23.18** (×100):
+funding в P&L превышал ценовой P&L контракта на порядки и полностью определял результат.
+`funding.moex-lot-multiplier` в конвертации **не участвует** (оставлен для совместимости
+конфигов); неизвестный тикер → fail-closed (LIVE: `null` → `FUNDING_UNKNOWN`; loader: пусто).
+Ряды `funding_history` по GLDRUBF/IMOEXF (508 + 508) пересчитаны из корректного `raw_value`
+(бэкап: `funding_history_backup_20260930`).
+
+⚠️ Результаты research-прогонов по GLDRUBF/IMOEXF до 2026-09-30, считавшие funding по
+`funding_history`, содержат завышенный funding и непригодны для выводов об edge.
 
 ### Funding Veto Gate (research, дефолт off)
 

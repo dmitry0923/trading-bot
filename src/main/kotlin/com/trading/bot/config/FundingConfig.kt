@@ -23,8 +23,15 @@ import java.time.LocalDate
  *   MOEX — `SWAPRATE` (RUB за 1 единицу базового актива; подтверждено по реальным
  *   данным CNYRUBF 2026-09-08..10: 0.00278 / 0.00256)
  *   — `LATESTFUNDING` в MOEX ISS НЕ существует (верифицировано 2026-09-10).
- * - [moexLotMultiplier] — конвертация raw-значения → RUB/контракт/клиринг (CNYRUBF:
- *   ставка за 1 CNY × лот 1000).
+ *
+ * Множитель лота — свойство КОНКРЕТНОГО контракта
+ * ([InstrumentsConfig.InstrumentSpec.lotSize]), а не константа: CNYRUBF/USDRUBF/
+ * EURRUBF = 1000, IMOEXF = 10, GLDRUBF = 1. Оба источника
+ * ([MoexFundingProvider], [MoexFundingHistoryLoader]) умножают raw на `lotSize`
+ * инструмента и fail-closed при неизвестном тикере.
+ * [moexLotMultiplier] НЕ УЧАСТВУЕТ в конвертации и оставлен только для совместимости
+ * старых конфигов: применять его как fallback нельзя — именно он завышал funding
+ * по GLDRUBF в 1000x (6 905 вместо 6.9 ₽/клиринг) и по IMOEXF в 100x.
  *
  * Research-источник ИСТОРИИ funding (донакачка SWAPRATE в
  * `funding_history` для P&L бэктеста / калибровки funding-veto, открытый P1):
@@ -38,7 +45,13 @@ import java.time.LocalDate
 class FundingConfig {
     var moexUrl: String? = null
     var moexColumn: String = "SWAPRATE"
+
+    /**
+     * НЕ используется в конвертации raw → RUB/контракт (берётся `lotSize` инструмента).
+     * Оставлен для совместимости конфигов/окружения; см. KDoc класса.
+     */
     var moexLotMultiplier: BigDecimal = BigDecimal("1000")
+
     var moexTtlMs: Long = 5 * 60_000L
     var requestTimeoutMs: Long = 10_000L
 

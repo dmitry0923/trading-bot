@@ -22,8 +22,18 @@ import java.time.ZoneId
  * единицу базового актива; подтверждено по реальным данным CNYRUBF 2026-09-08..10).
  *
  * Значение на выходе — raw (RUB за 1 единицу базового актива, [FundingUnit.RUB_PER_BASE_ASSET_UNIT]);
- * конвертация в RUB/контракт/клиринг — [FundingConfig.moexLotMultiplier] (CNYRUBF:
- * ставка × лот 1000 CNY = RUB/контракт).
+ * конвертация в RUB/контракт/клиринг — умножением на `lotSize` ИНСТРУМЕНТА
+ * ([InstrumentsConfig.InstrumentSpec.lotSize]): CNYRUBF/USDRUBF/EURRUBF = 1000,
+ * IMOEXF = 10, GLDRUBF = 1.
+ *
+ * Раньше здесь применялся один глобальный [FundingConfig.moexLotMultiplier]=1000 на
+ * ВСЕ тикеры, что завышало funding по GLDRUBF в 1000x, по IMOEXF — в 100x (P&L
+ * считался по несуществующим 6 905 ₽/клиринг вместо 6.9 ₽ за контракт золота).
+ * Множитель — свойство конкретного контракта, а не константа биржи.
+ *
+ * Неизвестный тикер (нет спецификации → неизвестен lotSize) → fail-closed: возвращается
+ * null → [FundingSnapshotService] помечает клиринги FUNDING_UNKNOWN. Глобальный
+ * множитель как fallback НЕ подставляется — он и был причиной завышения.
  *
  * Недоступность (пустой URL / ошибка API / отсутствие столбца / невалидное число) →
  * null → [FundingSnapshotService] помечает клиринги за сегодня как FUNDING_UNKNOWN
@@ -42,10 +52,15 @@ class MoexFundingProvider(
     override suspend fun currentSnapshot(ticker: String): FundingSnapshot? {
         val template = fundingConfig.moexUrl
         if (template.isNullOrBlank()) return null
+        val spec = instrumentsConfig.find(ticker)
+        if (spec == null) {
+            logger.warn { "Funding (MOEX): unknown instrument $ticker - lot size unresolved, rate stays UNKNOWN" }
+            return null
+        }
         val url =
             template.replace(
                 "{ticker}",
-                instrumentsConfig.find(ticker)?.effectiveTicker() ?: ticker,
+                spec.effectiveTicker(),
             )
         return try {
             val raw: String =
@@ -66,7 +81,7 @@ class MoexFundingProvider(
                 clearingDate = LocalDate.now(clock),
                 rawValue = rawValue,
                 unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
-                valueRubPerContractPerClearing = rawValue.multiply(fundingConfig.moexLotMultiplier),
+                valueRubPerContractPerClearing = rawValue.multiply(BigDecimal(spec.lotSize)),
                 source = FundingSource.MOEX,
                 timestamp = LocalDateTime.now(clock),
             )

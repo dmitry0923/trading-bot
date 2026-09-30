@@ -38,6 +38,28 @@ class MoexFundingProviderTest {
                         leverage = BigDecimal("1.0"),
                         baseAsset = "CNY",
                     ),
+                    // lotSize != 1000: раньше funding завышался глобальным множителем 1000
+                    // (GLDRUBF ×1000, IMOEXF ×100) — регрессия на конвертацию по lotSize.
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "GLDRUBF",
+                        type = "FUTURES",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.1"),
+                        priceStepCost = BigDecimal("0.1"),
+                        go = BigDecimal("1292"),
+                        leverage = BigDecimal("1.0"),
+                        baseAsset = "XAU",
+                    ),
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "IMOEXF",
+                        type = "FUTURES",
+                        lotSize = 10,
+                        priceStep = BigDecimal("0.5"),
+                        priceStepCost = BigDecimal("5.0"),
+                        go = BigDecimal("2264"),
+                        leverage = BigDecimal("1.0"),
+                        baseAsset = "IMOEX",
+                    ),
                 )
         }
 
@@ -94,6 +116,63 @@ class MoexFundingProviderTest {
                 assertEquals(FundingUnit.RUB_PER_BASE_ASSET_UNIT, snapshot.unit)
                 // 0.00279 (SWAPRATE, RUB за 1 CNY) × 1000 (лот CNYRUBF) = 2.79 ₽/контракт/клиринг
                 assertEquals(0, BigDecimal("2.79").compareTo(snapshot.valueRubPerContractPerClearing))
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `live snapshot converts raw swaprate by instrument lot size of 1`() =
+        runBlocking {
+            // Реальный GLDRUBF: SWAPRATE ~5.1 ₽ за 1 г золота, контракт = 1 г → ~5.1 ₽/клиринг.
+            val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["GLDRUBF", "5.10597"]]}}""")
+            try {
+                val fundingConfig = FundingConfig()
+                fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
+                val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
+
+                val snapshot = provider.currentSnapshot("GLDRUBF")
+
+                assertNotNull(snapshot)
+                // 5.10597 × lotSize 1 = 5.10597 ₽/контракт/клиринг (НЕ ×1000 = 5105.97)
+                assertEquals(0, BigDecimal("5.10597").compareTo(snapshot!!.valueRubPerContractPerClearing))
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `live snapshot converts raw swaprate by instrument lot size of 10`() =
+        runBlocking {
+            // Реальный IMOEXF: SWAPRATE ~1.01287 ₽ за 1 пункт индекса, контракт = 10 пунктов.
+            val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["IMOEXF", "1.01287"]]}}""")
+            try {
+                val fundingConfig = FundingConfig()
+                fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
+                val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
+
+                val snapshot = provider.currentSnapshot("IMOEXF")
+
+                assertNotNull(snapshot)
+                // 1.01287 × lotSize 10 = 10.1287 ₽/контракт/клиринг (НЕ ×1000 = 1012.87)
+                assertEquals(0, BigDecimal("10.1287").compareTo(snapshot!!.valueRubPerContractPerClearing))
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `unknown instrument yields null instead of global lot multiplier`() =
+        runBlocking {
+            // Тикер без спецификации → lotSize неизвестен. Подставлять глобальный
+            // множитель 1000 нельзя (именно это завышало GLDRUBF/IMOEXF) → fail-closed.
+            val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["NOSUCHF", "1.5"]]}}""")
+            try {
+                val fundingConfig = FundingConfig()
+                fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
+                val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
+
+                assertNull(provider.currentSnapshot("NOSUCHF"))
             } finally {
                 server.stop(0)
             }

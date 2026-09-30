@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
+import java.math.BigDecimal
 import java.time.Duration
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -21,7 +22,8 @@ import java.time.format.DateTimeFormatter
  *
  * Тянет фактические SWAPRATE за период from..till по тикеру (пагинация start,
  * как в [MoexClient.fetchCandlesPaged]) и сохраняет в funding_history
- * (RUB/контракт/клиринг после [FundingConfig.moexLotMultiplier]).
+ * (RUB/контракт/клиринг = raw × `lotSize` инструмента,
+ * [InstrumentsConfig.InstrumentSpec.lotSize]).
  *
  * Источник — [FundingConfig.moexHistoryUrl] (плейсхолдеры {ticker}, {from},
  * {till}). Пустой URL → донакачка отключена (возврат пустого [LoadResult]).
@@ -123,12 +125,23 @@ class MoexFundingHistoryLoader(
     /**
      * Парсит ISS history ответ: все строки блока, содержащего столбец
      * [FundingConfig.moexColumn] (SWAPRATE). Дата — из столбца `TRADEDATE`,
-     * конвертация raw → RUB/контракт/клиринг умножителем [FundingConfig.moexLotMultiplier].
+     * конвертация raw → RUB/контракт/клиринг умножением на `lotSize` ИНСТРУМЕНТА
+     * (CNYRUBF/USDRUBF/EURRUBF = 1000, IMOEXF = 10, GLDRUBF = 1) — не глобальным
+     * [FundingConfig.moexLotMultiplier]=1000, которым эти ряды раньше были завышены.
+     *
+     * Неизвестный тикер (нет спецификации) → пустой результат: конвертировать
+     * RUB/ед. базового актива в RUB/контракт без lotSize нельзя, и подставлять
+     * глобальный множитель нельзя (это и давало завышение в 1000x/100x).
      */
     internal fun parseHistory(
         raw: String,
         ticker: String,
     ): List<FundingHistoryRecord> {
+        val lotSize = instrumentsConfig.find(ticker)?.lotSize
+        if (lotSize == null || lotSize <= 0) {
+            logger.warn { "MoexFundingHistoryLoader: lot size unresolved for $ticker - history not converted" }
+            return emptyList()
+        }
         val root = objectMapper.readTree(raw)
         val block = firstBlockWithColumn(root, fundingConfig.moexColumn) ?: return emptyList()
         val columns = block.path("columns").toList().map { it.asString() }
@@ -148,7 +161,7 @@ class MoexFundingHistoryLoader(
                     ticker = ticker,
                     clearingDate = date,
                     rawValue = rawValue,
-                    valueRubPerContract = rawValue.multiply(fundingConfig.moexLotMultiplier),
+                    valueRubPerContract = rawValue.multiply(BigDecimal(lotSize)),
                     source = "MOEX",
                 ),
             )

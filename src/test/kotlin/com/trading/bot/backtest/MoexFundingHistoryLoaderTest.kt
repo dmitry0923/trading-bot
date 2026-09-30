@@ -40,6 +40,28 @@ class MoexFundingHistoryLoaderTest {
                         leverage = BigDecimal("1.0"),
                         baseAsset = "CNY",
                     ),
+                    // lotSize != 1000 — регрессия: ряды GLDRUBF/IMOEXF раньше
+                    // конвертировались глобальным множителем 1000 (завышение в 1000x/100x).
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "GLDRUBF",
+                        type = "FUTURES",
+                        lotSize = 1,
+                        priceStep = BigDecimal("0.1"),
+                        priceStepCost = BigDecimal("0.1"),
+                        go = BigDecimal("1292"),
+                        leverage = BigDecimal("1.0"),
+                        baseAsset = "XAU",
+                    ),
+                    InstrumentsConfig.InstrumentSpec(
+                        ticker = "IMOEXF",
+                        type = "FUTURES",
+                        lotSize = 10,
+                        priceStep = BigDecimal("0.5"),
+                        priceStepCost = BigDecimal("5.0"),
+                        go = BigDecimal("2264"),
+                        leverage = BigDecimal("1.0"),
+                        baseAsset = "IMOEX",
+                    ),
                 )
         }
 
@@ -62,6 +84,46 @@ class MoexFundingHistoryLoaderTest {
         // 0.00278 (SWAPRATE, RUB за 1 CNY) × 1000 (лот CNYRUBF) = 2.78 ₽/контракт/клиринг
         assertEquals(0, BigDecimal("2.78").compareTo(parsed[0].valueRubPerContract))
         assertEquals("MOEX", parsed[0].source)
+    }
+
+    @Test
+    fun `converts history by instrument lot size of 1`() {
+        val loader = loader(fundingConfig = FundingConfig())
+        val body =
+            """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
+                "data": [["2026-09-21", "5.10597"]]}}"""
+
+        val parsed = loader.parseHistory(body, "GLDRUBF")
+
+        // 5.10597 ₽ за 1 г × lotSize 1 = 5.10597 ₽/контракт (НЕ ×1000 = 5105.97)
+        assertEquals(1, parsed.size)
+        assertEquals(0, BigDecimal("5.10597").compareTo(parsed[0].valueRubPerContract))
+        assertEquals(0, BigDecimal("5.10597").compareTo(parsed[0].rawValue))
+    }
+
+    @Test
+    fun `converts history by instrument lot size of 10`() {
+        val loader = loader(fundingConfig = FundingConfig())
+        val body =
+            """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
+                "data": [["2026-09-21", "1.01287"]]}}"""
+
+        val parsed = loader.parseHistory(body, "IMOEXF")
+
+        // 1.01287 ₽ за 1 пункт × lotSize 10 = 10.1287 ₽/контракт (НЕ ×1000 = 1012.87)
+        assertEquals(1, parsed.size)
+        assertEquals(0, BigDecimal("10.1287").compareTo(parsed[0].valueRubPerContract))
+    }
+
+    @Test
+    fun `unknown ticker yields no history instead of global lot multiplier`() {
+        val loader = loader(fundingConfig = FundingConfig())
+        val body =
+            """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
+                "data": [["2026-09-21", "1.5"]]}}"""
+
+        // lotSize неизвестен → конвертировать нельзя; глобальный множитель 1000 не подставляем.
+        assertTrue(loader.parseHistory(body, "NOSUCHF").isEmpty())
     }
 
     @Test

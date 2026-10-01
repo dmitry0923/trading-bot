@@ -71,3 +71,5 @@ databaseChangeLog:
       file: db/changelog/changes/035-agent-log-action-varchar.sql
   - include:
       file: db/changelog/changes/036-funding-history.sql
+  - include:
+      file: db/changelog/changes/037-microstructure-snapshots.sql

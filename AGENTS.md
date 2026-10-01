@@ -124,6 +124,38 @@
 - **Результат WFA-калибровки порогов (CNYRUBF, 365д, folds=6, conf 0.60)**: см. research-раздел ниже
   «WFA-калибровка funding-veto (2026-09-19)». Оптимум — long 9 ₽, short 2 ₽; live-пороги НЕ менялись.
 
+### Сбор микроструктуры стакана (L1 → `microstructure_snapshots`, 2026-09-30)
+
+Зачем: исторических L1/L2/ticks нет ни в одном доступном источнике, поэтому OBI/microprice
+невозможно проверить на истории — их можно только **начинать собирать сейчас** и валидировать
+forward. До этого они жили только в памяти `MarketDataGate` и терялись при рестарте.
+
+- **Агрегация, а не сырые тики.** Частота котировок на порядки выше торговой; тики агрегируются
+  в бакеты `microstructure.bucket-ms` (default **1000 мс**) со средними `obi`/`microprice`/
+  `spread_bps`/`microprice_deviation_bps` и последними L1-полями + `update_count`.
+  `microprice` считается только для полного валидного L1, OBI — по null-правилам `ObiCalculator`.
+- **Таблица** `microstructure_snapshots` (миграция 037, Timescale hypertable, chunk 1 день,
+  `UNIQUE(ticker,time)`, retention 90 дней, без compression). Запись — multi-row INSERT батчем
+  с `ON CONFLICT (ticker,time) DO NOTHING`: повторный flush (ретрай/рестарт) не дублирует и не
+  перетирает агрегат. Чтение `findByTickerAndTimeBetween` — полуоткрытый интервал `[from,to)`
+  (строго-before, как у свечей: незакрытый правый бакет = lookahead).
+- **Не влияет на торговлю.** `MicrostructureRecorder.record()` — in-memory O(1) без БД, вызывается
+  из hot-path `TradingBotService`; запись делает отдельная корутина по расписанию
+  (`flushIntervalMs`, default 5000). Слой **наблюдательный**: он не читается торговыми решениями.
+  Live-allowlist и риск-конвейер не затронуты.
+- **Fail-soft, а не fail-closed.** Переполнение очереди (`max-queue-size`, default 20000) дропает
+  **самый старый** бакет (`microstructure.flush.dropped`) — свежие наблюдения ценнее backlog'а.
+  Ошибка БД возвращает батч в очередь (`microstructure.flush.errors`).
+- **Хронология.** Котировка из прошлого бакета отбрасывается (`microstructure.skipped{reason=stale}`)
+  — иначе после реконнекта WS закрылся бы бакет из будущего и point-in-time признаки получили бы
+  lookahead. Тикер, вставший на паузу, закрывается по протуханию (3 бакета) и по `@PreDestroy`.
+- **Конфиг** (`microstructure.*`, env `MICROSTRUCTURE_*`): `enabled`=**false** (research-сбор,
+  включать осознанно), `bucket-ms`=1000, `flush-interval-ms`=5000, `max-queue-size`=20000.
+- **Метрики:** `microstructure.recorded`, `microstructure.skipped`, `microstructure.flush.rows`,
+  `microstructure.flush.dropped`, `microstructure.flush.errors`.
+- **Платящий L2 (инструмент `OrderBook`) не проверен** — доступность по тарифу не выяснена;
+  подписка идёт только на `Quotations` (L1).
+
 ### Мониторинг (2026-09-09)
 
 Пороги синхронизированы с гейтами (`prometheus-alerting-rules.yml`):
@@ -1163,6 +1195,7 @@ edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, резу�
 | 2026-09-28 | WFA 730д трёх новых ядер + harness-фиксы (`strategies-cores-730d`) | **WFA 730д folds=8 conf 0.60 risk30/maxC100** (live-стек, `loadHistory=false`) на CNYRUBF/IMOEXF: squeeze (lookback 5) — **REJECTED** (PF 0.84 против baseline 0.92, consistency 0.25 против 0.50, 86→60 сделок; mh368 ничего не меняет −15.61→−15.55); panic на IMOEXF — **0 сигналов** при drop3%/RSI≤25 и при RSI≤30 (третий конфиг drop5%/RSI≤25 пропущен как provably 0), сам IMOEXF OOS −726%/PF 0.10; macro-trend — единственный развернувший baseline в плюс (PF 1.397–3.17, OOS +25.8…+146%, funding 5/6/8 ₽ = плато), но 11–23 OOS-сделки < 30 → **INCONCLUSIVE**, `robust=false` у всех → все три `bt.*` остаются off, live-параметры не менялись; **исправлены 5 harness-багов**: разделитель `имя;query` (без `;` был тихий baseline), дубль `maxHoldBars` в URL (Spring брал первое значение → max-hold молча выключен), неверное поле Sharpe (`oosSharpeRatio` → `oosSharpe`, колонка была 0), тайминг ORB-окна (930 мин = 15:30 МСК), повторный baseline (`-SkipBaseline`, у macro baseline = `-MaxHoldBars 0`); **fail-closed squeeze**: `catch (Exception)` при `squeezeBlockOnUnknown=true` даёт HOLD, а не «фильтр выключен» + регресс-тест | test (1588) + int (101) + ktlint |
 | 2026-09-29 | LLM-veto поверх детерминированного сигнала (`llm-veto`) | **`LlmVeto`** (`ContrarianAgent.challenge` → `ArbitratorAgent.adjudicate`, блокирует только `final.action == HOLD` без `overrideReason`; направление/цена/сила арбитра игнорируются), применяется последним в `LiveStrategyBacktestSignalGenerator` (после session/pullback/ORB/squeeze/panic/macro и ML); fail-closed на CRITICAL/ошибке/таймауте/отказе по `blockOnUnknown` (отказ ≠ veto); обход семантического кэша агентов (`bypassCache` в `ContrarianAgent`, `temperature=0.0`, `adaptiveConfidence=0.0`, namespace `backtest-veto`) + мемоизация вердикта по `(ticker, barTime, action)` — без этого вердикт кэшировался бы по грубому отпечатку и отвечал бы за другой бар, а WFA переигрывал бы платные вызовы; конфиг `bt.llm-veto-*` (enabled **false**, budget 20000, blockOnUnknown true, sampleEvery 0) + query-оверрайды `llmVeto*` на 5 эндпоинтах; метрики `bt_llm_veto_{candidates,blocked,allowed,cache_hits}_total`; **найден баг подключения**: условие фабрики генератора учитывало только query-оверрайды, config-only `llmVetoEnabled=true` молча не доходил до veto (4 эндпоинта) — добавлено `|| backtestConfig.llmVetoEnabled` + регресс-тест `LlmVetoSettings.from`; **IS-скрин выполнен 2026-09-29** (`research_llm_veto_is.ps1`, CNYRUBF 365д): score-порог 0.35 → 23 сделки PF 1.489, 0.40 → 15 сделок PF 1.945, 0.45 → 11 сделок PF 2.158 (return 0.208–0.235%, win 30–36%, MDD 0.16–0.20%) против baseline PF ≈ 0.93 — **score-порог edge не доказал** (монотонный сход к нулю при ослаблении фильтра = сокращение выборки, а не качество), WFA/gate по score не проводились; найден измерительный баг дельты `bt_llm_veto_blocked_total` (отрицательные значения при сбросе actuator-метрики) → колонка `blocked_run` непригодна, скрипт пишет `n/a`; `bt.llm-veto-*` остаётся off, live-путь не затронут; тесты `LlmVetoTest` (14) + `ContrarianAgentBypassCacheTest` (2) + query-контракт + generator-wiring | test (1656) + int + ktlint |
 | 2026-09-29 | Риск-сетка 730д (`risk-grid-730d`) | **Честная проверка «100%/год через риск»**: WFA 730д folds=8 conf 0.60 на детерминированной CNYRUBF MINUTE_10 (без LLM-veto, чтобы не смешивать выбор edge и риск), профили 5:20/10:50/15:75/20:100/30:100 — OOS **−2.17%/PF 0.954** … −12.38%/PF 0.924, **монотонная деградация с ростом риска, число сделок одинаково (85–86) при любом риске**; deployment-gate лучшего (5:20) = **REJECTED, liveAllowed=false** — провалены все 8 проверок (OOS PF 0.608, consistency 0.375, P(noEdge)=0.942, holdout −3.6%, MC p5=−15.9%, stressFailed=5); **цель 100%/год признана недостижимой на текущей стратегии** — риск не создаёт edge, леверидж умножает убыток; **исправлен баг `BacktestEngine`**: пустой фолд `sorted.first()` → `NoSuchElementException` проглатывался и логировался как «funding history unavailable» (ложная диагностика маскировала реальную ошибку, 3 `trades=0` из 78 строк) — теперь пустой срез логируется явно и не ходит в funding repository, регресс-тест `empty candle slice does not query funding history and returns empty result`; **остаточный риск**: пустой срез всё ещё возвращает формальный пустой `BacktestResult` (без invalid-флага) и входит в агрегацию; скрипты `research_risk_grid_730d.ps1` + `watch_research_job.ps1`, артефакты `riskgrid_wfa_730d.csv` + `riskgrid_gate_best.json` | test (1656) + int + ktlint |
+| 2026-09-30 | Сбор L1-микроструктуры в БД (`microstructure-recorder`) | **Закрыта дыра «нет исторических OBI/microprice»**: миграция 037 `microstructure_snapshots` (Timescale hypertable, chunk 1 день, `UNIQUE(ticker,time)`, retention 90д, без compression), `MicrostructureSnapshotRepository` (multi-row INSERT с `ON CONFLICT (ticker,time) DO NOTHING` — ретрай/рестарт не дублирует и не перетирает агрегат; чтение `findByTickerAndTimeBetween` полуоткрытое `[from,to)` — незакрытый правый бакет = lookahead), `MicrostructureConfig` + `MicrostructureRecorder` (1с-бакеты со средними obi/microprice/spread_bps/microprice_deviation_bps и последними L1-полями; `record()` — in-memory O(1) в hot-path `TradingBotService`, запись отдельной корутиной раз в 5с; очередь 20000 с drop-oldest; fail-soft, ошибка БД возвращает батч), `MicrostructureTimeSource` для тестов; **не влияет на торговлю** — слой наблюдательный, не читается решениями, allowlist LIVE не тронут; `microstructure.enabled`=**false** по умолчанию; **исправлены 2 дефекта, найденных при ревью**: `sealStale()` **отбрасывал** протухший бакет вместо закрытия (тикер на паузе терял все наблюдения) и `@PreDestroy` делал `scope.launch{flush()}` + немедленный `scope.cancel()` (финальный flush отменялся) → синхронный `drain()` с ограничением попыток, `enqueue()` с drop-oldest на пути возврата батча (очередь раздувалась сверх лимита), `flushInFlight` против наложения flush'ей; тесты `MicrostructureRecorderTest` (13) + `MicrostructureSnapshotRepositoryIntegrationTest` (5) | test (1682) + int (107) + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
@@ -1194,6 +1227,14 @@ edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, резу�
   одинаково (85–86) при любом профиле, deployment-gate лучшего = REJECTED (8/8 проверок).
   Итог: **цель «100% в год» на текущей детерминированной стратегии признана
   недостижимой**; требуется смена стратегии/источника edge, а не новый фильтр или риск-параметр.
+- **Микроструктура стакана (2026-09-30)**: сборщик готов, но **по умолчанию выключен**
+  (`microstructure.enabled=false`) — включать осознанно. Исторических L1/L2/ticks не существует,
+  поэтому OBI/microprice валидируются только **forward** на накопленных данных; выводы по
+  ним нельзя делать, пока не набрано достаточно сделок. Платный L2 (инструмент `OrderBook`)
+  не проверен — доступность по тарифу Alor не выяснена; подписка только на `Quotations` (L1).
+- **Alor WS нестабилен**: локально неоднократно переподключается, первопричина обрыва не
+  исследована. Recorder к этому подготовлен (stale-бакеты отбрасываются/закрываются по
+  протуханию, переподключение не портит хронологию), но первопричину обрыва ловить нужно отдельно.
 
 ## LLM как источник сигнала (research, `research/llm-signal-source`, 2026-09-11)
 

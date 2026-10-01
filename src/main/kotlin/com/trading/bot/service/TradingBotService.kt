@@ -87,6 +87,7 @@ class TradingBotService(
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
     private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
+    private val microstructureRecorder: MicrostructureRecorder,
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -211,6 +212,7 @@ class TradingBotService(
                         if (tick.bid != null && tick.ask != null) {
                             marketDataGate.recordSpread(tick.ticker, tick.bid, tick.ask)
                         }
+                        microstructureRecorder.record(tick)
                     } catch (e: Exception) {
                         logger.error(e) { "WS quote processing error for ${tick.ticker}" }
                     }

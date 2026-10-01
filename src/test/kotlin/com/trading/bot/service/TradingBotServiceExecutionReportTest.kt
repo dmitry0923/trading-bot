@@ -96,6 +96,7 @@ class TradingBotServiceExecutionReportTest {
                 instrumentsConfig,
                 meterRegistry,
                 EntryLeaseRecoveryGate(meterRegistry),
+                org.mockito.kotlin.mock<MicrostructureRecorder>(),
             )
     }
 

@@ -97,6 +97,16 @@ macro:
   snapshot-enabled: ${MACRO_SNAPSHOT_ENABLED:false}    # исторические снапшоты макро для ML-датасета (13.11.2)
   snapshot-interval-ms: ${MACRO_SNAPSHOT_INTERVAL_MS:900000}
 
+# Микроструктура стакана (OBI/microprice/spread) из live L1 Alor.
+# Исторических L1-данных не существует ни в одном источнике — данные появляются
+# только с момента включения, поэтому валидация возможна лишь forward.
+# Наблюдательный слой: торговые решения его не читают, hot-path не блокируется.
+microstructure:
+  enabled: ${MICROSTRUCTURE_ENABLED:false}
+  bucket-ms: ${MICROSTRUCTURE_BUCKET_MS:1000}
+  flush-interval-ms: ${MICROSTRUCTURE_FLUSH_INTERVAL_MS:5000}
+  max-queue-size: ${MICROSTRUCTURE_MAX_QUEUE_SIZE:20000}
+
 llm:
   provider: ${LLM_PROVIDER:ROUTER_AI}
   api-key: ${LLM_API_KEY:}

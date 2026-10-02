@@ -61,3 +61,6 @@ dataset.csv
 *.cbm
 ml/*.cbm
 
+# Сырые рыночные данные и выгрузки (docs/22)
+data/
+

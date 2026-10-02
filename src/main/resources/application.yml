@@ -67,6 +67,7 @@ app:
 
 alor:
   api-url: ${ALOR_API_URL:https://api.alor.ru}
+  oauth-url: ${ALOR_OAUTH_URL:https://oauth.alor.ru/refresh}
   ws-url: ${ALOR_WS_URL:wss://api.alor.ru/ws}
   token: ${ALOR_TOKEN:}
   refresh-token: ${ALOR_REFRESH_TOKEN:}
@@ -106,6 +107,13 @@ microstructure:
   bucket-ms: ${MICROSTRUCTURE_BUCKET_MS:1000}
   flush-interval-ms: ${MICROSTRUCTURE_FLUSH_INTERVAL_MS:5000}
   max-queue-size: ${MICROSTRUCTURE_MAX_QUEUE_SIZE:20000}
+  # Сбор стакана по REST-поллингу (боевой токен Alor). Нужен там, где WS-подписка
+  # не отдаёт объёмы: OBI/microprice считаются только по нему. Дискретен (1 Гц),
+  # поэтому не заменяет WS-L1 — ограничение фиксируется в research-доках.
+  rest-polling-enabled: ${MICROSTRUCTURE_REST_POLLING_ENABLED:false}
+  rest-poll-interval-ms: ${MICROSTRUCTURE_REST_POLL_INTERVAL_MS:1000}
+  rest-depth: ${MICROSTRUCTURE_REST_DEPTH:1}
+  rest-timeout-ms: ${MICROSTRUCTURE_REST_TIMEOUT_MS:5000}
 
 llm:
   provider: ${LLM_PROVIDER:ROUTER_AI}

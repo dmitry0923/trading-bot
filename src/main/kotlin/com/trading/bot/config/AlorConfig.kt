@@ -7,8 +7,13 @@ import org.springframework.stereotype.Component
  * Конфигурация брокера Alor (prefix = "alor").
  *
  * @property apiUrl базовый URL REST API Alor
+ * @property oauthUrl URL продления access-токена по refresh-токену
+ *   (документированный эндпоинт Alor `POST oauth.alor.ru/refresh?token=<refresh>`;
+ *   прежний `api.alor.ru/oauth/token` отвечает 404)
  * @property wsUrl базовый URL WebSocket Alor
- * @property token токен доступа (get token, а не refresh)
+ * @property token токен доступа (get token, а не refresh). Заполняется из
+ *   окружения; [com.trading.bot.client.AlorTokenProvider] обновляет его
+ *   после успешного refresh, чтобы WS-подписки брали актуальный токен
  * @property refreshToken refresh-токен для продления доступа
  * @property portfolio номер портфеля
  * @property exchange биржа (по умолчанию MOEX)
@@ -29,6 +34,7 @@ import org.springframework.stereotype.Component
 @ConfigurationProperties(prefix = "alor")
 class AlorConfig {
     var apiUrl: String = "https://api.alor.ru"
+    var oauthUrl: String = "https://oauth.alor.ru/refresh"
     var wsUrl: String = "wss://api.alor.ru/ws"
     var token: String = ""
     var refreshToken: String = ""

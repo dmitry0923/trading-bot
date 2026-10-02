@@ -92,6 +92,7 @@ class AlorWebSocketClient(
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
     private val webSocketManager: WebSocketManager,
+    private val tokenProvider: AlorTokenProvider,
 ) {
     private val logger = KotlinLogging.logger {}
     private val wsClient = ReactorNettyWebSocketClient()
@@ -110,7 +111,7 @@ class AlorWebSocketClient(
             var cancelled = false
 
             lateinit var scheduleReconnect: (Int) -> Unit
-            lateinit var connect: (Int) -> Unit
+            lateinit var connect: suspend (Int) -> Unit
 
             scheduleReconnect = { nextAttempt: Int ->
                 if (cancelled) {
@@ -130,7 +131,8 @@ class AlorWebSocketClient(
             connect = { currentAttempt: Int ->
                 if (!cancelled) {
                     try {
-                        val url = URI.create(wsUrl())
+                        val token = tokenProvider.actualToken()
+                        val url = URI.create(wsUrl(token))
                         wsClient
                             .execute(url) { session ->
                                 val heartbeat = startHeartbeat(session, "alor.ws", WsStream.ORDERS)
@@ -140,7 +142,7 @@ class AlorWebSocketClient(
                                             mapOf(
                                                 "opcode" to "OrdersGetAndSubscribeV2",
                                                 "guid" to UuidV7.uuidString(),
-                                                "token" to alorConfig.token,
+                                                "token" to token,
                                                 "portfolio" to portfolio,
                                                 "exchange" to alorConfig.exchange,
                                                 "format" to "Simple",
@@ -186,7 +188,7 @@ class AlorWebSocketClient(
                 }
             }
 
-            connect(0)
+            launch { connect(0) }
             awaitClose { cancelled = true }
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
@@ -209,7 +211,7 @@ class AlorWebSocketClient(
             var cancelled = false
 
             lateinit var scheduleReconnect: (Int) -> Unit
-            lateinit var connect: (Int) -> Unit
+            lateinit var connect: suspend (Int) -> Unit
 
             scheduleReconnect = { nextAttempt: Int ->
                 if (cancelled) {
@@ -229,7 +231,8 @@ class AlorWebSocketClient(
             connect = { currentAttempt: Int ->
                 if (!cancelled) {
                     try {
-                        val url = URI.create(wsUrl())
+                        val token = tokenProvider.actualToken()
+                        val url = URI.create(wsUrl(token))
                         wsClient
                             .execute(url) { session ->
                                 val heartbeat = startHeartbeat(session, "alor.ws.quotes", WsStream.QUOTES)
@@ -239,7 +242,7 @@ class AlorWebSocketClient(
                                             mapOf(
                                                 "opcode" to "QuotesSubscribe",
                                                 "guid" to UuidV7.uuidString(),
-                                                "token" to alorConfig.token,
+                                                "token" to token,
                                                 "exchange" to alorConfig.exchange,
                                                 "format" to "Simple",
                                                 "guids" to
@@ -315,13 +318,13 @@ class AlorWebSocketClient(
                 }
             }
 
-            connect(0)
+            launch { connect(0) }
             awaitClose { cancelled = true }
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    private fun wsUrl(): String {
+    private fun wsUrl(token: String): String {
         val base = alorConfig.wsUrl.removeSuffix("/")
-        return if (base.contains("?")) "$base&token=${alorConfig.token}" else "$base?token=${alorConfig.token}"
+        return if (base.contains("?")) "$base&token=$token" else "$base?token=$token"
     }
 
     /**

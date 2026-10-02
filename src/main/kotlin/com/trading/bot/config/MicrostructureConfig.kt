@@ -19,6 +19,11 @@ import org.springframework.stereotype.Component
  * @property flushIntervalMs период сброса закрытых бакетов в БД, мс
  * @property maxQueueSize максимум бакетов в очереди записи; при переполнении
  *   дропается самый старый (fail-soft: лучше потерять наблюдение, чем тормозить торговлю)
+ * @property restPollingEnabled включение сбора по REST-поллингу стакана
+ *   ([com.trading.bot.service.MicrostructureRestPoller]); требует живого токена Alor
+ * @property restPollIntervalMs период поллинга по всем тикерам, мс
+ * @property restDepth глубина стакана в запросе (1 = только L1)
+ * @property restTimeoutMs таймаут одного REST-запроса стакана, мс
  */
 @Component
 @ConfigurationProperties(prefix = "microstructure")
@@ -27,4 +32,8 @@ class MicrostructureConfig {
     var bucketMs: Long = 1_000L
     var flushIntervalMs: Long = 5_000L
     var maxQueueSize: Int = 20_000
+    var restPollingEnabled: Boolean = false
+    var restPollIntervalMs: Long = 1_000L
+    var restDepth: Int = 1
+    var restTimeoutMs: Long = 5_000L
 }

@@ -23,6 +23,7 @@ class AlorWebSocketClientTest {
             jacksonObjectMapper(),
             SimpleMeterRegistry(),
             mock<WebSocketManager>(),
+            mock<AlorTokenProvider>(),
         )
 
     @Test

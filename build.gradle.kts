@@ -53,6 +53,12 @@ dependencies {
     implementation(libs.logstashLogbackEncoder)
     implementation(libs.minio)
 
+    // Чтение платных архивов MOEX «Реестры заявок и сделок» (docs/22) без
+    // промежуточной распаковки на диске: SevenZFile + ZipInputStream.
+    // Версия зафиксирована явно — 7z-чтение используется в main-коде
+    // (MoexOrderLogParser), транзитивно тянуть его нельзя.
+    implementation("org.apache.commons:commons-compress:1.28.0")
+
     implementation(libs.resilience4jSpringBoot4)
     implementation(libs.resilience4jKotlin)
 

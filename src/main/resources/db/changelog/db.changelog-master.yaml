@@ -73,3 +73,5 @@ databaseChangeLog:
       file: db/changelog/changes/036-funding-history.sql
   - include:
       file: db/changelog/changes/037-microstructure-snapshots.sql
+  - include:
+      file: db/changelog/changes/038-ticks-orderbook-bbo.sql

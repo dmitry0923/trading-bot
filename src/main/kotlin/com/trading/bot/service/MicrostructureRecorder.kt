@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.client.QuoteTick
 import com.trading.bot.config.MicrostructureConfig
 import com.trading.bot.domain.microstructure.MicropriceCalculator
+import com.trading.bot.domain.microstructure.MicrostructureFeatures
 import com.trading.bot.domain.microstructure.ObiCalculator
 import com.trading.bot.model.entity.MicrostructureSnapshot
 import com.trading.bot.repository.MicrostructureSnapshotRepository
@@ -249,31 +250,32 @@ class MicrostructureRecorder(
             if (tick.bid != null && tick.ask != null) {
                 lastBid = tick.bid
                 lastAsk = tick.ask
-                val mid = tick.bid.add(tick.ask).divide(TWO, BPS_SCALE, RoundingMode.HALF_UP)
-                if (mid.signum() > 0) {
-                    val ratio = tick.ask.subtract(tick.bid).divide(mid, BPS_SCALE, RoundingMode.HALF_UP)
-                    spreadSum = spreadSum.add(ratio.multiply(BPS))
-                    spreadCount++
-                }
             }
             if (tick.bidSize != null) lastBidSize = tick.bidSize
             if (tick.askSize != null) lastAskSize = tick.askSize
+
+            val spread = MicrostructureFeatures.spreadBps(tick.bid, tick.ask)
+            if (spread != null) {
+                spreadSum = spreadSum.add(spread)
+                spreadCount++
+            }
 
             val obi = ObiCalculator.calculate(tick.bidSize, tick.askSize)
             if (obi != null) {
                 obiSum = obiSum.add(obi)
                 obiCount++
             }
+
             val microprice = MicropriceCalculator.calculate(tick.bid, tick.ask, tick.bidSize, tick.askSize)
             if (microprice != null) {
                 micropriceSum = micropriceSum.add(microprice)
                 micropriceCount++
-                val mid = tick.bid!!.add(tick.ask!!).divide(TWO, BPS_SCALE, RoundingMode.HALF_UP)
-                if (mid.signum() > 0) {
-                    val ratio = microprice.subtract(mid).divide(mid, BPS_SCALE, RoundingMode.HALF_UP)
-                    deviationSum = deviationSum.add(ratio.multiply(BPS))
-                    deviationCount++
-                }
+            }
+
+            val deviation = MicrostructureFeatures.deviationBps(tick.bid, tick.ask, tick.bidSize, tick.askSize)
+            if (deviation != null) {
+                deviationSum = deviationSum.add(deviation)
+                deviationCount++
             }
         }
 
@@ -305,9 +307,6 @@ class MicrostructureRecorder(
         const val BATCH_LIMIT = 500
         const val STALE_BUCKETS = 3L
         const val MAX_SHUTDOWN_PASSES = 3
-        const val BPS_SCALE = 8
         const val MEAN_SCALE = 6
-        val TWO = BigDecimal(2)
-        val BPS = BigDecimal(10_000)
     }
 }

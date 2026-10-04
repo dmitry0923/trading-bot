@@ -122,4 +122,50 @@ class MicrostructureRestPollerParseTest {
         assertEquals(0L, tick.bidSize)
         assertEquals(81L, tick.askSize)
     }
+
+    @Test
+    fun `collection tickers narrow the pilot and never fall back to trading watchlist`() {
+        val micro =
+            com.trading.bot.config
+                .MicrostructureConfig()
+                .apply { tickers = listOf(" CNYRUBF ", "CNYRUBF", "") }
+        val trading =
+            com.trading.bot.config
+                .TradingConfig()
+
+        val narrowed = newPoller(micro, trading)
+
+        assertEquals(listOf("CNYRUBF"), narrowed.tickers)
+    }
+
+    @Test
+    fun `empty collection tickers fall back to trading watchlist without duplicates`() {
+        val micro =
+            com.trading.bot.config
+                .MicrostructureConfig()
+        val trading =
+            com.trading.bot.config
+                .TradingConfig()
+                .apply { tickers = listOf("SBER", "SBER", "GAZP") }
+
+        val fallback = newPoller(micro, trading)
+
+        assertEquals(listOf("SBER", "GAZP"), fallback.tickers)
+    }
+
+    private fun newPoller(
+        tickers: com.trading.bot.config.MicrostructureConfig,
+        trading: com.trading.bot.config.TradingConfig,
+    ): MicrostructureRestPoller =
+        MicrostructureRestPoller(
+            alorConfig =
+                com.trading.bot.config
+                    .AlorConfig(),
+            microstructureConfig = tickers,
+            tradingConfig = trading,
+            tokenProvider = org.mockito.Mockito.mock(com.trading.bot.client.AlorTokenProvider::class.java),
+            recorder = org.mockito.Mockito.mock(MicrostructureRecorder::class.java),
+            meterRegistry = SimpleMeterRegistry(),
+            objectMapper = mapper,
+        )
 }

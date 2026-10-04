@@ -1,5 +1,6 @@
 param(
   [string]$Portfolio = "D52465",
+  [string]$Tickers = "CNYRUBF",
   [switch]$NoMonitor,
   [int]$IntervalSec = 600
 )
@@ -33,6 +34,7 @@ $env:ALOR_PORTFOLIO = $Portfolio
 $env:TRADING_MODE = "SIMULATION"
 $env:MICROSTRUCTURE_ENABLED = "true"
 $env:MICROSTRUCTURE_REST_POLLING_ENABLED = "true"
+$env:MICROSTRUCTURE_TICKERS = $Tickers
 
 # --- 2. Остановка прошлых экземпляров ---
 foreach ($f in @($pidFile, $monPidFile)) {
@@ -53,7 +55,7 @@ $p = Start-Process -FilePath "java" `
   -WorkingDirectory $root -RedirectStandardOutput $out -RedirectStandardError $err `
   -PassThru -WindowStyle Hidden
 $p.Id | Set-Content $pidFile
-Write-Host "bot started pid=$($p.Id) portfolio=$Portfolio refresh=set"
+Write-Host "bot started pid=$($p.Id) portfolio=$Portfolio tickers=$Tickers refresh=set"
 
 # --- 4. Монитор в фоне ---
 if (-not $NoMonitor) {

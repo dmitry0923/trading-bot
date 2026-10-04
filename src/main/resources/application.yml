@@ -111,6 +111,9 @@ microstructure:
   # не отдаёт объёмы: OBI/microprice считаются только по нему. Дискретен (1 Гц),
   # поэтому не заменяет WS-L1 — ограничение фиксируется в research-доках.
   rest-polling-enabled: ${MICROSTRUCTURE_REST_POLLING_ENABLED:false}
+  # Инструменты сбора (через запятую). Пусто = брать trading.tickers.
+  # Пилот ведётся на одном инструменте, поэтому список свой, а не торговый.
+  tickers: ${MICROSTRUCTURE_TICKERS:}
   rest-poll-interval-ms: ${MICROSTRUCTURE_REST_POLL_INTERVAL_MS:1000}
   rest-depth: ${MICROSTRUCTURE_REST_DEPTH:1}
   rest-timeout-ms: ${MICROSTRUCTURE_REST_TIMEOUT_MS:5000}

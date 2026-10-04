@@ -150,11 +150,20 @@ forward. До этого они жили только в памяти `MarketDat
   — иначе после реконнекта WS закрылся бы бакет из будущего и point-in-time признаки получили бы
   lookahead. Тикер, вставший на паузу, закрывается по протуханию (3 бакета) и по `@PreDestroy`.
 - **Конфиг** (`microstructure.*`, env `MICROSTRUCTURE_*`): `enabled`=**false** (research-сбор,
-  включать осознанно), `bucket-ms`=1000, `flush-interval-ms`=5000, `max-queue-size`=20000.
+  включать осознанно), `bucket-ms`=1000, `flush-interval-ms`=5000, `max-queue-size`=20000,
+  `tickers`=**пусто** (инструменты сбора; пусто = брать `trading.tickers`).
 - **Метрики:** `microstructure.recorded`, `microstructure.skipped`, `microstructure.flush.rows`,
   `microstructure.flush.dropped`, `microstructure.flush.errors`.
 - **Платящий L2 (инструмент `OrderBook`) не проверен** — доступность по тарифу не выяснена;
   подписка идёт только на `Quotations` (L1).
+- **Источник L1 для пилота — REST Alor, не WS** (`rest-polling-enabled`, дефолт **off**;
+  `docs/23` §2.1): WS-подписка `QuotesSubscribe` на живом токене не работает
+  (`404 "Instrument with symbol  was not found in exchange MOEX"` — символ пустой; перебраны
+  `symbol/security/secid/ticker/scode`, верхний уровень, `guids[]`, board, `OrderBookGetAndSubscribe`).
+  Рабочий путь — REST `/md/v2/orderbooks/{exchange}/{ticker}?depth=1`. Пилот ведётся на одном
+  инструменте: `MICROSTRUCTURE_TICKERS=CNYRUBF` (свой список сбора, торговый watchlist не меняется).
+  Ограничение фиксировано до сбора: REST-поллинг дискретен (1 Гц × 11 тикеров последовательно),
+  признаки «среднее за следующие 250 мс» смещены, корректные горизонты — от интервала опроса.
 
 ### Мониторинг (2026-09-09)
 
@@ -1147,6 +1156,67 @@ edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, резу�
   формальный пустой `BacktestResult` (без invalid-флага), поэтому такие фолды входят в
   агрегацию — при следующем изменении движка это нужно закрыть.
 
+### Платные данные MOEX и бесплатный день (2026-10-01/02, docs/22 + docs/23)
+
+Цель: снять ограничитель «исторических OBI/microprice нет ни в одном источнике». Разбор
+рынка данных MOEX — `docs/22-paid-market-data.md`, план пилота и зафиксированные критерии —
+`docs/23-microstructure-forward-pilot.md`.
+
+**Что есть бесплатно (покупать не нужно):**
+
+| Данные | Источник | Статус |
+|---|---|---|
+| Свечи MINUTE_10, 2 года, 5 тикеров | MOEX ISS | ✅ в `candles` |
+| Свечи HOUR_1 (42 672) / DAY_1 (2 554), 2 года | MOEX ISS | ✅ выгружены 01.10 в `data/candles/*.csv` + `candles` |
+| Funding SWAPRATE, 2 года | MOEX ISS `history` | ✅ `funding_history` (509+ дат) |
+| Тики (сделки) | ISS `trades.json` | ⚠️ только текущая сессия |
+| Стакан | ISS `orderbook.json` | ❌ **404 — стакана в ISS нет** |
+| **Стакан/тики за 1 день** | `ftp.moex.com/pub/info/data/` (`OrderLog20241001_A/B.7z`) | ✅ **ровно один бесплатный день**, скачан, распарсен, лежит в `data/samples/moex_orderlog_20241001`; прочие даты — 404 |
+| Live L1 | Alor OpenAPI | ✅ бесплатно, но только вперёд и 1 Гц по REST |
+
+**Что рекомендовано купить (решение за пользователем, заявка НЕ подана):** Тип В (Top of Book —
+все сделки + лучшие заявки), **1 инструмент = CNYRUBF, 2 года = 30 000 ₽ без НДС**
+(15 000 ₽/год × 2). Даёт `obi`/`microprice`/`spread_bps`/`microprice_deviation_bps` на 2 годах —
+ровно тот слой, который уже реализован. Тип А (полный L3, 90 000 ₽) нужен только ради
+VPIN/depth; Тип С (только сделки) хуже Типа В при той же цене. Объём CNYRUBF ≈ 9.6 МБ CSV/день
+→ **≈ 5 ГБ за 2 года**. Первым шагом — проба **1 500 ₽/мес** (проверка парсера + второй
+независимый день). Готовность к загрузке: миграция 038 (`ticks`, `orderbook_bbo`), парсер
+`MoexOrderLogParser` (20 тестов), R2DBC-сущности/репозитории, загрузчик `MoexOrderLogLoader`.
+**Не сделано:** слой чтения для research и endpoint выгрузки в CSV — читать таблицы пока нечем.
+
+**Замер на бесплатном дне (2024-10-01, CNYRUBF) — эффект есть, издержки его съедают:**
+66 328 наблюдений стакана с разрешением **1 мс** + 22 859 сделок, 3 сессии. corr(OBI, fwd)
+0.09…0.13 (250 мс…30 с), доход «вход по знаку OBI» **0.11…0.32 bps** против круговых
+издержек **3…11 bps** (спред 0.75…9.1 bps + комиссия 1.5 ₽/контракт/сторона + проскальзывание
+~1 bp) — разрыв в 10…100 раз. Контроли пройдены: placebo 0.001…0.006, частичная корреляция
+после снятия импульса 0.066…0.108, устойчивость по половинам дня, блочный бутстрэп
+(лаг-1 автокорреляция forward-рядов 0.91…0.99 → наивные p по n неприменимы).
+**Вердикт: покупка пилота за 1 500 ₽/мес на этом основании не обоснована** — решение
+отложено до проверки хвостов.
+
+**Forward-пилот L1 (2026-10-02, SIM):** WS Alor не работает (§ «Сбор микроструктуры»), сбор
+переведён на REST-поллинг 1 Гц; 11 инструментов стабильно ~7.4 строки/с, ошибок 0; OBI
+невырожден (σ 0.47…0.70, 1200…1570 уникальных значений при ~1800 наблюдениях). Найден и
+починен баг `bestSide` (максимум на обеих сторонах; для ask нужен минимум — при `depth=1`
+невидимо, ломало бы microprice при глубине >1). **Пилот остановлен 2026-10-02 ~20:33 МСК:**
+накоплено **33 535 строк**, дальше `Token refresh failed, using existing token` каждые 11 с
+(истёк `ALOR_REFRESH_TOKEN`) → REST-поллинг без токена не пишет; монитор 20 раз подряд
+зафиксировал `HANG DETECTED` (правило §4 docs/23 отработало по назначению). Бот сейчас
+не запущен, строки остались в `microstructure_snapshots` (postgres остановлен).
+
+**НЕ сделано (главный следующий шаг, 0 ₽):** хвостовая калибровка OBI на бесплатном дне —
+сетка порогов `k = 1.5 / 2.0 / 2.5 / 3.0` по σ OBI зафиксирована в docs/23 §3 ДО сбора,
+но **не посчитана**. Это единственный бесплатный ответ на вопрос «концентрируется ли эффект
+в хвостах»; ответ определяет, покупать ли данные вообще. Стенд
+`MoexOrderLogMicrostructureSignalTest` (среднее по всем наблюдениям, бутстрэп) расширить
+условным расчётом по хвосту.
+
+**Честная рамка «100% в год»:** тики/стакан дают новый класс признаков, а не подтверждают
+уже измеренный edge. Детерминированная стратегия на полной 730д истории OOS убыточна
+(PF 0.92), лидер combo730 (+193% за 730д ≈ +71%/год) — `RESEARCH_ONLY` с отрицательным
+holdout −17.6%, риск-сетка ухудшает OOS монотонно. Промежуточная цель — **OOS PF ≥ 1.3 на
+≥ 100 сделках**; масштабирование обсуждается только после этого.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -1196,8 +1266,16 @@ edge и риск). Скрипт `scripts/research_risk_grid_730d.ps1`, резу�
 | 2026-09-29 | LLM-veto поверх детерминированного сигнала (`llm-veto`) | **`LlmVeto`** (`ContrarianAgent.challenge` → `ArbitratorAgent.adjudicate`, блокирует только `final.action == HOLD` без `overrideReason`; направление/цена/сила арбитра игнорируются), применяется последним в `LiveStrategyBacktestSignalGenerator` (после session/pullback/ORB/squeeze/panic/macro и ML); fail-closed на CRITICAL/ошибке/таймауте/отказе по `blockOnUnknown` (отказ ≠ veto); обход семантического кэша агентов (`bypassCache` в `ContrarianAgent`, `temperature=0.0`, `adaptiveConfidence=0.0`, namespace `backtest-veto`) + мемоизация вердикта по `(ticker, barTime, action)` — без этого вердикт кэшировался бы по грубому отпечатку и отвечал бы за другой бар, а WFA переигрывал бы платные вызовы; конфиг `bt.llm-veto-*` (enabled **false**, budget 20000, blockOnUnknown true, sampleEvery 0) + query-оверрайды `llmVeto*` на 5 эндпоинтах; метрики `bt_llm_veto_{candidates,blocked,allowed,cache_hits}_total`; **найден баг подключения**: условие фабрики генератора учитывало только query-оверрайды, config-only `llmVetoEnabled=true` молча не доходил до veto (4 эндпоинта) — добавлено `|| backtestConfig.llmVetoEnabled` + регресс-тест `LlmVetoSettings.from`; **IS-скрин выполнен 2026-09-29** (`research_llm_veto_is.ps1`, CNYRUBF 365д): score-порог 0.35 → 23 сделки PF 1.489, 0.40 → 15 сделок PF 1.945, 0.45 → 11 сделок PF 2.158 (return 0.208–0.235%, win 30–36%, MDD 0.16–0.20%) против baseline PF ≈ 0.93 — **score-порог edge не доказал** (монотонный сход к нулю при ослаблении фильтра = сокращение выборки, а не качество), WFA/gate по score не проводились; найден измерительный баг дельты `bt_llm_veto_blocked_total` (отрицательные значения при сбросе actuator-метрики) → колонка `blocked_run` непригодна, скрипт пишет `n/a`; `bt.llm-veto-*` остаётся off, live-путь не затронут; тесты `LlmVetoTest` (14) + `ContrarianAgentBypassCacheTest` (2) + query-контракт + generator-wiring | test (1656) + int + ktlint |
 | 2026-09-29 | Риск-сетка 730д (`risk-grid-730d`) | **Честная проверка «100%/год через риск»**: WFA 730д folds=8 conf 0.60 на детерминированной CNYRUBF MINUTE_10 (без LLM-veto, чтобы не смешивать выбор edge и риск), профили 5:20/10:50/15:75/20:100/30:100 — OOS **−2.17%/PF 0.954** … −12.38%/PF 0.924, **монотонная деградация с ростом риска, число сделок одинаково (85–86) при любом риске**; deployment-gate лучшего (5:20) = **REJECTED, liveAllowed=false** — провалены все 8 проверок (OOS PF 0.608, consistency 0.375, P(noEdge)=0.942, holdout −3.6%, MC p5=−15.9%, stressFailed=5); **цель 100%/год признана недостижимой на текущей стратегии** — риск не создаёт edge, леверидж умножает убыток; **исправлен баг `BacktestEngine`**: пустой фолд `sorted.first()` → `NoSuchElementException` проглатывался и логировался как «funding history unavailable» (ложная диагностика маскировала реальную ошибку, 3 `trades=0` из 78 строк) — теперь пустой срез логируется явно и не ходит в funding repository, регресс-тест `empty candle slice does not query funding history and returns empty result`; **остаточный риск**: пустой срез всё ещё возвращает формальный пустой `BacktestResult` (без invalid-флага) и входит в агрегацию; скрипты `research_risk_grid_730d.ps1` + `watch_research_job.ps1`, артефакты `riskgrid_wfa_730d.csv` + `riskgrid_gate_best.json` | test (1656) + int + ktlint |
 | 2026-09-30 | Сбор L1-микроструктуры в БД (`microstructure-recorder`) | **Закрыта дыра «нет исторических OBI/microprice»**: миграция 037 `microstructure_snapshots` (Timescale hypertable, chunk 1 день, `UNIQUE(ticker,time)`, retention 90д, без compression), `MicrostructureSnapshotRepository` (multi-row INSERT с `ON CONFLICT (ticker,time) DO NOTHING` — ретрай/рестарт не дублирует и не перетирает агрегат; чтение `findByTickerAndTimeBetween` полуоткрытое `[from,to)` — незакрытый правый бакет = lookahead), `MicrostructureConfig` + `MicrostructureRecorder` (1с-бакеты со средними obi/microprice/spread_bps/microprice_deviation_bps и последними L1-полями; `record()` — in-memory O(1) в hot-path `TradingBotService`, запись отдельной корутиной раз в 5с; очередь 20000 с drop-oldest; fail-soft, ошибка БД возвращает батч), `MicrostructureTimeSource` для тестов; **не влияет на торговлю** — слой наблюдательный, не читается решениями, allowlist LIVE не тронут; `microstructure.enabled`=**false** по умолчанию; **исправлены 2 дефекта, найденных при ревью**: `sealStale()` **отбрасывал** протухший бакет вместо закрытия (тикер на паузе терял все наблюдения) и `@PreDestroy` делал `scope.launch{flush()}` + немедленный `scope.cancel()` (финальный flush отменялся) → синхронный `drain()` с ограничением попыток, `enqueue()` с drop-oldest на пути возврата батча (очередь раздувалась сверх лимита), `flushInFlight` против наложения flush'ей; тесты `MicrostructureRecorderTest` (13) + `MicrostructureSnapshotRepositoryIntegrationTest` (5) | test (1682) + int (107) + ktlint |
+| 2026-10-01 | Разбор платных данных MOEX (`paid-market-data`, docs/22) | **Инвентаризация бесплатного**: свечи MINUTE_10/HOUR_1 (42 672)/DAY_1 (2 554) за 2 года по 5 тикерам уже в БД + `data/candles/*.csv`, funding SWAPRATE 509 дат, тики ISS только за текущую сессию, **стакана в ISS нет** (`orderbook.json` → 404); **единственный бесплатный стакан — `OrderLog20241001_A/B.7z`** (публичный FTP-листинг, прочие даты 404) скачан и распарсен: 216 653 строки тиков + 22 859 сделок CNYRUBF, `data/samples/moex_orderlog_20241001`; **готовность к загрузке платных данных**: миграция 038 (`ticks`, `orderbook_bbo`), `MoexOrderLogParser` (20 тестов), `TradeTick`/`OrderbookBbo` + идемпотентные репозитории, `MoexOrderLogLoader` (Channel + корутины-писатели, т.к. парсер синхронный, R2DBC suspend), интеграционные тесты на TimescaleDB 2.17.2 зелёные; **рекомендация по закупке**: Тип В (Top of Book), 1 инструмент = CNYRUBF, 2 года = **30 000 ₽ без НДС** (≈5 ГБ CSV), проба 1 500 ₽/мес первой; Тип А (90 000 ₽) нужен только ради VPIN/depth, Тип С хуже Типа В при той же цене; **не сделано**: слой чтения для research и endpoint выгрузки в CSV (`ResearchMicrostructureController` из `3e8a8e4` фактически отсутствует) | test+int+ktlint |
+| 2026-10-02 | Замер OBI на бесплатном дне + REST-forward-пилот L1 (`obi-free-day`, `microstructure-pilot`) | **Замер на единственном бесплатном дне (2024-10-01, CNYRUBF)**: 66 328 наблюдений стакана с разрешением **1 мс** (MOMENT = `yyyyMMddHHmmssSSS`), 22 859 сделок, 3 сессии; corr(OBI, fwd) 0.09…0.13 (250 мс…30 с), доход «вход по знаку OBI» **0.11…0.32 bps** против круговых издержек **3…11 bps** → разрыв 10…100 раз; контроли: placebo 0.001…0.006, частичная корреляция после снятия импульса 0.066…0.108, устойчивость по половинам дня, **блочный бутстрэп** (лаг-1 автокорреляция forward 0.91…0.99 → наивные p по n неприменимы); `micropriceDeviationBps` даёт идентичный доход = второй признак переизмеряет тот же перекос; **вердикт: покупка пилота за 1 500 ₽/мес не обоснована**, решение отложено до проверки хвостов; **WS Alor `QuotesSubscribe` не работает** (404 «Instrument with symbol was not found», символ пустой; перебраны symbol/security/secid/ticker/scode/guids/board/`OrderBookGetAndSubscribe`) → сбор переведён на REST `/md/v2/orderbooks/{exchange}/{ticker}?depth=1` (`MicrostructureRestPoller`, дефолт off), 11 инструментов ~7.4 строки/с, ошибок 0, OBI невырожден (σ 0.47…0.70, 1200…1570 уникальных значений при ~1800 наблюдениях); **найден баг `bestSide`** — максимум на обеих сторонах (для ask нужен минимум), при `depth=1` невидим, сломал бы microprice при глубине >1 → `higherIsBetter` + регресс-тест; **`MICROSTRUCTURE_TICKERS`** — свой список сбора (пилот на одном CNYRUBF), торговый watchlist не меняется; **пилот остановлен 2026-10-02 ~20:33 МСК**: 33 535 строк, дальше `Token refresh failed` каждые 11 с (истёк `ALOR_REFRESH_TOKEN`) → монитор 20 раз подряд зафиксировал `HANG DETECTED` (правило docs/23 §4 отработало по назначению), бот не запущен, postgres остановлен | test+int+ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
+- **Микроструктура (2026-10-02/04):** пилот стоит — для продолжения нужен свежий `ALOR_REFRESH_TOKEN`
+  в `.env` (и поднятый postgres) + рестарт `scripts/start_microstructure_pilot.ps1 -Tickers CNYRUBF`.
+  Главный невыполненный пункт — **хвостовая калибровка OBI на бесплатном дне** (сетка
+  k=1.5/2.0/2.5/3.0 зафиксирована в docs/23 §3, кода нет): единственный бесплатный ответ на
+  вопрос «концентрируется ли эффект в хвостах»; покупка данных (1 500 ₽/мес пилот → 30 000 ₽
+  за 2 года) обоснована только если хвост даёт ≥5 bps после издержек.
 - live-сайзинг акций Kelly vs калибровочный x5/x6 — открытый вопрос (min приоритет).
 - Funding-veto: **решено (2026-09-22, пользователь): live остаётся off** — research-пороги
   (long 9 ₽ / short 2 ₽) в LIVE НЕ переносятся; `trading.funding-veto-*` default off/2.0.

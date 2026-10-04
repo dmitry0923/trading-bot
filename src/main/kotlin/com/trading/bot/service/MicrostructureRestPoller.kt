@@ -68,11 +68,19 @@ class MicrostructureRestPoller(
     private val depth: Int = microstructureConfig.restDepth.coerceIn(1, 20)
     private val timeout: Duration = Duration.ofMillis(microstructureConfig.restTimeoutMs.coerceAtLeast(500L))
 
-    /** Список инструментов сбора; пустой список отключает поллинг. */
-    private val tickers: List<String> =
-        tradingConfig.tickers
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
+/**
+     * Инструменты сбора.
+     *
+     * Собственный список [MicrostructureConfig.tickers], чтобы пилот сужался до
+     * нужного инструмента (например, только CNYRUBF) без изменения торгового
+     * watchlist: сбор и торговля решают разные задачи, и список наблюдаемых
+     * инструментов не должен быть торговым. Пустой список = fallback на
+     * [TradingConfig.tickers] (прежнее поведение).
+     */
+    internal val tickers: List<String> =
+        (
+            microstructureConfig.tickers.ifEmpty { tradingConfig.tickers }
+        ).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
     @PostConstruct
     fun start() {

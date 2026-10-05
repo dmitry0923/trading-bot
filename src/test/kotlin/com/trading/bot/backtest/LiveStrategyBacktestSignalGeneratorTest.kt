@@ -885,21 +885,33 @@ class LiveStrategyBacktestSignalGeneratorTest {
      * LLM-veto (docs/20 §10) применяется последним и умеет только блокировать:
      * число входов не может вырасти относительно baseline.
      *
-     * Конфигурация veto здесь намеренно «сломанная» (`budgetMs = 0`): бюджет пары
-     * LLM-вызовов исчерпан мгновенно, ни один агент не успевает ответить ⇒ fail-closed
-     * блок. Именно этот путь и должен гасить детерминированные входы, не завися от
+     * Конфигурация veto здесь намеренно «сломанная»: контрарьян отвечает
+     * `llmAvailable = false` (LLM недоступна), бюджет валиден ⇒ fail-closed блок.
+     * Именно этот путь и должен гасить детерминированные входы, не завися от
      * текста ответа модели.
      */
     @Test
     fun `llm veto only removes entries and default generator is untouched`() {
+        // Ответ агента не зависит от аргументов (их набор меняется вместе с
+        // индикаторами), поэтому ставим его через default-answer, а не через
+        // any()-matcher'ы: inline any() для non-null типов в Kotlin даёт NPE.
+        val unavailable =
+            ContrarianAgent.ChallengeReport(
+                isValid = true,
+                riskLevel = "LOW",
+                critique = "unavailable",
+                signalStrength = 0.0,
+                llmAvailable = false,
+            )
+        val contrarian = Mockito.mock(ContrarianAgent::class.java) { unavailable }
         val genBaseline = LiveStrategyBacktestSignalGenerator()
         val genVetoed =
             LiveStrategyBacktestSignalGenerator(
                 llmVeto =
                     LlmVeto(
-                        contrarianAgent = Mockito.mock(ContrarianAgent::class.java),
+                        contrarianAgent = contrarian,
                         arbitratorAgent = Mockito.mock(ArbitratorAgent::class.java),
-                        settings = LlmVetoSettings(enabled = true, budgetMs = 0, blockOnUnknown = true),
+                        settings = LlmVetoSettings(enabled = true, blockOnUnknown = true),
                         meterRegistry = SimpleMeterRegistry(),
                     ),
             )
@@ -915,7 +927,7 @@ class LiveStrategyBacktestSignalGeneratorTest {
         )
         assertTrue(
             vetoed.all { it == StrategyAction.HOLD },
-            "fail-closed veto (бюджет 0) обязан оставить только HOLD",
+            "fail-closed veto (LLM недоступна) обязан оставить только HOLD",
         )
         assertEquals(baseline, collectSignalsWith(genBaseline, candles), "baseline-генератор без veto не должен меняться")
     }

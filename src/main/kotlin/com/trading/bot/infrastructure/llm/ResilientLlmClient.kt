@@ -2,6 +2,7 @@ package com.trading.bot.infrastructure.llm
 
 import com.trading.bot.config.LlmConfig
 import com.trading.bot.config.LlmProvider
+import com.trading.bot.config.SlaTimers
 import com.trading.bot.config.TraceStorageConfig
 import com.trading.bot.infrastructure.tracing.LlmTrace
 import com.trading.bot.infrastructure.tracing.TraceContext
@@ -400,7 +401,7 @@ class ResilientLlmClient(
         val latency = System.currentTimeMillis() - start
 
         meterRegistry.counter("llm.tokens.used", Tags.of("agent", agent, "model", endpoint.model)).increment(tokens.toDouble())
-        meterRegistry.timer("llm.latency", Tags.of("agent", agent)).record(latency, TimeUnit.MILLISECONDS)
+        SlaTimers.record(meterRegistry, "llm.latency", Tags.of("agent", agent), latency, TimeUnit.MILLISECONDS)
         return LlmResponse(content = content, tokensUsed = tokens, latencyMs = latency, model = endpoint.model)
     }
 }

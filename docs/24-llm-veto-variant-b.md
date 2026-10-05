@@ -1,6 +1,6 @@
 # docs/24 — LLM-veto Вариант B: Методология и Гипотеза
 
-**Статус:** 🟡 В разработке (не запускалось, ждёт прогона)  
+**Статус:** ❌ **REJECTED** (измерен 2026-10-05, WFA 365д × 6 folds) — см. [docs/20](20-hybrid-strategies-triage.md) §10.7  
 **Дата создания:** 2026-10  
 **Основание:** [docs/23](23-microstructure-forward-pilot.md) §7 (закрытый OBI), [AGENTS.md](../AGENTS.md)  
 **Коммит-ориентир:** `39ef4006` — закрытие OBI/микроструктуры
@@ -69,36 +69,63 @@ Baseline CNYRUBF (RSI+MACD) на WFA показывает OOS PF=0.92 — нед
 |------|-----------|
 | `backtest/AgentVetoBacktestSignalGenerator.kt` | Основная логика veto-генератора |
 | `agent/VetoResult.kt` | Sealed class ALLOW/BLOCK/HOLD |
-| `config/BacktestAgentConfig.kt` | Добавлен флаг `vetoMode` |
-| `api/ApiController.kt` | Добавлен `?agentVetoMode=true` |
-| `application.yml` | Секция `bt.agent.veto-mode` |
+| `backtest/BacktestAgentConfig.kt` | Флаги `bt.agent.*` (в т.ч. `veto-mode`, default off) |
+| `api/ApiController.kt` | Query-оверрайды `llmVeto*` на 5 эндпоинтах |
+| `application.yml` | Секция `bt.llm-veto-*` |
+
+> **Поправка к первоначальной редакции документа:** параметра
+> `?agentVetoMode=true` в API **нет** — включение делается через
+> `llmVetoEnabled=true` (+ `llmVetoPromptVersion`, `llmVetoBlockOnUnknown`),
+> см. docs/20 §10.4. Дубликат `config/BacktestAgentConfig.kt` удалён: рабочий
+> конфиг — `backtest/BacktestAgentConfig.kt`.
 
 ### Активация в бэктесте
 
 ```bash
-# Запуск прогона с LLM-veto
-curl "http://localhost:8080/backtest?ticker=CNYRUBF&agentVetoMode=true"
+# WFA-прогон с LLM-veto (фактические параметры)
+curl "http://localhost:8080/api/v1/backtest/CNYRUBF/validate?days=365&folds=6\
+&adaptiveConfidenceThreshold=0.60\
+&llmVetoEnabled=true&llmVetoPromptVersion=veto-score&llmVetoBlockOnUnknown=true"
 ```
+
+Research-флаги процесса обязательны: `LLM_DISABLE_REASONING=true` и
+`LLM_BUDGET_ENABLED=false`. Готовый сценарий — `scripts/research_llm_veto_wfa.ps1`.
 
 ### Метрики
 
 - `bt_llm_veto_blocked_total{ticker, reason}` — количество заблокированных сигналов
 - `bt_llm_veto_allowed_total{ticker, reason}` — количество пропущенных сигналов
+- также `bt_llm_veto_candidates_total`, `bt_llm_veto_cache_hits_total`
+
+> **Наблюдаемость:** с 2026-10-05 `/actuator/prometheus` отдаёт **500**
+> (`ClassCastException` в prometheus-реестре), поэтому эти метрики сейчас
+> недоступны — block rate пришлось считать по логам `ArbitratorAgent`.
+> Баг реестра предсуществующий, к veto отношения не имеет.
 
 ---
 
 ## 4. Критерии прохождения гипотезы
 
-| Метрика | Минимум для PASS | Целевое значение |
-|---------|-----------------|-----------------|
-| OOS Profit Factor | > 1.2 | > 1.4 |
-| OOS Sharpe | > 0.3 | > 0.5 |
-| WFA Consistency | > 0.60 | > 0.70 |
-| Monte-Carlo P(loss) | < 30% | < 20% |
-| Veto Block Rate | < 60% | 20-40% |
+| Метрика | Минимум для PASS | Целевое значение | **Измерено (2026-10-05)** |
+|---------|-----------------|-----------------|--------------------------|
+| OOS Profit Factor | > 1.2 | > 1.4 | 1.771 fail-closed / **1.299 при `blockOnUnknown=false`** |
+| OOS Sharpe | > 0.3 | > 0.5 | 1.119 / **0.556** |
+| WFA Consistency | > 0.60 | > 0.70 | 0.500 / **0.667** |
+| Monte-Carlo P(loss) | < 30% | < 20% | не измерялся (REJECTED раньше) |
+| Veto Block Rate | < 60% | 20-40% | **0% (0 HOLD из 40 вердиктов)** |
 
 **Veto Block Rate** — доля сигналов, заблокированных LLM-veto. Если > 60% — LLM блокирует  
 слишком много, вето неэффективно. Если < 10% — LLM почти не фильтрует, veto бесполезен.
+
+### 4.1 Итог: критерий PF > 1.2 оказался ложноположительным
+
+Формальный PF 1.771 получен на **fail-closed артефакте**: арбитр не выдал ни
+одного `HOLD` (40 вердиктов: 20 BUY / 20 SELL), а фальсифицирующий прогон с
+`llmVetoBlockOnUnknown=false` дал **тождественный baseline** (PF 1.299,
+31 сделка, consistency 0.667). Улучшение целиком объясняется 2 отказами LLM,
+срезанными fail-closed, т.е. зависит от доступности LLM, а не от сигнала.
+Block Rate 0% и PF 1.299 не проходят критерии §4 → **`REJECTED`**, переход к
+Гипотезе H3 (§8.5). Полный разбор — docs/20 §10.7.
 
 ---
 
@@ -151,13 +178,22 @@ Cron: первый рабочий день месяца в 09:05 МСК (`0 5 9 
 
 ---
 
-## 8. Следующие шаги
+## 8. Статус следующих шагов
 
-1. Запустить прогон: `curl ".../backtest?ticker=CNYRUBF&agentVetoMode=true"`
-2. Проверить Veto Block Rate в метриках (`bt_llm_veto_blocked_total`)
-3. Сравнить OOS PF с baseline (WFA без veto)
-4. Если OOS PF > 1.2 → shadow-тест 30 дней
-5. Если OOS PF ≤ 1.2 → переход к Гипотезе H3 (Carry+Momentum)
+| # | Шаг | Статус |
+|---|---|---|
+| 1 | Прогон WFA с veto | ✅ выполнен 2026-10-05 (docs/20 §10.7) |
+| 2 | Проверить Veto Block Rate | ✅ из логов: **0%**; из метрик нельзя — `/actuator/prometheus` = 500 |
+| 3 | Сравнить OOS PF с baseline | ✅ 1.771 fail-closed / 1.299 при `blockOnUnknown=false` |
+| 4 | Если OOS PF > 1.2 → shadow-тест 30 дней | ❌ **не запускается**: PF оказался артефактом fail-closed, критерий ложноположителен |
+| 5 | Если OOS PF ≤ 1.2 → Гипотеза H3 (Carry+Momentum) | ✅ **активирована** — это следующая гипотеза |
+
+**Monthly Tuning Engine (§7) по своему гейту не активируется:** он поставлен
+после подтверждения edge veto (OOS PF > 1.2), а подтверждения нет. Код движка
+при этом рабочий (контекст поднимается, миграция `strategy_versions` есть) и
+исправлен 2026-10-05 — см. AGENTS.md, каталог аудитов
+(`monthly-tuning-integration`); включать его в LIVE без отдельного решения
+пользователя нельзя.
 
 ---
 

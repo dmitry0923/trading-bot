@@ -1120,6 +1120,78 @@ docs/19), а как **сокращатель плохих входов**. Реа
   давала отрицательные значения (сброс/подмена actuator-метрики) — колонка `blocked_run`
   в свипе непригодна, в следующих прогонах скрипт пишет `n/a`.
 
+### WFA-валидация LLM-veto 365д: PF 1.771 = артефакт fail-closed (2026-10-05, `llm-veto-wfa`)
+
+Полное измерение гипотезы «LLM отсекает убыточные входы детерминированного сигнала»
+(Вариант B, docs/24). CNYRUBF, 365д MINUTE_10, WFA folds=6, conf 0.60,
+`llmVetoEnabled=true&llmVetoPromptVersion=veto-score&llmVetoBlockOnUnknown=true`,
+`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false` (Router AI /
+`moonshotai/kimi-k3`), скрипт `scripts/research_llm_veto_wfa.ps1`.
+
+| Прогон | OOS сделки | OOS PF | OOS Return | OOS Sharpe | Consistency | P(noEdge) |
+|---|---|---|---|---|---|---|
+| baseline (veto off) | 31 | 1.299 | +0.364% | 0.556 | 0.667 | 0.31 |
+| veto ON, fail-closed | 26 | **1.771** | +0.893% | 1.119 | 0.500 | 0.13 |
+| veto ON, `blockOnUnknown=false` | 31 | 1.299 | +0.364% | 0.556 | 0.667 | 0.31 |
+
+- **Фальсификация (решающий довод):** с `blockOnUnknown=false` veto-конвейер даёт
+  результат, **тождественный baseline** до последнего знака (PF 1.2989500760596326,
+  31 сделка, consistency 0.667) — значит он не добавляет ничего, а весь эффект
+  `PF 1.771` дали **исключительно отказы LLM**, срезанные fail-closed.
+- **Логи:** 40 вердиктов арбитра = 20 BUY / 20 SELL / **0 HOLD**; 2 отказа
+  `LLM call failed for agent=arbitrator` в окне прогона (`12:11:52`, `12:13:20`),
+  третий (`11:52`) — от 30-дневного smoke. **Veto Block Rate = 0%** — ниже
+  порога docs/24 §4 («< 10% — LLM почти не фильтрует»).
+- **Оговорка про арифметику:** блоками объясняются 2 кандидата, а сделки упали
+  на 5 (31 → 26); оставшиеся 3 логами не объяснены, причина не установлена.
+  Это доп., а не решающий довод — решающим является тождественность baseline.
+- **Вердикт: `REJECTED`.** Формальный критерий docs/24 §4 «PF > 1.2» выполнен
+  (1.771), но оказался ложноположительным на артефакте; дополнительно не пройдены
+  consistency 0.500 < 0.600, Block Rate 0% < 10%, `robust=false` (26 сделок << 100),
+  P(noEdge) 0.13 > 0.05. → **Гипотеза H3** (docs/24 §8.5). `bt.llm-veto-*` off.
+- **Инфра-дефекты прогона:** (1) query-параметра `agentVetoMode` из docs/24 §3/§8
+  в API нет — фактически `llmVeto*` (docs/20 §10.4), дубликат
+  `config/BacktestAgentConfig.kt` удалён (рабочий — `backtest/`); (2)
+  `/actuator/prometheus` = **500** (`ClassCastException` в prometheus-реестре) —
+  `bt_llm_veto_*` не читаются, block rate считан по логам; (3) скрипт писал
+  baseline- и veto-результат в один JSON (обойдено копированием) — добавлены
+  `-Out` и `-NoBlockOnUnknown`.
+- Разбор: docs/20 §10.7, docs/24 §4.1. Артефакты:
+  `scripts/llmveto_wfa_CNYRUBF_365d_f6.json`, `…_f6_noblock.json`,
+  `build/veto_baseline_365d_f6.json`, `build/veto_withveto_365d_f6.json`.
+
+### Monthly Tuning Engine: контекст и миграция (2026-10-05, `monthly-tuning-integration`)
+
+**Spring-контекст не поднимался — падали все 107 integration-тестов.** Движок
+написан, но не был проверен ни разу: три дефекта наложились.
+
+1. **`StrategyVersionRepository` был Spring Data `CrudRepository<Entity, Long>`**
+   над несуществующей persistence-сущностью (есть только data-класс) → бины не
+   собирались. Переписан в `@Repository class` на `DatabaseClient` с suspend-API,
+   по образцу `BacktestResultRepository`: `save` (`CAST(... AS jsonb)` для
+   параметров, вставка `ON CONFLICT (version) WHERE NOT rolled_back` с
+   возвратом id), `findAllByOrderByDeployedAtDesc`,
+   `findFirstByRolledBackFalseOrderByDeployedAtDesc`, `findByVersion`,
+   `findByRolledBackTrue`. `runTuningCycle`/`saveVersion` стали suspend;
+   nullable SL/TP исправлены в `ParameterOptimizer`, `PerformanceGateCheck`,
+   `TuningMetricsProvider`, `MonthlyTuningScheduler`.
+2. **Jackson 2 при Jackson 3 в проекте:** `MonthlyTuningService` импортировал
+   `com.fasterxml.jackson.databind.ObjectMapper`, бина в контексте не было →
+   падение контекста. Заменено на `tools.jackson.databind.ObjectMapper`.
+3. **Таблицы `strategy_versions` не существовало.** Flyway в проекте **нет**
+   (используется Liquibase), а мёртвый `db/migration/V038__strategy_versions.sql`
+   никто не выполнял. Добавлена Liquibase-миграция
+   `039-strategy-versions.sql` + include в `db.changelog-master.yaml`, мёртвый
+   Flyway-файл удалён.
+
+**Итог: `test` 1718 (1 skipped), `integrationTest` 117 (1 skipped),
+`ktlintCheck` — все зелёные** (`build/full5.log`, `BUILD SUCCESSFUL in 17m 51s`).
+
+**ВНИМАНИЕ, не решено:** по гейту docs/24 §7 Monthly Tuning активируется только
+после подтверждённого edge veto (OOS PF > 1.2), а подтверждения нет (см. раздел
+выше). Код рабочий, но включать cron-тюнинг в LIVE без явного решения
+пользователя нельзя.
+
 ### Риск-сетка 730д: риск не создаёт доходность (2026-09-29, `risk-grid-730d`)
 
 Проверка гипотезы «100%/год достижима повышением риска». WFA 730д folds=8, conf 0.60,
@@ -1290,8 +1362,27 @@ k ≥ 2.0 не содержит ни одного наблюдения. «Хво
 | 2026-10-01 | Разбор платных данных MOEX (`paid-market-data`, docs/22) | **Инвентаризация бесплатного**: свечи MINUTE_10/HOUR_1 (42 672)/DAY_1 (2 554) за 2 года по 5 тикерам уже в БД + `data/candles/*.csv`, funding SWAPRATE 509 дат, тики ISS только за текущую сессию, **стакана в ISS нет** (`orderbook.json` → 404); **единственный бесплатный стакан — `OrderLog20241001_A/B.7z`** (публичный FTP-листинг, прочие даты 404) скачан и распарсен: 216 653 строки тиков + 22 859 сделок CNYRUBF, `data/samples/moex_orderlog_20241001`; **готовность к загрузке платных данных**: миграция 038 (`ticks`, `orderbook_bbo`), `MoexOrderLogParser` (20 тестов), `TradeTick`/`OrderbookBbo` + идемпотентные репозитории, `MoexOrderLogLoader` (Channel + корутины-писатели, т.к. парсер синхронный, R2DBC suspend), интеграционные тесты на TimescaleDB 2.17.2 зелёные; **рекомендация по закупке**: Тип В (Top of Book), 1 инструмент = CNYRUBF, 2 года = **30 000 ₽ без НДС** (≈5 ГБ CSV), проба 1 500 ₽/мес первой; Тип А (90 000 ₽) нужен только ради VPIN/depth, Тип С хуже Типа В при той же цене; **не сделано**: слой чтения для research и endpoint выгрузки в CSV (`ResearchMicrostructureController` из `3e8a8e4` фактически отсутствует) | test+int+ktlint |
 | 2026-10-02 | Замер OBI на бесплатном дне + REST-forward-пилот L1 (`obi-free-day`, `microstructure-pilot`) | **Замер на единственном бесплатном дне (2024-10-01, CNYRUBF)**: 66 328 наблюдений стакана с разрешением **1 мс** (MOMENT = `yyyyMMddHHmmssSSS`), 22 859 сделок, 3 сессии; corr(OBI, fwd) 0.09…0.13 (250 мс…30 с), доход «вход по знаку OBI» **0.11…0.32 bps** против круговых издержек **3…11 bps** → разрыв 10…100 раз; контроли: placebo 0.001…0.006, частичная корреляция после снятия импульса 0.066…0.108, устойчивость по половинам дня, **блочный бутстрэп** (лаг-1 автокорреляция forward 0.91…0.99 → наивные p по n неприменимы); `micropriceDeviationBps` даёт идентичный доход = второй признак переизмеряет тот же перекос; **вердикт: покупка пилота за 1 500 ₽/мес не обоснована**, решение отложено до проверки хвостов; **WS Alor `QuotesSubscribe` не работает** (404 «Instrument with symbol was not found», символ пустой; перебраны symbol/security/secid/ticker/scode/guids/board/`OrderBookGetAndSubscribe`) → сбор переведён на REST `/md/v2/orderbooks/{exchange}/{ticker}?depth=1` (`MicrostructureRestPoller`, дефолт off), 11 инструментов ~7.4 строки/с, ошибок 0, OBI невырожден (σ 0.47…0.70, 1200…1570 уникальных значений при ~1800 наблюдениях); **найден баг `bestSide`** — максимум на обеих сторонах (для ask нужен минимум), при `depth=1` невидим, сломал бы microprice при глубине >1 → `higherIsBetter` + регресс-тест; **`MICROSTRUCTURE_TICKERS`** — свой список сбора (пилот на одном CNYRUBF), торговый watchlist не меняется; **пилот остановлен 2026-10-02 ~20:33 МСК**: 33 535 строк, дальше `Token refresh failed` каждые 11 с (истёк `ALOR_REFRESH_TOKEN`) → монитор 20 раз подряд зафиксировал `HANG DETECTED` (правило docs/23 §4 отработало по назначению), бот не запущен, postgres остановлен | test+int+ktlint |
 | 2026-10-04 | Хвостовая калибровка OBI (`obi-tail`) | **ВЫПОЛНЕНА, ответ отрицательный.** Стенд `MoexOrderLogObiTailTest`: условное среднее по хвосту для горизонтов 250 мс/1 с/5 с/30 с, блочный бутстрэп по исходному времени, placebo (перемешанный внутри сессии OBI), momentum-контроль, устойчивость по половинам дня, счётчик эпизодов хвоста, три варианта дохода (mid / taker по touch / оптимистичный passive по touch); **найден дефект сетки §3**: `ObiCalculator` считает imbalance `(bid−ask)/(bid+ask) ∈ [−1,1]`, книга CNYRUBF часто односторонняя (|OBI|>0.99 у 5.46% наблюдений) → σ ≈ вся шкала, **max|z| = 1.08**, т.е. k ≥ 2.0 пуст по построению (вывод «хвоста нет» был бы артефактом нормализации) → добавлена вторая сетка в **абсолютных** единицах (|OBI| ≥ 0.5/0.7/0.9), обе не подбирались; **результат**: gross(mid) монотонно растёт с глубиной хвоста 0.17→0.60 bps (в 2–6 раз выше среднего), но net(taker) **−4.29…−4.81 bps/сделку**, net(passive, оптимист.) **−2.95…−3.63**, требовалось ≥ +5 bps — ни один CI95 не пересекает ноль в плюс; momentum-контроль −0.19…+0.03 bps = весь gross объясняется импульсом, прирост против placebo 0.2–0.6 bps; хвост не кластеризуется (15 548 наблюдений = 4 412 эпизодов); **вердикт: покупка платного архива (1 500 ₽/мес → 30 000 ₽/2 года) НЕ обоснована** по главному аргументу «эффект может быть в хвостах»; docs/23 §7, docs/22 §12.1 | test + int + ktlint |
+| 2026-10-05 | WFA-валидация LLM-veto 365д (`llm-veto-wfa`) | **Полное измерение гипотезы H2 (docs/24, Вариант B) — `REJECTED`.** WFA CNYRUBF 365д folds=6 conf 0.60, `llmVetoEnabled=true&llmVetoPromptVersion=veto-score&llmVetoBlockOnUnknown=true`, kimi-k3, `LLM_DISABLE_REASONING`/`LLM_BUDGET_ENABLED=false`; baseline 31 сделка/PF 1.299 → veto fail-closed 26/PF **1.771**/Sharpe 1.119, но **фальсифицирующий прогон `blockOnUnknown=false` тождествен baseline** (31/PF 1.2989500760596326/consistency 0.667) → весь эффект дали 2 отказа `LLM call failed for agent=arbitrator`, срезанные fail-closed; логи: 40 вердиктов арбитра = 20 BUY / 20 SELL / **0 HOLD** → Veto Block Rate 0% (порог docs/24 §4 — 10%); оговорка: 2 блока объясняют лишь часть расхождения 31→26, 3 сделки не объяснены; не пройдены также consistency 0.500, `robust=false` (26 << 100), P(noEdge) 0.13; **новый harness-скрипт `scripts/research_llm_veto_wfa.ps1`** (`-Out`, `-NoBlockOnUnknown`); инфра-дефекты: параметра `agentVetoMode` в API нет (фактически `llmVeto*`), дубликат `config/BacktestAgentConfig.kt` удалён, `/actuator/prometheus` = 500 (`ClassCastException`) → метрики veto читаются только по логам; docs/20 §10.7, docs/24 §4.1 | test (1718) + int (117) + ktlint |
+| 2026-10-05 | Monthly Tuning: контекст и миграция (`monthly-tuning-integration`) | **Spring-контекст не поднимался — 107 integration-тестов падали.** Три дефекта: (1) `StrategyVersionRepository` был Spring Data `CrudRepository` над несуществующей сущностью → переписан в `@Repository class` на `DatabaseClient` (suspend `save`/`findAllByOrderByDeployedAtDesc`/`findFirstByRolledBackFalseOrderByDeployedAtDesc`/`findByVersion`/`findByRolledBackTrue`; JSONB через `CAST(... AS jsonb)`; вставка `ON CONFLICT (version) WHERE NOT rolled_back` с возвратом id — паттерн `BacktestResultRepository`); `runTuningCycle`/`saveVersion` сделаны suspend, nullable SL/TP в `ParameterOptimizer`/`PerformanceGateCheck`/`TuningMetricsProvider`/`MonthlyTuningScheduler` исправлены; (2) `MonthlyTuningService` импортировал Jackson 2 (`com.fasterxml...`) при Jackson 3 в проекте (`tools.jackson...`) → бина `ObjectMapper` не было, контекст падал; (3) таблицы `strategy_versions` не существовало — вместо Flyway-миграции (flyway в проекте нет) добавлена Liquibase `039-strategy-versions.sql` + include в `db.changelog-master.yaml`, мёртвый `db/migration/V038__strategy_versions.sql` удалён; тесты `AgentVetoBacktestSignalGeneratorTest` 5/5; **все три прогона зелёные**: `test` 1718 (1 skipped), `integrationTest` 117 (1 skipped), `ktlintCheck` | test + int + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
+- **LLM-veto (2026-10-05):** гипотеза **закрыта отрицательно** — `REJECTED`
+  (PF 1.771 = артефакт fail-closed, при `blockOnUnknown=false` тождествен
+  baseline PF 1.299; арбитр не выдал ни одного HOLD, Block Rate 0%).
+  `bt.llm-veto-*` остаётся `off`. Следующая гипотеза — **H3 (Carry+Momentum)**
+  по docs/24 §8.5; она не сформулирована в коде и требует отдельной постановки.
+- **Monthly Tuning Engine (2026-10-05):** код рабочий и контекст поднимается,
+  но движок **не должен включаться в LIVE без решения пользователя** — его гейт
+  в docs/24 §7 предполагает подтверждённый edge veto (OOS PF > 1.2), которого
+  нет (см. выше). Нужен явный ответ: активировать ли cron-тюнинг независимо от
+  veto-гипотезы или держать выключенным.
+- **`/actuator/prometheus` = 500** (2026-10-05, найдено на veto-прогоне):
+  `ClassCastException: io.prometheus.metrics.model.snapshots.HistogramSnapshot$HistogramDataPointSnapshot cannot be cast …`
+  в prometheus-реестре. Предсуществующий баг, не связан с veto; **делает все
+  research-счётчики (`bt_llm_veto_*` и др.) нечитаемыми**, поэтому в прогонах
+  метрики приходится брать из логов. Требует отдельного аудита и исправления —
+  иначе наблюдаемость всех экспериментальных гейтов (funding-veto, ML, veto)
+  ограничена логами.
 - **Микроструктура (2026-10-04):** хвостовая калибровка выполнена, покупка данных не обоснована
   (см. каталог ниже). Пилот forward-сбора стоит; для продолжения нужен свежий
   `ALOR_REFRESH_TOKEN` в `.env` (и поднятый postgres) + рестарт

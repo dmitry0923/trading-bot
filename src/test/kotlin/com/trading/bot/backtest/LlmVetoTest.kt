@@ -276,6 +276,76 @@ class LlmVetoTest {
     }
 
     @Test
+    fun `arbitrator refusal is fail-closed even when the returned action is BUY`() {
+        // Регресс на fail-open: ArbitratorAgent при guardrail-override отдаёт
+        // `action` из guardrails вместе с `overrideReason`, то есть BUY + overrideReason
+        // — это отказ, а не разрешение. Прежний порядок проверок («сначала action»)
+        // трактовал такой ответ как ALLOW, хотя контур объявлен fail-closed.
+        val refused = buyFinal.copy(overrideReason = "LLM_UNAVAILABLE")
+        runBlocking {
+            stubChallenge(challenge)
+            stubFinal(refused)
+        }
+
+        val verdict = runBlocking { run() }
+
+        assertEquals(false, verdict.allow, "отказ арбитра не может разрешить вход")
+        assertEquals(LlmVeto.Reason.ARB_FAILURE, verdict.reason)
+        assertTrue(verdict.detail!!.contains("LLM_UNAVAILABLE"), "причина отказа обязана попасть в лог: ${verdict.detail}")
+    }
+
+    @Test
+    fun `arbitrator refusal in score mode does not pass the entry through the score threshold`() {
+        // minScore не должен превращать отказ арбитра в разрешение: score 0.95 выше
+        // порога, но вердикта от арбитра нет — вопрос решает blockOnUnknown.
+        val refused = buyFinal.copy(signalStrength = 0.95, overrideReason = "PARSE_ERROR")
+        runBlocking {
+            stubChallenge(challenge)
+            stubFinal(refused)
+        }
+
+        val scored = veto(settings.copy(minScore = 0.5))
+        val verdict = runBlocking { scored.veto("CNYRUBF", StrategyAction.BUY, 0.7, snapshot, indicators, "c1", barTime) }
+
+        assertEquals(false, verdict.allow)
+        assertEquals(LlmVeto.Reason.ARB_FAILURE, verdict.reason)
+    }
+
+    @Test
+    fun `zero budget is rejected because withTimeout(0) cancels every candidate`() {
+        // 0 отменяет вызов до старта: каждый кандидат уходил в BUDGET_TIMEOUT.
+        // Выключать veto — флагом enabled=false.
+        assertThrows(IllegalArgumentException::class.java) { LlmVetoSettings(budgetMs = 0) }
+        LlmVetoSettings(budgetMs = 1)
+    }
+
+    @Test
+    fun `verdict carries the failure detail for log triage`() {
+        runBlocking {
+            stubChallenge(challenge.copy(llmAvailable = false))
+        }
+
+        val verdict = runBlocking { run() }
+
+        assertEquals(false, verdict.allow)
+        assertEquals(LlmVeto.Reason.LLM_FAILURE, verdict.reason)
+        assertTrue(verdict.detail!!.contains("llmAvailable=false"), "детализация отказа обязана быть в вердикте: ${verdict.detail}")
+    }
+
+    @Test
+    fun `decisions and failures are disjoint so research metrics stay interpretable`() {
+        // По прогону 2026-10-05 причина «почему сделок стало меньше» читалась только
+        // по логам: метрика не различала решение LLM и отказ, срезанный fail-closed.
+        val decisions = LlmVeto.Reason.DECISIONS
+        val failures = LlmVeto.Reason.FAILURES
+        assertTrue(decisions.intersect(failures).isEmpty())
+        assertTrue(LlmVeto.Reason.ARB_HOLD in decisions)
+        assertTrue(LlmVeto.Reason.ARB_SCORE_LOW in decisions)
+        assertTrue(LlmVeto.Reason.ARB_FAILURE in failures)
+        assertTrue(LlmVeto.Reason.BUDGET_TIMEOUT in failures)
+    }
+
+    @Test
     fun `budget timeout is fail-closed and counted as BUDGET_TIMEOUT`() {
         // Тот же TimeoutCancellationException, что бросает withTimeout при исчерпании
         // бюджета; конструктор internal в Kotlin, поэтому ставим его рефлексией.

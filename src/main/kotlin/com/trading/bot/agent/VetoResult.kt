@@ -21,7 +21,9 @@ sealed class VetoResult {
      *
      * @property reason причина блокировки (из [com.trading.bot.backtest.LlmVeto.Reason]).
      */
-    data class BLOCK(val reason: String) : VetoResult()
+    data class BLOCK(
+        val reason: String,
+    ) : VetoResult()
 
     /**
      * Fail-closed: LLM недоступен или произошла ошибка.
@@ -30,5 +32,7 @@ sealed class VetoResult {
      *
      * @property cause техническая причина отказа для диагностики.
      */
-    data class HOLD(val cause: String) : VetoResult()
+    data class HOLD(
+        val cause: String,
+    ) : VetoResult()
 }

@@ -11,7 +11,7 @@ import java.math.BigDecimal
  * Реализует grid search параметров стратегии на expanding window (не sliding!).
  *
  * **Expanding window vs Sliding window:**
- * - Expanding: обучение на ВСЕЙ истории [start..current], OOS = последние 30 дней.
+ * - Expanding: обучение на ВСЕЙ истории (`start..current`), OOS = последние 30 дней.
  * - Sliding: только последние N дней — риск забыть старые паттерны.
  * - Expanding выбран намеренно: в алготрейдинге overfitting на короткое окно опаснее
  *   чем потеря адаптивности.
@@ -27,7 +27,6 @@ import java.math.BigDecimal
  */
 @Component
 class ParameterOptimizer {
-
     private val logger = LoggerFactory.getLogger(ParameterOptimizer::class.java)
 
     /**
@@ -72,8 +71,19 @@ class ParameterOptimizer {
         }
 
         // Grid search: перебор значений SL/TP в диапазоне ±20% от текущих.
-        val candidateSlValues = generateGrid(currentParameters.slPoints.toDouble(), GRID_STEPS)
-        val candidateTpValues = generateGrid(currentParameters.tpPoints.toDouble(), GRID_STEPS)
+        // SL/TP опциональны в [StrategyParameters] — без них сетка не центрируется.
+        val currentSl = currentParameters.slPoints
+        val currentTp = currentParameters.tpPoints
+        if (currentSl == null || currentTp == null) {
+            logger.info("ParameterOptimizer: пропуск — SL/TP не заданы в текущих параметрах")
+            return OptimizationResult(
+                parameters = currentParameters,
+                skipped = true,
+                reason = "SL/TP не заданы (slPoints=$currentSl, tpPoints=$currentTp)",
+            )
+        }
+        val candidateSlValues = generateGrid(currentSl.toDouble(), GRID_STEPS)
+        val candidateTpValues = generateGrid(currentTp.toDouble(), GRID_STEPS)
 
         // Выбор лучшей комбинации: минимальный риск при текущем PF > 1.2.
         // При PF < 1.2 (WARN) смещаем в сторону более консервативных параметров.
@@ -93,8 +103,8 @@ class ParameterOptimizer {
             )
 
         // Проверка регуляризации: изменение > 30% → дополнительная валидация.
-        val slDeviation = deviationPct(currentParameters.slPoints.toDouble(), bestSl)
-        val tpDeviation = deviationPct(currentParameters.tpPoints.toDouble(), bestTp)
+        val slDeviation = deviationPct(currentSl.toDouble(), bestSl)
+        val tpDeviation = deviationPct(currentTp.toDouble(), bestTp)
         val requiresValidation = slDeviation > MAX_DEVIATION_PCT || tpDeviation > MAX_DEVIATION_PCT
 
         if (requiresValidation) {

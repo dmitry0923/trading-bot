@@ -5,6 +5,7 @@ import com.trading.bot.repository.PositionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.time.LocalDate
+import java.time.LocalDateTime
 
 /**
  * Провайдер метрик для Monthly Tuning Engine (docs/24, Фаза 3.5).
@@ -35,22 +36,22 @@ class TuningMetricsProvider(
      *
      * @return метрики прошедшего месяца и текущие параметры стратегии.
      */
-    fun collectCurrentMonthlyData(): MonthlyData {
+    suspend fun collectCurrentMonthlyData(): MonthlyData {
         val now = LocalDate.now()
         val monthStart = now.withDayOfMonth(1).minusMonths(1)
-        val monthEnd = now.withDayOfMonth(1)
+        val monthEnd = now.withDayOfMonth(1).atStartOfDay()
 
         logger.info(
             "TuningMetricsProvider: сбор метрик за период $monthStart — $monthEnd",
         )
 
-        // Загрузка закрытых позиций за прошедший месяц.
+        // Закрытые позиции за прошедший месяц: findClosedSince отдаёт closed_at >= since,
+        // правый конец интервала отсекаем в коде (в БД его нет).
+        val monthEndInstant = monthEnd
         val closedPositions =
-            positionRepository.findByClosedAtBetweenAndStatus(
-                monthStart.atStartOfDay(),
-                monthEnd.atStartOfDay(),
-                "CLOSED",
-            )
+            positionRepository.findClosedSince(monthStart.atStartOfDay()).filter {
+                (it.closedAt ?: LocalDateTime.MIN) < monthEndInstant
+            }
 
         if (closedPositions.isEmpty()) {
             logger.warn("TuningMetricsProvider: нет закрытых позиций за период $monthStart — $monthEnd")

@@ -1,12 +1,12 @@
 package com.trading.bot.tuning
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.trading.bot.backtest.StrategyParameters
 import com.trading.bot.tuning.PerformanceGateCheck.GateVerdict
 import org.slf4j.LoggerFactory
 import org.springframework.mail.SimpleMailMessage
 import org.springframework.mail.javamail.JavaMailSender
 import org.springframework.stereotype.Service
+import tools.jackson.databind.ObjectMapper
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
@@ -17,7 +17,7 @@ import java.time.format.DateTimeFormatter
  *
  * 1. Сбор метрик за прошедший месяц.
  * 2. Gate Check ([PerformanceGateCheck]): PASS / WARN / ALERT.
- * 3. При ALERT — автоостановка торговли + email на trading-alerts@example.com.
+ * 3. При ALERT — автоостановка торговли + email на [ALERT_EMAIL].
  * 4. Оптимизация параметров ([ParameterOptimizer]) на expanding window.
  * 5. Версионирование в PostgreSQL ([StrategyVersionRepository]).
  *
@@ -33,7 +33,7 @@ class MonthlyTuningService(
     private val performanceGateCheck: PerformanceGateCheck,
     private val parameterOptimizer: ParameterOptimizer,
     private val strategyVersionRepository: StrategyVersionRepository,
-    private val mailSender: JavaMailSender?,  // nullable — email опционален
+    private val mailSender: JavaMailSender?, // nullable — email опционален
     private val objectMapper: ObjectMapper,
 ) {
     private val logger = LoggerFactory.getLogger(MonthlyTuningService::class.java)
@@ -60,7 +60,7 @@ class MonthlyTuningService(
      * @param period период в формате YearMonth (если null — предыдущий месяц).
      * @return результат цикла тюнинга.
      */
-    fun runTuningCycle(
+    suspend fun runTuningCycle(
         metrics: PerformanceGateCheck.MonthlyMetrics,
         currentParameters: StrategyParameters,
         period: YearMonth = YearMonth.now().minusMonths(1),
@@ -173,8 +173,7 @@ class MonthlyTuningService(
         Вердикт: ${gateResult.verdict}
         
         Причины:
-        ${gateResult.reasons.joinToString("
-") { "  - $it" }}
+        ${gateResult.reasons.joinToString("\n") { "  - $it" }}
         
         Метрики:
           PF:       ${gateResult.metrics.profitFactor}
@@ -189,7 +188,7 @@ class MonthlyTuningService(
         -- Trading Bot Monitoring
         """.trimIndent()
 
-    private fun saveVersion(
+    private suspend fun saveVersion(
         period: String,
         parameters: StrategyParameters,
         gateResult: PerformanceGateCheck.GateCheckResult,
@@ -219,13 +218,12 @@ class MonthlyTuningService(
             parts += "Требуется дополнительная валидация: ${optimizationResult.reason}"
         }
         parts += "Gate reasons: ${gateResult.reasons.joinToString("; ")}"
-        return parts.joinToString("
-")
+        return parts.joinToString("\n")
     }
 
     companion object {
-        /** Email для ALERT-уведомлений (placeholder — заменить в .env). */
-        const val ALERT_EMAIL = "trading-alerts@example.com"
+        /** Email для ALERT-уведомлений (задаётся здесь, переопределяется в .env при доставке). */
+        const val ALERT_EMAIL = "dmitry@dmitry-novikov.ru"
 
         /** Минимум сделок для запуска тюнинга. */
         const val MIN_TRADES_TO_TUNE = 20

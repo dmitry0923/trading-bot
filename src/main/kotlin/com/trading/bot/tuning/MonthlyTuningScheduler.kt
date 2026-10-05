@@ -1,5 +1,9 @@
 package com.trading.bot.tuning
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
@@ -27,6 +31,9 @@ class MonthlyTuningScheduler(
 ) {
     private val logger = LoggerFactory.getLogger(MonthlyTuningScheduler::class.java)
 
+    // Сбор метрик — suspend (R2DBC), поэтому цикл запускается в корутине.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     /**
      * Автоматический запуск в первый рабочий день месяца в 09:05 МСК.
      *
@@ -49,16 +56,18 @@ class MonthlyTuningScheduler(
     }
 
     private fun runCycle() {
-        try {
-            val (metrics, parameters) = tuningMetricsProvider.collectCurrentMonthlyData()
-            val result = monthlyTuningService.runTuningCycle(metrics, parameters)
-            logger.info(
-                "MonthlyTuningScheduler: цикл завершён — " +
-                    "period=${result.period}, gate=${result.gateVerdict}, " +
-                    "tradingStopped=${result.tradingStopped}",
-            )
-        } catch (e: Exception) {
-            logger.error("MonthlyTuningScheduler: ошибка в цикле тюнинга: ${e.message}", e)
+        scope.launch {
+            try {
+                val (metrics, parameters) = tuningMetricsProvider.collectCurrentMonthlyData()
+                val result = monthlyTuningService.runTuningCycle(metrics, parameters)
+                logger.info(
+                    "MonthlyTuningScheduler: цикл завершён — " +
+                        "period=${result.period}, gate=${result.gateVerdict}, " +
+                        "tradingStopped=${result.tradingStopped}",
+                )
+            } catch (e: Exception) {
+                logger.error("MonthlyTuningScheduler: ошибка в цикле тюнинга: ${e.message}", e)
+            }
         }
     }
 }

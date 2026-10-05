@@ -21,7 +21,6 @@ import org.springframework.stereotype.Component
  */
 @Component
 class PerformanceGateCheck {
-
     /**
      * Вердикт gate check.
      */
@@ -89,9 +88,18 @@ class PerformanceGateCheck {
         // 2. Max Drawdown
         verdicts +=
             when {
-                metrics.maxDrawdownPct < DD_PASS -> GateVerdict.PASS to "DD=%.1f%% < $DD_PASS%%".format(metrics.maxDrawdownPct)
-                metrics.maxDrawdownPct < DD_WARN -> GateVerdict.WARN to "DD=%.1f%% (${DD_PASS}..${DD_WARN}%%)".format(metrics.maxDrawdownPct)
-                else -> GateVerdict.ALERT to "DD=%.1f%% > $DD_WARN%% (критическая просадка)".format(metrics.maxDrawdownPct)
+                metrics.maxDrawdownPct < DD_PASS -> {
+                    GateVerdict.PASS to "DD=%.1f%% < $DD_PASS%%".format(metrics.maxDrawdownPct)
+                }
+
+                metrics.maxDrawdownPct < DD_WARN -> {
+                    GateVerdict.WARN to
+                        "DD=%.1f%% (${DD_PASS}..${DD_WARN}%%)".format(metrics.maxDrawdownPct)
+                }
+
+                else -> {
+                    GateVerdict.ALERT to "DD=%.1f%% > $DD_WARN%% (критическая просадка)".format(metrics.maxDrawdownPct)
+                }
             }
 
         // 3. Win Rate
@@ -113,9 +121,18 @@ class PerformanceGateCheck {
         // 5. Минимальное количество сделок
         verdicts +=
             when {
-                metrics.tradesCount >= MIN_TRADES_PASS -> GateVerdict.PASS to "Trades=${metrics.tradesCount} ≥ $MIN_TRADES_PASS"
-                metrics.tradesCount >= MIN_TRADES_WARN -> GateVerdict.WARN to "Trades=${metrics.tradesCount} < $MIN_TRADES_PASS (мало данных)"
-                else -> GateVerdict.ALERT to "Trades=${metrics.tradesCount} < $MIN_TRADES_WARN (статистика незначима)"
+                metrics.tradesCount >= MIN_TRADES_PASS -> {
+                    GateVerdict.PASS to "Trades=${metrics.tradesCount} ≥ $MIN_TRADES_PASS"
+                }
+
+                metrics.tradesCount >= MIN_TRADES_WARN -> {
+                    GateVerdict.WARN to
+                        "Trades=${metrics.tradesCount} < $MIN_TRADES_PASS (мало данных)"
+                }
+
+                else -> {
+                    GateVerdict.ALERT to "Trades=${metrics.tradesCount} < $MIN_TRADES_WARN (статистика незначима)"
+                }
             }
 
         val worstVerdict = verdicts.maxOf { it.first }

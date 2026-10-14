@@ -563,6 +563,85 @@ thinking-моделей пустой content) и `LLM_BUDGET_ENABLED=false` (д�
 протухший JWT ронял половину порогов — оба исправлены (invariant culture,
 re-login на 401).
 
+### 10.7 WFA 365д: PF 1.771 — артефакт fail-closed, а не решение veto (2026-10-05, `llm-veto-wfa`)
+
+**Гипотеза.** LLM-veto (Вариант B, docs/24 §2) поднимает OOS PF детерминированной
+стратегии выше 1.2 — критерий PASS из docs/24 §4.
+
+**Метод.** CNYRUBF, 365д MINUTE_10, WFA folds=6, `adaptiveConfidenceThreshold=0.60`,
+`llmVetoEnabled=true`, `llmVetoPromptVersion=veto-score`,
+`llmVetoBlockOnUnknown=true` (fail-closed, дефолт),
+`LLM_DISABLE_REASONING=true`, `LLM_BUDGET_ENABLED=false`, Router AI /
+`moonshotai/kimi-k3`. Скрипт `scripts/research_llm_veto_wfa.ps1` (новый).
+
+| Прогон | OOS сделки | OOS PF | OOS Return | OOS Sharpe | Consistency | P(noEdge) |
+|---|---|---|---|---|---|---|
+| baseline (veto off) | 31 | 1.299 | +0.364% | 0.556 | 0.667 | 0.31 |
+| veto ON, fail-closed | 26 | **1.771** | +0.893% | 1.119 | 0.500 | 0.13 |
+| veto ON, `blockOnUnknown=false` | 31 | 1.299 | +0.364% | 0.556 | 0.667 | 0.31 |
+
+**Фальсификация (решающий эксперимент).** Тот же конфиг с
+`llmVetoBlockOnUnknown=false` — отказы LLM пропускаются, а не блокируются —
+даёт **тождественный baseline** результат (31 сделка, PF 1.2989500760596326,
+consistency 0.667, до последнего знака). Значит veto-конвейер при `false`
+эквивалентен детерминированной стратегии, и весь эффект `PF 1.771` дали
+**исключительно отказы LLM**, срезанные fail-closed.
+
+**Что показали логи.** За прогон арбитр вынес **40 вердиктов: 20 BUY / 20 SELL /
+0 HOLD** — ни одного настоящего вето. В окне прогона зафиксировано 2 отказа
+(`12:11:52`, `12:13:20`: `LLM call failed for agent=arbitrator`), ещё 1 отказ
+пришёлся на 30-дневный smoke-прогон (`11:52`). **Veto Block Rate = 0/40 = 0%** —
+ниже собственного порога docs/24 §4 («< 10% — LLM почти не фильтрует, veto
+бесполезен»).
+
+**Честная оговорка про арифметику (уточнено 2026-10-05 по полному логу
+`build/bootrun1.log`).** Первоначальная формулировка «2 отказа объясняют падение
+31 → 26» была неточной: в окне прогона (12:11–12:39) отказов арбитра **4**, а не
+2 — `12:11:52`, `12:13:20`, `12:38:23`, `12:39:37` (все `TimeoutCancellationException:
+Timed out waiting for 20000 ms`, то есть сетевые таймауты Router AI, не отказы
+модели). Ещё один отказ `contrarian` (`12:41:06`) уже вне окна прогона; отказ
+`arbitrator` в `11:52` относится к 30-дневному smoke. Итого fail-closed срезал
+**4** кандидата, что согласуется с падением 31 → 26 с точностью до одной сделки,
+не объяснённой логами (причина не установлена; приоритет низкий — вердикт
+определяется тождественностью baseline).
+
+**Следствие для интерпретации.** Улучшение PF 1.299 → 1.771 объясняется
+исключительно **сетевыми таймаутами LLM**, случайно совпавшими с убыточными
+входами. Это делает прогон fail-closed не просто неинформативным, а активно
+вводящим в заблуждение: он измеряет связь «доступность LLM ↔ случайный исход
+сделки», а не качество вето-сигнала. Именно поэтому метрики veto теперь
+различают решения (`ARB_HOLD`, `ARB_SCORE_LOW`) и отказы (`ARB_FAILURE`,
+`LLM_FAILURE`, `BUDGET_TIMEOUT`): по прогону 2026-10-05 причина «почему сделок
+стало меньше» читалась только по логам, и в этом прогоне она была именно
+недоступностью LLM.
+
+**Вердикт: `REJECTED`.** По формальному критерию docs/24 §4 «PF > 1.2» прогон
+его формально проходит (1.771), но критерий оказался ложноположительным на
+артефакте fail-closed. Дополнительно не пройдены: `consistency` 0.500 < 0.600,
+Veto Block Rate 0% < 10%, `robust=false` (26 сделок << `MIN_WALK_FORWARD_TRADES=100`),
+P(noEdge) 0.13 > 0.05. Гипотеза H3 (docs/24 §8.5). `bt.llm-veto-*` остаётся `off`;
+live-путь veto не имеет вовсе.
+
+**Инфра-дефекты, найденные на этом прогоне (не связаны с логикой veto):**
+
+1. **Параметра `agentVetoMode` в API нет.** docs/24 §3/§8 и handoff docs/21
+   предписывают `?agentVetoMode=true`; фактические параметры — `llmVetoEnabled`,
+   `llmVetoPromptVersion`, `llmVetoBlockOnUnknown` (таблица §10.4). Дубликат
+   конфига `config/BacktestAgentConfig.kt` (реальный — `backtest/`) удалён.
+2. **`/actuator/prometheus` отдаёт 500** —
+   `ClassCastException: io.prometheus.metrics.model.snapshots.HistogramSnapshot$HistogramDataPointSnapshot cannot be cast to ...`
+   Значит `bt_llm_veto_*` (кандидаты/блоки/allow/cache-hits) прочитать нельзя,
+   и block rate взят из логов агентов. Предсуществующий баг реестра, к veto
+   отношения не имеет, но метрики veto сейчас **наблюдаемы только по логам**.
+3. **Баг харнесса:** скрипт по умолчанию писал baseline- и veto-прогон в один и
+   тот же JSON-файл; результаты различались копированием вручную. Добавлены
+   `-Out` и `-NoBlockOnUnknown`.
+
+**Артефакты:** `scripts/research_llm_veto_wfa.ps1`,
+`scripts/llmveto_wfa_CNYRUBF_365d_f6.json` (fail-closed),
+`scripts/llmveto_wfa_CNYRUBF_365d_f6_noblock.json` (фальсификация),
+`build/veto_baseline_365d_f6.json`, `build/veto_withveto_365d_f6.json`.
+
 ## 11. Риск-сетка 730д: риск не создаёт доходность (2026-09-29, `risk-grid-730d`)
 
 **Гипотеза.** «Цель 100%/год недостижима, потому что риск мал; если поднять

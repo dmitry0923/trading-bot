@@ -2,6 +2,7 @@ package com.trading.bot.application
 
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
+import com.trading.bot.config.SlaTimers
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.CloseReason
@@ -60,9 +61,13 @@ class StockPositionMonitor(
             logger.error(e) { "Stock monitor error ${event.ticker}" }
             meterRegistry.counter("bot.monitor.error", Tags.of("ticker", event.ticker)).increment()
         } finally {
-            meterRegistry
-                .timer("bot.latency", Tags.of("ticker", event.ticker))
-                .record(System.nanoTime() - handlerStart, java.util.concurrent.TimeUnit.NANOSECONDS)
+            SlaTimers.record(
+                meterRegistry,
+                "bot.latency",
+                Tags.of("ticker", event.ticker),
+                System.nanoTime() - handlerStart,
+                java.util.concurrent.TimeUnit.NANOSECONDS,
+            )
         }
     }
 

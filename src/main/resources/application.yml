@@ -515,6 +515,51 @@ bt:
   llm-veto-temperature: ${BT_LLM_VETO_TEMPERATURE:0.0}
   llm-veto-cache-namespace: ${BT_LLM_VETO_CACHE_NAMESPACE:backtest-veto}
 
+  # Market-neutral FX-pairs (research, 2026-10, docs/25): торгуется расхождение
+  # спреда двух коррлированных бессрочных фьючерсов, а не направление. Default off;
+  # live-путь/LIVE-guard не затрагиваются. Вердикт — только по OOS.
+  pairs:
+    enabled: ${BT_PAIRS_ENABLED:false}
+    leg-a: ${BT_PAIRS_LEG_A:CNYRUBF}
+    leg-b: ${BT_PAIRS_LEG_B:USDRUBF}
+    timeframe: ${BT_PAIRS_TIMEFRAME:MINUTE_10}
+    lookback-bars: ${BT_PAIRS_LOOKBACK_BARS:240}
+    entry-z: ${BT_PAIRS_ENTRY_Z:2.0}
+    exit-z: ${BT_PAIRS_EXIT_Z:0.5}
+    stop-z: ${BT_PAIRS_STOP_Z:4.0}
+    max-hold-bars: ${BT_PAIRS_MAX_HOLD_BARS:0}
+    oos-fraction: ${BT_PAIRS_OOS_FRACTION:0.30}
+    capital-slice: ${BT_PAIRS_CAPITAL_SLICE:0.50}
+    initial-capital: ${BT_PAIRS_INITIAL_CAPITAL:100000}
+    use-funding-history: ${BT_PAIRS_USE_FUNDING_HISTORY:true}
+    beta-min: ${BT_PAIRS_BETA_MIN:0.10}
+
+  # Cross-sectional momentum + carry портфель фьючерсов (research, 2026-10, docs/26):
+  # ранжирование юниверса по моментуму с funding-тилтом, долларово-нейтрально. Default off;
+  # live-путь/LIVE-guard не затрагиваются. Вердикт — по OOS/WFA-агрегату.
+  portfolio:
+    enabled: ${BT_PORTFOLIO_ENABLED:false}
+    universe: ${BT_PORTFOLIO_UNIVERSE:CNYRUBF,USDRUBF,EURRUBF,GLDRUBF,IMOEXF}
+    timeframe: ${BT_PORTFOLIO_TIMEFRAME:MINUTE_10}
+    lookback-bars: ${BT_PORTFOLIO_LOOKBACK_BARS:1680}
+    reversal-enabled: ${BT_PORTFOLIO_REVERSAL_ENABLED:false}
+    rebalance-bars: ${BT_PORTFOLIO_REBALANCE_BARS:420}
+    long-count: ${BT_PORTFOLIO_LONG_COUNT:1}
+    short-count: ${BT_PORTFOLIO_SHORT_COUNT:1}
+    oos-fraction: ${BT_PORTFOLIO_OOS_FRACTION:0.30}
+    capital-slice: ${BT_PORTFOLIO_CAPITAL_SLICE:1.0}
+    momentum-weight: ${BT_PORTFOLIO_MOMENTUM_WEIGHT:1.0}
+    carry-weight: ${BT_PORTFOLIO_CARRY_WEIGHT:0.0}
+    carry-lookback-days: ${BT_PORTFOLIO_CARRY_LOOKBACK_DAYS:5}
+    min-universe: ${BT_PORTFOLIO_MIN_UNIVERSE:3}
+    vol-scaling-enabled: ${BT_PORTFOLIO_VOL_SCALING_ENABLED:false}
+    vol-lookback-bars: ${BT_PORTFOLIO_VOL_LOOKBACK_BARS:420}
+    vol-target-enabled: ${BT_PORTFOLIO_VOL_TARGET_ENABLED:false}
+    vol-target-annualized: ${BT_PORTFOLIO_VOL_TARGET_ANNUALIZED:0.15}
+    vol-target-bars-per-year: ${BT_PORTFOLIO_VOL_TARGET_BARS_PER_YEAR:21000}
+    initial-capital: ${BT_PORTFOLIO_INITIAL_CAPITAL:1000000}
+    use-funding-history: ${BT_PORTFOLIO_USE_FUNDING_HISTORY:true}
+
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
   max-leverage: ${LEVERAGE_MAX:3.0}
@@ -607,6 +652,30 @@ instruments:
       go: "2264"
       leverage: "${leverage.user-leverage}"
       baseAsset: "IMOEX"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "SBERF"
+      type: "FUTURES"
+      lotSize: 1
+      priceStep: "0.01"
+      priceStepCost: "1.0"
+      go: "0"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "SBER"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "GAZPF"
+      type: "FUTURES"
+      lotSize: 1
+      priceStep: "0.001"
+      priceStepCost: "1.0"
+      go: "0"
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "GAZP"
       quoteAsset: "RUB"
       brokerCommissionRub: "1.0"
       exchangeFeeRub: "0.5"
@@ -885,3 +954,8 @@ funding:
   # спец-клиринги), yyyy-MM-dd через запятую. Гос. праздники РФ исключаются
   # автоматически (MoexHolidayCalendar); здесь — только переносы/спец. дни.
   holidays: ${FUNDING_HOLIDAYS:}
+
+
+
+
+

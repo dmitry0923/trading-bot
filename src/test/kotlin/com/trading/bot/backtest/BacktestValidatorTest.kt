@@ -73,6 +73,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(result())
                 validator.validate("SBER", List(300) { mockCandle(it) }, folds = 3)
@@ -102,6 +103,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         any(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
@@ -160,6 +162,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(infinitePf)
                 whenever(
@@ -184,6 +187,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(mediocre)
                 whenever(
@@ -199,6 +203,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         any(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
@@ -248,6 +253,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(result())
                 whenever(
@@ -263,6 +269,7 @@ class BacktestValidatorTest {
                         Mockito.eq(50),
                         Mockito.eq(100),
                         any(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
@@ -296,6 +303,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(result())
                 whenever(
@@ -320,6 +328,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(result())
                 whenever(
@@ -335,6 +344,7 @@ class BacktestValidatorTest {
                         Mockito.eq(300),
                         Mockito.eq(600),
                         any(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
@@ -376,6 +386,7 @@ class BacktestValidatorTest {
                         anyOrNull(),
                         anyOrNull(),
                         any(),
+                        anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
@@ -514,6 +525,7 @@ class BacktestValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
+                    anyOrNull(),
                 ),
             ).thenAnswer {
                 captured.add(it.getArgument(1))
@@ -593,6 +605,7 @@ class BacktestValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     any(),
+                    anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),

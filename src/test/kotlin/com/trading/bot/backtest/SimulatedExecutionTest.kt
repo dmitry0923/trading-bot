@@ -58,4 +58,24 @@ class SimulatedExecutionTest {
         val sell = SimulatedExecution.realisticFill(BigDecimal("100"), isBuy = false, halfSpread = BigDecimal("0.5"))
         assertEquals(0, BigDecimal("99.5").compareTo(sell.price))
     }
+
+    @Test
+    fun `passiveFill buys below and sells above mid`() {
+        // Зеркало realisticFill: maker-заявка получает ценовое улучшение на спред
+        // (research a2, PLAN-001 §5.1).
+        val buy = SimulatedExecution.passiveFill(BigDecimal("100"), isBuy = true, halfSpread = BigDecimal("0.5"))
+        assertEquals(0, BigDecimal("99.5").compareTo(buy.price))
+        val sell = SimulatedExecution.passiveFill(BigDecimal("100"), isBuy = false, halfSpread = BigDecimal("0.5"))
+        assertEquals(0, BigDecimal("100.5").compareTo(sell.price))
+    }
+
+    @Test
+    fun `passiveFill improves price by exactly one spread versus realisticFill`() {
+        val reference = BigDecimal("100")
+        val halfSpread = BigDecimal("0.5")
+        val takerBuy = SimulatedExecution.realisticFill(reference, isBuy = true, halfSpread = halfSpread)
+        val makerBuy = SimulatedExecution.passiveFill(reference, isBuy = true, halfSpread = halfSpread)
+        // taker buy 100.5 → maker buy 99.5: улучшение = 2 * halfSpread = полный спред.
+        assertEquals(0, BigDecimal("1.0").compareTo(takerBuy.price.subtract(makerBuy.price)))
+    }
 }

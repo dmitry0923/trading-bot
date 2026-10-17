@@ -452,6 +452,7 @@ class MonteCarloAnalyzer(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BacktestRobustnessReport {
         // Замороженные параметры стратегии (если переданы) приоритетнее config-дефолтов —
         // robustness обязан проверять ту же стратегию, что уйдёт на holdout/live.
@@ -494,6 +495,7 @@ class MonteCarloAnalyzer(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars,
+                passiveFillEnabled = passiveFillEnabled,
             )
         val base = StressScenarioResult.of("base", "Базовый прогон (комиссия 0.05%, проскальзывание 0.1%)", 1.0, 1.0, baseResult)
 
@@ -550,6 +552,7 @@ class MonteCarloAnalyzer(
                         fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                         fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                         maxHoldBars = maxHoldBars,
+                        passiveFillEnabled = passiveFillEnabled,
                     ),
                 )
             }

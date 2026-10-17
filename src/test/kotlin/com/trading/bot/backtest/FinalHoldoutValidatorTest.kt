@@ -107,6 +107,7 @@ class FinalHoldoutValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
+                    anyOrNull(),
                 ),
             ).thenReturn(holdoutCandidate)
         }
@@ -164,6 +165,7 @@ class FinalHoldoutValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
+                    anyOrNull(),
                 ),
             ).thenReturn(strongResult(40))
         }
@@ -207,6 +209,7 @@ class FinalHoldoutValidatorTest {
                     anyOrNull(),
                     anyOrNull(),
                     any(),
+                    anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
@@ -303,6 +306,7 @@ class FinalHoldoutValidatorTest {
                     anyOrNull<Double>(),
                     anyOrNull<Boolean>(),
                     anyOrNull<Int>(),
+                    anyOrNull(),
                 ),
             ).thenReturn(aggregate)
         }
@@ -358,6 +362,7 @@ class FinalHoldoutValidatorTest {
                     anyOrNull<Double>(),
                     anyOrNull<Boolean>(),
                     holdCaptor.capture(),
+                    anyOrNull(),
                 )
         }
         val holds = holdCaptor.allValues

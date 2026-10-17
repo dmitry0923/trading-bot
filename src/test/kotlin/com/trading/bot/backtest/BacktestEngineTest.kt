@@ -468,6 +468,67 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `passive fill improves long equity versus taker on flat candles`() =
+        runBlocking {
+            // Research a2 (PLAN-001 §5.1): тот же вход/сделка, но maker-цена на своей
+            // стороне спреда. На плоской свече (high 101, low 99 → halfSpread 0.5)
+            // taker покупает по 100.5 и продаёт по 99.5 (убыток), maker — по 99.5/100.5.
+            val takerEngine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val makerEngine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    backtestConfig =
+                        BacktestConfig().apply {
+                            executionPassiveFillEnabled = true
+                        },
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val takerResult = takerEngine.simulate("SBER", flatCandles())
+            val makerResult = makerEngine.simulate("SBER", flatCandles())
+
+            assertTrue(takerResult.totalTrades > 0, "fixture must produce a trade")
+            assertEquals(
+                takerResult.totalTrades,
+                makerResult.totalTrades,
+                "пассивное исполнение не должно менять набор сделок",
+            )
+            assertTrue(
+                makerResult.totalReturn > takerResult.totalReturn,
+                "maker-вход ниже mid должен улучшить доходность: taker=${takerResult.totalReturn} maker=${makerResult.totalReturn}",
+            )
+        }
+
+    @Test
+    fun `passive fill query override beats config default`() =
+        runBlocking {
+            // Query-оверрайд (`executionPassiveFill`) должен перекрывать bt.-дефолт:
+            // simulate(passiveFillEnabled = true) на конфиге без флага обязан дать
+            // тот же результат, что и конфиг с включённым maker-исполнением.
+            val makerEngine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    backtestConfig =
+                        BacktestConfig().apply {
+                            executionPassiveFillEnabled = true
+                        },
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val overrideResult =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                ).simulate("SBER", flatCandles(), passiveFillEnabled = true)
+
+            val makerResult = makerEngine.simulate("SBER", flatCandles())
+            assertEquals(makerResult.totalReturn, overrideResult.totalReturn, 1e-9)
+            assertEquals(makerResult.totalTrades, overrideResult.totalTrades)
+        }
+
+    @Test
     fun `initial capital from config scales equity proportionally`() {
         val base = runBlocking { engine.simulate("SBER", trendingCandles()) }
         val big =

@@ -1,6 +1,7 @@
 package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.require
+import com.trading.bot.model.dto.MicrostructureCoverage
 import com.trading.bot.model.entity.OrderbookBbo
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
@@ -103,28 +104,62 @@ class HistoricalBboRepository(
      *
      * Полуоткрытый интервал: бакет, начавшийся в `toExclusive`, ещё не закрыт
      * и не должен попадать в point-in-time признаки (lookahead).
+     *
+     * @param limit предохранитель от неограниченной выгрузки; по умолчанию
+     *   [Int.MAX_VALUE] (без ограничения, обратная совместимость)
      */
     suspend fun findByTickerAndTimeBetween(
         ticker: String,
         from: LocalDateTime,
         toExclusive: LocalDateTime,
+        limit: Int = Int.MAX_VALUE,
     ): List<OrderbookBbo> {
         val sql =
             """
             SELECT * FROM orderbook_bbo
             WHERE ticker = :ticker AND ts >= :from AND ts < :toExclusive
             ORDER BY ts
+            LIMIT :limit
             """.trimIndent()
         return databaseClient
             .sql(sql)
             .bind("ticker", ticker)
             .bind("from", from)
             .bind("toExclusive", toExclusive)
+            .bind("limit", limit)
             .map { row, _ -> toBbo(row) }
             .all()
             .collectList()
             .awaitSingle()
     }
+
+    /** Покрытие таблицы по тикеру: число строк и временные границы (для research-выгрузки). */
+    suspend fun coverage(ticker: String): MicrostructureCoverage {
+        val sql =
+            """
+            SELECT count(*) AS cnt, min(ts) AS lo, max(ts) AS hi
+            FROM orderbook_bbo
+            WHERE ticker = :ticker
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("ticker", ticker)
+            .map { row, _ -> toCoverage(ticker, row) }
+            .one()
+            .awaitSingle()
+    }
+
+    private fun toCoverage(
+        ticker: String,
+        row: Row,
+    ): MicrostructureCoverage =
+        MicrostructureCoverage(
+            source = SOURCE,
+            ticker = ticker,
+            rows = row.require("cnt", Long::class.javaObjectType),
+            from = row["lo", LocalDateTime::class.java],
+            to = row["hi", LocalDateTime::class.java],
+        )
 
     /** Параметр multi-row INSERT с явным типом: нужен для корректного `bindNull` по R2DBC. */
     private data class Bound(
@@ -135,5 +170,8 @@ class HistoricalBboRepository(
 
     private companion object {
         const val BATCH_SIZE = 500
+
+        /** Имя таблицы-источника в [MicrostructureCoverage.source]. */
+        const val SOURCE = "orderbook_bbo"
     }
 }

@@ -113,6 +113,8 @@ class BacktestEngine(
      * Прогон бэктеста по тикеру за N дней.
      *
      * @param ticker тикер инструмента
+     * @param passiveFillEnabled research (PLAN-001 §5.1, a2): пассивное (maker)
+     *   исполнение входов/рыночных выходов; null → `bt.execution-passive-fill-enabled`.
      * @param days глубина истории в днях (по умолчанию `bt.days`)
      * @param timeframe таймфрейм свечей (по умолчанию `bt.timeframe`)
      * @param initialCapital стартовый капитал (по умолчанию `bt.initial-capital`)
@@ -146,6 +148,7 @@ class BacktestEngine(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -176,6 +179,7 @@ class BacktestEngine(
                 fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown,
                 maxHoldBars,
+                passiveFillEnabled,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -258,9 +262,14 @@ class BacktestEngine(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BacktestResult {
         val effectiveCapitalSlice = capitalSlice ?: backtestConfig.capitalSlice
         val effectiveSignalGenerator = signalGeneratorOverride ?: signalGenerator
+        // Research a2: пассивное (maker) исполнение входов и рыночных выходов.
+        // null → bt.execution-passive-fill-enabled; защитные SL/TP/ликвидация
+        // остаются taker (передаётся passiveEligible=false).
+        val effectivePassiveFill = passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
         val equityTimestamps = ArrayList<LocalDateTime>()
@@ -358,6 +367,7 @@ class BacktestEngine(
                             slippageMultiplier,
                             current,
                             applySlippage = !backtestConfig.realisticExecution,
+                            passiveEligible = false,
                             fundingHistory = fundingHistory,
                             tradeLog = tradeLog,
                         )
@@ -386,6 +396,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
+                                passiveEligible = false,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
                             )
@@ -409,6 +420,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
+                                passiveEligible = false,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
                             )
@@ -444,6 +456,7 @@ class BacktestEngine(
                         current,
                         fundingHistory = fundingHistory,
                         tradeLog = tradeLog,
+                        passiveFillEnabled = effectivePassiveFill,
                     )
                 recordRiskSimClose(ticker, maxHoldPosition, "MAX_HOLD", current.closePrice, i, sorted, cash)
                 position = null
@@ -484,6 +497,7 @@ class BacktestEngine(
                                 current,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
+                                passiveFillEnabled = effectivePassiveFill,
                             )
                         recordRiskSimClose(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -527,6 +541,7 @@ class BacktestEngine(
                                 current,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
+                                passiveFillEnabled = effectivePassiveFill,
                             )
                         recordRiskSimClose(ticker, curPos, "MTF_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -585,6 +600,7 @@ class BacktestEngine(
                                 current,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
+                                passiveFillEnabled = effectivePassiveFill,
                             )
                         recordRiskSimClose(ticker, curPos, "FUNDING_VETO_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -638,6 +654,7 @@ class BacktestEngine(
                             current,
                             fundingHistory = fundingHistory,
                             tradeLog = tradeLog,
+                            passiveFillEnabled = effectivePassiveFill,
                         )
                     recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
                     position =
@@ -658,6 +675,7 @@ class BacktestEngine(
                             effectiveCapitalSlice,
                             riskPerTradePercent,
                             futuresMaxContractsPerPosition,
+                            passiveFillEnabled = effectivePassiveFill,
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -687,6 +705,7 @@ class BacktestEngine(
                     effectiveCapitalSlice,
                     riskPerTradePercent,
                     futuresMaxContractsPerPosition,
+                    passiveFillEnabled = effectivePassiveFill,
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -713,6 +732,7 @@ class BacktestEngine(
                     sorted.last(),
                     fundingHistory = fundingHistory,
                     tradeLog = tradeLog,
+                    passiveFillEnabled = effectivePassiveFill,
                 )
             recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
@@ -787,6 +807,11 @@ class BacktestEngine(
 
     /**
      * Цена исполнения market-ордера с проскальзыванием:
+     * - пассивный (maker) режим research (PLAN-001 §5.1, a2,
+     *   [BacktestConfig.executionPassiveFillEnabled]) — покупка по bid = mid − halfSpread,
+     *   продажа по ask = mid + halfSpread ([SimulatedExecution.passiveFill]) на цене
+     *   открытия свечи; применяется к входам и рыночным выходам (не к защитным
+     *   SL/TP/ликвидации — их вызовы передают `passiveEligible=false`);
      * - фьючерсы — в ТИКАХ (пунктах), как при исполнении на бирже; процентная
      *   ставка от цены фьючерса непропорционально велика (0.1% Si ≈ 92 пункта >
      *   стоп в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] пунктов);
@@ -802,8 +827,15 @@ class BacktestEngine(
         isBuy: Boolean,
         slippageMultiplier: Double,
         candle: Candle? = null,
+        passiveEligible: Boolean = true,
+        passiveFillEnabled: Boolean? = null,
     ): SimulatedExecution.Fill =
-        if (instrument != null && instrumentsConfig.isFutures(ticker)) {
+        if ((passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled) && passiveEligible && candle != null) {
+            // Maker-исполнение: цена на своей стороне стакана (bid для покупки,
+            // ask для продажи) — ценовое улучшение на полный спред вместо taker.
+            val halfSpread = SimulatedExecution.estimateHalfSpread(candle, reference)
+            SimulatedExecution.passiveFill(reference, isBuy, halfSpread)
+        } else if (instrument != null && instrumentsConfig.isFutures(ticker)) {
             val bps = instrument.slippageBps
             if (bps != null && bps > BigDecimal.ZERO) {
                 // SlippageModel: отраслевая конфигурация в bps (1 bp = 1/10000 цены);
@@ -892,6 +924,7 @@ class BacktestEngine(
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercent: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
@@ -923,6 +956,8 @@ class BacktestEngine(
                 direction == PositionDirection.LONG,
                 slippageMultiplier,
                 candle,
+                passiveEligible = true,
+                passiveFillEnabled = passiveFillEnabled,
             )
         val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod)
         val atrPercent =
@@ -1149,8 +1184,10 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
         candle: Candle? = null,
         applySlippage: Boolean = true,
+        passiveEligible: Boolean = true,
         fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
         tradeLog: MutableList<BacktestTradeRecord>? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill =
@@ -1162,6 +1199,8 @@ class BacktestEngine(
                     pos.direction == PositionDirection.SHORT,
                     slippageMultiplier,
                     candle,
+                    passiveEligible,
+                    passiveFillEnabled,
                 )
             } else {
                 SimulatedExecution.Fill(price)

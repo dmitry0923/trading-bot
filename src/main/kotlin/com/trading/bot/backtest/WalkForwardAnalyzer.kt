@@ -35,6 +35,8 @@ data class WfaConfig(
     val fundingVetoBlockOnUnknown: Boolean? = null,
     /** research max-hold override (выход по барам, паттерн funding-veto): null → bt.*. */
     val maxHoldBars: Int? = null,
+    /** research пассивное (maker) исполнение (PLAN-001 §5.1, a2): null → bt.*. */
+    val passiveFillEnabled: Boolean? = null,
     /**
      * Research override сетки SL/TP **в пунктах** для фьючерсов: null → штатная
      * сетка `BacktestValidator.futuresGrid` (25/50…300/600 пт).

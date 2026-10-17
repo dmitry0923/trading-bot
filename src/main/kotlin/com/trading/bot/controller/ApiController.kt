@@ -552,6 +552,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) executionPassiveFill: Boolean?,
         @RequestParam(defaultValue = "false") includeTrades: Boolean,
     ): Map<String, Any> {
         meterRegistry
@@ -671,6 +672,7 @@ class ApiController(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars,
+                passiveFillEnabled = executionPassiveFill,
             )
         return mapOf(
             "ticker" to result.ticker,
@@ -953,6 +955,7 @@ class ApiController(
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(required = false) wfaSlPoints: Int?,
         @RequestParam(required = false) wfaTpPoints: Int?,
+        @RequestParam(required = false) executionPassiveFill: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1085,6 +1088,7 @@ class ApiController(
                     maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars.takeIf { it > 0 },
                     slPoints = wfaSlPoints,
                     tpPoints = wfaTpPoints,
+                    passiveFillEnabled = executionPassiveFill,
                 ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
@@ -1202,6 +1206,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) executionPassiveFill: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1348,6 +1353,7 @@ class ApiController(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars.takeIf { it > 0 },
+                passiveFillEnabled = executionPassiveFill,
             )
         return mapOf(
             "ticker" to ticker,
@@ -1474,6 +1480,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) executionPassiveFill: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1595,6 +1602,7 @@ class ApiController(
                 futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
                 signalGeneratorOverride = signalGeneratorOverride,
                 maxHoldBars = maxHoldBars,
+                passiveFillEnabled = executionPassiveFill,
             )
         return mapOf(
             "ticker" to ticker,
@@ -1718,6 +1726,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) executionPassiveFill: Boolean?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1841,6 +1850,7 @@ class ApiController(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars,
+                passiveFillEnabled = executionPassiveFill,
             )
         // Базовый backtest и WFA берём из holdout-валидации (уже на dev-данных):
         // отдельный прогон на всей истории протекал бы holdout в edge-проверку.
@@ -1862,6 +1872,7 @@ class ApiController(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars,
+                passiveFillEnabled = executionPassiveFill,
             )
 
         val decision =

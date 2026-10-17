@@ -91,6 +91,12 @@ class FinalHoldoutValidator(
          * БЕЗ max-hold, то есть проверялся бы не тот конфиг, который отобран.
          */
         maxHoldBars: Int? = null,
+        /**
+         * Research passive-fill override (PLAN-001 §5.1, a2). null → [backtestConfig].
+         * Гейт обязан проверять тот же конфиг исполнения, что отобран в WFA —
+         * иначе dev/holdout шли бы taker-филлом при passive-переборе.
+         */
+        passiveFillEnabled: Boolean? = null,
     ): HoldoutValidation {
         require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
         val sorted = candles.sortedBy { it.time }
@@ -130,6 +136,7 @@ class FinalHoldoutValidator(
                     fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                     fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                     maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars,
+                    passiveFillEnabled = passiveFillEnabled,
                 ),
             )
 
@@ -168,6 +175,7 @@ class FinalHoldoutValidator(
         // backtest-а (dev и holdout) обязаны использовать одно и то же значение,
         // иначе гейт проверяет не тот конфиг, который заморожен в WFA-фолдах.
         val effectiveMaxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars
+        val effectivePassiveFill = passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled
 
         // Базовый backtest на dev-данных (без holdout) с зафиксированными параметрами.
         val devBacktest =
@@ -192,6 +200,7 @@ class FinalHoldoutValidator(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = effectiveMaxHoldBars,
+                passiveFillEnabled = effectivePassiveFill,
             )
 
         // Одноразовый финальный прогон на независимом holdout с зафиксированными параметрами.
@@ -217,6 +226,7 @@ class FinalHoldoutValidator(
                 fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = effectiveMaxHoldBars,
+                passiveFillEnabled = effectivePassiveFill,
             )
 
         val result = HoldoutValidation(walkForward, holdout, paramsUsed, frozenStrategy, devBacktest)

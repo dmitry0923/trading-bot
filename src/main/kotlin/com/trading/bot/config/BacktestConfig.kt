@@ -75,6 +75,15 @@ import java.math.BigDecimal
  *   чей внутрисвечной диапазон преодолел уровень ликвидации, закрывается по цене
  *   ликвидации (LIQUIDATION) с наивысшим приоритетом — до SL/TP. При false —
  *   прежнее поведение без ликвидации (overestimates удержания).
+ * @property executionPassiveFillEnabled research (PLAN-001 §5.1, a2): пассивное
+ *   (maker) исполнение входов и рыночных выходов вместо taker. Покупка по цене
+ *   bid = mid − halfSpread, продажа по ask = mid + halfSpread
+ *   ([com.trading.bot.backtest.SimulatedExecution.passiveFill]; halfSpread —
+ *   оценка из диапазона свечи [SimulatedExecution.estimateHalfSpread]). Защитные
+ *   ордера (SL/TP/ликвидация) остаются taker. Тот же набор сделок, изменяется
+ *   только цена исполнения — изолирует эффект издержек (3-11 bps) на OOS-edge.
+ *   По умолчанию false (taker/legacy), задаётся `bt.execution-passive-fill-enabled`
+ *   (env `BT_EXECUTION_PASSIVE_FILL_ENABLED`).
  */
 @Component
 @ConfigurationProperties(prefix = "bt")
@@ -96,6 +105,9 @@ class BacktestConfig {
     var regimeDetectionEnabled: Boolean = true
     var adaptiveConfidenceThreshold: Double = 0.60
     var futuresLiquidationSimulation: Boolean = true
+
+    /** research a2 (PLAN-001 §5.1): пассивное (maker) исполнение вместо taker. */
+    var executionPassiveFillEnabled: Boolean = false
 
     /** Funding-veto research-фильтр: false по умолчанию (live управляется trading.funding-veto.enabled). */
     var fundingVetoEnabled: Boolean = false

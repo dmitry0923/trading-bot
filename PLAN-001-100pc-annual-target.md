@@ -117,6 +117,41 @@
 
 **Структурное ограничение (осознанное):** исторического L1/L2 нет → **WFA на самой микроструктуре невозможен** (только 1 день + forward). Но пассив-филл как **модель исполнения на свечах** проверяем на 730д (пункт a3) — это и есть основной тест. Оценка a5 — вспомогательная (forward — только вперёд).
 
+**Уточнение модели исполнения для корректного A/B (2026-10-17, две правки после ревью a2):**
+
+1. **Maker-филл — точное зеркало taker-филла относительно цены решения.** `executionFill` сначала считает taker-сдвиг (`takerFill`: bps или тик по инструменту), затем `halfSpread = |takerfill.price − reference|` и maker-цена = `reference ∓ halfSpread`. Раньше ветка maker шла **первой** и использовала сток-оценку `(high−low)/4` и для фьючерсов — maker-преимущество завышалось ~3× относительно реального спреда (CNYRUBF: медиана MINUTE_10 range 0.011 ₽ → 0.00275 ₽ против реального спреда 0.80 bps ≈ 0.0005 ₽).
+2. **SL/TP выводятся из цены РЕШЕНИЯ (`price`), а не из цены филла.** Это паритет с live: `DecisionEngine` берёт `entryPrice = snapshot.microprice/currentPrice` **на момент решения**, а не фактический филл, и SL/TP считаются от него (`OrderBuilder`). Плюс это обязательное условие валидного A/B: при привязке SL/TP к филлу лучший maker-вход сдвигал бы и стоп/тейк, оставляя R-мультипл неизменным — эффект исполнения исчезал бы. `entryPrice` позиции остаётся фактическим филлом (по нему P&L).
+
+**Вердикт направления (а) — `REJECTED` (2026-10-17).**
+
+Прогон **a3** (730д, folds=8, conf 0.60, **live-риск** maxC=1/risk 1% без overrides,
+`loadHistory=false`, `scripts/research_a3_passive_fill.ps1`) сравнил taker- и passive-филл **на одних и тех же фолдах WFA**; артефакты — `artifacts/a3_taker_730d_f8.json`,
+`a3_passive_730d_f8.json`, `a3_passive_fill_730d_f8.csv`, `a3_passive_gate_730d_f8.recovered.txt`.
+
+| Проверка §4 | taker | passive | Требование | Итог |
+|---|---|---|---|---|
+| OOS PF | 1.2317 | **1.3343** | ≥ 1.30 | ✅ |
+| OOS Return | +0.5229% | +0.7173% | — | — |
+| OOS Sharpe | 0.733 | 1.003 | — | — |
+| OOS сделки | 80 | 80 | ≥ 100 | ❌ |
+| Consistency | 0.500 | 0.500 | ≥ 0.60 | ❌ |
+| P(noEdge) | 0.2365 | 0.1585 | < 0.05 | ❌ |
+| Holdout | — | 16 сделок, +0.09% | ≥ 30 сделок, PF_holdout ≥ 1.30, return ≥ 0% | ❌ |
+| MC / robustness | — | p5 −0.90%, pLoss 48.3%, `stressFailed=5`, FRAGILE | robust, p5 ≥ 0%, pLoss < 5%, stressFailed = 0 | ❌ |
+| Deployment-gate | — | `deployment_approval.status = REVOKED` | `liveAllowed = true` | ❌ |
+
+- **Пассив-филл подтверждает исходную гипотезу частично**: издержки действительно съедают
+  gross-edge — при прочих равных PF вырос 1.2317 → 1.3343 (+0.10), Sharpe 0.733 → 1.003,
+  P(noEdge) 0.2365 → 0.1585, return +0.52% → +0.72% на тех же 80 сделках.
+- **Но критерий §4 не выполнен** в трёх из основных пунктов (сделки 80 < 100, P(noEdge)
+  0.1585 > 0.05, consistency 0.500 < 0.600), а gate дополнительно провалил holdout
+  (16 сделок < 30) и MC (`FRAGILE`, `stressFailed=5`) → деплой отозван.
+- **Итог: направление (а) закрыто `REJECTED`.** Понижение стоимости исполнения — реальное,
+  но **недостаточное** для статистически значимого edge; **платный архив микроструктуры не
+  покупается** (условие гипотезы §5.1 «иначе архив не нужен» — выполнено).
+- Дальнейший шаг по очереди §5 — направление **(б)** (донакачка истории/юниверса), которое
+  целится непосредственно в блокер «< 100 OOS-сделок» — по решению пользователя.
+
 ### 5.2 Направление (б) — Донакачка истории и расширение юниверса
 
 **Гипотеза.** Edge «не виден» из-за **недостаточной мощности** (OOS-сделок 11–87 < 100) и **узкого carry-юниверса** (5 тикеров с `funding_history`). Больше истории по существующим + новые инструменты с полной историей могут дать ≥100 OOS-сделок и выявить инструмент/портфель с устойчивым edge.
@@ -243,3 +278,5 @@
 |---|---|---|---|---|
 | 2026-10-15 | (а) | a1 — read-слой + endpoint | `MicrostructureResearchService` (`coverage`/`snapshots`/`bbo`/`ticks`/`exportCsv`), `ResearchMicrostructureController` (`/api/v1/microstructure/{coverage,snapshots,bbo,ticks,export.csv}`), DTO `MicrostructureCoverage`, `coverage()`+`limit` в `MicrostructureSnapshotRepository`/`HistoricalBboRepository`/`TradeTickRepository`; тесты `MicrostructureResearchServiceTest` (9) + `ResearchMicrostructureControllerTest` (5) | ✅ готово; unit 1766, integration 117, ktlintCheck зелёные |
 | 2026-10-17 | (а) | a2 — passive-fill модель + query-флаг | `SimulatedExecution.passiveFill` (maker: buy по bid = mid−halfSpread, sell по ask = mid+halfSpread — зеркало `realisticFill`); `BacktestConfig.executionPassiveFillEnabled` (default **off**, env `BT_EXECUTION_PASSIVE_FILL_ENABLED`); проброс `passiveFillEnabled` `run`→`simulate`→`openPosition`/`closePosition`→`executionFill` (защитные SL/TP/ликвидация остаются taker через `passiveEligible=false`); query-оверрайд `executionPassiveFill` на `/backtest` `/validate` `/robustness` `/holdout` `/deployment-gate` через `WfaConfig`→`BacktestValidator`/`FinalHoldoutValidator`→`MonteCarloAnalyzer`; тесты `SimulatedExecutionTest` (+2), `BacktestEngineTest` (+2: maker>taker на плоской свече, override=config) | ✅ готово; unit 1770, integration 117, ktlintCheck зелёные |
+| 2026-10-17 | (а) | a2-fix — коррекция модели исполнения (ревью) | `BacktestEngine.executionFill`/`takerFill`: maker-филл = **точное зеркало** taker относительно цены решения (`halfSpread = |takerfill.price − reference|`) вместо сток-оценки `(high−low)/4`, которая давала фьючерсному мейкеру ~3× завышенное преимущество (0.00275 ₽ против реального спреда 0.80 bps ≈ 0.0005 ₽); SL/TP в `openPosition` переведены с `fill.price` на **цену решения `price`** — паритет с live (`DecisionEngine`: `entryPrice = snapshot.microprice/currentPrice` на момент решения, SL/TP строит `OrderBuilder`) и обязательное условие валидного A/B: при привязке к филлу лучший вход сдвигал бы стоп/тейк и R-мультипл оставался бы прежним (эффект исполнения исчезал); `entryPrice` позиции — фактический филл (P&L по нему); тест `passive fill mirrors taker slippage for futures ignoring candle range` + обновлён `equity curve keeps exactly one point per bar when position is stopped out` (3→2 сделки) | ✅ готово; `BacktestEngineTest` + `ktlintCheck` зелёные |
+| 2026-10-17 | (а) | a3 — сравнительный WFA 730д taker vs passive + gate | `scripts/research_a3_passive_fill.ps1` (730д, folds=8, conf 0.60, **live-риск** maxC=1/risk 1% без overrides, `loadHistory=false`, `-RunGate`); артефакты `artifacts/a3_taker_730d_f8.json`, `a3_passive_730d_f8.json`, `a3_passive_fill_730d_f8.csv`, `a3_passive_gate_730d_f8.recovered.txt` (гейт восстановлен из лога сервера + БД: раннер убит по нехватке ОЗУ до записи JSON) | **REJECTED** — taker: PF **1.2317**, ret +0.5229%, Sharpe 0.733, 80 сделок, cons 0.500, P(noEdge) 0.2365 → passive: PF **1.3343**, ret **+0.7173%**, Sharpe **1.003**, 80 сделок, cons 0.500, P(noEdge) **0.1585**. Пассив-филл улучшает все метрики на одном наборе сделок (PF +0.10, Sharpe +0.27, P(noEdge) 0.24→0.16), порог §4 **по PF пройден (≥1.30)**, но **критерий НЕ выполнен**: сделок **80 < 100**, P(noEdge) **0.1585 > 0.05** (edge не значим), cons 0.500 < 0.600. Gate: backtest REJECT, `wfa=FAIL`, `holdout=FAIL` (16 сделок, +0.09% — но 16 < 30), robustness **FRAGILE** (mc_p5 −0.90%, mc_pLoss 48.3%, stressFailed=5) → `deployment_approval.status=REVOKED`. Итог: снижение стоимости исполнения даёт реальный, но **недостаточный** эффект — направление (а) закрыто `REJECTED`, платный архив не покупается |

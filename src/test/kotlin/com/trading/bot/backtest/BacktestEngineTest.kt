@@ -529,6 +529,84 @@ class BacktestEngineTest {
         }
 
     @Test
+    fun `passive fill mirrors taker slippage for futures ignoring candle range`() {
+        // Regression (PLAN-001 a2): maker-филл обязан зеркалить taker-филл
+        // относительно reference и использовать ТУ ЖЕ базу спреда. Раньше maker
+        // брал диапазон свечи (estimateHalfSpread), а фьючерсный taker — bps/тики,
+        // что завышало выгоду maker в разы. Свеча с огромным диапазоном
+        // (range/4 = 50) не должна влиять на филл фьючерса.
+        val instruments =
+            InstrumentsConfig().apply {
+                instruments =
+                    listOf(
+                        InstrumentsConfig.InstrumentSpec(
+                            ticker = "SIF",
+                            type = "FUTURES",
+                            lotSize = 1,
+                            priceStep = BigDecimal("0.01"),
+                            priceStepCost = BigDecimal("10.0"),
+                            go = BigDecimal("1000"),
+                            leverage = BigDecimal("1.0"),
+                            baseAsset = "USD",
+                            slippageBps = BigDecimal("1.0"),
+                        ),
+                    )
+            }
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = instruments,
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+        val spec = instruments.find("SIF")
+        val reference = BigDecimal("100")
+        val candle =
+            Candle(
+                ticker = "SIF",
+                timeframe = "MINUTE_10",
+                openPrice = reference,
+                highPrice = BigDecimal("300"),
+                lowPrice = BigDecimal("-100"),
+                closePrice = reference,
+                volume = 1L,
+                time = LocalDateTime.now(),
+            )
+
+        val taker =
+            engine.executionFill(
+                instrument = spec,
+                ticker = "SIF",
+                reference = reference,
+                isBuy = true,
+                slippageMultiplier = 1.0,
+                candle = candle,
+                passiveFillEnabled = false,
+            )
+        val maker =
+            engine.executionFill(
+                instrument = spec,
+                ticker = "SIF",
+                reference = reference,
+                isBuy = true,
+                slippageMultiplier = 1.0,
+                candle = candle,
+                passiveFillEnabled = true,
+            )
+
+        assertTrue(taker.price > reference, "taker buy must pay above reference")
+        assertTrue(maker.price < reference, "maker buy must be below reference")
+        assertEquals(
+            0,
+            (taker.price - reference).compareTo(reference - maker.price),
+            "maker must mirror taker around reference (taker=${taker.price} maker=${maker.price})",
+        )
+        assertTrue(
+            taker.price - reference < BigDecimal("1"),
+            "futures slippage must come from bps/tick, not candle range/4: taker=${taker.price}",
+        )
+    }
+
+    @Test
     fun `initial capital from config scales equity proportionally`() {
         val base = runBlocking { engine.simulate("SBER", trendingCandles()) }
         val big =
@@ -1527,9 +1605,13 @@ class BacktestEngineTest {
 
         val result = runBlocking { buyEngine.simulate("SBER", candles) }
 
-        // Реалистичные спреды шире фиксированных 0.1%: повторный вход на баре 2
-        // (fill 102.125) тоже стоп-аутится на баре 3 → STOP ×2 + END_OF_PERIOD.
-        assertEquals(3, result.totalTrades, "два стопа по SL и закрытие конца периода")
+        // SL/TP выводятся из ЦЕНЫ РЕШЕНИЯ (open входа), как в live
+        // (DecisionEngine: SL/TP от snapshot-цены, а не от фактического филла).
+        // Поэтому при повторном входе на баре 2 стоп (98.98 = 101.0×0.98) не
+        // пробивается низом бара 3 (99.5) — в отличие от старой fill-based
+        // привязки (102.125×0.98 = 100.08). Итог: один стоп по SL + закрытие
+        // конца периода = 2 сделки.
+        assertEquals(2, result.totalTrades, "один стоп по SL и закрытие конца периода")
         assertEquals(candles.size, result.equityCurve.size, "по одной точке на свечу без дубликатов на закрытии")
     }
 

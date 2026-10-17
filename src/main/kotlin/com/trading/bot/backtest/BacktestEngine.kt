@@ -806,12 +806,19 @@ class BacktestEngine(
     }
 
     /**
-     * Цена исполнения market-ордера с проскальзыванием:
-     * - пассивный (maker) режим research (PLAN-001 §5.1, a2,
-     *   [BacktestConfig.executionPassiveFillEnabled]) — покупка по bid = mid − halfSpread,
-     *   продажа по ask = mid + halfSpread ([SimulatedExecution.passiveFill]) на цене
-     *   открытия свечи; применяется к входам и рыночным выходам (не к защитным
-     *   SL/TP/ликвидации — их вызовы передают `passiveEligible=false`);
+     * Цена исполнения market-ордера с проскальзыванием.
+     *
+     * Пассивный (maker) режим research (PLAN-001 §5.1, a2,
+     * [BacktestConfig.executionPassiveFillEnabled]): покупка по bid = mid − halfSpread,
+     * продажа по ask = mid + halfSpread ([SimulatedExecution.passiveFill]), где
+     * `halfSpread = |takerFill − reference|` — **зеркало taker-филла** относительно
+     * reference. Единая база спреда/проскальзывания для обеих сторон обязательна:
+     * если фьючерсный taker идёт по bps/тикам, а maker — по диапазону свечи
+     * (`estimateHalfSpread`), выгода maker завышается в разы (CNYRUBF: bps ≈ 0.00125 ₽
+     * против диапазона/4 ≈ 0.00275 ₽ на сторону). Применяется к входам и рыночным
+     * выходам (не к защитным SL/TP/ликвидации — их вызовы передают `passiveEligible=false`).
+     *
+     * Taker-филл ([takerFill]):
      * - фьючерсы — в ТИКАХ (пунктах), как при исполнении на бирже; процентная
      *   ставка от цены фьючерса непропорционально велика (0.1% Si ≈ 92 пункта >
      *   стоп в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] пунктов);
@@ -820,7 +827,7 @@ class BacktestEngine(
      *   продажа по mid − halfSpread;
      * - иначе (флаг выключен или свеча недоступна) — фиксированная ставка 0.1%.
      */
-    private fun executionFill(
+    internal fun executionFill(
         instrument: InstrumentsConfig.InstrumentSpec?,
         ticker: String,
         reference: BigDecimal,
@@ -829,13 +836,25 @@ class BacktestEngine(
         candle: Candle? = null,
         passiveEligible: Boolean = true,
         passiveFillEnabled: Boolean? = null,
+    ): SimulatedExecution.Fill {
+        val taker = takerFill(instrument, ticker, reference, isBuy, slippageMultiplier, candle)
+        if (!((passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled) && passiveEligible)) {
+            return taker
+        }
+        val halfSpread = taker.price.subtract(reference).abs()
+        return SimulatedExecution.passiveFill(reference, isBuy, halfSpread)
+    }
+
+    /** Taker-филл market-ордера (без passive-ветки — см. [executionFill]). */
+    private fun takerFill(
+        instrument: InstrumentsConfig.InstrumentSpec?,
+        ticker: String,
+        reference: BigDecimal,
+        isBuy: Boolean,
+        slippageMultiplier: Double,
+        candle: Candle?,
     ): SimulatedExecution.Fill =
-        if ((passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled) && passiveEligible && candle != null) {
-            // Maker-исполнение: цена на своей стороне стакана (bid для покупки,
-            // ask для продажи) — ценовое улучшение на полный спред вместо taker.
-            val halfSpread = SimulatedExecution.estimateHalfSpread(candle, reference)
-            SimulatedExecution.passiveFill(reference, isBuy, halfSpread)
-        } else if (instrument != null && instrumentsConfig.isFutures(ticker)) {
+        if (instrument != null && instrumentsConfig.isFutures(ticker)) {
             val bps = instrument.slippageBps
             if (bps != null && bps > BigDecimal.ZERO) {
                 // SlippageModel: отраслевая конфигурация в bps (1 bp = 1/10000 цены);
@@ -961,18 +980,23 @@ class BacktestEngine(
             )
         val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod)
         val atrPercent =
-            if (atr != null && fill.price > BigDecimal.ZERO) {
-                atr.divide(fill.price, 6, RoundingMode.HALF_UP).multiply(BigDecimal(100)).toDouble()
+            if (atr != null && price > BigDecimal.ZERO) {
+                atr.divide(price, 6, RoundingMode.HALF_UP).multiply(BigDecimal(100)).toDouble()
             } else {
                 null
             }
         val volatilityPercent = volatility20(history)
+        // Уровни стопа/тейка выводятся из ЦЕНЫ РЕШЕНИЯ (`price`), а не из цены филла:
+        // исполнение (taker/passive) не должно менять решения стратегии, иначе A/B по
+        // стоимости исполнения некорректен (лучший вход сдвигал бы и стоп, оставляя
+        // R-мультипл неизменным — эффект мейкера исчезал бы). `entryPrice` — фактический
+        // филл, по нему считается P&L.
         return PositionSim(
             direction = direction,
             quantity = sized.quantity,
             entryPrice = fill.price,
-            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints, slPoints),
-            takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent, tpPoints),
+            stopLoss = stopPrice(ticker, instrument, direction, price, slPercent, stopPoints, slPoints),
+            takeProfit = takePrice(ticker, instrument, direction, price, tpPercent, tpPoints),
             entryBars = bar,
             liquidationPrice = sized.liquidationPrice,
             entryTime = candle?.time,

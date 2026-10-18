@@ -19,7 +19,9 @@ import java.time.LocalDateTime
  *
  * Вердикт одиночного прогона — ТОЛЬКО по OOS (пороги [BacktestResult.isPassable]);
  * walk-forward дополнительно проверяет consistency (защита от везения на одном сегменте).
- * Live-путь не затрагивается.
+ * `holdoutFraction` в [validate] отрезает от истории последние `holdoutFraction` ДО
+ * walk-forward — протокол IS70/OOS30 (holdout не участвует ни в каком подборе, вердикт
+ * по нему даёт `/momentum?oosFraction=`). Live-путь не затрагивается.
  */
 @Service
 class PortfolioMomentumService(
@@ -161,6 +163,7 @@ class PortfolioMomentumService(
         volTargetAnnualized: Double? = null,
         volTargetBarsPerYear: Double? = null,
         folds: Int = 8,
+        holdoutFraction: Double? = null,
     ): MomentumWfaResponse {
         val r =
             resolve(
@@ -184,9 +187,10 @@ class PortfolioMomentumService(
                 volTargetBarsPerYear = volTargetBarsPerYear,
             )
         val inputs = loadInputs(r, days)
+        val devBars = devSlice(inputs.bars, holdoutFraction)
         val wfa =
             PortfolioWalkForward.run(
-                bars = inputs.bars,
+                bars = devBars,
                 specs = inputs.specs,
                 params = engineParams(r),
                 folds = folds,
@@ -196,7 +200,7 @@ class PortfolioMomentumService(
         return MomentumWfaResponse(
             universe = r.universe,
             timeframe = r.tf,
-            bars = inputs.bars.size,
+            bars = devBars.size,
             folds = wfa.folds.size,
             consistency = wfa.consistency,
             robust = wfa.robust,
@@ -206,6 +210,7 @@ class PortfolioMomentumService(
                 wfa.folds.map {
                     MomentumFoldResult(it.foldIndex, it.from.toString(), it.to.toString(), it.result.metrics())
                 },
+            holdoutFraction = holdoutFraction,
         )
     }
 
@@ -395,7 +400,26 @@ data class MomentumWfaResponse(
     val verdict: String,
     val aggregate: Map<String, Any>,
     val foldResults: List<MomentumFoldResult>,
+    /** Протокол IS70/OOS30: доля holdout; null — WFA по всей истории (без отрезки). */
+    val holdoutFraction: Double? = null,
 )
+
+/**
+ * Отрезка dev-части для holdout-протокола IS70/OOS30 (`scripts/research_oos70_portfolio.ps1`):
+ * первые `(1 − holdoutFraction)` элементов — обучающее окно, последние `holdoutFraction`
+ * в walk-forward не участвуют (так, как это делает `StrategyParameters` для тикерного
+ * `/holdout`). `null` → список целиком (протокол не применяется, прежнее поведение).
+ * Порядок элементов обязан быть хронологическим — срез выполняется по индексу.
+ */
+internal fun <T> devSlice(
+    items: List<T>,
+    holdoutFraction: Double?,
+): List<T> {
+    if (holdoutFraction == null) return items
+    require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
+    val devSize = ((1.0 - holdoutFraction) * items.size).toInt().coerceAtLeast(1)
+    return items.take(devSize)
+}
 
 /** Метрики одного OOS-фолда walk-forward. */
 data class MomentumFoldResult(

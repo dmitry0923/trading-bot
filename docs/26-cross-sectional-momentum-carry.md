@@ -331,3 +331,46 @@ P ≤ 0.05) берутся вразнобой, но не вместе ни на 
 - движок: `PortfolioMomentumEngine` (vol-scaling + vol-targeting + `reversalEnabled` + `momentumWeight`
   `Params.*`), конфиг `bt.portfolio.vol-*`/`vol-target-*`/`reversal-enabled`/`momentum-weight`,
   тесты `PortfolioMomentumEngineTest` (7 новых, включая reversal и carry-only).
+
+## 11. Формальный holdout-протокол IS70/OOS30 (2026-10-18, `18_10_2026` P1 шаг 1)
+
+Инструмент: `scripts/research_oos70_portfolio.ps1` + новый query-параметр
+`holdoutFraction` на `/portfolio/momentum/validate` (Kotlin `devSlice`, тесты
+`PortfolioHoldoutSliceTest`): WFA считается на ПЕРВЫХ `(1 − holdoutFraction)`
+истории, holdout в диагностику не попадает; второй вызов
+(`/momentum?oosFraction=0.30`) даёт holdout-сегмент, вердикт — только по нему.
+Гейты — §4 PLAN-001: **OOS PF ≥ 1.30 И OOS P(noEdge) < 0.05 И ≥ 30 OOS-сделок
+И dev-consistency ≥ 0.60**; REJECTED — если OOS PF < 1.30, иначе INCONCLUSIVE.
+
+Отличие от §6: там WFA шёл по **полной** истории (holdout попадал в consistency),
+здесь dev-часть независима от holdout. Конфиги **заморожены** (§5/§6/§8a/§8c),
+подбора нет.
+
+Прогон 18.10.2026, 730д, folds=8, holdout 0.30, dev 29 054 бара, 25 с (детерминированно):
+
+| Конфиг | OOS PF | OOS Ret | OOS Sharpe | OOS MDD | OOS сделки | OOS P(noEdge) | dev cons | Вердикт |
+|---|---|---|---|---|---|---|---|---|
+| baseline U5 mom L1S1 rb420 | 0.805 | −8.19% | −0.63 | 16.2% | 62 | 0.762 | 0.500 | REJECTED |
+| mom+carry U5 L1S1 rb210 cw1 | 0.990 | −1.11% | −0.05 | 11.1% | 122 | 0.536 | 0.500 | REJECTED |
+| mom+carry U5 L1S3 rb210 cw1 | 1.148 | +5.92% | 0.93 | 6.9% | 244 | 0.214 | 0.500 | REJECTED |
+| **mom U13 L2S4 rb300 vs210 vt30** | **1.362** | **+15.75%** | **1.58** | 12.6% | **252** | **0.032** | **0.375** | **INCONCLUSIVE (cons)** |
+| mom U13 L2S3 rb210 vs420 vt15 | 1.202 | +8.92% | 1.04 | 7.9% | 300 | 0.109 | 0.375 | REJECTED |
+| carry-only U5 L0S3 rb630 cl5 | 1.158 | +5.92% | 0.73 | 11.4% | 63 | 0.336 | 0.500 | REJECTED |
+
+**Вердикт: ни один замороженный конфиг не проходит §4.** Ближайший —
+`U13 L2S4 rb300 vs210 vt30`: OOS PF 1.362 и P(noEdge) 0.032 **одновременно**
+(впервые в проекте на этом классе), 252 OOS-сделки, но **dev-consistency 0.375
+< 0.60**: 3/8 фолдов в плюс (f1 +10.1% PF 3.93 — тянет агрегат, f3/f5 +0.8/+0.6%),
+5 фолдов в минус (f4 −2.5%, f7 −2.9%). Именно то, о чём предупреждает §9: «WFA-значимость»
+в значительной мере держится на одном среднем сегменте 2025 года, а хвостовой год
+плоский. Класс остаётся **INCONCLUSIVE/не проход**; `bt.portfolio.*` — off.
+
+Замечания по воспроизводимости: числа слегка отличаются от §6/§8a (baseline OOS PF
+1.026 → 0.805; L2S4 rb300 vs210 vt30 1.305/0.056 → 1.362/0.032) — свежая граница
+730д-окна и донакачанные ряды `funding_history` после тех прогонов; **направление
+вердикта то же**, а прогон теперь воспроизводим штатным скриптом за секунды
+(§6-числа получены ad-hoc вызовами). Мировые границы данных: inner-join U5/U13
+заканчивается 2026-09-22 (у `EURRUBF/GLDRUBF/IMOEXF` свечи до этой даты).
+
+Артефакты: `artifacts/p1_oos70_portfolio.csv`, `artifacts/p1_oos70_portfolio.json`
+(полные dev-фолды + holdout-метрики + URL-ы прогонов).

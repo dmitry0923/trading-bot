@@ -10,7 +10,8 @@ import org.springframework.web.bind.annotation.RestController
  * Research-эндпоинты cross-sectional momentum + carry портфеля фьючерсов (`docs/26`).
  *
  * `GET /api/v1/portfolio/momentum` — прогон с IS/OOS split; `GET
- * /api/v1/portfolio/momentum/validate` — walk-forward (фолды + consistency).
+ * /api/v1/portfolio/momentum/validate` — walk-forward (фолды + consistency), параметр
+ * `holdoutFraction` отрезает holdout до WFA (протокол IS70/OOS30).
  * Query-параметры перекрывают `bt.portfolio.*` без перезапуска. Live-путь не
  * затрагивается; вердикт — только по OOS/агрегату фолдов.
  */
@@ -86,6 +87,7 @@ class PortfolioMomentumController(
         @RequestParam(required = false) volTargetEnabled: Boolean?,
         @RequestParam(required = false) volTargetAnnualized: Double?,
         @RequestParam(required = false) volTargetBarsPerYear: Double?,
+        @RequestParam(required = false) holdoutFraction: Double?,
     ) = service.validate(
         universe = universe,
         timeframe = timeframe,
@@ -107,5 +109,6 @@ class PortfolioMomentumController(
         volTargetAnnualized = volTargetAnnualized,
         volTargetBarsPerYear = volTargetBarsPerYear,
         folds = folds,
+        holdoutFraction = holdoutFraction,
     )
 }

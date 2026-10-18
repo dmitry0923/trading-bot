@@ -663,10 +663,10 @@ instruments:
       slippageBps: "1.0"
     - ticker: "SBERF"
       type: "FUTURES"
-      lotSize: 1
+      lotSize: 100 # LOTVOLUME MOEX ISS (100 акций SBER в контракте, сверено 2026-10-18)
       priceStep: "0.01"
       priceStepCost: "1.0"
-      go: "0"
+      go: "4901.15" # INITIALMARGIN MOEX ISS (SIM/fallback)
       leverage: "${leverage.user-leverage}"
       baseAsset: "SBER"
       quoteAsset: "RUB"
@@ -675,10 +675,10 @@ instruments:
       slippageBps: "1.0"
     - ticker: "GAZPF"
       type: "FUTURES"
-      lotSize: 1
-      priceStep: "0.001"
+      lotSize: 100 # LOTVOLUME MOEX ISS (100 акций GAZP в контракте, сверено 2026-10-18)
+      priceStep: "0.01" # MINSTEP MOEX ISS (было 0.001 — в 10 раз мельче реального шага)
       priceStepCost: "1.0"
-      go: "0"
+      go: "1828.06" # INITIALMARGIN MOEX ISS (SIM/fallback)
       leverage: "${leverage.user-leverage}"
       baseAsset: "GAZP"
       quoteAsset: "RUB"

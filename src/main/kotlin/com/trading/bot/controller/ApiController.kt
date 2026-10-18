@@ -956,6 +956,12 @@ class ApiController(
         @RequestParam(required = false) wfaSlPoints: Int?,
         @RequestParam(required = false) wfaTpPoints: Int?,
         @RequestParam(required = false) executionPassiveFill: Boolean?,
+        /**
+         * Research (b6, PLAN-001 §5.2): отдать OOS-сделки по фолдам — сырьё для
+         * портфельной агрегации нескольких тикеров в один §4-вердикт. Дефолт off,
+         * чтобы обычные вызовы не раздували ответ (паттерн includeTrades в /backtest).
+         */
+        @RequestParam(defaultValue = "false") includeOosTrades: Boolean,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1092,6 +1098,21 @@ class ApiController(
                 ),
             )
         persistValidationResult(ticker, effectiveDays, effectiveTimeframe, folds, loadHistory, result)
+        val oosFoldTrades =
+            if (includeOosTrades) {
+                result.folds.map { fold ->
+                    mapOf(
+                        "fold" to fold.foldIndex,
+                        "chosenSlPercent" to fold.chosenSlPercent,
+                        "chosenTpPercent" to fold.chosenTpPercent,
+                        "chosenSlPoints" to fold.chosenSlPoints,
+                        "chosenTpPoints" to fold.chosenTpPoints,
+                        "trades" to fold.outOfSample.trades.map { it.toMap() },
+                    )
+                }
+            } else {
+                emptyList<Any>()
+            }
         return mapOf(
             "ticker" to ticker,
             "timeframe" to effectiveTimeframe,
@@ -1107,6 +1128,7 @@ class ApiController(
             "oosProbabilityOfNoEdge" to result.aggregateOutOfSample.probabilityOfNoEdge,
             "oosMeanTradeCI95Low" to result.aggregateOutOfSample.meanTradeCI95Low,
             "oosMeanTradeCI95High" to result.aggregateOutOfSample.meanTradeCI95High,
+            "oosFoldTrades" to oosFoldTrades,
             "timestamp" to LocalDateTime.now().toString(),
         )
     }

@@ -1,0 +1,147 @@
+{
+  "config": {
+    "capitalPerTicker": 100000.0,
+    "days": 730,
+    "conf": 0.6,
+    "tickers": [
+      "USDRUBF",
+      "IMOEXF",
+      "EURRUBF",
+      "CNYRUBF"
+    ],
+    "bootstrapIters": 2000,
+    "folds": 8
+  },
+  "portfolio": {
+    "tradesTotal": 339,
+    "pnlTotalRub": -5083.32,
+    "returnPct": -1.271,
+    "profitFactor": 0.9072,
+    "consistency": 0.375,
+    "blockDays": 234,
+    "naive": {
+      "pNoEdge": 0.756,
+      "ci95Low": -57.39,
+      "ci95High": 31.607
+    },
+    "block": {
+      "pNoEdge": 0.7465,
+      "ci95Low": -61.951,
+      "ci95High": 29.229
+    }
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "trades": 50,
+      "pnl": 2618.69
+    },
+    {
+      "fold": 1,
+      "trades": 51,
+      "pnl": 7223.75
+    },
+    {
+      "fold": 2,
+      "trades": 40,
+      "pnl": -6481.87
+    },
+    {
+      "fold": 3,
+      "trades": 43,
+      "pnl": -772.63
+    },
+    {
+      "fold": 4,
+      "trades": 38,
+      "pnl": -3836.14
+    },
+    {
+      "fold": 5,
+      "trades": 34,
+      "pnl": -1575.52
+    },
+    {
+      "fold": 6,
+      "trades": 46,
+      "pnl": -3498.79
+    },
+    {
+      "fold": 7,
+      "trades": 37,
+      "pnl": 1239.19
+    }
+  ],
+  "perTicker": [
+    {
+      "ticker": "USDRUBF",
+      "oosTrades": 72,
+      "oosPF": 0.883,
+      "oosRetPct": -2.09,
+      "consistency": 0.375,
+      "pNoEdge": 0.69,
+      "robust": false
+    },
+    {
+      "ticker": "IMOEXF",
+      "oosTrades": 96,
+      "oosPF": 1.104,
+      "oosRetPct": 0.81,
+      "consistency": 0.5,
+      "pNoEdge": 0.322,
+      "robust": false
+    },
+    {
+      "ticker": "EURRUBF",
+      "oosTrades": 90,
+      "oosPF": 0.838,
+      "oosRetPct": -4.39,
+      "consistency": 0.25,
+      "pNoEdge": 0.785,
+      "robust": false
+    },
+    {
+      "ticker": "CNYRUBF",
+      "oosTrades": 81,
+      "oosPF": 1.279,
+      "oosRetPct": 0.59,
+      "consistency": 0.5,
+      "pNoEdge": 0.2,
+      "robust": false
+    }
+  ],
+  "criteria": [
+    {
+      "name": "oosTrades>=100",
+      "value": 339,
+      "passed": true
+    },
+    {
+      "name": "pf>=1.30",
+      "value": 0.9072,
+      "passed": false
+    },
+    {
+      "name": "pNoEdge(block)<0.05",
+      "value": 0.7465,
+      "passed": false
+    },
+    {
+      "name": "ci95Low(block)>0",
+      "value": -61.951,
+      "passed": false
+    },
+    {
+      "name": "consistency>=0.60",
+      "value": 0.375,
+      "passed": false
+    },
+    {
+      "name": "return>=0",
+      "value": -1.271,
+      "passed": false
+    }
+  ],
+  "verdict": "REJECTED",
+  "timestamp": "2026-10-18 15:59:15"
+}

@@ -39,6 +39,10 @@ desktop.ini
 bootrun.err
 logs/
 
+# Research-run markers (heartbeat/status пишутся раннерами в artifacts/)
+artifacts/*.heartbeat
+artifacts/*.status
+
 # Секреты: файл с API-ключами и паролями НИКОГДА не должен попадать в git
 .env
 .env.*

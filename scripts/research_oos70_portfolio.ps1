@@ -68,13 +68,28 @@ $headers = Get-Headers
 
 $u5 = "CNYRUBF,USDRUBF,EURRUBF,GLDRUBF,IMOEXF"
 $u13 = "$u5,GAZP,LKOH,MGNT,NVTK,PLZL,ROSN,SBER,TATN"
+# P1 шаг 2 (18_10_2026): расширение юниверса без перебора параметров —
+#   U7 = U5 + SBERF/GAZPF (perpetual'ы, carry-eligible: funding 508 дат в БД);
+#   U15 = U13 + SBERF/GAZPF (momentum-only, у акций funding нет).
+$u7 = "$u5,SBERF,GAZPF"
+$u15 = "$u13,SBERF,GAZPF"
 $defaultConfigs = @(
     "baseline U5 mom L1S1 rb420;",
     "mom+carry U5 L1S1 rb210 cw1;&rebalanceBars=210&carryWeight=1",
     "mom+carry U5 L1S3 rb210 cw1;&rebalanceBars=210&longCount=1&shortCount=3&carryWeight=1",
     "mom U13 L2S4 rb300 vs210 vt30;&universe=$u13&longCount=2&shortCount=4&rebalanceBars=300&volScalingEnabled=true&volLookbackBars=210&volTargetEnabled=true&volTargetAnnualized=0.30",
     "mom U13 L2S3 rb210 vs420 vt15;&universe=$u13&longCount=2&shortCount=3&rebalanceBars=210&volScalingEnabled=true&volLookbackBars=420&volTargetEnabled=true&volTargetAnnualized=0.15",
-    "carry-only U5 L0S3 rb630 cl5;&momentumWeight=0&carryWeight=1&longCount=0&shortCount=3&rebalanceBars=630&carryLookbackDays=5"
+    "carry-only U5 L0S3 rb630 cl5;&momentumWeight=0&carryWeight=1&longCount=0&shortCount=3&rebalanceBars=630&carryLookbackDays=5",
+    # --- шаг 2: расширенный юниверс (замороженные параметры + плато cw/rb) ---
+    "s2 U7 mom+carry L1S1 rb210 cw1;&universe=$u7&rebalanceBars=210&carryWeight=1",
+    "s2 U7 mom+carry L1S3 rb210 cw1;&universe=$u7&longCount=1&shortCount=3&rebalanceBars=210&carryWeight=1",
+    "s2 U7 mom+carry L1S1 rb210 cw0.5;&universe=$u7&rebalanceBars=210&carryWeight=0.5",
+    "s2 U7 mom+carry L1S1 rb210 cw2;&universe=$u7&rebalanceBars=210&carryWeight=2",
+    "s2 U7 mom+carry L1S1 rb150 cw1;&universe=$u7&rebalanceBars=150&carryWeight=1",
+    "s2 U7 mom+carry L1S1 rb420 cw1;&universe=$u7&rebalanceBars=420&carryWeight=1",
+    "s2 U7 carry-only L0S3 rb630 cl5;&universe=$u7&momentumWeight=0&carryWeight=1&longCount=0&shortCount=3&rebalanceBars=630&carryLookbackDays=5",
+    "s2 U15 mom L2S4 rb300 vs210 vt30;&universe=$u15&longCount=2&shortCount=4&rebalanceBars=300&volScalingEnabled=true&volLookbackBars=210&volTargetEnabled=true&volTargetAnnualized=0.30",
+    "s2 U15 mom L2S3 rb210 vs420 vt15;&universe=$u15&longCount=2&shortCount=3&rebalanceBars=210&volScalingEnabled=true&volLookbackBars=420&volTargetEnabled=true&volTargetAnnualized=0.15"
 )
 $raw = if ($ConfigCsv.Count -eq 0) { $defaultConfigs } else { $ConfigCsv }
 $configs = @()

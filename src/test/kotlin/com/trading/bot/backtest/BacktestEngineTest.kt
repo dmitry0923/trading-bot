@@ -1258,6 +1258,221 @@ class BacktestEngineTest {
         assertTrue(result.totalTrades > 0, "выключенный фильтр не должен блокировать сделки")
     }
 
+    // ------------------------------------------------------------------
+    // Research P4 (docs/27-funding-window-capture): funding-window capture.
+    // Сторона выбирается ПО СТАВКЕ последнего клиринга (strictly before bar date,
+    // lowerEntry — без lookahead); детерминированный генератор сигналов обходится.
+    // ------------------------------------------------------------------
+
+    /** Плоские свечи CNYRUBF (high=low=open=close): SL/TP не задеваются, P&L определяется funding. */
+    private fun flatCnyCandles(
+        count: Int = 200,
+        // Пн 12.01.2026 — рабочий день (праздники 1–8 янв вне серии, иначе клиринги нет).
+        start: LocalDateTime = LocalDateTime.of(2026, 1, 12, 10, 0),
+        price: BigDecimal = BigDecimal("12.5"),
+    ): List<Candle> =
+        (0 until count).map { i ->
+            Candle(
+                ticker = "CNYRUBF",
+                timeframe = "MINUTE_10",
+                openPrice = price,
+                highPrice = price,
+                lowPrice = price,
+                closePrice = price,
+                volume = 1000L,
+                time = start.plusMinutes(10L * i),
+            )
+        }
+
+    private fun fundingWindowEngine(
+        repo: FundingHistoryRepository,
+        directionAware: Boolean = true,
+        meterRegistry: SimpleMeterRegistry? = null,
+        generator: BacktestSignalGenerator = ConstantSignalGenerator(StrategyAction.HOLD),
+        randomSide: Boolean = false,
+    ): BacktestEngine =
+        BacktestEngine(
+            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+            meterRegistry = meterRegistry,
+            backtestConfig =
+                BacktestConfig().apply {
+                    fundingWindowEnabled = true
+                    fundingWindowLongThresholdRub = 2.0
+                    fundingWindowShortThresholdRub = 2.0
+                    fundingWindowBlockOnUnknown = true
+                    fundingWindowRandomSide = randomSide
+                    fundingDirectionAware = directionAware
+                },
+            signalGenerator = generator,
+            fundingHistoryRepository = repo,
+        )
+
+    @Test
+    fun `funding window opens short on positive rate and direction-aware funding credits short`() {
+        val series = flatCnyCandles()
+        // Ставка 30.0 (>= порога 2.0) на все даты серии + запись строго раньше первого бара.
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+        val awareEngine = fundingWindowEngine(repo, directionAware = true)
+
+        val aware = runBlocking { awareEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        val awareTrade = aware.trades[0]
+        assertEquals(1, aware.totalTrades, "при ставке выше порога открывается ровно одна позиция")
+        assertEquals(PositionDirection.SHORT, awareTrade.direction, "положительная ставка → SHORT (short платит лонгу)")
+        assertTrue(
+            awareTrade.funding < 0.0,
+            "направленный funding: SHORT получает ставку (funding < 0), got ${awareTrade.funding}",
+        )
+        assertTrue(aware.totalReturn > 0.0, "кредит funding покрывает комиссию/slippage → pnl > 0, got ${aware.totalReturn}")
+
+        // Контроль legacy (direction-aware=false): та же ставка СПИСЫВАЕТСЯ обеим сторонам.
+        val legacyEngine = fundingWindowEngine(repo, directionAware = false)
+        val legacy = runBlocking { legacyEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        val legacyTrade = legacy.trades[0]
+        assertEquals(1, legacy.totalTrades)
+        assertTrue(
+            legacyTrade.funding > 0.0,
+            "legacy-модель списывает ставку SHORT-позиции (funding > 0), got ${legacyTrade.funding}",
+        )
+        assertTrue(legacy.totalReturn < 0.0, "legacy: списанный funding → pnl < 0, got ${legacy.totalReturn}")
+    }
+
+    @Test
+    fun `funding window opens long on negative rate`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("-30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("-30.0"))
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(1, result.totalTrades, "отрицательная ставка → ровно одна позиция")
+        assertEquals(PositionDirection.LONG, result.trades[0].direction, "ставка <= −порога → LONG")
+    }
+
+    @Test
+    fun `funding window stays flat when rate below threshold`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("1.0"), LocalDate.of(2026, 1, 9) to BigDecimal("1.0"))
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(0, result.totalTrades, "ставка 1.0 < порога 2.0 → FLAT, входов нет")
+    }
+
+    @Test
+    fun `funding window blocks unknown rate fail-closed and counts metric`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val emptyRepo = fundingRepoReturning()
+        val windowEngine = fundingWindowEngine(emptyRepo, meterRegistry = meterRegistry)
+
+        val candles = flatCnyCandles()
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", candles, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(0, result.totalTrades, "нет ряда funding + block-on-unknown → fail-closed FLAT")
+        val unknown = meterRegistry.counter("bt_funding_window_unknown_total", "ticker", "CNYRUBF").count()
+        assertTrue(unknown > 0, "метрика unknown должна увеличиваться, got $unknown")
+    }
+
+    @Test
+    fun `funding window bypasses deterministic signal generator when enabled`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+        // HOLD-генератор: без P4 сделок не было бы вовсе; включённый P4-блок его обходит.
+        val holdEngine = fundingWindowEngine(repo)
+
+        val withFlagOn = runBlocking { holdEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(1, withFlagOn.totalTrades, "включённый P4-блок входит по ставке, игнорируя HOLD-сигнал")
+
+        val flagOffConfig =
+            BacktestConfig().apply {
+                fundingWindowEnabled = false
+                fundingWindowLongThresholdRub = 2.0
+                fundingWindowShortThresholdRub = 2.0
+            }
+        val flagOffEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig = flagOffConfig,
+                signalGenerator = ConstantSignalGenerator(StrategyAction.HOLD),
+                fundingHistoryRepository = repo,
+            )
+
+        val withFlagOff = runBlocking { flagOffEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(0, withFlagOff.totalTrades, "выключенный флаг: P4 не работает, HOLD-генератор не входит")
+    }
+
+    @Test
+    fun `funding window exits position when rate falls below threshold`() {
+        val series = flatCnyCandles()
+        // Бары 12 янв видят ставку 9 янв (30.0 → SHORT); бары 13 янв видят ставку 12 янв (1.0 → FLAT).
+        val repo =
+            fundingRepoReturning(
+                LocalDate.of(2026, 1, 9) to BigDecimal("30.0"),
+                LocalDate.of(2026, 1, 12) to BigDecimal("1.0"),
+            )
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(1, result.totalTrades, "позиция открывается и закрывается один раз")
+        assertEquals("FUNDING_WINDOW_EXIT", result.trades[0].closeReason, "ослабление ставки → выход по фазе, не по SL/TP")
+        assertEquals(PositionDirection.SHORT, result.trades[0].direction)
+    }
+
+    @Test
+    fun `funding window flips position when target side changes`() {
+        val series = flatCnyCandles()
+        // Бары 12 янв: ставка 9 янв = +30.0 → SHORT; бары 13 янв: ставка 12 янв = −30.0 → LONG.
+        val repo =
+            fundingRepoReturning(
+                LocalDate.of(2026, 1, 9) to BigDecimal("30.0"),
+                LocalDate.of(2026, 1, 12) to BigDecimal("-30.0"),
+            )
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(2, result.totalTrades, "разворот: закрытие SHORT + открытие LONG")
+        assertEquals("FUNDING_WINDOW_FLIP", result.trades[0].closeReason, "SHORT закрыт сменой цели")
+        assertEquals(PositionDirection.SHORT, result.trades[0].direction)
+        assertEquals(PositionDirection.LONG, result.trades[1].direction, "после разворота удерживается LONG до конца периода")
+    }
+
+    @Test
+    fun `funding window random side placebo keeps in-market days but ignores rate sign`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+
+        // Основной режим: сторона по знаку ставки (+30 → SHORT на обе даты серии) → 1 сделка.
+        val signEngine = fundingWindowEngine(repo)
+        val signResult = runBlocking { signEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+        assertEquals(1, signResult.totalTrades, "режим по ставке: одна SHORT-позиция на обе даты")
+        assertEquals(PositionDirection.SHORT, signResult.trades[0].direction)
+
+        // Placebo §7.2: те же дни в рынке (|ставка| >= порога), но сторона — по (ticker, дата).
+        val placeboEngine = fundingWindowEngine(repo, randomSide = true)
+        val placebo = runBlocking { placeboEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(2, placebo.totalTrades, "соседние даты дают разные стороны → разворот на границе дня")
+        assertEquals("FUNDING_WINDOW_FLIP", placebo.trades[0].closeReason, "разворот placebo-стороны")
+        assertTrue(
+            placebo.trades[0].direction != placebo.trades[1].direction,
+            "placebo игнорирует знак ставки: стороны соседних дней противоположны",
+        )
+        // Направленный funding согласован с фактической стороной: SHORT получает (+30 → funding < 0), LONG платит.
+        placebo.trades.forEach { trade ->
+            val shortCredits = trade.direction == PositionDirection.SHORT
+            assertTrue(
+                (trade.funding < 0.0) == shortCredits,
+                "funding ${trade.funding} должен соответствовать стороне ${trade.direction}",
+            )
+        }
+    }
+
     private class BtRecordingModel(
         private val probability: Double,
     ) : MlModel {

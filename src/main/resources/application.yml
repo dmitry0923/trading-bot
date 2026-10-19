@@ -442,6 +442,22 @@ bt:
   # по числу баров удержания (MKT по close) вместо ожидания SL/TP месяцами.
   # 0 (default) = выключено; query-оверрайд maxHoldBars на /backtest /validate.
   max-hold-bars: ${BT_MAX_HOLD_BARS:0}
+  # Funding-window capture (research P4, docs/27-funding-window-capture.md): движок сам
+  # выбирает сторону по последней ИЗВЕСТНОЙ ставке funding_history (клиринг строго раньше
+  # даты бара — без lookahead) и удерживает позицию через клиринги: SHORT при
+  # r >= +short-порога, LONG при r <= -long-порога, иначе FLAT. Обходит генератор
+  # сигналов и входные фильтры. По умолчанию false (live-путь не затрагивается).
+  funding-window-enabled: ${BT_FUNDING_WINDOW_ENABLED:false}
+  funding-window-long-threshold-rub: ${BT_FUNDING_WINDOW_LONG_THRESHOLD_RUB:2.0}
+  funding-window-short-threshold-rub: ${BT_FUNDING_WINDOW_SHORT_THRESHOLD_RUB:2.0}
+  funding-window-block-on-unknown: ${BT_FUNDING_WINDOW_BLOCK_ON_UNKNOWN:true}
+  # Placebo-контроль P4 (docs/27 §7.2): те же «дни в рынке», но сторона — детерминированный
+  # псевдослучайный поток по (ticker, дата), а не знак ставки. Default false = сторона по ставке.
+  funding-window-random-side: ${BT_FUNDING_WINDOW_RANDOM_SIDE:false}
+  # Направленный funding в P&L бэктеста (research P4, docs/27): false — историческая
+  # direction-agnostic модель (обе стороны платят), true — LONG платит при r>0, SHORT
+  # получает (модель портфельного движка). Воспроизводимость прежних артефактов — false.
+  funding-direction-aware: ${BT_FUNDING_DIRECTION_AWARE:false}
   # Пассивное (maker) исполнение входов/рыночных выходов в бэктесте (research a2,
   # PLAN-001 §5.1): покупка по bid, продажа по ask (ценовое улучшение на полный
   # спред вместо его оплаты). Тот же набор сделок; изолирует эффект издержек.

@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.config.MacroConfig
 import com.trading.bot.infrastructure.metrics.MutableGauges
+import com.trading.bot.repository.CbrRatesHistoryRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -16,16 +17,19 @@ import java.time.Duration
  * Поставщик макроэкономического контекста для фундаментального анализа.
  *
  * - Курс USD/RUB запрашивается вживую с MOEX (валютный рынок).
- * - Ключевая ставка ЦБ и нефть Brent берутся из конфига (macro.*) с env-оверрайдами —
- *   надёжных и стабильных публичных REST-источников для них нет, поэтому fallback в конфиг.
+ * - Ключевая ставка ЦБ берётся из ряда ЦБ (`cbr_rates_history`) при
+ *   `macro.live-rate-enabled=true`; по умолчанию и при отсутствии данных/ошибке —
+ *   статичная `macro.cbr-rate` (graceful degradation).
+ * - Нефть Brent берётся из конфига (macro.*) — надёжного публичного REST-источника нет.
  *
- * При любой ошибке внешнего запроса используется конфиг (graceful degradation) — бот не падает.
+ * При любой ошибке внешнего запроса используется конфиг — бот не падает.
  */
 @Service
 class MacroContextService(
     private val macroConfig: MacroConfig,
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
+    private val cbrRatesHistoryRepository: CbrRatesHistoryRepository? = null,
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -38,7 +42,8 @@ class MacroContextService(
 
     /**
      * Формирует актуальный макро-контекст: курс USD/RUB вживую с MOEX,
-     * ставка ЦБ и нефть Brent из конфига. Обновляет метрики macro.*.
+     * ставка ЦБ — из ряда ЦБ при `macro.live-rate-enabled` (иначе конфиг),
+     * нефть Brent — из конфига. Обновляет метрики macro.*.
      *
      * @return макро-контекст (ставка, Brent, USD/RUB)
      */
@@ -46,7 +51,7 @@ class MacroContextService(
         val liveUsdRub = fetchUsdRubLive()
         val ctx =
             MacroContext(
-                cbrRate = macroConfig.cbrRate,
+                cbrRate = latestKeyRateOrConfig(),
                 brentPrice = macroConfig.brentPrice,
                 usdRub = liveUsdRub ?: macroConfig.usdRub,
             )
@@ -54,6 +59,31 @@ class MacroContextService(
         MutableGauges.set(meterRegistry, "macro.cbr_rate", ctx.cbrRate.toDouble())
         MutableGauges.set(meterRegistry, "macro.brent", ctx.brentPrice.toDouble())
         return ctx
+    }
+
+    /**
+     * Ключевая ставка ЦБ: последняя из [CbrRatesHistoryRepository] при
+     * `macro.live-rate-enabled=true`, иначе статичная `macro.cbr-rate`.
+     * Fail-soft: пустой ряд или ошибка БД → статичная ставка (live-контур не падает).
+     */
+    internal suspend fun latestKeyRateOrConfig(): BigDecimal {
+        if (!macroConfig.liveRateEnabled) return macroConfig.cbrRate
+        val repository = cbrRatesHistoryRepository ?: return macroConfig.cbrRate
+        val liveRate =
+            try {
+                repository.findLatestKeyRate()
+            } catch (e: Exception) {
+                logger.warn(e) { "CBR key rate read failed, using config default ${macroConfig.cbrRate}" }
+                meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "FALLBACK")).increment()
+                return macroConfig.cbrRate
+            }
+        if (liveRate == null) {
+            meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "EMPTY")).increment()
+            return macroConfig.cbrRate
+        }
+        meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "OK")).increment()
+        logger.info { "CBR key rate from history: $liveRate" }
+        return liveRate
     }
 
     private suspend fun fetchUsdRubLive(): BigDecimal? =

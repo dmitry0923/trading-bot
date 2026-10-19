@@ -97,6 +97,13 @@ macro:
   usd-rub-ticker: USD000UTSTOM
   snapshot-enabled: ${MACRO_SNAPSHOT_ENABLED:false}    # исторические снапшоты макро для ML-датасета (13.11.2)
   snapshot-interval-ms: ${MACRO_SNAPSHOT_INTERVAL_MS:900000}
+  # Ряд ставок ЦБ РФ (P2 c1 плана 18_10_2026, research): ключевая ставка + RUONIA
+  # из официального SOAP-сервиса ЦБ DailyInfoWebServ (методы KeyRate/Ruonia).
+  # Донакачка — GET /api/v1/macro/rates-history. live-rate-enabled=false —
+  # торговый контур остаётся на статичной macro.cbr-rate.
+  live-rate-enabled: ${MACRO_LIVE_RATE_ENABLED:false}
+  cbr-soap-url: ${MACRO_CBR_SOAP_URL:https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx}
+  cbr-request-timeout-ms: ${MACRO_CBR_REQUEST_TIMEOUT_MS:10000}
 
 # Микроструктура стакана (OBI/microprice/spread) из live L1 Alor.
 # Исторических L1-данных не существует ни в одном источнике — данные появляются

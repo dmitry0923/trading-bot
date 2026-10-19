@@ -11,15 +11,20 @@ import org.springframework.stereotype.Service
 import org.springframework.web.reactive.function.client.WebClient
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Duration
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 /**
  * Поставщик макроэкономического контекста для фундаментального анализа.
  *
  * - Курс USD/RUB запрашивается вживую с MOEX (валютный рынок).
  * - Ключевая ставка ЦБ берётся из ряда ЦБ (`cbr_rates_history`) при
- *   `macro.live-rate-enabled=true`; по умолчанию и при отсутствии данных/ошибке —
- *   статичная `macro.cbr-rate` (graceful degradation).
+ *   `macro.live-rate-enabled=true` (проектный дефолт); при выключенном флаге,
+ *   пустом ряде или ошибке БД — статичная `macro.cbr-rate` (graceful degradation).
+ *   Ряд обновляет [com.trading.bot.infrastructure.cbr.CbrRatesRefreshScheduler].
  * - Нефть Brent берётся из конфига (macro.*) — надёжного публичного REST-источника нет.
  *
  * При любой ошибке внешнего запроса используется конфиг — бот не падает.
@@ -30,6 +35,7 @@ class MacroContextService(
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
     private val cbrRatesHistoryRepository: CbrRatesHistoryRepository? = null,
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
@@ -65,24 +71,41 @@ class MacroContextService(
      * Ключевая ставка ЦБ: последняя из [CbrRatesHistoryRepository] при
      * `macro.live-rate-enabled=true`, иначе статичная `macro.cbr-rate`.
      * Fail-soft: пустой ряд или ошибка БД → статичная ставка (live-контур не падает).
+     *
+     * Устаревание (старше `macro.live-rate-stale-days`) **не** подменяется конфигом:
+     * ключевая ставка — ступенчатая функция, поэтому последнее наблюдение остаётся
+     * лучшей оценкой, а статичный конфиг не свежее. Вместо подмены — WARN в логе и
+     * метрика `macro.cbr_rate.live{status=STALE}` (отказ донакачки виден, но не
+     * меняет ставку молча).
      */
     internal suspend fun latestKeyRateOrConfig(): BigDecimal {
         if (!macroConfig.liveRateEnabled) return macroConfig.cbrRate
         val repository = cbrRatesHistoryRepository ?: return macroConfig.cbrRate
-        val liveRate =
+        val latest =
             try {
-                repository.findLatestKeyRate()
+                repository.findLatestKeyRateRecord()
             } catch (e: Exception) {
                 logger.warn(e) { "CBR key rate read failed, using config default ${macroConfig.cbrRate}" }
                 meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "FALLBACK")).increment()
                 return macroConfig.cbrRate
             }
+        val liveRate = latest?.keyRate
         if (liveRate == null) {
             meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "EMPTY")).increment()
             return macroConfig.cbrRate
         }
+        val ageDays = ChronoUnit.DAYS.between(latest.rateDate, LocalDate.now(clock))
+        if (ageDays > macroConfig.liveRateStaleDays) {
+            logger.warn {
+                "CBR key rate is stale: latest=${latest.rateDate} age=${ageDays}d " +
+                    "exceeds macro.live-rate-stale-days=${macroConfig.liveRateStaleDays} " +
+                    "- check CbrRatesRefreshScheduler / CBR truststore"
+            }
+            meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "STALE")).increment()
+            return liveRate
+        }
         meterRegistry.counter("macro.cbr_rate.live", Tags.of("status", "OK")).increment()
-        logger.info { "CBR key rate from history: $liveRate" }
+        logger.info { "CBR key rate from history: $liveRate (${latest.rateDate})" }
         return liveRate
     }
 

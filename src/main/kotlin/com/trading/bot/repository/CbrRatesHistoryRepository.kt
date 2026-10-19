@@ -100,8 +100,8 @@ class CbrRatesHistoryRepository(
             .awaitSingle()
     }
 
-    /** Последняя известная ключевая ставка (null, если ряда ещё нет). */
-    suspend fun findLatestKeyRate(): BigDecimal? {
+    /** Последняя запись с непустой ключевой ставкой (null, если ряда ещё нет). */
+    suspend fun findLatestKeyRateRecord(): CbrRateRecord? {
         val sql =
             "SELECT * FROM cbr_rates_history WHERE key_rate IS NOT NULL ORDER BY rate_date DESC LIMIT 1"
         return databaseClient
@@ -109,8 +109,10 @@ class CbrRatesHistoryRepository(
             .map { row, _ -> toRecord(row) }
             .first()
             .awaitSingleOrNull()
-            ?.keyRate
     }
+
+    /** Последняя известная ключевая ставка (null, если ряда ещё нет). */
+    suspend fun findLatestKeyRate(): BigDecimal? = findLatestKeyRateRecord()?.keyRate
 
     /** Покрытие ряда: число дат и границы. */
     suspend fun coverage(): Coverage {

@@ -288,4 +288,55 @@ class PortfolioMomentumEngineTest {
             )
         assertTrue(result.trades.isEmpty())
     }
+
+    /**
+     * A растёт до бара [reversalAt] и падает после; B — зеркально; C стоит.
+     * Детерминированный реверс ровно в заданной точке сечения.
+     */
+    private fun reversalBars(
+        n: Int,
+        reversalAt: Int,
+    ): List<PortfolioMomentumEngine.Bar> =
+        (0 until n).map { i ->
+            val after = (i - reversalAt).coerceAtLeast(0)
+            val a = exp(2.4 + 0.001 * minOf(i, reversalAt) - 0.004 * after)
+            val b = exp(2.4 - 0.001 * minOf(i, reversalAt) + 0.004 * after)
+            val c = exp(2.4)
+            PortfolioMomentumEngine.Bar(
+                time = start.plusMinutes(10L * i),
+                opens = doubleArrayOf(a, b, c),
+                closes = doubleArrayOf(a, b, c),
+            )
+        }
+
+    private fun firstLong(result: PortfolioMomentumEngine.Result): String = result.trades.first { it.side == "LONG" }.ticker
+
+    @Test
+    fun `skip bars evaluates momentum on the pre-skip window`() {
+        // Оба конфига имеют одинаковый warmup (100) и одинаковый сигнальный бар ref=100,
+        // но разные окна momentum: без пропуска [0,100], с пропуском [0,60].
+        // Реверс на баре 80 попадает ТОЛЬКО в окно без пропуска.
+        val base = params().copy(rebalanceBars = 150)
+        val bars = reversalBars(400, reversalAt = 80)
+        val specs = listOf(spec("A"), spec("B"), spec("C"))
+
+        val noSkip = PortfolioMomentumEngine.run(bars, specs, base.copy(lookbackBars = 100, skipBars = 0))
+        assertEquals("B", firstLong(noSkip), "window [0,100] includes the bar-80 reversal → first long B")
+
+        val withSkip = PortfolioMomentumEngine.run(bars, specs, base.copy(lookbackBars = 60, skipBars = 40))
+        assertEquals("A", firstLong(withSkip), "window [0,60] ends before bar 80 → first long A")
+    }
+
+    @Test
+    fun `skip bars requires extra warmup history`() {
+        // lookback 60 + skip 40 + rebalance 40 + 2 = 142 бара минимум; 120 — мало.
+        val params = params().copy(lookbackBars = 60, skipBars = 40, rebalanceBars = 40)
+        val short = PortfolioMomentumEngine.run(trendingBars(120), listOf(spec("UP"), spec("FLAT"), spec("DOWN")), params)
+        assertTrue(short.trades.isEmpty(), "skipBars must extend the warmup requirement")
+        assertEquals(0, short.rebalances)
+
+        val enough =
+            PortfolioMomentumEngine.run(trendingBars(400), listOf(spec("UP"), spec("FLAT"), spec("DOWN")), params)
+        assertTrue(enough.trades.isNotEmpty(), "with enough history the book trades")
+    }
 }

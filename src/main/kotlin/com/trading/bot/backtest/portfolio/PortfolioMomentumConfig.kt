@@ -26,6 +26,9 @@ class PortfolioMomentumConfig {
     /** Окно momentum (лог-доходность), бары. */
     var lookbackBars: Int = 1680
 
+    /** Пропуск последних баров перед сигналом (классический `12−1` momentum); 0 = без пропуска. */
+    var skipBars: Int = 0
+
     /** Инвертировать знак momentum-члена: true → cross-sectional mean-reversion (long отстающие). */
     var reversalEnabled: Boolean = false
 

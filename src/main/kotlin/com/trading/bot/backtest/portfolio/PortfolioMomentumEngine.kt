@@ -13,6 +13,8 @@ import kotlin.math.sqrt
  * На каждом ребалансе (`rebalanceBars` баров) инструменты ранжируются по
  * cross-sectional z-score momentum (лог-доходность за `lookbackBars`) и, опционально,
  * по carry (знак/величина funding, нормированная на нотионал): `score = z(mom) + λ·z(carry)`.
+ * `skipBars` сдвигает окно momentum назад (классический `12−1`: последние `skipBars` баров
+ * исключаются из окна), снимая краткосрочную реверсал-контаминацию.
  * Покупаются `longCount` лучших, продаются `shortCount` худших (равные нотионалы,
  * долларово-нейтрально). Сигнал считается на закрытии бара `i−1`, исполняется на
  * открытии `i` (lookahead закрыт). Все издержки (комиссия, слиппедж, funding)
@@ -40,6 +42,13 @@ object PortfolioMomentumEngine {
         val initialCapital: Double = 1_000_000.0,
         /** Окно momentum (лог-доходность), бары. */
         val lookbackBars: Int = 1680,
+        /**
+         * Пропуск последних `skipBars` баров перед сигнальным баром (классический `12−1`
+         * momentum: окно доходности оканчивается за месяц до ребаланса, снимая
+         * краткосрочную реверсал-контаминацию). `0` — текущее поведение (окно кончается
+         * на сигнальном баре).
+         */
+        val skipBars: Int = 0,
         /** Инвертировать знак momentum-члена: true → cross-sectional mean-reversion (long отстающие). */
         val reversalEnabled: Boolean = false,
         /** Период между ребалансами, бары. */
@@ -159,12 +168,13 @@ object PortfolioMomentumEngine {
         val n = bars.size
         val u = specs.size
         val unknownUniverse = specs.map { it.ticker }
-        if (n < params.lookbackBars + params.rebalanceBars + 2 || u < params.minUniverse) {
+        val warmup = params.skipBars + params.lookbackBars
+        if (n < warmup + params.rebalanceBars + 2 || u < params.minUniverse) {
             return Result(unknownUniverse, n, emptyList(), emptyList(), emptyList(), 0)
         }
 
         val totalBookNotional = params.capitalSlice * params.initialCapital
-        val rebalanceStart = params.lookbackBars + 1
+        val rebalanceStart = warmup + 1
         val trades = ArrayList<Trade>()
         val equity = ArrayList<Double>(n)
         val times = ArrayList<LocalDateTime>(n)
@@ -241,14 +251,15 @@ object PortfolioMomentumEngine {
         val needCarry = params.carryWeight != 0.0
         if (!needMom && !needCarry) return null
         val sign = momentumSign(params)
-        val base = ref - params.lookbackBars
+        val base = ref - params.skipBars - params.lookbackBars
         if (needMom && base < 0) return null
+        val momEnd = ref - params.skipBars
         val mom = DoubleArray(u) { Double.NaN }
         val carry = DoubleArray(u) { Double.NaN }
         for (k in 0 until u) {
             if (needMom) {
                 val p0 = bars[base].closes[k]
-                val p1 = bars[ref].closes[k]
+                val p1 = bars[momEnd].closes[k]
                 if (p0.isFinite() && p1.isFinite() && p0 > 0.0 && p1 > 0.0) {
                     mom[k] = ln(p1) - ln(p0)
                 }

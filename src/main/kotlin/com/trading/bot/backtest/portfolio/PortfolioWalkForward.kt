@@ -13,7 +13,7 @@ import java.time.LocalDateTime
  *
  * У портфеля нет in-sample сетки (все параметры фиксированы заранее), поэтому фолды —
  * чистые OOS-окна: история режется на [folds] последовательных равных сегментов, движок
- * прогоняется независимо на каждом (свой warmup [PortfolioMomentumEngine.Params.lookbackBars]).
+ * прогоняется независимо на каждом (свой warmup `skipBars + lookbackBars`).
  * Вердикт — по агрегату сделок фолдов и [consistency] (доля фолдов с положительной
  * доходностью). Live-путь не затрагивается.
  */
@@ -48,7 +48,7 @@ object PortfolioWalkForward {
     ): Result {
         val label = specs.joinToString("+") { it.ticker }
         val effectiveFolds = folds.coerceAtLeast(2)
-        val minBarsPerFold = params.lookbackBars + params.rebalanceBars + 2
+        val minBarsPerFold = params.skipBars + params.lookbackBars + params.rebalanceBars + 2
         if (bars.size < minBarsPerFold * effectiveFolds) {
             val need = minBarsPerFold * effectiveFolds
             return Result(

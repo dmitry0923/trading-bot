@@ -1605,6 +1605,64 @@ HOUR_1: акции 32 051–32 242, перпетуалы 9 133–17 649. Изм�
 - Скрипты: `load_candles_deep.ps1`, `research_oos70_portfolio_day1_deep.ps1`; docs/26 §11.6
   (предрегистрация) + §11.7 (результаты); `18_10_2026.md` журнал.
 
+### Протокол `12−0`: единый пасс-конфиг класса проверен декомпозицией (2026-10-20, `p6-12-0-protocol`)
+
+Предрегистрация — docs/26 **§11.8** (закоммичена ДО прогона, `ccf5a73`): замороженный
+`U8 12−0` (`lookbackBars=249`, `skipBars=0`, `rebalanceBars=21` — параметры скопированы из
+§11.4/§11.6 **без изменений**, §6 PLAN-001 не нарушён) проверяется **тремя декомпозициями**
+вместо одного WFA: L1 (два непересекающихся под-периода, `folds=3`), L2 (8 leave-one-out по
+составу юниверса), L3 (параметрические контроли rb42/rb10/L187). Причина — §11.2 измерил, что
+P&L класса = **единый режимный фактор** (средняя попарная корреляция фолд-доходностей 0.652,
+доля 1-го фактора ≈96.6 %), `corr(dev-consistency, OOS PF) = −0.293` (n=29) — гейт §4
+«consistency ≥ 0.60» **антикоррелирован** с OOS, одиночный WFA не может дать вердикт об edge.
+Runner `scripts/research_12_0_protocol.ps1` (артефакты `artifacts/p6_12_0_protocol_{l1,l2,l3}.csv`,
+`_summary.json`, `_window_sensitivity.csv`).
+
+**Вердикт: `INCONCLUSIVE`.** L1 ✅ (обе половины PF 1.648 / 1.732, consistency 1.00), L2 ✅ (7/8;
+не прошёл только `−PLZL` PF 1.212), MDD ✅ (10.58 %), но **значимость ❌** (P(noEdge)=0.075 ≥ 0.05
+и CI95 `[−4463; +26046]` содержит ноль) и **robust ❌** (ни на одном уровне). Полный U8:
+PF 2.030, +39.28 %, Sharpe 1.57, **34 сделки**.
+
+**Главный результат — дефект метода, а не цифры. `folds=8` на DAY_1 при `lookback=249`
+вырождается в «одну формацию портфеля на фолд»:** сегмент `2330/8 = 291` бар, `warmup = 249` →
+после прогрева **~42 бара = 2 ребаланса** (`i=250`, `i=271`). Отсюда: (1) **ровно 4 сделки в
+каждом из 7 фолдов** (6 в последнем); (2) гейт `robust` (≥100 сделок) на `folds=8`
+**недостижим по построению** (максимум ~34) — гейт исполнимости §11.8 проверял «можно ли
+запустить фолд», а **не** «содержит ли фолд сигнальную динамику»; (3) **PF 2.030 — артефакт
+границ**: сдвиг окна на 0.6 % (`days` 3220 → 3200) переворачивает результат — PF **2.030 →
+1.430**, consistency **0.75 → 0.50**, P(noEdge) **0.075 → 0.234**; (4) **L1 и FULL — разные
+режимы движка**: половины (`folds=3`, сегмент ~390–410) дают 48/42 сделки (12–13 ребалансов/фолд)
+против 34 (2/фолд) на полном U8, т.е. L1 подтверждает устойчивость *3-фолдового* режима, а не
+заявленного 8-фолдового вердикта.
+
+**Почему НЕ пересчитали на `folds=5`** (сегмент 466 → 11 ребалансов/фолд → ~110 сделок, порог
+robust достижим): это донастройка **способа проверки под результат**, запрещённая §6 PLAN-001 и
+буквой §11.8 («без права на донастройку») — правило вердикта менялось бы после получения чисел.
+`folds=8` зафиксирован как **неисполнимый как тест momentum** уровень, а не заменён. Прямой ответ
+на вопрос §11.8: **`12−0` — режимный бет, а не подтверждённый edge.**
+
+**Найден и исправлен harness-баг (обязателен к учёту во всех раннерах).** Первый прогон дал
+**побитово идентичные** результаты для `rb10`/`L187`/базового: раннер собирал URL как «база со
+своими `rebalanceBars=21&lookbackBars=249` + `&extra`», а **Spring берёт ПЕРВОЕ значение
+дублированного query-параметра** (тот же класс, что дубль `maxHoldBars` в combo730/§11.6) —
+override молча не работал. Исправлено: query собирается **хеш-таблицей** и сериализуется один раз
+(override физически не может стать дубликатом) + guard (уровень с `folds=0` **падает**, а не тихо
+агрегируется). После фикса контроли различимы (rb10: 80 сделок/PF 1.392 против 34/PF 2.030).
+**Правило: research-раннер обязан собирать query из единственного источника и проверять, что
+override реально меняет результат** — иначе «фильтр не работает» выглядит как «фильтр не даёт
+эффекта».
+
+**Урок для PLAN-001 §4 «folds ≥ 8»:** требование несовместимо с длинным `lookback` на коротком
+таймфрейме. `folds × (lookback + rebalance + 2)` — минимум **для запуска**, а сигнал живёт в
+`segment − lookback`; на DAY_1 (`2330` бар, `lookback 249`) `folds=8` оставляет 42 бара сигнала.
+Верификация любого WFA обязана считать **ребалансы/сделки на фолд**, а не только `bars ≥ need`.
+
+**Решение:** `bt.portfolio.skip-bars` = `0` (off), `bt.portfolio.*` off, live-путь не тронут.
+Класс cross-sectional momentum+carry на U8 закрыт как **не дающий подтверждённого edge**; продолжение
+(например, `folds≤5` с явным обоснованием вместимости) — **новый** предрегистрированный протокол,
+не правка §11.8. Скрипт: `research_12_0_protocol.ps1`; docs/26 §11.8 (предрегистрация) + §11.9
+(результаты); `18_10_2026.md` журнал.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -1662,6 +1720,7 @@ HOUR_1: акции 32 051–32 242, перпетуалы 9 133–17 649. Изм�
 | 2026-10-05 | Monthly Tuning: контекст и миграция (`monthly-tuning-integration`) | **Spring-контекст не поднимался — 107 integration-тестов падали.** Три дефекта: (1) `StrategyVersionRepository` был Spring Data `CrudRepository` над несуществующей сущностью → переписан в `@Repository class` на `DatabaseClient` (suspend `save`/`findAllByOrderByDeployedAtDesc`/`findFirstByRolledBackFalseOrderByDeployedAtDesc`/`findByVersion`/`findByRolledBackTrue`; JSONB через `CAST(... AS jsonb)`; вставка `ON CONFLICT (version) WHERE NOT rolled_back` с возвратом id — паттерн `BacktestResultRepository`); `runTuningCycle`/`saveVersion` сделаны suspend, nullable SL/TP в `ParameterOptimizer`/`PerformanceGateCheck`/`TuningMetricsProvider`/`MonthlyTuningScheduler` исправлены; (2) `MonthlyTuningService` импортировал Jackson 2 (`com.fasterxml...`) при Jackson 3 в проекте (`tools.jackson...`) → бина `ObjectMapper` не было, контекст падал; (3) таблицы `strategy_versions` не существовало — вместо Flyway-миграции (flyway в проекте нет) добавлена Liquibase `039-strategy-versions.sql` + include в `db.changelog-master.yaml`, мёртвый `db/migration/V038__strategy_versions.sql` удалён; тесты `AgentVetoBacktestSignalGeneratorTest` 5/5; **все три прогона зелёные**: `test` 1718 (1 skipped), `integrationTest` 117 (1 skipped), `ktlintCheck` | test + int + ktlint |
 | 2026-10-20 | Донакачка DAY_1/HOUR_1 на макс. глубину MOEX ISS + глубокий `12−1` (`p6-day1-deep`) | **Закрыт ограничитель глубины §11.5** (гипотеза (b) `12−1` momentum на DAY_1): `scripts/load_candles_deep.ps1` донакачал DAY_1/HOUR_1 на макс. глубину (акции TQBR с 2018-01-03 = **2336–2343 бара DAY_1, 8.8 года**; перпетуалы CNY/USD/EUR 1140, GLDRUBF 839, IMOEXF 749, SBERF/GAZPF 525; HOUR_1 акции 32 051–32 242). Измеренная глубина inner-join DAY_1: U8 2330, U11 1137, U13 744. Гейт `(skip 21 + lookback 249 + rb 21 + 2) = 293 бар/фолд` → честный `12−1` исполним **только на U8** (folds=5, holdout 0.30). Прогон (`research_oos70_portfolio_day1_deep.ps1`, `artifacts/p6_day1deep_day1deep.{csv,json}`, days=3220, 5 конфигов, 6 с): **`12−1` впервые ИСПОЛНИЛСЯ на walk-forward** (5 фолдов, 70 OOS-сделок против 0 фолдов в §11.5). **Главный вывод: skip-month (ядро `12−1`) результат УХУДШАЕТ** — изоляция чистая (отличается только `skipBars` 21 vs 0): PF **1.445 vs 1.746** (`12−0`), Sharpe **1.77 vs 2.30**, MDD **28.6 % vs 16.7 %**, P(noEdge) **0.1485 vs 0.042**, dev-cons **0.40 vs 0.60**; ожидание Jegadeesh–Titman на MOEX-акциях **не воспроизводится**. Единственный формальный `PASS` — контроль **`12−0`** (без skip; P=0.042 < 0.05, dev-cons 0.60, PF 1.746, Sharpe 2.30, 70 сделок) — лучший результат класса за всё время, но **`robust=false`, CI95 `[−1182; +18998]` содержит ноль**, dev-aggregate PF 1.065 → движковый `PASS` ≠ значимый edge. Широкий юниверс невыразим даже после донакачки (U11 folds=5 → 0 фолдов, лишь folds=2; U13 → 0), carry снижает результат (costDrag 4.2/17.7 %). **Исправлен баг пагинации `MoexFundingHistoryLoader`**: `page.isEmpty()` проверял размер ПОСЛЕ фильтра пустых ставок, а SWAPRATE ISS пуст до 2023-01-03 → первая страница обрывала обход (`loaded=0` у валютных перпетуалов); пагинация переведена на число **сырых** строк ISS (`Page(records, rawRows)`, `countRawRows`, `.size()` — не `.count()` у Jackson-3), регресс-тест `pages past a full page of blank swaprate rows`; после фикса CNYRUBF/USDRUBF/EURRUBF = 986 дат (с 2022-12-05). **Решение:** `bt.portfolio.skip-bars` остаётся `0` (off), класс `INCONCLUSIVE` (целевой `12−1` — `REJECTED`); кандидат `12−0` требует **отдельного** предрегистрированного протокола; live-путь не тронут. docs/26 §11.6/§11.7, `18_10_2026.md` | test + int + ktlint |
 | 2026-10-18/19 | P2 c1: ряд ставок ЦБ РФ + RUONIA (`cbr-rates-history`) | **Реализован и включён в торговый контур дневной ряд ставок ЦБ** (P2 c1 плана `18_10_2026.md`): миграция 040 `cbr_rates_history(rate_date PK, key_rate, ruonia, source, loaded_at)` (поля nullable — RUONIA за дату D публикуется на D+1), `CbrRateRecord` + `CbrRatesHistoryRepository` (`saveAll` — multi-row upsert `ON CONFLICT (rate_date) DO UPDATE` + `COALESCE(EXCLUDED…, cbr_rates_history…)` → повторная донакачка дозаполняет частичные строки и не затирает известную ставку; `findBetween`/`findLatestKeyRateRecord`/`findLatestKeyRate`/`coverage`/`deleteAll`; helper `Bound(name, value, type)` для `bindNull` — паттерн `HistoricalBboRepository`), `CbrRatesProvider` (SOAP `DailyInfoWebServ`, методы `KeyRate`/`Ruonia`; DOM-парсер `DocumentBuilderFactory` c отключёнными doctype/external entities; fail-soft → пустой список; метрика `macro.cbr.fetch{operation,status}`), `CbrRatesHistoryLoader` (окно `[today − days, today]` от `Clock`, merge двух рядов по дате, `macro.cbr.rates.loaded`), `MacroRatesController` (`GET /api/v1/macro/rates-history?days=`, `/rates-history/status`, `/rates-history/series?days=`); **`macro.live-rate-enabled` = true** (env `MACRO_LIVE_RATE_ENABLED`; было false) — `MacroContextService.latestKeyRateOrConfig()` берёт последнюю ставку из БД (факт **14,0%** против устаревшего `macro.cbr-rate = 16.0`), при выключенном флаге/пустом ряде/ошибке БД — конфиг (fail-soft, метрика `macro.cbr_rate.live{status=OK\|STALE\|EMPTY\|FALLBACK}`); **устаревание НЕ подменяется конфигом** (ставка — ступенчатая функция, конфиг не свежее): возраст > `macro.live-rate-stale-days` (14) → WARN + `status=STALE`, возвращается та же ставка; фоновое обновление ряда — новый **`CbrRatesRefreshScheduler`** (`macro.cbr-refresh-interval-ms` 6 ч, окно `macro.cbr-refresh-days` 30 дней, только при `live-rate-enabled=true`; метрика `macro.cbr.rates.refresh{status=OK\|EMPTY\|ERROR}`, fail-soft) — без него «live»-ставка была бы лишь на уровне последнего ручного бэкфилла; **источник проверен живыми запросами:** `XML_key_rate_daily.asp`/`XML_ruonia.asp` → 404, рабочий путь только SOAP; тесты `CbrRatesProviderTest`/`CbrRatesHistoryLoaderTest`/`CbrRatesRefreshSchedulerTest`/`MacroContextServiceTest` (live/empty/ошибка/устаревание/выключенный флаг)/`CbrRatesHistoryRepositoryIntegrationTest`; **e2e-бэкфилл пройден 2026-10-18 на живом стеке** (пустая таблица → `bootJar` с миграцией 040 → бэкфилл): `loaded/upserted 508`, `keyRates 508`, `ruonia 491`, `/status` `2024-10-18…2026-10-16` `latestKeyRate=14.0`, повтор идемпотентен, WARN `CBR SOAP …` = 0; восстановлен ключевой путь 19→**21,0% (пик 2024-10-28…2025-06-06)**→12 снижений→**14,0% (с 2026-07-27)**, RUONIA avg 17,344; **найден барьер TLS**: `www.cbr.ru` отдаёт только листовой сертификат, JVM не строит цепочку до `HARICA TLS RSA Root CA 2021` (`PKIX path building failed` → `loaded 0` в fail-soft; в `cacerts` JDK только HARICA-корни 2015) — решение `scripts/make_cbr_truststore.ps1` + `-Djavax.net.ssl.trustStore=…`; артефакты `artifacts/p2c1_cbr_e2e.json`, `artifacts/cbr_rates_730d.csv`; **включён в торговый контур 2026-10-19** (`macro.live-rate-enabled=true`: live-ставка 14,0% вместо конфига 16,0 + `CbrRatesRefreshScheduler` + staleness WARN `macro.cbr_rate.live{status=STALE}`; в Docker/CI обязателен truststore HARICA); **остаётся в P2 c1:** rg.ru (платный news-слой) | test + int + ktlint |
+| 2026-10-20 | Протокол `12−0`: единый пасс-конфиг класса проверен декомпозицией (`p6-12-0-protocol`) | Предрегистрация — docs/26 **§11.8** (закоммичена ДО прогона, `ccf5a73`): замороженный `U8 12−0` (`L249/S0/rb21`, параметры скопированы из §11.4/§11.6 без изменений → §6 PLAN-001 не нарушён) проверяется **тремя декомпозициями** вместо одного WFA (L1 два непересекающихся под-периода `folds=3`; L2 8 leave-one-out по составу юниверса; L3 параметрические контроли rb42/rb10/L187) — потому что §11.2 измерил P&L класса как **единый режимный фактор** (попарная корреляция фолд-доходностей 0.652, 1-й фактор ≈96.6 %), `corr(dev-consistency, OOS PF) = −0.293` (n=29). Runner `research_12_0_protocol.ps1`, артефакты `artifacts/p6_12_0_protocol_{l1,l2,l3}.csv`, `_summary.json`, `_window_sensitivity.csv`. **Вердикт `INCONCLUSIVE`:** L1 ✅ (PF 1.648/1.732, cons 1.00), L2 ✅ (7/8; провал только `−PLZL` PF 1.212), MDD ✅ (10.58 %), но **значимость ❌** (P(noEdge)=**0.075**, CI95 `[−4463; +26046]` содержит ноль) и **robust ❌**. Полный U8: PF 2.030, Sharpe 1.57, **34 сделки**. **Главное — дефект метода: `folds=8` на DAY_1 при `lookback=249` вырождается в «одну формацию портфеля на фолд»** (сегмент 291 бар, warmup 249 → ~42 бара = 2 ребаланса → ровно 4 сделки/фолд); гейт `robust` (≥100 сделок) на `folds=8` **недостижим по построению**; **PF 2.030 — артефакт границ** (сдвиг `days` 3220→3200 = 0.6 % истории переворачивает: PF 2.030→**1.430**, cons 0.75→**0.50**, P 0.075→**0.234**); L1 и FULL — разные режимы движка (48/42 vs 34 сделки), несопоставимы. **Пересчёт на `folds=5` НЕ делался** — это донастройка способа проверки под результат, запрещённая §11.8/§6 PLAN-001. **Исправлен harness-баг раннера:** URL собирался «база со своими `rb21&L249` + `&extra`» → **Spring берёт ПЕРВОЕ значение дублированного query** (класс бага combo730/§11.6), override молча не работал (rb10/L187 были байт-идентичны базе); теперь query собирается хеш-таблицей + guard на `folds=0`. **Решение:** `bt.portfolio.skip-bars` = `0` (off), `bt.portfolio.*` off, live-путь не тронут; класс momentum на U8 закрыт как **не дающий подтверждённого edge**; docs/26 §11.8/§11.9, `18_10_2026.md` журнал. **Урок для PLAN-001 §4 «folds ≥ 8»:** `folds × (lookback + rebalance + 2)` — минимум **для запуска**, сигнал живёт в `segment − lookback`; верификация WFA обязана считать **ребалансы/сделки на фолд**. |
 
 Открытые пункты (вне скоупа / решение пользователя):
 - **P1 плана 18_10_2026 (2026-10-18):** шаги 1–3 выполнены, §4 не пройден (см. разделы
@@ -1684,6 +1743,13 @@ HOUR_1: акции 32 051–32 242, перпетуалы 9 133–17 649. Изм�
   `[−1182; +18998]` содержит ноль. `12−0` — эмпирический кандидат на **отдельный**
   предрегистрированный протокол (пониженный folds / отдельная OOS-половина). `bt.portfolio.skip-bars`
   остаётся `0`.
+  **Закрыто 2026-10-20 (`p6-12-0-protocol`):** протокол `12−0` выполнен по предрегистрации
+  docs/26 §11.8 (`ccf5a73`) — вердикт **`INCONCLUSIVE`** (P(noEdge)=0.075, CI95 содержит ноль,
+  `robust=false`, 34 сделки; L1/L2/MDD пройдены). Ключевой вывод — **дефект метода**: `folds=8`
+  на DAY_1 при `lookback=249` вырождается в 4 сделки/фолд, порог robust недостижим, а PF 2.030
+  разворачивается сдвигом окна на 0.6 %. `12−0` — **режимный бет, а не подтверждённый edge**;
+  пересчёт на `folds=5` запрещён §11.8/§6 PLAN-001. Класс momentum на U8 закрыт; продолжение —
+  только **новый** предрегистрированный протокол.
 - **P2 c1 плана 18_10_2026 (2026-10-18/19; e2e ✅, live-ставка ✅):** ряд ставок ЦБ РФ (ключевая + RUONIA)
   реализован **и проверен e2e на живом стеке** (`cbr-rates-history`) — см. раздел «Ряд ставок ЦБ РФ»:
   508 дат (2024-10-18…2026-10-16), RUONIA 491, **ставка 14,0%**, идемпотентный повтор,

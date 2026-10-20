@@ -1,0 +1,6 @@
+"Config","Verdict","OOS_PF","OOS_RetPct","OOS_Sharpe","OOS_MDD_Pct","OOS_Trades","OOS_PNoEdge","Dev_Cons","Dev_Robust","Dev_AggPF","Dev_Bars","Dev_Folds","Dev_Verdict","Secs"
+"d1deep U8 12-1 L249 S21 rb21","INCONCLUSIVE (P>=0.05, cons<0.6)","1,445","109,7","1,77","28,63","70","0,1485","0,4","False","1,176","1631","5","REJECTED (consistency 0,400)","2"
+"d1deep U8 12-0 L249 S0 rb21","PASS (research-кандидат)","1,746","86,96","2,3","16,69","70","0,042","0,6","False","1,065","1631","5","REJECTED (oos PF 1,065)","1"
+"d1deep U8 9-1 L187 S21 rb21","INCONCLUSIVE (P>=0.05)","1,309","37,44","1,41","16,54","68","0,203","0,6","False","1,295","1631","5","REJECTED (oos PF 1,295)","1"
+"d1deep U11 12-1 L249 S21 rb21","INCONCLUSIVE (P>=0.05, cons<0.6)","1,375","13,39","0,77","15,42","36","0,2465","0","False","0","795","0","INCONCLUSIVE (bars 795 < 1465 for 5 folds)","1"
+"d1deep U13 12-1 L249 S21 rb21","INCONCLUSIVE (trades<30, P>=0.05, cons<0.6)","1,331","12,98","0,74","16,86","24","0,2795","0","False","0","520","0","INCONCLUSIVE (bars 520 < 1465 for 5 folds)","1"

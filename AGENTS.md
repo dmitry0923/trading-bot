@@ -1540,6 +1540,71 @@ HOUR_1 14.2 → **5.5**; DAY_1 1 → **78**); баровые параметры 
   реверсала) и собственным предрегистрированным протоколом; донастройка текущей сетки на
   том же окне запрещена §6 PLAN-001.
 
+### Донакачка DAY_1/HOUR_1 на макс. глубину MOEX ISS + глубокий `12−1` (2026-10-20, `p6-day1-deep`)
+
+Решение пользователя («докачивай»): закрыть единственное измеренное препятствие §11.5
+(«нужно ≥ 3–4 лет DAY_1, располагаем 2 года») и честно перепроверить гипотезу (b) —
+**классический кросс-секционный momentum `12−1`** (skip-month). Это **предрегистрированное
+продолжение** §11.5 (условие продолжения было «донакачка на 3+ года»), не новая сетка —
+§6 PLAN-001 не нарушён: конфиги заморожены, меняется только глубина истории.
+
+**Донакачка** `scripts/load_candles_deep.ps1` (лог `build/deep_load_20261020-112503.log`):
+15 тикеров × {HOUR_1, DAY_1}, per-ticker start (акции TQBR 2018-01-01, CNY/USD/EUR 2022-04-26,
+GLDRUBF 2023-07-11, IMOEXF 2023-11-14, SBERF/GAZPF 2024-10-01). DAY_1 после: акции **2336–2343**
+(2018-01-03…2026-10-20, 8.8 года), CNY/USD/EUR 1140, GLDRUBF 839, IMOEXF 749, SBERF/GAZPF 525;
+HOUR_1: акции 32 051–32 242, перпетуалы 9 133–17 649. Измеренная глубина inner-join DAY_1:
+**U8 = 2330** (2018-01-03), U11 = 1137 (2022-04-26), U13 = 744 (2023-11-14). Гейт
+`PortfolioWalkForward` need = (skip 21 + lookback 249 + rebalance 21 + 2) = 293 бар/фолд →
+честный `12−1` исполним только на U8 (folds=5 при holdout 0.30) и U11 (folds=2); U13 — folds=1.
+
+**Фикс пагинации `MoexFundingHistoryLoader` (найден донакачкой, обязателен).** Глубокая
+донакачка funding валютных перпетуалов возвращала `loaded=0`: `page.isEmpty()` проверял размер
+**после** фильтра пустых ставок, а SWAPRATE у MOEX ISS пуст до 2023-01-03 — первая страница
+(100 сырых строк, 0 валидных) обрывала обход. Исправлено: `fetchPage` возвращает
+`Page(records, rawRows)`, пагинация идёт по **числу сырых строк ISS** (`countRawRows` + `.size()`;
+через `block.path("data").count()` не работало — у Jackson-3 `JsonNode` нужен `.size()`).
+Регресс-тест `MoexFundingHistoryLoaderTest.pages past a full page of blank swaprate rows`.
+После фикса: CNYRUBF/USDRUBF/EURRUBF = **986 строк (с 2022-12-05)**, GLDRUBF 836, IMOEXF 746.
+(Отсутствие SWAPRATE ранее 2023-01 — свойство ISS, не баг.)
+
+**Прогон** `scripts/research_oos70_portfolio_day1_deep.ps1`, `artifacts/p6_day1deep_day1deep.{csv,json}`,
+`days=3220`, `folds=5`, `holdout=0.30`, 5 конфигов, 6 с:
+
+| Конфиг | Dev-фолды | Dev-cons | Holdout PF | OOS Ret | Sharpe | MDD | Сделки | P(noEdge) | CI95 | Вердикт |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **U8 `12−1`** | **5** | 0.40 | 1.445 | +109.7 % | 1.77 | 28.6 % | **70** | 0.1485 | [−5097; +17206] | INCONCLUSIVE |
+| **U8 `12−0`** (без skip) | **5** | **0.60** | **1.746** | +87.0 % | **2.30** | **16.7 %** | **70** | **0.042** | [−1182; +18998] | **PASS (research)** |
+| U8 `9−1` | 5 | 0.60 | 1.309 | +37.4 % | 1.41 | 16.5 % | 68 | 0.203 | [−6297; +15756] | INCONCLUSIVE |
+| U11 `12−1` | 0 | — | 1.375 | +13.4 % | 0.77 | 15.4 % | 36 | 0.2465 | [−15047; +24828] | INCONCLUSIVE |
+| U13 `12−1` | 0 | — | 1.331 | +13.0 % | 0.74 | 16.9 % | 24 | 0.2795 | [−13426; +24067] | INCONCLUSIVE |
+
+- **`12−1` впервые ИСПОЛНИЛСЯ на walk-forward** (dev U8 = 1631 бар ≥ 5 × 293 = 1465, 5 фолдов,
+  **70 OOS-сделок** против 0 фолдов и 16 «непрерывных» сделок в §11.5) — устранён ограничитель
+  глубины, и это была первая честная проверка гипотезы (b), а не на 2-летнем огрызке.
+- **Главный вывод: skip-month (ядро `12−1`) результат УХУДШАЕТ.** Изоляция чистая: юниверс,
+  lookback (249) и rebalance (21) идентичны, отличается только `skipBars` 21 vs 0: PF **1.445
+  vs 1.746**, Sharpe **1.77 vs 2.30**, MDD **28.6 % vs 16.7 %**, P(noEdge) **0.1485 vs 0.042**,
+  dev-cons **0.40 vs 0.60**. Ожидание Jegadeesh–Titman (skip снимает краткосрочный реверсал и
+  улучшает momentum) **на MOEX-акциях не воспроизводится** — а именно этот довод был мотивацией
+  направления (b).
+- **Единственный формальный `PASS` — контроль БЕЗ skip** (`12−0`: P=0.042 < 0.05, dev-cons 0.60,
+  PF 1.746, Sharpe 2.30 — лучший результат класса за всё время), но он **не проходит live-критерий**:
+  `robust=false`, **CI95 средней сделки `[−1182; +18998]` содержит ноль**, dev-aggregate PF 1.065.
+  Движковый `PASS` (`BacktestResult.isPassable`: PF>1.3 и P<0.05) **≠ значимый edge** — тот же
+  разрыв «robust ≠ значимость», что у IMOEXF (2026-09-30).
+- **Широкий юниверс остаётся невыразимым** (не изменилось после донакачки): U11 (1137 бар) при
+  `folds=5` → 0 фолдов, исполним лишь при `folds=2` (двухточечный WFA); U13 (744 бар) → 0 фолдов
+  при любом разумном folds. Carry добавляет издержки (costDrag 4.2 %/17.7 %) и **снижает** результат.
+  §11.6 подтверждён: «шире юниверс» и «исполнимый `12−1`» взаимоисключающие; работает только U8.
+- **Решение:** `bt.portfolio.skip-bars` остаётся `0` (off); класс остаётся `INCONCLUSIVE`
+  (целевой `12−1` — `REJECTED`). Live-путь и live-параметры (maxC=1, Kelly, LIVE-guard CNYRUBF)
+  не тронуты. Эмпирический кандидат `12−0` (momentum БЕЗ skip на U8) требует **отдельного
+  предрегистрированного протокола** (пониженный folds / отдельная OOS-половина), а не признания
+  «прошедшим гейт»: P формально < 0.05, но CI95 содержит ноль, а §6 PLAN-001 запрещает
+  донастройку сетки на этом же окне.
+- Скрипты: `load_candles_deep.ps1`, `research_oos70_portfolio_day1_deep.ps1`; docs/26 §11.6
+  (предрегистрация) + §11.7 (результаты); `18_10_2026.md` журнал.
+
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 
 | Дата | Аудит | Что закрыто | Итоговый прогон |
@@ -1595,6 +1660,7 @@ HOUR_1 14.2 → **5.5**; DAY_1 1 → **78**); баровые параметры 
 | 2026-10-05 | WFA-валидация LLM-veto 365д (`llm-veto-wfa`) | **Полное измерение гипотезы H2 (docs/24, Вариант B) — `REJECTED`.** WFA CNYRUBF 365д folds=6 conf 0.60, `llmVetoEnabled=true&llmVetoPromptVersion=veto-score&llmVetoBlockOnUnknown=true`, kimi-k3, `LLM_DISABLE_REASONING`/`LLM_BUDGET_ENABLED=false`; baseline 31 сделка/PF 1.299 → veto fail-closed 26/PF **1.771**/Sharpe 1.119, но **фальсифицирующий прогон `blockOnUnknown=false` тождествен baseline** (31/PF 1.2989500760596326/consistency 0.667) → весь эффект дали 2 отказа `LLM call failed for agent=arbitrator`, срезанные fail-closed; логи: 40 вердиктов арбитра = 20 BUY / 20 SELL / **0 HOLD** → Veto Block Rate 0% (порог docs/24 §4 — 10%); оговорка: 2 блока объясняют лишь часть расхождения 31→26, 3 сделки не объяснены; не пройдены также consistency 0.500, `robust=false` (26 << 100), P(noEdge) 0.13; **новый harness-скрипт `scripts/research_llm_veto_wfa.ps1`** (`-Out`, `-NoBlockOnUnknown`); инфра-дефекты: параметра `agentVetoMode` в API нет (фактически `llmVeto*`), дубликат `config/BacktestAgentConfig.kt` удалён, `/actuator/prometheus` = 500 (`ClassCastException`) → метрики veto читаются только по логам; docs/20 §10.7, docs/24 §4.1 | test (1718) + int (117) + ktlint |
 | 2026-10-18 | P1 шаги 1+2+3 плана 18_10_2026: holdout-протокол carry-портфеля (`p1-oos70-portfolio`, `p1-oos70-step2`, `p1-oos70-step3`) | **Шаг 1** — формальный IS70/OOS30 (`holdoutFraction` на `/portfolio/momentum/validate` + `devSlice`, `PortfolioHoldoutSliceTest`, скрипт `research_oos70_portfolio.ps1` с verdict-гейтами §4): ни один замороженный конфиг docs/26 не проходит §4, ближайший `U13 L2S4 rb300 vs210 vt30` — OOS PF 1.362/P 0.032/252 сделки, но dev-consistency 0.375 (3/8 фолдов) → `INCONCLUSIVE`. **Шаг 2** — донакачка SBERF/GAZPF MINUTE_10 (2024-10-18…2026-10-18) + 15 замороженных конфигов (U7 = U5+SBERF/GAZPF carry, U15 = U13+SBERF/GAZPF momentum-only, плато cw/rb): U15 PF 1.410/P 0.019/246 сделок, но dev-consistency **0.250** (0.375 → 0.250 — расширение усиливает концентрацию результата на одном сегменте) → §4 не пройден, `bt.portfolio.*` off. **Найден и исправлен дефект спеки перпетуалов:** SBERF/GAZPF имели `lotSize=1` при ISS `LOTVOLUME=100` (+ GAZPF `priceStep 0.001` vs `MINSTEP 0.01`) → комиссия в портфельном движке была **×100**, и прежний вывод «SBERF/GAZPF разваливают портфель» (PF 0.625/−47.6%) был артефактом; спеки исправлены по ISS (`go` = INITIALMARGIN), регресс-тест `PerpetualSpecIssAuditTest`; второй слой — 1016 строк `funding_history` SBERF/GAZPF пересчитаны `× 100` (бэкап `funding_history_backup_20261018`, `raw_value` сверен с ISS `SWAPRATE`). **Воспроизводимость:** движок детерминирован (2 прогона бит-в-бит), микродрейф чисел — скользящее окно `days=730` от wall-clock (граница фолда ±1 бар). **Диагностика шага 2** — P&L семейства = единый режимный бет: 15 конфигов в фолде 2024-12-24 в плюсе 15/15 (средняя +7.99%), в фолдах 2025-07-03/2026-01-14 — 1/15; средняя попарная корреляция фолд-доходностей 0.652 (доля 1-го фактора ≈ 96.6%); **corr(dev-consistency, OOS PF) = −0.29** (n=29) — гейт «dev-consistency ≥ 0.60» антикоррелирован с OOS, набор гейтов §4 недостижим по построению. **Шаг 3** — донакачка HOUR_1/DAY_1 для 8 акций TQBR + SBERF/GAZPF (`load_candles_higher_tf.ps1`, 103 919 + 6 419 строк), предрегистрированный пересчёт баров по фактическому отношению (MINUTE_10→HOUR_1 = 5.5, →DAY_1 = 78; контроль «наивный» перенос неисполним — 0 фолдов), 18 конфигов (`research_oos70_portfolio_tf.ps1`, `…_step3b.*`): ни один не проходит §4; сильнейший единичный результат класса — **DAY_1 на U13/U15** (OOS PF 1.97–1.98, P(noEdge) 0.0005–0.003, **228 OOS-сделок** — впервые ≥ 100, MDD 3.2–4.3%), но dev-агрегат ≈ 0 и dev-consistency 0.500 → `INCONCLUSIVE` (тот же holdout-режим 2026-03…2026-10); сдвиг правила пересчёта ×6→×5.5 переворачивает метрики (PF 1.210→0.951, cons 0.250→0.625) — метрики шумо-доминированы | test + int + ktlint |
 | 2026-10-05 | Monthly Tuning: контекст и миграция (`monthly-tuning-integration`) | **Spring-контекст не поднимался — 107 integration-тестов падали.** Три дефекта: (1) `StrategyVersionRepository` был Spring Data `CrudRepository` над несуществующей сущностью → переписан в `@Repository class` на `DatabaseClient` (suspend `save`/`findAllByOrderByDeployedAtDesc`/`findFirstByRolledBackFalseOrderByDeployedAtDesc`/`findByVersion`/`findByRolledBackTrue`; JSONB через `CAST(... AS jsonb)`; вставка `ON CONFLICT (version) WHERE NOT rolled_back` с возвратом id — паттерн `BacktestResultRepository`); `runTuningCycle`/`saveVersion` сделаны suspend, nullable SL/TP в `ParameterOptimizer`/`PerformanceGateCheck`/`TuningMetricsProvider`/`MonthlyTuningScheduler` исправлены; (2) `MonthlyTuningService` импортировал Jackson 2 (`com.fasterxml...`) при Jackson 3 в проекте (`tools.jackson...`) → бина `ObjectMapper` не было, контекст падал; (3) таблицы `strategy_versions` не существовало — вместо Flyway-миграции (flyway в проекте нет) добавлена Liquibase `039-strategy-versions.sql` + include в `db.changelog-master.yaml`, мёртвый `db/migration/V038__strategy_versions.sql` удалён; тесты `AgentVetoBacktestSignalGeneratorTest` 5/5; **все три прогона зелёные**: `test` 1718 (1 skipped), `integrationTest` 117 (1 skipped), `ktlintCheck` | test + int + ktlint |
+| 2026-10-20 | Донакачка DAY_1/HOUR_1 на макс. глубину MOEX ISS + глубокий `12−1` (`p6-day1-deep`) | **Закрыт ограничитель глубины §11.5** (гипотеза (b) `12−1` momentum на DAY_1): `scripts/load_candles_deep.ps1` донакачал DAY_1/HOUR_1 на макс. глубину (акции TQBR с 2018-01-03 = **2336–2343 бара DAY_1, 8.8 года**; перпетуалы CNY/USD/EUR 1140, GLDRUBF 839, IMOEXF 749, SBERF/GAZPF 525; HOUR_1 акции 32 051–32 242). Измеренная глубина inner-join DAY_1: U8 2330, U11 1137, U13 744. Гейт `(skip 21 + lookback 249 + rb 21 + 2) = 293 бар/фолд` → честный `12−1` исполним **только на U8** (folds=5, holdout 0.30). Прогон (`research_oos70_portfolio_day1_deep.ps1`, `artifacts/p6_day1deep_day1deep.{csv,json}`, days=3220, 5 конфигов, 6 с): **`12−1` впервые ИСПОЛНИЛСЯ на walk-forward** (5 фолдов, 70 OOS-сделок против 0 фолдов в §11.5). **Главный вывод: skip-month (ядро `12−1`) результат УХУДШАЕТ** — изоляция чистая (отличается только `skipBars` 21 vs 0): PF **1.445 vs 1.746** (`12−0`), Sharpe **1.77 vs 2.30**, MDD **28.6 % vs 16.7 %**, P(noEdge) **0.1485 vs 0.042**, dev-cons **0.40 vs 0.60**; ожидание Jegadeesh–Titman на MOEX-акциях **не воспроизводится**. Единственный формальный `PASS` — контроль **`12−0`** (без skip; P=0.042 < 0.05, dev-cons 0.60, PF 1.746, Sharpe 2.30, 70 сделок) — лучший результат класса за всё время, но **`robust=false`, CI95 `[−1182; +18998]` содержит ноль**, dev-aggregate PF 1.065 → движковый `PASS` ≠ значимый edge. Широкий юниверс невыразим даже после донакачки (U11 folds=5 → 0 фолдов, лишь folds=2; U13 → 0), carry снижает результат (costDrag 4.2/17.7 %). **Исправлен баг пагинации `MoexFundingHistoryLoader`**: `page.isEmpty()` проверял размер ПОСЛЕ фильтра пустых ставок, а SWAPRATE ISS пуст до 2023-01-03 → первая страница обрывала обход (`loaded=0` у валютных перпетуалов); пагинация переведена на число **сырых** строк ISS (`Page(records, rawRows)`, `countRawRows`, `.size()` — не `.count()` у Jackson-3), регресс-тест `pages past a full page of blank swaprate rows`; после фикса CNYRUBF/USDRUBF/EURRUBF = 986 дат (с 2022-12-05). **Решение:** `bt.portfolio.skip-bars` остаётся `0` (off), класс `INCONCLUSIVE` (целевой `12−1` — `REJECTED`); кандидат `12−0` требует **отдельного** предрегистрированного протокола; live-путь не тронут. docs/26 §11.6/§11.7, `18_10_2026.md` | test + int + ktlint |
 | 2026-10-18/19 | P2 c1: ряд ставок ЦБ РФ + RUONIA (`cbr-rates-history`) | **Реализован и включён в торговый контур дневной ряд ставок ЦБ** (P2 c1 плана `18_10_2026.md`): миграция 040 `cbr_rates_history(rate_date PK, key_rate, ruonia, source, loaded_at)` (поля nullable — RUONIA за дату D публикуется на D+1), `CbrRateRecord` + `CbrRatesHistoryRepository` (`saveAll` — multi-row upsert `ON CONFLICT (rate_date) DO UPDATE` + `COALESCE(EXCLUDED…, cbr_rates_history…)` → повторная донакачка дозаполняет частичные строки и не затирает известную ставку; `findBetween`/`findLatestKeyRateRecord`/`findLatestKeyRate`/`coverage`/`deleteAll`; helper `Bound(name, value, type)` для `bindNull` — паттерн `HistoricalBboRepository`), `CbrRatesProvider` (SOAP `DailyInfoWebServ`, методы `KeyRate`/`Ruonia`; DOM-парсер `DocumentBuilderFactory` c отключёнными doctype/external entities; fail-soft → пустой список; метрика `macro.cbr.fetch{operation,status}`), `CbrRatesHistoryLoader` (окно `[today − days, today]` от `Clock`, merge двух рядов по дате, `macro.cbr.rates.loaded`), `MacroRatesController` (`GET /api/v1/macro/rates-history?days=`, `/rates-history/status`, `/rates-history/series?days=`); **`macro.live-rate-enabled` = true** (env `MACRO_LIVE_RATE_ENABLED`; было false) — `MacroContextService.latestKeyRateOrConfig()` берёт последнюю ставку из БД (факт **14,0%** против устаревшего `macro.cbr-rate = 16.0`), при выключенном флаге/пустом ряде/ошибке БД — конфиг (fail-soft, метрика `macro.cbr_rate.live{status=OK\|STALE\|EMPTY\|FALLBACK}`); **устаревание НЕ подменяется конфигом** (ставка — ступенчатая функция, конфиг не свежее): возраст > `macro.live-rate-stale-days` (14) → WARN + `status=STALE`, возвращается та же ставка; фоновое обновление ряда — новый **`CbrRatesRefreshScheduler`** (`macro.cbr-refresh-interval-ms` 6 ч, окно `macro.cbr-refresh-days` 30 дней, только при `live-rate-enabled=true`; метрика `macro.cbr.rates.refresh{status=OK\|EMPTY\|ERROR}`, fail-soft) — без него «live»-ставка была бы лишь на уровне последнего ручного бэкфилла; **источник проверен живыми запросами:** `XML_key_rate_daily.asp`/`XML_ruonia.asp` → 404, рабочий путь только SOAP; тесты `CbrRatesProviderTest`/`CbrRatesHistoryLoaderTest`/`CbrRatesRefreshSchedulerTest`/`MacroContextServiceTest` (live/empty/ошибка/устаревание/выключенный флаг)/`CbrRatesHistoryRepositoryIntegrationTest`; **e2e-бэкфилл пройден 2026-10-18 на живом стеке** (пустая таблица → `bootJar` с миграцией 040 → бэкфилл): `loaded/upserted 508`, `keyRates 508`, `ruonia 491`, `/status` `2024-10-18…2026-10-16` `latestKeyRate=14.0`, повтор идемпотентен, WARN `CBR SOAP …` = 0; восстановлен ключевой путь 19→**21,0% (пик 2024-10-28…2025-06-06)**→12 снижений→**14,0% (с 2026-07-27)**, RUONIA avg 17,344; **найден барьер TLS**: `www.cbr.ru` отдаёт только листовой сертификат, JVM не строит цепочку до `HARICA TLS RSA Root CA 2021` (`PKIX path building failed` → `loaded 0` в fail-soft; в `cacerts` JDK только HARICA-корни 2015) — решение `scripts/make_cbr_truststore.ps1` + `-Djavax.net.ssl.trustStore=…`; артефакты `artifacts/p2c1_cbr_e2e.json`, `artifacts/cbr_rates_730d.csv`; **включён в торговый контур 2026-10-19** (`macro.live-rate-enabled=true`: live-ставка 14,0% вместо конфига 16,0 + `CbrRatesRefreshScheduler` + staleness WARN `macro.cbr_rate.live{status=STALE}`; в Docker/CI обязателен truststore HARICA); **остаётся в P2 c1:** rg.ru (платный news-слой) | test + int + ktlint |
 
 Открытые пункты (вне скоупа / решение пользователя):
@@ -1610,6 +1676,14 @@ HOUR_1 14.2 → **5.5**; DAY_1 1 → **78**); баровые параметры 
   горизонт месячного реверсала) с отдельным предрегистрированным протоколом; донастройка
   текущей сетки на том же окне запрещена §6 PLAN-001. **P0** — подключение ставки на
   свободную маржу у брокера (действие пользователя), **P3** — нужен свежий `ALOR_REFRESH_TOKEN`.
+  **Обновление 2026-10-20 (`p6-day1-deep`):** DAY_1/HOUR_1 донакачаны на макс. глубину
+  (акции с 2018-01-03, 8.8 года), и гипотеза (b) `12−1` **впервые исполнена на walk-forward**
+  (5 фолдов, 70 OOS-сделок, U8) — см. раздел «Донакачка DAY_1/HOUR_1 …». Вердикт не изменился:
+  целевой `12−1` `REJECTED` (skip-month ухудшает: PF 1.445 vs 1.746 у `12−0`), лучший `12−0`
+  формально `PASS` (P=0.042, dev-cons 0.60, PF 1.746, Sharpe 2.30), но `robust=false` и CI95
+  `[−1182; +18998]` содержит ноль. `12−0` — эмпирический кандидат на **отдельный**
+  предрегистрированный протокол (пониженный folds / отдельная OOS-половина). `bt.portfolio.skip-bars`
+  остаётся `0`.
 - **P2 c1 плана 18_10_2026 (2026-10-18/19; e2e ✅, live-ставка ✅):** ряд ставок ЦБ РФ (ключевая + RUONIA)
   реализован **и проверен e2e на живом стеке** (`cbr-rates-history`) — см. раздел «Ряд ставок ЦБ РФ»:
   508 дат (2024-10-18…2026-10-16), RUONIA 491, **ставка 14,0%**, идемпотентный повтор,

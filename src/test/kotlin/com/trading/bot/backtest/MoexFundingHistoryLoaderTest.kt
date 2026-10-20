@@ -208,6 +208,56 @@ class MoexFundingHistoryLoaderTest {
             }
         }
 
+    @Test
+    fun `pages past a full page of blank swaprate rows`() =
+        runBlocking {
+            // Регресс: у валютных перпетуалов SWAPRATE пуст до 2023-01-03, поэтому
+            // ПЕРВАЯ страница (100 сырых строк) даёт 0 валидных записей. Прежний
+            // `page.isEmpty()` обрывал обход → loaded=0 на глубокой донакачке.
+            val requests = AtomicInteger(0)
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/") { exchange ->
+                val startParam =
+                    Regex("start=(\\d+)")
+                        .find(exchange.requestURI.query ?: "")
+                        ?.groupValues
+                        ?.get(1)
+                        ?.toInt() ?: 0
+                val page =
+                    if (startParam == 0) {
+                        // 100 сырых строк 2022 года с ПУСТЫМ SWAPRATE.
+                        """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [${blankRows(0, 100)}]}}"""
+                    } else {
+                        // Следующая страница: валидный SWAPRATE 2023 года.
+                        """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [["2023-01-03", "0.00278"]]}}"""
+                    }
+                requests.incrementAndGet()
+                respond(exchange, page, 200)
+            }
+            server.start()
+            try {
+                val fundingConfig = FundingConfig()
+                fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
+                val repo = Mockito.mock(FundingHistoryRepository::class.java)
+                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(1)
+                val loader = loader(fundingConfig = fundingConfig, repo = repo)
+
+                val result = loader.loadAndSave("CNYRUBF", 3220)
+
+                assertEquals(1, result.loaded, "валидная строка со второй страницы должна подтянуться")
+                assertEquals(2, requests.get(), "обход не должен обрываться на странице с пустым SWAPRATE")
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    private fun blankRows(
+        from: Int,
+        count: Int,
+    ): String =
+        (from until from + count)
+            .joinToString(",") { i -> "[\"${LocalDate.of(2022, 4, 26).plusDays(i.toLong())}\", \"\"]" }
+
     private fun rows(
         from: Int,
         count: Int,

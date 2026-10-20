@@ -1,5 +1,36 @@
 # Trading Bot Project Memory
 
+## Последнее (2026-10-20, план `18_10_2026.md`)
+- **Пункты 2 и 6 плана закрыты и запушены** (HEAD `08dadfa`, ветка
+  `feature/llm-veto-variant-b-monthly-tuning`).
+- **Пункт 2** (`c5054e0`): LIVE `PnlCalculator.futures` — направленный funding
+  (`sign(direction) × r × qty`), асимметрия `takeIf { it > 0 }` убрана; дефолт
+  `bt.funding-direction-aware` в бэктесте не менялся (false).
+- **Пункт 6** (`b8d3640` код, `d5e0b7b` docs, `08dadfa` глубокий прогон): направление (b)
+  `12−1` momentum на DAY_1 — **REJECTED/INCONCLUSIVE**. Донакачаны DAY_1/HOUR_1 на макс.
+  глубину MOEX ISS (`scripts/load_candles_deep.ps1`): акции 2336–2343 бара DAY_1
+  (2018-01-03…2026-10-20, 8.8 года), перпетуалы 525–1140. Глубокий прогон
+  (`scripts/research_oos70_portfolio_day1_deep.ps1`, `artifacts/p6_day1deep_day1deep.{csv,json}`,
+  days=3220/folds=5/holdout=0.30): честный `12−1` **впервые исполнился на walk-forward**
+  (U8, 5 фолдов, 70 OOS-сделок) → **skip-month ухудшает** результат (PF 1.445 vs 1.746
+  у `12−0`; Sharpe 1.77 vs 2.30; P 0.1485 vs 0.042; dev-cons 0.40 vs 0.60) — Jegadeesh–Titman
+  skip-премия на MOEX-акциях НЕ воспроизводится. Единственный формальный PASS — `12−0`
+  (P=0.042, dev-cons 0.60, PF 1.746, Sharpe 2.30, 70 сделок), но `robust=false` и
+  **CI95 средней сделки `[−1182; +18998]` содержит ноль** → движковый PASS ≠ значимый edge.
+  U11 (1137 бар) при folds=5 → 0 фолдов (только folds=2), U13 (744 бара) → 0; carry снижает
+  результат. Решение: `bt.portfolio.skip-bars` остаётся `0` (off); `12−0` требует **отдельного**
+  предрегистрированного протокола. Детали: docs/26 §11.6–§11.7, `18_10_2026.md` (блок 2026-10-20).
+- Инфра-фикс, найденный донакачкой: `MoexFundingHistoryLoader` обрывал пагинацию на первой
+  странице с пустым SWAPRATE (ISS пуст до 2023-01-03) → пагинация переведена на число **сырых**
+  строк ISS (`Page(records, rawRows)`, `countRawRows`, `JsonNode.size()`); регресс-тест
+  `pages past a full page of blank swaprate rows`. После фикса: CNYRUBF/USDRUBF/EURRUBF 986 дат
+  (с 2022-12-05), GLDRUBF 836, IMOEXF 746.
+- Проверки глубокого прогона: `test` + `integrationTest` + `ktlintCheck` зелёные
+  (`build/p6deep_full_checks_*.log`, BUILD SUCCESSFUL).
+- **Следующие шаги (по решению пользователя):** `12−0` — отдельный протокол; P1 шаг 4 —
+  deployment-gate портфеля (своего эндпоинта нет); P2 — rg.ru (нужна подписка); P3 — нужен
+  свежий `ALOR_REFRESH_TOKEN`; P0 — действие брокера.
+
 ## Status
 - GOAL DONE: `artifacts/baseline_730d_gates.json` получен 2026-10-08 12:03 (прогон 2401 с).
 - Вердикт гейта: **REJECTED, liveAllowed=false** (8/8 проверок провалены).
@@ -160,6 +191,8 @@
   ограничен 5 тикерами с funding_history) либо новый инструментарий (order book/funding-арбитраж);
   новый грид направленного сигнала на тех же 730д неинформативен (selection). Решение по PLAN-001
   — за пользователем.
+- **После 2026-10-20** добавились: донакачка DAY_1/HOUR_1 на 8.8 года (акции) + глубокий `12−1`
+  (`12−1` REJECTED как skip-гипотеза, `12−0` PASS с CI95, содержащим ноль — см. блок выше).
 
 ## Rules
 - At start of each session, ALWAYS read this file (memory-trading-bot.md) to understand context.

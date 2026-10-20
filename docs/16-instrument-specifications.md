@@ -61,8 +61,13 @@ Round-trip = `totalCommissionPerLotSide × qty × 2`.
 - Носитель: 1 контракт за каждый пережитый клиринг (18:45 МСК, торговый день; внутридневная позиция — 0).
 - Моменты: `FundingCosts.clearingsCrossed(openedAt, closedAt)` — дни, где `openedAt < clearing < closedAt`,
   с учётом выходных (без клирингов) и московского времени.
-- Встраивание: `PnlCalculator.futures` (live) и `BacktestEngine.closePosition` (бэктест) вычитают
-  `fundingPerClearing × qty × clearings`. Значение отключено (`null`), если funding не задан.
+- Встраивание: `PnlCalculator.futures` (live) и `BacktestEngine.closePosition` (бэктест) применяют
+  funding направленно по конвенции MOEX «положительная ставка = long платит»:
+  `LONG → +r × qty`, `SHORT → −r × qty` (исправлено в live 2026-10-20, docs/27 §3 —
+  прежде `takeIf { it > 0 }` отбрасывал кредит и занижал short). Значение отключено (`null`),
+  если funding не задан. Legacy direction-agnostic модель однотикерного бэктеста
+  (`bt.funding-direction-aware=false`, обе стороны платят) сохранена только для
+  воспроизводимости прежних research-артефактов.
 - **LIVE-источник (P0)**: перед входом `FuturesEntryProfile` вызывает `FundingSnapshotService.refresh(ticker)`
   — MOEX-снапшот (`funding.moex-url`, столбец `funding.moex-column`, конвертация `raw × lotSize`
   инструмента) с TTL `funding.moex-ttl-ms`. Поле funding — **`SWAPRATE`**

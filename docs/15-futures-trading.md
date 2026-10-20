@@ -37,7 +37,9 @@
   позиции; плечо НЕ делит маржу — брокер требует GO независимо от выбранного leverage).
 - P&L фьючерса: `(close − entry) × qty × pointValue − комиссия round-trip − funding`
   (`PnlCalculator.futures`; комиссия = `totalCommissionPerLotSide × qty × 2`,
-  funding = `fundingPerClearing × qty × число пережитых клирингов`, см. `FundingCosts`).
+  funding = **направленная** сумма `sign(direction) × r × qty` за пережитые клиринги, см.
+  `FundingCosts`): конвенция MOEX «положительная ставка = long платит» — LONG платит `+r`,
+  SHORT получает кредит (исправлено 2026-10-20, docs/27 §3).
 
 ## 15.2. Исполнительный сервис — `FuturesTradingBotService`
 

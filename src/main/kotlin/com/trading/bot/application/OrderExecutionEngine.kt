@@ -73,8 +73,11 @@ fun interface PnlCalculator {
          *        [Position.openedAt]-…-[Position.closedAt] клиринги
          *        (ticker, List<LocalDate> → RUB). Ожидается СУММА per-clearing
          *        значений (пересчитывается через [FundingCosts.clearingDates]);
-         *        в SIM/backtest — config-ставка × число клирингов. Вычитается как
-         *        funding × qty. null → 0 (инструмент без funding, e.g. Si/RI).
+         *        в SIM/backtest — config-ставка × число клирингов.
+         *        **Знак — конвенция MOEX «положительная ставка = long платит»**:
+         *        списание направленное (`LONG → +r × qty`, `SHORT → −r × qty`), поэтому
+         *        положительный r кредитует SHORT, а отрицательный — LONG.
+         *        null → 0 (инструмент без funding, e.g. Si/RI).
          * @param onFundingUnknown колбэк, вызываемый когда [fundingPerClearing] вернул
          *        null при непустом списке клирингов — LIVE FUNDING_UNKNOWN (MOEX
          *        недоступен на часть клирингов): P&L посчитан без авторитетного
@@ -109,13 +112,25 @@ fun interface PnlCalculator {
                     )
                 val fundingTotal = fundingPerClearing(pos.ticker, clearings)
                 if (fundingTotal == null && clearings.isNotEmpty()) onFundingUnknown(pos)
-                val funding =
+                // Направленный funding (конвенция MOEX «положительная ставка = long платит»):
+                // LONG списывает +r, SHORT получает кредит −r. Знак ставки сохраняется, в т.ч.
+                // отрицательный r кредитует LONG и дебетует SHORT (legacy `takeIf { it > 0 }`
+                // отбрасывал кредит целиком и занижал получающую сторону — docs/27 §3).
+                val fundingCharge =
                     fundingTotal
-                        ?.takeIf { it > BigDecimal.ZERO }
+                        ?.multiply(fundingChargeSign(pos.direction))
                         ?.multiply(qty)
                         ?: BigDecimal.ZERO
-                pricePnl.subtract(totalCommission).subtract(funding)
+                pricePnl.subtract(totalCommission).subtract(fundingCharge)
             }
+
+        /**
+         * Знак списания funding по стороне позиции (конвенция MOEX: положительная ставка =
+         * LONG платит). LONG → +1 (сумма вычитается), SHORT → −1 (сумма прибавляется,
+         * т.е. короткая сторона получает положительный funding).
+         */
+        private fun fundingChargeSign(direction: PositionDirection): BigDecimal =
+            if (direction == PositionDirection.SHORT) BigDecimal.ONE.negate() else BigDecimal.ONE
     }
 }
 

@@ -95,6 +95,9 @@ configurations.all {
 
 tasks.withType<Test> {
     jvmArgs("-Xshare:off", "-XX:+EnableDynamicAgentLoading")
+    // Kotlin-компиляция тестового source set (большие классы с inline-Mockito) упирается
+    // в GC overhead limit при дефолтном heap Gradle worker'а — задаём явно.
+    maxHeapSize = "2g"
     // Проброс system property в JVM тестов: полномасштабный нагрузочный прогон
     // (roadmap 13.3.4) запускается `./gradlew.bat test -Dload.full=true`.
     systemProperty("load.full", System.getProperty("load.full", ""))

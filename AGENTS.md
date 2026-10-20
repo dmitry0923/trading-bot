@@ -87,8 +87,13 @@
   12 июн, 4 ноя) + переносы/спец-дни из `funding.holidays` (env `FUNDING_HOLIDAYS`, yyyy-MM-dd
   через запятую). Календарь применяется в live (P&L futures) и backtest (число клирингов);
   переносы правительственного производственного календаря задаются явно в `funding.holidays`.
-- P&L futures вычитает комиссию `qty × commissionRub × 2` и funding `× qty × clearings`
-  (live через `FundingSnapshotService`, backtest — на config) — паритет live↔backtest.
+- P&L futures вычитает комиссию `qty × commissionRub × 2` и направленный funding
+  `sign(direction) × r × qty` (live через `FundingSnapshotService`, backtest — на config).
+  **Конвенция MOEX «положительная ставка = long платит»** (исправлено 2026-10-20, docs/27 §3):
+  LONG платит `+r`, SHORT получает кредит `−r`; знак ставки сохраняется (отрицательный r
+  кредитует LONG и дебетует SHORT). Legacy-модель в `BacktestEngine` (direction-agnostic,
+  обе стороны платят, `bt.funding-direction-aware=false`) — только для воспроизводимости
+  прежних research-артефактов.
 - Backtest P&L использует ФАКТИЧЕСКИЕ SWAPRATE из `funding_history` (если ряд донакачан):
   `sum(funding_history[clearingDate]) × qty` вместо config-ставки (fallback — при отсутствии
   истории или тикера). Донакачка — `GET /api/v1/backtest/{ticker}/funding-history?days=`.

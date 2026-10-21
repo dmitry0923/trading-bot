@@ -3,9 +3,14 @@ package com.trading.bot.backtest.portfolio
 import com.trading.bot.application.MoexHolidayCalendar
 import com.trading.bot.backtest.BacktestMetrics
 import com.trading.bot.backtest.BacktestResult
+import com.trading.bot.backtest.DeploymentStatus
+import com.trading.bot.backtest.FoldValidation
+import com.trading.bot.backtest.MonteCarlo
+import com.trading.bot.backtest.ValidationResult
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.FundingHistoryRepository
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.time.LocalDate
@@ -31,6 +36,8 @@ class PortfolioMomentumService(
     private val config: PortfolioMomentumConfig,
     private val moexHolidayCalendar: MoexHolidayCalendar? = null,
 ) {
+    private val logger = KotlinLogging.logger {}
+
     private data class Resolved(
         val universe: List<String>,
         val tf: String,
@@ -216,6 +223,219 @@ class PortfolioMomentumService(
                     MomentumFoldResult(it.foldIndex, it.from.toString(), it.to.toString(), it.result.metrics())
                 },
             holdoutFraction = holdoutFraction,
+        )
+    }
+
+    /**
+     * Deployment-gate портфеля (`docs/26` P1 шаг 4): консолидирует dev-backtest,
+     * walk-forward на dev-части, независимый holdout, Monte Carlo и проверку
+     * структурной вместимости фолдов (§11.9) в один вердикт [DeploymentDecision].
+     *
+     * У портфеля нет in-sample сетки параметров, поэтому [ValidationResult]
+     * конструируется из чистых OOS-фолдов [PortfolioWalkForward] (inSample =
+     * outOfSample того же фолда — сетка отсутствует).
+     *
+     * Все прогоны — на dev-части (`holdoutFraction` резервируется до WFA и
+     * трогается один раз для holdout). Live-путь не затрагивается.
+     */
+    @Suppress("LongParameterList", "LongMethod", "CyclomaticComplexMethod")
+    suspend fun deploymentGate(
+        universe: List<String>? = null,
+        timeframe: String? = null,
+        days: Int = 3220,
+        lookbackBars: Int? = null,
+        skipBars: Int? = null,
+        rebalanceBars: Int? = null,
+        longCount: Int? = null,
+        shortCount: Int? = null,
+        capitalSlice: Double? = null,
+        momentumWeight: Double? = null,
+        carryWeight: Double? = null,
+        carryLookbackDays: Int? = null,
+        minUniverse: Int? = null,
+        initialCapital: Double? = null,
+        reversalEnabled: Boolean? = null,
+        volScalingEnabled: Boolean? = null,
+        volLookbackBars: Int? = null,
+        volTargetEnabled: Boolean? = null,
+        volTargetAnnualized: Double? = null,
+        volTargetBarsPerYear: Double? = null,
+        folds: Int = 8,
+        holdoutFraction: Double = 0.30,
+        researchMode: Boolean = true,
+        confirmedForProduction: Boolean = false,
+        simulations: Int = 2000,
+        seed: Long = 42,
+    ): PortfolioGateResponse {
+        val r =
+            resolve(
+                universe = universe,
+                timeframe = timeframe,
+                lookbackBars = lookbackBars,
+                skipBars = skipBars,
+                rebalanceBars = rebalanceBars,
+                longCount = longCount,
+                shortCount = shortCount,
+                capitalSlice = capitalSlice,
+                momentumWeight = momentumWeight,
+                carryWeight = carryWeight,
+                carryLookbackDays = carryLookbackDays,
+                minUniverse = minUniverse,
+                initialCapital = initialCapital,
+                reversalEnabled = reversalEnabled,
+                volScalingEnabled = volScalingEnabled,
+                volLookbackBars = volLookbackBars,
+                volTargetEnabled = volTargetEnabled,
+                volTargetAnnualized = volTargetAnnualized,
+                volTargetBarsPerYear = volTargetBarsPerYear,
+            )
+        require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
+        val inputs = loadInputs(r, days)
+        val bars = inputs.bars
+        val splitIndex = ((1.0 - holdoutFraction) * bars.size).toInt().coerceIn(1, (bars.size - 1).coerceAtLeast(1))
+        val devBars = bars.take(splitIndex)
+        val holdoutBars = bars.drop(splitIndex)
+        val params = engineParams(r)
+        val label = r.universe.joinToString("+")
+
+        // Ограничитель §11.9/§11.8: `folds` — это МЕТОД проверки, а не подбираемый
+        // параметр. Чтобы гейт не «терял» WFA на dev-части (80 % истории), folds
+        // усекается до структурно вмещаемого числа и это фиксируется в ответе
+        // (`foldsRequested` vs `folds`), а не подменяется молча.
+        val warmup = params.skipBars + params.lookbackBars
+        val minBarsPerFold = warmup + params.rebalanceBars + 2
+        val maxFoldsForDev = (devBars.size / minBarsPerFold).coerceAtLeast(2)
+        val effectiveFolds = folds.coerceAtMost(maxFoldsForDev).coerceAtLeast(2)
+
+        // 1. Walk-forward на dev-части (чистые OOS-фолды).
+        val wfa =
+            PortfolioWalkForward.run(
+                bars = devBars,
+                specs = inputs.specs,
+                params = params,
+                folds = effectiveFolds,
+                funding = inputs.funding,
+                isTradingDay = inputs.calendar::isTradingDay,
+            )
+        val validation =
+            ValidationResult(
+                folds =
+                    wfa.folds.map {
+                        FoldValidation(
+                            foldIndex = it.foldIndex,
+                            inSample = it.result,
+                            outOfSample = it.result,
+                            chosenSlPercent = 0.0,
+                            chosenTpPercent = 0.0,
+                        )
+                    },
+                aggregateOutOfSample = wfa.aggregate,
+            )
+
+        // 2. Dev-backtest на тех же dev-данных (метрики по кривой капитала).
+        val devRun =
+            PortfolioMomentumEngine.run(
+                bars = devBars,
+                specs = inputs.specs,
+                params = params,
+                funding = inputs.funding,
+                isTradingDay = inputs.calendar::isTradingDay,
+            )
+        val devBacktest =
+            metrics(
+                label,
+                devRun.equityCurve,
+                devRun.equityTimestamps,
+                devRun.trades,
+                0,
+                devRun.equityCurve.size,
+            )
+
+        // 3. Одноразовый holdout-прогон на независимом хвосте.
+        val holdoutRun =
+            PortfolioMomentumEngine.run(
+                bars = holdoutBars,
+                specs = inputs.specs,
+                params = params,
+                funding = inputs.funding,
+                isTradingDay = inputs.calendar::isTradingDay,
+            )
+        val holdout =
+            metrics(
+                label,
+                holdoutRun.equityCurve,
+                holdoutRun.equityTimestamps,
+                holdoutRun.trades,
+                0,
+                holdoutRun.equityCurve.size,
+            )
+
+        // 4. Monte Carlo по доходностям holdout-пути (bootstrap периодных доходностей).
+        val periodReturns = BacktestMetrics.periodReturnsFromEquity(holdout.equityCurve)
+        val monteCarlo =
+            if (periodReturns.isEmpty()) {
+                null
+            } else {
+                MonteCarlo.simulate(
+                    periodReturns = periodReturns,
+                    initialCapital = BigDecimal.valueOf(r.initialCapital),
+                    simulations = simulations,
+                    seed = seed,
+                )
+            }
+
+        val decision =
+            PortfolioDeploymentGate.decide(
+                PortfolioDeploymentCriteria(
+                    devBacktest = devBacktest,
+                    validation = validation,
+                    holdout = holdout,
+                    monteCarlo = monteCarlo,
+                    foldsCount = wfa.folds.size,
+                    degenerateFolds = wfa.capacity,
+                    researchMode = researchMode,
+                    confirmedForProduction = confirmedForProduction,
+                    capacityReason = if (wfa.folds.isEmpty()) wfa.verdict else "",
+                ),
+            )
+
+        logger.info {
+            "Portfolio gate (${r.universe.joinToString("+")}): ${decision.status} " +
+                "folds=${wfa.folds.size}/$folds oosTrades=${wfa.aggregate.totalTrades} " +
+                "consistency=${"%.3f".format(wfa.consistency)} degenerate=${wfa.capacity.count { it.degenerate }}"
+        }
+
+        return PortfolioGateResponse(
+            universe = r.universe,
+            timeframe = r.tf,
+            bars = bars.size,
+            devBars = devBars.size,
+            holdoutBars = holdoutBars.size,
+            folds = wfa.folds.size,
+            foldsRequested = folds,
+            consistency = wfa.consistency,
+            holdoutFraction = holdoutFraction,
+            status = decision.status.name,
+            liveAllowed = decision.status == DeploymentStatus.LIVE_ALLOWED,
+            allChecksPassed = decision.allChecksPassed,
+            researchMode = decision.researchMode,
+            confirmedForProduction = decision.confirmedForProduction,
+            checks =
+                decision.checks.map {
+                    PortfolioGateCheck(it.key, it.label, it.passed, it.detail)
+                },
+            foldCapacity =
+                wfa.capacity.map {
+                    PortfolioFoldCapacity(it.foldIndex, it.segmentBars, it.signalBars, it.rebalances, it.trades, it.degenerate)
+                },
+            foldResults =
+                wfa.folds.map {
+                    MomentumFoldResult(it.foldIndex, it.from.toString(), it.to.toString(), it.result.metrics())
+                },
+            devBacktest = devBacktest.metrics(),
+            aggregate = wfa.aggregate.metrics(),
+            holdout = holdout.metrics(),
+            monteCarlo = monteCarlo?.toMap(),
         )
     }
 
@@ -453,4 +673,75 @@ private fun PortfolioMomentumEngine.Trade.toMap(): Map<String, Any?> =
         "funding" to funding,
         "netPnl" to netPnl,
         "closeReason" to closeReason,
+    )
+
+/**
+ * Ответ research-эндпоинта `/api/v1/portfolio/momentum/deployment-gate` (P1 шаг 4):
+ * консолидированный вердикт допуска портфеля с проверками, вместимостью фолдов,
+ * метриками dev-backtest/WFA-агрегата/holdout и Monte Carlo.
+ */
+data class PortfolioGateResponse(
+    val universe: List<String>,
+    val timeframe: String,
+    val bars: Int,
+    val devBars: Int,
+    val holdoutBars: Int,
+    val folds: Int,
+    /** Запрошенное число фолдов; может быть усечено под вместимость dev-части (§11.9). */
+    val foldsRequested: Int,
+    /** Доля фолдов WFA с положительной доходностью. */
+    val consistency: Double,
+    val holdoutFraction: Double,
+    /** REJECTED | RESEARCH_ONLY | PAPER_ALLOWED | LIVE_ALLOWED. */
+    val status: String,
+    val liveAllowed: Boolean,
+    val allChecksPassed: Boolean,
+    val researchMode: Boolean,
+    val confirmedForProduction: Boolean,
+    val checks: List<PortfolioGateCheck>,
+    /** Структурная вместимость каждого фолда (урок §11.9). */
+    val foldCapacity: List<PortfolioFoldCapacity>,
+    val foldResults: List<MomentumFoldResult>,
+    val devBacktest: Map<String, Any>,
+    val aggregate: Map<String, Any>,
+    val holdout: Map<String, Any>,
+    val monteCarlo: Map<String, Any>?,
+)
+
+/** Одна проверка портфельного гейта. */
+data class PortfolioGateCheck(
+    val key: String,
+    val label: String,
+    val passed: Boolean,
+    val detail: String,
+)
+
+/** Вместимость одного фолда: сегмент, сигнальное окно, ребалансы, сделки, вырожденность. */
+data class PortfolioFoldCapacity(
+    val foldIndex: Int,
+    val segmentBars: Int,
+    val signalBars: Int,
+    val rebalances: Int,
+    val trades: Int,
+    val degenerate: Boolean,
+)
+
+/** Компактное представление [com.trading.bot.backtest.MonteCarloResult] для ответа API. */
+fun com.trading.bot.backtest.MonteCarloResult.toMap(): Map<String, Any> =
+    mapOf(
+        "simulations" to simulations,
+        "medianReturn" to medianReturn,
+        "p5Return" to p5Return,
+        "p95Return" to p95Return,
+        "avgReturn" to avgReturn,
+        "minReturn" to minReturn,
+        "maxReturn" to maxReturn,
+        "probabilityOfLoss" to probabilityOfLoss,
+        "probabilityMddExceeds20" to probabilityMddExceeds20,
+        "probabilityMddExceeds30" to probabilityMddExceeds30,
+        "probabilityMddExceeds40" to probabilityMddExceeds40,
+        "probabilityOfRuin" to probabilityOfRuin,
+        "blockMethod" to blockMethod,
+        "avgBlockLength" to avgBlockLength,
+        "mcRobust" to isRobust(),
     )

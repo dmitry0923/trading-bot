@@ -1,0 +1,626 @@
+{
+  "simulations": 2000,
+  "generatedAt": "2026-10-21T07:52:16",
+  "holdoutFraction": 0.3,
+  "folds": 8,
+  "researchMode": true,
+  "protocol": "portfolio momentum deployment-gate (docs/26 P1 shag 4)",
+  "results": [
+    {
+      "row": {
+        "Config": "U8DAY_12-0",
+        "Timeframe": "DAY_1",
+        "Bars": 2330,
+        "DevBars": 1631,
+        "HoldoutBars": 699,
+        "RanFolds": 5,
+        "ReqFolds": 8,
+        "Status": "REJECTED",
+        "AllChecks": false,
+        "FailedChecks": "dev_backtest|walk_forward|consistency|edge_significance|holdout|robustness",
+        "DegenerateFolds": 0,
+        "DevPf": 0.857,
+        "DevTrades": 396,
+        "AggPf": 0.776,
+        "AggRetPct": -17.09,
+        "AggSharpe": -0.96,
+        "AggMddPct": 29.0,
+        "OosTrades": 120,
+        "Consistency": 0.4,
+        "PNoEdge": 0.8425,
+        "Ci95Low": -4289.45,
+        "Ci95High": 1299.28,
+        "HoPf": 1.049,
+        "HoRetPct": 3.25,
+        "HoTrades": 132,
+        "McP5": -0.2284,
+        "McRobust": false,
+        "Secs": 1.0
+      },
+      "checks": [
+        {
+          "key": "dev_backtest",
+          "label": "Dev-backtest (до holdout-границы)",
+          "passed": false,
+          "detail": "Sharpe=-1,010 MDD=0,548 PF=0,857 trades=396"
+        },
+        {
+          "key": "mdd",
+          "label": "Ограничение просадки OOS-агрегата",
+          "passed": true,
+          "detail": "need <= 0,400, got 0,290"
+        },
+        {
+          "key": "walk_forward",
+          "label": "Walk-forward OOS",
+          "passed": false,
+          "detail": "consistency=0,400 oosTrades=120 oosSharpe=-0,959 oosPF=0,776"
+        },
+        {
+          "key": "walk_forward_sample",
+          "label": "Достаточность OOS-выборки WFA",
+          "passed": true,
+          "detail": "need >= 100, got 120"
+        },
+        {
+          "key": "consistency",
+          "label": "Консистентность фолдов",
+          "passed": false,
+          "detail": "need >= 0,600, got 0,400"
+        },
+        {
+          "key": "fold_capacity",
+          "label": "Структурная вместимость фолдов (ребалансы/сделки)",
+          "passed": true,
+          "detail": "folds=5 degenerate=0"
+        },
+        {
+          "key": "edge_significance",
+          "label": "Стат. значимость edge (dev-WFA OOS)",
+          "passed": false,
+          "detail": "probabilityOfNoEdge=0,843 CI95=[-4289,447; 1299,282] significant=false"
+        },
+        {
+          "key": "holdout",
+          "label": "Финальный holdout (независимый хвост)",
+          "passed": false,
+          "detail": "holdoutReturn=0,032 PF=1,049 MDD=0,148 trades=132 passable=false"
+        },
+        {
+          "key": "holdout_sample",
+          "label": "Достаточность holdout-выборки",
+          "passed": true,
+          "detail": "need >= 30, got 132"
+        },
+        {
+          "key": "robustness",
+          "label": "Monte Carlo (OOS)",
+          "passed": false,
+          "detail": "mcRobust=false p5=-0,228 pLoss=0,415 mdd40=0,005 ruin=0,000"
+        }
+      ],
+      "foldCapacity": [
+        {
+          "foldIndex": 0,
+          "segmentBars": 326,
+          "signalBars": 77,
+          "rebalances": 4,
+          "trades": 24,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 1,
+          "segmentBars": 326,
+          "signalBars": 77,
+          "rebalances": 4,
+          "trades": 24,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 2,
+          "segmentBars": 326,
+          "signalBars": 77,
+          "rebalances": 4,
+          "trades": 24,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 3,
+          "segmentBars": 326,
+          "signalBars": 77,
+          "rebalances": 4,
+          "trades": 24,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 4,
+          "segmentBars": 327,
+          "signalBars": 78,
+          "rebalances": 4,
+          "trades": 24,
+          "degenerate": false
+        }
+      ]
+    },
+    {
+      "row": {
+        "Config": "U13DAY_vt30",
+        "Timeframe": "DAY_1",
+        "Bars": 744,
+        "DevBars": 520,
+        "HoldoutBars": 224,
+        "RanFolds": 8,
+        "ReqFolds": 8,
+        "Status": "REJECTED",
+        "AllChecks": false,
+        "FailedChecks": "dev_backtest|walk_forward|edge_significance|holdout|robustness",
+        "DegenerateFolds": 0,
+        "DevPf": 1.001,
+        "DevTrades": 744,
+        "AggPf": 1.183,
+        "AggRetPct": 15.79,
+        "AggSharpe": 1.28,
+        "AggMddPct": 7.72,
+        "OosTrades": 480,
+        "Consistency": 0.625,
+        "PNoEdge": 0.118,
+        "Ci95Low": -203.04,
+        "Ci95High": 880.47,
+        "HoPf": 1.143,
+        "HoRetPct": 8.73,
+        "HoTrades": 300,
+        "McP5": -0.1471,
+        "McRobust": false,
+        "Secs": 1.0
+      },
+      "checks": [
+        {
+          "key": "dev_backtest",
+          "label": "Dev-backtest (до holdout-границы)",
+          "passed": false,
+          "detail": "Sharpe=0,106 MDD=0,162 PF=1,001 trades=744"
+        },
+        {
+          "key": "mdd",
+          "label": "Ограничение просадки OOS-агрегата",
+          "passed": true,
+          "detail": "need <= 0,400, got 0,077"
+        },
+        {
+          "key": "walk_forward",
+          "label": "Walk-forward OOS",
+          "passed": false,
+          "detail": "consistency=0,625 oosTrades=480 oosSharpe=1,281 oosPF=1,183"
+        },
+        {
+          "key": "walk_forward_sample",
+          "label": "Достаточность OOS-выборки WFA",
+          "passed": true,
+          "detail": "need >= 100, got 480"
+        },
+        {
+          "key": "consistency",
+          "label": "Консистентность фолдов",
+          "passed": true,
+          "detail": "need >= 0,600, got 0,625"
+        },
+        {
+          "key": "fold_capacity",
+          "label": "Структурная вместимость фолдов (ребалансы/сделки)",
+          "passed": true,
+          "detail": "folds=8 degenerate=0"
+        },
+        {
+          "key": "edge_significance",
+          "label": "Стат. значимость edge (dev-WFA OOS)",
+          "passed": false,
+          "detail": "probabilityOfNoEdge=0,118 CI95=[-203,041; 880,471] significant=false"
+        },
+        {
+          "key": "holdout",
+          "label": "Финальный holdout (независимый хвост)",
+          "passed": false,
+          "detail": "holdoutReturn=0,087 PF=1,143 MDD=0,082 trades=300 passable=false"
+        },
+        {
+          "key": "holdout_sample",
+          "label": "Достаточность holdout-выборки",
+          "passed": true,
+          "detail": "need >= 30, got 300"
+        },
+        {
+          "key": "robustness",
+          "label": "Monte Carlo (OOS)",
+          "passed": false,
+          "detail": "mcRobust=false p5=-0,147 pLoss=0,277 mdd40=0,000 ruin=0,000"
+        }
+      ],
+      "foldCapacity": [
+        {
+          "foldIndex": 0,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 1,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 2,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 3,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 4,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 5,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 6,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 7,
+          "segmentBars": 65,
+          "signalBars": 40,
+          "rebalances": 10,
+          "trades": 60,
+          "degenerate": false
+        }
+      ]
+    },
+    {
+      "row": {
+        "Config": "U15DAY_vt30",
+        "Timeframe": "DAY_1",
+        "Bars": 520,
+        "DevBars": 364,
+        "HoldoutBars": 156,
+        "RanFolds": 8,
+        "ReqFolds": 8,
+        "Status": "REJECTED",
+        "AllChecks": false,
+        "FailedChecks": "dev_backtest|walk_forward|consistency|edge_significance|robustness",
+        "DegenerateFolds": 0,
+        "DevPf": 0.897,
+        "DevTrades": 510,
+        "AggPf": 0.812,
+        "AggRetPct": -9.76,
+        "AggSharpe": -1.01,
+        "AggMddPct": 13.99,
+        "OosTrades": 246,
+        "Consistency": 0.375,
+        "PNoEdge": 0.8465,
+        "Ci95Low": -1114.93,
+        "Ci95High": 364.04,
+        "HoPf": 1.386,
+        "HoRetPct": 14.6,
+        "HoTrades": 198,
+        "McP5": -0.039,
+        "McRobust": false,
+        "Secs": 1.0
+      },
+      "checks": [
+        {
+          "key": "dev_backtest",
+          "label": "Dev-backtest (до holdout-границы)",
+          "passed": false,
+          "detail": "Sharpe=-0,578 MDD=0,214 PF=0,897 trades=510"
+        },
+        {
+          "key": "mdd",
+          "label": "Ограничение просадки OOS-агрегата",
+          "passed": true,
+          "detail": "need <= 0,400, got 0,140"
+        },
+        {
+          "key": "walk_forward",
+          "label": "Walk-forward OOS",
+          "passed": false,
+          "detail": "consistency=0,375 oosTrades=246 oosSharpe=-1,007 oosPF=0,812"
+        },
+        {
+          "key": "walk_forward_sample",
+          "label": "Достаточность OOS-выборки WFA",
+          "passed": true,
+          "detail": "need >= 100, got 246"
+        },
+        {
+          "key": "consistency",
+          "label": "Консистентность фолдов",
+          "passed": false,
+          "detail": "need >= 0,600, got 0,375"
+        },
+        {
+          "key": "fold_capacity",
+          "label": "Структурная вместимость фолдов (ребалансы/сделки)",
+          "passed": true,
+          "detail": "folds=8 degenerate=0"
+        },
+        {
+          "key": "edge_significance",
+          "label": "Стат. значимость edge (dev-WFA OOS)",
+          "passed": false,
+          "detail": "probabilityOfNoEdge=0,847 CI95=[-1114,925; 364,040] significant=false"
+        },
+        {
+          "key": "holdout",
+          "label": "Финальный holdout (независимый хвост)",
+          "passed": true,
+          "detail": "holdoutReturn=0,146 PF=1,386 MDD=0,078 trades=198 passable=true"
+        },
+        {
+          "key": "holdout_sample",
+          "label": "Достаточность holdout-выборки",
+          "passed": true,
+          "detail": "need >= 30, got 198"
+        },
+        {
+          "key": "robustness",
+          "label": "Monte Carlo (OOS)",
+          "passed": false,
+          "detail": "mcRobust=false p5=-0,039 pLoss=0,106 mdd40=0,000 ruin=0,000"
+        }
+      ],
+      "foldCapacity": [
+        {
+          "foldIndex": 0,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 1,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 2,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 3,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 4,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 5,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 6,
+          "segmentBars": 45,
+          "signalBars": 20,
+          "rebalances": 5,
+          "trades": 30,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 7,
+          "segmentBars": 49,
+          "signalBars": 24,
+          "rebalances": 6,
+          "trades": 36,
+          "degenerate": false
+        }
+      ]
+    },
+    {
+      "row": {
+        "Config": "U5MIN_1-1",
+        "Timeframe": "MINUTE_10",
+        "Bars": 41800,
+        "DevBars": 29259,
+        "HoldoutBars": 12541,
+        "RanFolds": 8,
+        "ReqFolds": 8,
+        "Status": "REJECTED",
+        "AllChecks": false,
+        "FailedChecks": "dev_backtest|mdd|walk_forward|consistency|edge_significance|holdout|robustness",
+        "DegenerateFolds": 0,
+        "DevPf": 0.484,
+        "DevTrades": 58472,
+        "AggPf": 0.484,
+        "AggRetPct": -1011.72,
+        "AggSharpe": -2.44,
+        "AggMddPct": 1011.72,
+        "OosTrades": 58150,
+        "Consistency": 0.0,
+        "PNoEdge": 1.0,
+        "Ci95Low": -179.99,
+        "Ci95High": -167.73,
+        "HoPf": 0.496,
+        "HoRetPct": -450.15,
+        "HoTrades": 25036,
+        "McP5": -1.0,
+        "McRobust": false,
+        "Secs": 6.0
+      },
+      "checks": [
+        {
+          "key": "dev_backtest",
+          "label": "Dev-backtest (до holdout-границы)",
+          "passed": false,
+          "detail": "Sharpe=-2,807 MDD=10,184 PF=0,484 trades=58472"
+        },
+        {
+          "key": "mdd",
+          "label": "Ограничение просадки OOS-агрегата",
+          "passed": false,
+          "detail": "need <= 0,400, got 10,117"
+        },
+        {
+          "key": "walk_forward",
+          "label": "Walk-forward OOS",
+          "passed": false,
+          "detail": "consistency=0,000 oosTrades=58150 oosSharpe=-2,440 oosPF=0,484"
+        },
+        {
+          "key": "walk_forward_sample",
+          "label": "Достаточность OOS-выборки WFA",
+          "passed": true,
+          "detail": "need >= 100, got 58150"
+        },
+        {
+          "key": "consistency",
+          "label": "Консистентность фолдов",
+          "passed": false,
+          "detail": "need >= 0,600, got 0,000"
+        },
+        {
+          "key": "fold_capacity",
+          "label": "Структурная вместимость фолдов (ребалансы/сделки)",
+          "passed": true,
+          "detail": "folds=8 degenerate=0"
+        },
+        {
+          "key": "edge_significance",
+          "label": "Стат. значимость edge (dev-WFA OOS)",
+          "passed": false,
+          "detail": "probabilityOfNoEdge=1,000 CI95=[-179,988; -167,725] significant=false"
+        },
+        {
+          "key": "holdout",
+          "label": "Финальный holdout (независимый хвост)",
+          "passed": false,
+          "detail": "holdoutReturn=-4,501 PF=0,496 MDD=4,498 trades=25036 passable=false"
+        },
+        {
+          "key": "holdout_sample",
+          "label": "Достаточность holdout-выборки",
+          "passed": true,
+          "detail": "need >= 30, got 25036"
+        },
+        {
+          "key": "robustness",
+          "label": "Monte Carlo (OOS)",
+          "passed": false,
+          "detail": "mcRobust=false p5=-1,000 pLoss=1,000 mdd40=1,000 ruin=1,000"
+        }
+      ],
+      "foldCapacity": [
+        {
+          "foldIndex": 0,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 1,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 2,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 3,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 4,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 5,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 6,
+          "segmentBars": 3657,
+          "signalBars": 3635,
+          "rebalances": 3634,
+          "trades": 7268,
+          "degenerate": false
+        },
+        {
+          "foldIndex": 7,
+          "segmentBars": 3660,
+          "signalBars": 3638,
+          "rebalances": 3637,
+          "trades": 7274,
+          "degenerate": false
+        }
+      ]
+    }
+  ]
+}

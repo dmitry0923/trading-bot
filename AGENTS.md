@@ -1534,7 +1534,8 @@ HOUR_1 14.2 → **5.5**; DAY_1 1 → **78**); баровые параметры 
   0 сделок; HOUR_1 U5 — 0 фолдов / 24 сделки.
 - **Все `bt.*` выключены, live-путь не тронут.** Скрипты: `load_candles_higher_tf.ps1`,
   `research_oos70_portfolio_tf.ps1`; артефакты `…_step3{,b}.*` + `…_step2c_folds.csv`;
-  docs/26 §11.2/§11.3. Шаг 4 (deployment-gate портфеля) — отдельная задача (нет эндпоинта).
+  docs/26 §11.2/§11.3. Шаг 4 (deployment-gate портфеля) **выполнен 2026-10-21** — см. раздел
+  `p1-portfolio-gate` ниже.
   Возможная **новая** гипотеза (если ставить): классический momentum на дневных барах с
   горизонтом «12−1 месяц» (текущий `lookback` 1680 MINUTE_10 ≈ 21 день — горизонт месячного
   реверсала) и собственным предрегистрированным протоколом; донастройка текущей сетки на
@@ -1662,6 +1663,45 @@ override реально меняет результат** — иначе «фи�
 (например, `folds≤5` с явным обоснованием вместимости) — **новый** предрегистрированный протокол,
 не правка §11.8. Скрипт: `research_12_0_protocol.ps1`; docs/26 §11.8 (предрегистрация) + §11.9
 (результаты); `18_10_2026.md` журнал.
+| 2026-10-21 | P1 шаг 4: deployment-gate портфеля (`p1-portfolio-gate`) | **Формальная проверка класса momentum+carry собственным gate** (тикерный `DeploymentGate` неприменим — работает на `BacktestRobustnessReport`/in-sample сетке). `PortfolioDeploymentGate.kt` (чистый: `PortfolioDeploymentCriteria`, 9 проверок, вердикт REJECTED/RESEARCH_ONLY/PAPER_ALLOWED/LIVE_ALLOWED, `researchMode=true` по умолчанию), `PortfolioWalkForward` (`Fold.bars/rebalances`, `Result.capacity`), `PortfolioMomentumService.deploymentGate(...)` + DTO, эндпоинт `GET /api/v1/portfolio/momentum/deployment-gate`, тесты `PortfolioDeploymentGateTest` (12). **Проверка вместимости фолдов (урок §11.9):** `degenerate` при `rebalances<3`/`trades<4` блокирует `walk_forward`. **Авто-фит `folds` под вместимость dev-части** (`foldsRequested` vs `folds` + `capacityReason`) — раскрытие геометрии, не донастройка под результат. **Прогон** (`research_portfolio_gate.ps1`, query из хеша; 4 замороженных конфига, ~9 с; `artifacts/p1_portfolio_gate.{csv,json}`): **все `REJECTED`** — `U8DAY_12-0` (dev Sharpe −1.01, OOS PF 0.776/−17.1 %, 120 сд., cons 0.400, P 0.843, folds 5/8), `U13DAY_vt30` (dev Sharpe 0.11, **OOS PF 1.183**, 480 сд., cons **0.625**, HO PF 1.143 — 3 гейта пройдены, провал по dev-backtest/edge/MC), `U15DAY_vt30` (PF 0.812, cons 0.375), `U5MIN_1-1` (**−1011.7 %**, MDD >100 %). **Главное:** `12−0` (PF 2.030/`PASS` на полной истории, §11.9) на dev-части **убыточен** (PF 0.776) → подтверждение «режимного бета» независимым инструментом; вырожденных фолдов нет (`degenerate=0`). Класс закрыт как не дающий edge; `bt.portfolio.*` off, live не тронут. docs/26 §11.10, `18_10_2026.md` | test + int + ktlint |
+
+### P1 шаг 4: deployment-gate для портфеля (2026-10-21, `p1-portfolio-gate`)
+
+У класса momentum+carry не было своего gate (тикерный `DeploymentGate` работает на
+`BacktestRobustnessReport`/in-sample сетке, которых у портфеля нет). Реализован **портфельный**
+гейт и применён к **замороженным** конфигам без подбора (§6 PLAN-001 не нарушён).
+
+- **Код (research, `bt.portfolio.*` off, live не тронут):** `PortfolioDeploymentGate.kt`
+  (чистый unit-тестируемый: `PortfolioDeploymentCriteria`, 9 проверок, вердикт
+  REJECTED/RESEARCH_ONLY/PAPER_ALLOWED/LIVE_ALLOWED; `researchMode=true` по умолчанию → выше
+  `PAPER_ALLOWED` не поднимается без `confirmedForProduction=true`); `PortfolioWalkForward`
+  расширен (`Fold.bars/rebalances`, `Result.capacity`); `PortfolioMomentumService.deploymentGate(...)`
+  (dev-WFA→`ValidationResult`, dev-backtest, одноразовый holdout, MC 2000 по holdout-доходностям)
+  + DTO; эндпоинт `GET /api/v1/portfolio/momentum/deployment-gate`; тесты
+  `PortfolioDeploymentGateTest` (12) — зелёные.
+- **Проверка структурной вместимости фолдов (урок §11.9):** `FoldCapacity` считает
+  `signalBars`/`rebalances`/`trades`; фолд с `rebalances < 3` или `trades < 4` → `degenerate` и
+  **блокирует** `walk_forward` (пустой фолд не считается прохождением).
+- **Авто-фит `folds` под вместимость dev-части:** `folds` — метод проверки, не подбираемый параметр;
+  если `folds=8` структурно не влезает (`dev 1631 < 8×272`), гейт **не теряет WFA молча**, а усекает
+  и репортит `foldsRequested` vs `folds` + `capacityReason`. Это раскрытие геометрии, а не донастройка
+  под результат (§11.8/§6).
+- **Прогон** (`scripts/research_portfolio_gate.ps1`, query из `[ordered]`-хеша; 4 конфига, ~9 с;
+  `artifacts/p1_portfolio_gate.{csv,json}`): **все четыре `REJECTED`, `liveAllowed=false`** —
+  `U8DAY_12-0` (dev PF 0.857/Sharpe −1.01, OOS PF 0.776, −17.1%, 120 сд., cons 0.400, P=0.843,
+  `folds 5/8`), `U13DAY_vt30` (dev PF 1.001/Sharpe 0.11, **OOS PF 1.183**, +15.8%, **480 сд.**,
+  cons **0.625**, P=0.118, HO PF 1.143), `U15DAY_vt30` (OOS PF 0.812, cons 0.375),
+  `U5MIN_1-1` (**−1011.7%**, MDD >100%, 58150 сд.).
+- **Главное:** `12−0`, дававший PF 2.030/`PASS` на полной истории (§11.9), на dev-части
+  (первые 70 % глубокой истории) — **убыточен** (PF 0.776, −17.1 %) → прямое подтверждение
+  «режимного бета» независимым инструментом. Вырожденных фолдов нет нигде (`degenerate=0`).
+  Ближайший `U13DAY_vt30` (3 гейта пройдены: WFA-sample 480, consistency 0.625, MDD 7.7 %)
+  провален по dev-backtest (`isPassable`: Sharpe>1.2 — dev-Sharpe 0.106), значимости edge и MC.
+- **Решение:** класс закрыт как не дающий подтверждённого edge; `bt.portfolio.*` off; live не тронут;
+  продолжение — только **новый** предрегистрированный протокол. Урок: авто-фит `folds` — раскрытие
+  геометрии, не донастройка; `degenerate`-флаг обязан быть отдельной проверкой.
+  Скрипт `research_portfolio_gate.ps1`; docs/26 §11.10; `18_10_2026.md` журнал.
+
 
 ## Каталог закрытых аудитов (сжато; суть — в разделах выше)
 

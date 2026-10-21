@@ -24,6 +24,10 @@ object PortfolioWalkForward {
         val from: LocalDateTime,
         val to: LocalDateTime,
         val result: BacktestResult,
+        /** Число баров сегмента фолда. */
+        val bars: Int = 0,
+        /** Число ребалансов в фолде (структурная вместимость сигнала, §11.9). */
+        val rebalances: Int = 0,
     )
 
     /** Агрегированный результат walk-forward. */
@@ -35,6 +39,12 @@ object PortfolioWalkForward {
         /** OOS Sharpe > 0.5, PF > 1.1, consistency >= 0.6, >= 100 сделок. */
         val robust: Boolean,
         val verdict: String,
+        /**
+         * Структурная вместимость фолдов (урок §11.9): для каждого фолда — число
+         * баров сегмента, баров после прогрева, ребалансов и сделок. Позволяет
+         * отличить «фолд работает» от «фолд вырожден» (2 ребаланса → 4 сделки).
+         */
+        val capacity: List<PortfolioDeploymentGate.FoldCapacity> = emptyList(),
     )
 
     @Suppress("LongParameterList", "LongMethod", "CyclomaticComplexMethod")
@@ -48,7 +58,8 @@ object PortfolioWalkForward {
     ): Result {
         val label = specs.joinToString("+") { it.ticker }
         val effectiveFolds = folds.coerceAtLeast(2)
-        val minBarsPerFold = params.skipBars + params.lookbackBars + params.rebalanceBars + 2
+        val warmup = params.skipBars + params.lookbackBars
+        val minBarsPerFold = warmup + params.rebalanceBars + 2
         if (bars.size < minBarsPerFold * effectiveFolds) {
             val need = minBarsPerFold * effectiveFolds
             return Result(
@@ -79,6 +90,8 @@ object PortfolioWalkForward {
                     from = slice.first().time,
                     to = slice.last().time,
                     result = metricsFrom(label, result.equityCurve, result.equityTimestamps, result.trades),
+                    bars = slice.size,
+                    rebalances = result.rebalances,
                 )
             }
 
@@ -89,12 +102,23 @@ object PortfolioWalkForward {
                 aggregate.profitFactor > 1.1 &&
                 consistency >= 0.6 &&
                 aggregate.totalTrades >= 100
+        val capacity =
+            foldsRuns.map {
+                PortfolioDeploymentGate.FoldCapacity(
+                    foldIndex = it.foldIndex,
+                    segmentBars = it.bars,
+                    signalBars = (it.bars - warmup).coerceAtLeast(0),
+                    rebalances = it.rebalances,
+                    trades = it.result.totalTrades,
+                )
+            }
         return Result(
             folds = foldsRuns,
             aggregate = aggregate,
             consistency = consistency,
             robust = robust,
             verdict = verdict(aggregate, consistency),
+            capacity = capacity,
         )
     }
 

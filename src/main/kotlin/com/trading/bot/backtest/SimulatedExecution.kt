@@ -92,6 +92,27 @@ object SimulatedExecution {
     }
 
     /**
+     * Passive (maker) fill: buy at bid = mid - halfSpread, sell at ask = mid + halfSpread.
+     *
+     * Зеркало [realisticFill]: пассивная (пост-онли) лимитная заявка исполняется на
+     * СВОЕЙ стороне стакана, поэтому получает ценовое улучшение на полный спред, а не
+     * платит его. Изолирует эффект издержек (research a2, PLAN-001 §5.1): тот же набор
+     * входов/сделок, изменяется только цена исполнения taker → maker.
+     *
+     * Модель НЕ учитывает неисполнение заявки и adverse selection (оптимистичный
+     * верхний предел ценового улучшения); halfSpread оценивается из диапазона свечи
+     * ([estimateHalfSpread]) — так же, как в [realisticFill].
+     */
+    fun passiveFill(
+        reference: BigDecimal,
+        isBuy: Boolean,
+        halfSpread: BigDecimal,
+    ): Fill {
+        val price = if (isBuy) reference.subtract(halfSpread) else reference.add(halfSpread)
+        return Fill(price)
+    }
+
+    /**
      * Комиссия за полный оборот (0.05% от price × quantity).
      *
      * @param quantity количество контрактов/акций (оборот = price × quantity)

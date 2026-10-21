@@ -97,6 +97,20 @@ macro:
   usd-rub-ticker: USD000UTSTOM
   snapshot-enabled: ${MACRO_SNAPSHOT_ENABLED:false}    # исторические снапшоты макро для ML-датасета (13.11.2)
   snapshot-interval-ms: ${MACRO_SNAPSHOT_INTERVAL_MS:900000}
+  # Ряд ставок ЦБ РФ (P2 c1 плана 18_10_2026): ключевая ставка + RUONIA
+  # из официального SOAP-сервиса ЦБ DailyInfoWebServ (методы KeyRate/Ruonia).
+  # Донакачка — GET /api/v1/macro/rates-history (бэкфилл) и фоновая
+  # CbrRatesRefreshScheduler (cbr-refresh-interval-ms, только при live-rate-enabled).
+  # live-rate-enabled=true — торговый контур берёт последнюю ставку из БД
+  # (факт 14,0% против устаревшего cbr-rate=16.0); fail-soft fallback на cbr-rate.
+  # ВНИМАНИЕ: контур ЦБ требует TLS-truststore HARICA (scripts/make_cbr_truststore.ps1),
+  # иначе фоновая донакачка молча деградирует в fail-soft (WARN в логе).
+  live-rate-enabled: ${MACRO_LIVE_RATE_ENABLED:true}
+  cbr-soap-url: ${MACRO_CBR_SOAP_URL:https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx}
+  cbr-request-timeout-ms: ${MACRO_CBR_REQUEST_TIMEOUT_MS:10000}
+  cbr-refresh-interval-ms: ${MACRO_CBR_REFRESH_INTERVAL_MS:21600000}
+  cbr-refresh-days: ${MACRO_CBR_REFRESH_DAYS:30}
+  live-rate-stale-days: ${MACRO_LIVE_RATE_STALE_DAYS:14}
 
 # Микроструктура стакана (OBI/microprice/spread) из live L1 Alor.
 # Исторических L1-данных не существует ни в одном источнике — данные появляются
@@ -428,6 +442,27 @@ bt:
   # по числу баров удержания (MKT по close) вместо ожидания SL/TP месяцами.
   # 0 (default) = выключено; query-оверрайд maxHoldBars на /backtest /validate.
   max-hold-bars: ${BT_MAX_HOLD_BARS:0}
+  # Funding-window capture (research P4, docs/27-funding-window-capture.md): движок сам
+  # выбирает сторону по последней ИЗВЕСТНОЙ ставке funding_history (клиринг строго раньше
+  # даты бара — без lookahead) и удерживает позицию через клиринги: SHORT при
+  # r >= +short-порога, LONG при r <= -long-порога, иначе FLAT. Обходит генератор
+  # сигналов и входные фильтры. По умолчанию false (live-путь не затрагивается).
+  funding-window-enabled: ${BT_FUNDING_WINDOW_ENABLED:false}
+  funding-window-long-threshold-rub: ${BT_FUNDING_WINDOW_LONG_THRESHOLD_RUB:2.0}
+  funding-window-short-threshold-rub: ${BT_FUNDING_WINDOW_SHORT_THRESHOLD_RUB:2.0}
+  funding-window-block-on-unknown: ${BT_FUNDING_WINDOW_BLOCK_ON_UNKNOWN:true}
+  # Placebo-контроль P4 (docs/27 §7.2): те же «дни в рынке», но сторона — детерминированный
+  # псевдослучайный поток по (ticker, дата), а не знак ставки. Default false = сторона по ставке.
+  funding-window-random-side: ${BT_FUNDING_WINDOW_RANDOM_SIDE:false}
+  # Направленный funding в P&L бэктеста (research P4, docs/27): false — историческая
+  # direction-agnostic модель (обе стороны платят), true — LONG платит при r>0, SHORT
+  # получает (модель портфельного движка). Воспроизводимость прежних артефактов — false.
+  funding-direction-aware: ${BT_FUNDING_DIRECTION_AWARE:false}
+  # Пассивное (maker) исполнение входов/рыночных выходов в бэктесте (research a2,
+  # PLAN-001 §5.1): покупка по bid, продажа по ask (ценовое улучшение на полный
+  # спред вместо его оплаты). Тот же набор сделок; изолирует эффект издержек.
+  # Защитные SL/TP/ликвидация остаются taker. По умолчанию false.
+  execution-passive-fill-enabled: ${BT_EXECUTION_PASSIVE_FILL_ENABLED:false}
   # Онлайн-логистическая регрессия направления в бэктесте (research, docs/17 этап 4b):
   # P(up) обучается онлайн-SGD на барах истории (без lookahead), BUY/SELL по
   # калиброванной вероятности. По умолчанию false; на live-входы не влияет.
@@ -514,6 +549,52 @@ bt:
   llm-veto-min-score: ${BT_LLM_VETO_MIN_SCORE:}
   llm-veto-temperature: ${BT_LLM_VETO_TEMPERATURE:0.0}
   llm-veto-cache-namespace: ${BT_LLM_VETO_CACHE_NAMESPACE:backtest-veto}
+
+  # Market-neutral FX-pairs (research, 2026-10, docs/25): торгуется расхождение
+  # спреда двух коррлированных бессрочных фьючерсов, а не направление. Default off;
+  # live-путь/LIVE-guard не затрагиваются. Вердикт — только по OOS.
+  pairs:
+    enabled: ${BT_PAIRS_ENABLED:false}
+    leg-a: ${BT_PAIRS_LEG_A:CNYRUBF}
+    leg-b: ${BT_PAIRS_LEG_B:USDRUBF}
+    timeframe: ${BT_PAIRS_TIMEFRAME:MINUTE_10}
+    lookback-bars: ${BT_PAIRS_LOOKBACK_BARS:240}
+    entry-z: ${BT_PAIRS_ENTRY_Z:2.0}
+    exit-z: ${BT_PAIRS_EXIT_Z:0.5}
+    stop-z: ${BT_PAIRS_STOP_Z:4.0}
+    max-hold-bars: ${BT_PAIRS_MAX_HOLD_BARS:0}
+    oos-fraction: ${BT_PAIRS_OOS_FRACTION:0.30}
+    capital-slice: ${BT_PAIRS_CAPITAL_SLICE:0.50}
+    initial-capital: ${BT_PAIRS_INITIAL_CAPITAL:100000}
+    use-funding-history: ${BT_PAIRS_USE_FUNDING_HISTORY:true}
+    beta-min: ${BT_PAIRS_BETA_MIN:0.10}
+
+  # Cross-sectional momentum + carry портфель фьючерсов (research, 2026-10, docs/26):
+  # ранжирование юниверса по моментуму с funding-тилтом, долларово-нейтрально. Default off;
+  # live-путь/LIVE-guard не затрагиваются. Вердикт — по OOS/WFA-агрегату.
+  portfolio:
+    enabled: ${BT_PORTFOLIO_ENABLED:false}
+    universe: ${BT_PORTFOLIO_UNIVERSE:CNYRUBF,USDRUBF,EURRUBF,GLDRUBF,IMOEXF}
+    timeframe: ${BT_PORTFOLIO_TIMEFRAME:MINUTE_10}
+    lookback-bars: ${BT_PORTFOLIO_LOOKBACK_BARS:1680}
+    skip-bars: ${BT_PORTFOLIO_SKIP_BARS:0}
+    reversal-enabled: ${BT_PORTFOLIO_REVERSAL_ENABLED:false}
+    rebalance-bars: ${BT_PORTFOLIO_REBALANCE_BARS:420}
+    long-count: ${BT_PORTFOLIO_LONG_COUNT:1}
+    short-count: ${BT_PORTFOLIO_SHORT_COUNT:1}
+    oos-fraction: ${BT_PORTFOLIO_OOS_FRACTION:0.30}
+    capital-slice: ${BT_PORTFOLIO_CAPITAL_SLICE:1.0}
+    momentum-weight: ${BT_PORTFOLIO_MOMENTUM_WEIGHT:1.0}
+    carry-weight: ${BT_PORTFOLIO_CARRY_WEIGHT:0.0}
+    carry-lookback-days: ${BT_PORTFOLIO_CARRY_LOOKBACK_DAYS:5}
+    min-universe: ${BT_PORTFOLIO_MIN_UNIVERSE:3}
+    vol-scaling-enabled: ${BT_PORTFOLIO_VOL_SCALING_ENABLED:false}
+    vol-lookback-bars: ${BT_PORTFOLIO_VOL_LOOKBACK_BARS:420}
+    vol-target-enabled: ${BT_PORTFOLIO_VOL_TARGET_ENABLED:false}
+    vol-target-annualized: ${BT_PORTFOLIO_VOL_TARGET_ANNUALIZED:0.15}
+    vol-target-bars-per-year: ${BT_PORTFOLIO_VOL_TARGET_BARS_PER_YEAR:21000}
+    initial-capital: ${BT_PORTFOLIO_INITIAL_CAPITAL:1000000}
+    use-funding-history: ${BT_PORTFOLIO_USE_FUNDING_HISTORY:true}
 
 leverage:
   enabled: ${LEVERAGE_ENABLED:true}
@@ -607,6 +688,30 @@ instruments:
       go: "2264"
       leverage: "${leverage.user-leverage}"
       baseAsset: "IMOEX"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "SBERF"
+      type: "FUTURES"
+      lotSize: 100 # LOTVOLUME MOEX ISS (100 акций SBER в контракте, сверено 2026-10-18)
+      priceStep: "0.01"
+      priceStepCost: "1.0"
+      go: "4901.15" # INITIALMARGIN MOEX ISS (SIM/fallback)
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "SBER"
+      quoteAsset: "RUB"
+      brokerCommissionRub: "1.0"
+      exchangeFeeRub: "0.5"
+      slippageBps: "1.0"
+    - ticker: "GAZPF"
+      type: "FUTURES"
+      lotSize: 100 # LOTVOLUME MOEX ISS (100 акций GAZP в контракте, сверено 2026-10-18)
+      priceStep: "0.01" # MINSTEP MOEX ISS (было 0.001 — в 10 раз мельче реального шага)
+      priceStepCost: "1.0"
+      go: "1828.06" # INITIALMARGIN MOEX ISS (SIM/fallback)
+      leverage: "${leverage.user-leverage}"
+      baseAsset: "GAZP"
       quoteAsset: "RUB"
       brokerCommissionRub: "1.0"
       exchangeFeeRub: "0.5"
@@ -885,3 +990,8 @@ funding:
   # спец-клиринги), yyyy-MM-dd через запятую. Гос. праздники РФ исключаются
   # автоматически (MoexHolidayCalendar); здесь — только переносы/спец. дни.
   holidays: ${FUNDING_HOLIDAYS:}
+
+
+
+
+

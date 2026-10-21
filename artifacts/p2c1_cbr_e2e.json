@@ -1,0 +1,114 @@
+{
+  "task": "P2 c1 (free part) — CBR key rate + RUONIA daily series",
+  "plan": "18_10_2026.md",
+  "date": "2026-10-18",
+  "git_head": "faedb90",
+  "status": "DONE (free part) — e2e verified on live stack",
+
+  "source": {
+    "endpoint": "POST https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx",
+    "content_type": "text/xml; charset=utf-8",
+    "soap_actions": {
+      "key_rate": "http://web.cbr.ru/KeyRate",
+      "ruonia": "http://web.cbr.ru/Ruonia"
+    },
+    "response_format": "diffgram; KeyRate/KR{DT,Rate} (descending from ToDate); Ruonia/ro{D0,ruo,vol} (ascending from fromDate)",
+    "dead_sources_404": [
+      "https://www.cbr.ru/hd_base/XML_key_rate_daily.asp",
+      "https://www.cbr.ru/hd_base/XML_ruonia.asp"
+    ],
+    "note": "SOAP is the only working path; both ASP endpoints return 404"
+  },
+
+  "prerequisite_truststore": {
+    "problem": "JVM fails with PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException",
+    "cause": "www.cbr.ru sends ONLY the leaf certificate (CN=*.cbr.ru); Windows completes the chain via AIA from the OS store, the JVM does not. JDK cacerts (160 entries) has only the 2015 HARICA roots.",
+    "chain": [
+      "leaf:         CN=*.cbr.ru  (issuer CN=HARICA DV TLS RSA)",
+      "intermediate: CN=HARICA DV TLS RSA, O=Hellenic Academic and Research Institutions CA, C=GR (missing in JDK cacerts)",
+      "root:         CN=HARICA TLS RSA Root CA 2021, O=Hellenic Academic and Research Institutions CA, C=GR (missing in JDK cacerts)"
+    ],
+    "fix": "scripts/make_cbr_truststore.ps1 — derives the live TLS chain, copies $JAVA_HOME/lib/security/cacerts and imports all non-leaf elements; launch with -Djavax.net.ssl.trustStore=<path> -Djavax.net.ssl.trustStorePassword=changeit",
+    "observed_without_fix": "GET /api/v1/macro/rates-history?days=730 -> loaded=0, keyRates=0, ruonia=0 (fail-soft) + WARN 'CBR SOAP KeyRate fetch failed'",
+    "impact_on_live": "none — macro.live-rate-enabled=false by default; MacroContextService falls back to static macro.cbr-rate"
+  },
+
+  "protocol": [
+    "TRUNCATE cbr_rates_history  (count=0)",
+    "scripts/make_cbr_truststore.ps1  (truststore rebuilt from scratch)",
+    "java -Djavax.net.ssl.trustStore=build\\cbr-certs\\cbr-truststore.jks -jar build/libs/trading-bot-2.0.0.jar",
+    "POST /api/v1/auth/login {admin} -> accessToken",
+    "GET /api/v1/macro/rates-history?days=730",
+    "GET /api/v1/macro/rates-history/status",
+    "GET /api/v1/macro/rates-history/series?days=365",
+    "re-run GET /api/v1/macro/rates-history?days=730 (idempotency)",
+    "psql checks: counts, coverage, distinct key rates, RUONIA stats"
+  ],
+
+  "runs": {
+    "from_empty_table": {
+      "elapsed_sec": 4.38,
+      "from": "2024-10-18",
+      "to": "2026-10-18",
+      "days": 730,
+      "loaded": 508,
+      "upserted": 508,
+      "keyRates": 508,
+      "ruonia": 491
+    },
+    "repeat_run_idempotent": {
+      "loaded": 508,
+      "upserted": 508,
+      "keyRates": 508,
+      "ruonia": 491,
+      "rows_after": 508
+    },
+    "cbr_warnings_in_log": 0
+  },
+
+  "db_after": {
+    "rows": 508,
+    "key_rate_not_null": 508,
+    "ruonia_not_null": 491,
+    "min_rate_date": "2024-10-18",
+    "max_rate_date": "2026-10-16",
+    "latest_key_rate": 14.0,
+    "ruonia_avg": 17.344,
+    "ruonia_min": 13.57,
+    "ruonia_max": 22.08
+  },
+
+  "key_rate_path": [
+    { "key_rate": 19.0,    "first_seen": "2024-10-18", "last_seen": "2024-10-25", "days": 6 },
+    { "key_rate": 21.0,    "first_seen": "2024-10-28", "last_seen": "2025-06-06", "days": 155 },
+    { "key_rate": 20.0,    "first_seen": "2025-06-09", "last_seen": "2025-07-25", "days": 34 },
+    { "key_rate": 18.0,    "first_seen": "2025-07-28", "last_seen": "2025-09-12", "days": 35 },
+    { "key_rate": 17.0,    "first_seen": "2025-09-15", "last_seen": "2025-10-24", "days": 30 },
+    { "key_rate": 16.5,    "first_seen": "2025-10-27", "last_seen": "2025-12-19", "days": 40 },
+    { "key_rate": 16.0,    "first_seen": "2025-12-22", "last_seen": "2026-02-13", "days": 36 },
+    { "key_rate": 15.5,    "first_seen": "2026-02-16", "last_seen": "2026-03-20", "days": 24 },
+    { "key_rate": 15.0,    "first_seen": "2026-03-23", "last_seen": "2026-04-24", "days": 25 },
+    { "key_rate": 14.5,    "first_seen": "2026-04-27", "last_seen": "2026-06-19", "days": 38 },
+    { "key_rate": 14.25,   "first_seen": "2026-06-22", "last_seen": "2026-07-24", "days": 25 },
+    { "key_rate": 14.0,    "first_seen": "2026-07-27", "last_seen": "2026-10-16", "days": 60 }
+  ],
+
+  "observations": [
+    "Policy path fully reconstructed: 19% -> 21% peak (2024-10-28, 155 trading days) -> 12 consecutive easings -> 14.0% current (since 2026-07-27).",
+    "Static macro.cbr-rate = 16.0 (application.yml) is STALE: actual key rate is 14.00% since 2026-07-27 (last row 2026-10-16).",
+    "RUONIA coverage 491/508 (~96.7%): the last date (D) has key rate but no RUONIA (published on D+1) — expected, fields are nullable.",
+    "Idempotent: repeat backfill leaves exactly 508 rows; COALESCE-based upsert backfills missing RUONIA cells without overwriting known values.",
+    "Row count 508 vs calendar 730 days: series contains business days only (CBR does not publish on weekends)."
+  ],
+
+  "artifacts": {
+    "series_csv": "artifacts/cbr_rates_730d.csv (509 lines = header + 508 rows)",
+    "truststore_script": "scripts/make_cbr_truststore.ps1",
+    "migration": "src/main/resources/db/changelog/changes/040-cbr-rates-history.sql"
+  },
+
+  "next_steps": [
+    "Decision: flip macro.live-rate-enabled=true? This CHANGES the trading contour (MacroContext of LLM agents) — requires explicit user decision, not part of P2 c1.",
+    "P2 c1 remains partial: rg.ru paid news layer (news.enabled=false) needs URL/subscription key from the user."
+  ]
+}

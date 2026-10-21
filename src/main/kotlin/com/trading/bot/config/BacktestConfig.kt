@@ -69,12 +69,40 @@ import java.math.BigDecimal
  *   (research, паттерн funding-veto; null/0 = выключено — позиция держится до SL/TP).
  *   Задаётся в `bt.max-hold-bars` (env `BT_MAX_HOLD_BARS`) или query-оверрайдом
  *   `maxHoldBars` на /backtest /validate /robustness /holdout /deployment-gate.
+ * @property fundingWindowEnabled research P4 (docs/27-funding-window-capture.md):
+ *   funding-window capture. Движок САМ выбирает сторону по последней ИЗВЕСТНОЙ ставке
+ *   `funding_history` (клиринг строго раньше даты бара — без lookahead): SHORT при
+ *   `r >= +fundingWindowShortThresholdRub`, LONG при `r <= –fundingWindowLongThresholdRub`,
+ *   иначе FLAT. Позиция удерживается через клиринги (закрытие/разворот — на открытии
+ *   бара смены режима), детерминированный генератор сигналов и входные фильтры
+ *   обходятся. Задаётся `bt.funding-window-enabled` (env `BT_FUNDING_WINDOW_ENABLED`);
+ *   по умолчанию false — live-путь не затрагивается.
+ * @property fundingWindowLongThresholdRub порог LONG (руб/контракт/клиринг): LONG при `r <= –порога`.
+ * @property fundingWindowShortThresholdRub порог SHORT (руб/контракт/клиринг): SHORT при `r >= +порога`.
+ * @property fundingWindowBlockOnUnknown нет ставки funding до даты бара → FLAT (fail-closed);
+ *   при false — состояние позиции не меняется (паттерн funding-veto.block-on-unknown).
+ * @property fundingWindowRandomSide placebo-контроль P4 (docs/27 §7.2): те же дни в рынке,
+ *   но сторона — детерминированный псевдослучайный поток по (ticker, дата), а не знак ставки.
+ * @property fundingDirectionAware research P4 (docs/27): направленный funding в P&L —
+ *   LONG платит положительную ставку и получает при отрицательной, SHORT — наоборот
+ *   (модель портфельного движка [com.trading.bot.backtest.portfolio.PortfolioMomentumEngine]).
+ *   При false — историческая direction-agnostic модель (ставка списывается обеим
+ *   сторонам; воспроизводимость прежних артефактов). LIVE-контур не меняется.
  * @property futuresLiquidationSimulation симулировать принудительную ликвидацию
  *   фьючерсной позиции на уровне ликвидационной цены (паритет live-monitorу
  *   [com.trading.bot.application.FuturesPositionMonitor]). При true позиция,
  *   чей внутрисвечной диапазон преодолел уровень ликвидации, закрывается по цене
  *   ликвидации (LIQUIDATION) с наивысшим приоритетом — до SL/TP. При false —
  *   прежнее поведение без ликвидации (overestimates удержания).
+ * @property executionPassiveFillEnabled research (PLAN-001 §5.1, a2): пассивное
+ *   (maker) исполнение входов и рыночных выходов вместо taker. Покупка по цене
+ *   bid = mid − halfSpread, продажа по ask = mid + halfSpread
+ *   ([com.trading.bot.backtest.SimulatedExecution.passiveFill]; halfSpread —
+ *   оценка из диапазона свечи [SimulatedExecution.estimateHalfSpread]). Защитные
+ *   ордера (SL/TP/ликвидация) остаются taker. Тот же набор сделок, изменяется
+ *   только цена исполнения — изолирует эффект издержек (3-11 bps) на OOS-edge.
+ *   По умолчанию false (taker/legacy), задаётся `bt.execution-passive-fill-enabled`
+ *   (env `BT_EXECUTION_PASSIVE_FILL_ENABLED`).
  */
 @Component
 @ConfigurationProperties(prefix = "bt")
@@ -97,6 +125,9 @@ class BacktestConfig {
     var adaptiveConfidenceThreshold: Double = 0.60
     var futuresLiquidationSimulation: Boolean = true
 
+    /** research a2 (PLAN-001 §5.1): пассивное (maker) исполнение вместо taker. */
+    var executionPassiveFillEnabled: Boolean = false
+
     /** Funding-veto research-фильтр: false по умолчанию (live управляется trading.funding-veto.enabled). */
     var fundingVetoEnabled: Boolean = false
     var fundingVetoLongThresholdRub: Double = 2.0
@@ -105,6 +136,26 @@ class BacktestConfig {
 
     /** Max-hold research (выход по времени удержания в барах): 0 = выключено (держать до SL/TP). */
     var maxHoldBars: Int = 0
+
+    /** Funding-window capture research P4 (docs/27): false по умолчанию, live не затрагивает. */
+    var fundingWindowEnabled: Boolean = false
+    var fundingWindowLongThresholdRub: Double = 2.0
+    var fundingWindowShortThresholdRub: Double = 2.0
+    var fundingWindowBlockOnUnknown: Boolean = true
+
+    /**
+     * Placebo-контроль P4 (docs/27 §7.2): те же «дни в рынке» (по |ставке| >= порога), но
+     * сторона выбирается детерминированным псевдослучайным потоком по (ticker, дата), а не
+     * знаком ставки. Нужен, чтобы отличить доход от самой ставки от ценового шума
+     * пребывания в рынке. false по умолчанию — основной режим (сторона по ставке).
+     */
+    var fundingWindowRandomSide: Boolean = false
+
+    /**
+     * Направленный funding в P&L бэктеста (research P4, docs/27): false — историческая
+     * direction-agnostic модель (воспроизводимость прежних артефактов).
+     */
+    var fundingDirectionAware: Boolean = false
 
     /** Доля КОНЦА истории, резервируемая под финальный независимый holdout (0..1). */
     var holdoutFraction: Double = 0.20

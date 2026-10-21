@@ -1,0 +1,7 @@
+"Config","Verdict","OOS_PF","OOS_RetPct","OOS_Sharpe","OOS_MDD_Pct","OOS_Trades","OOS_PNoEdge","Dev_Cons","Dev_Robust","Dev_AggPF","Dev_Bars","Dev_Folds","Dev_Verdict","Secs"
+"d1 U13 12-1 L249 S21 rb21","REJECTED (PF<1.3, trades<30, P>=0.05, cons<0.6)","0,913","-7,28","-0,22","26,16","16","0,5345","0","False","0","345","0","INCONCLUSIVE (bars 345 < 2344 for 8 folds)","1"
+"d1 U15 12-1 L249 S21 rb21","REJECTED (PF<1.3, trades<30, P>=0.05, cons<0.6)","0,913","-7,28","-0,22","26,16","16","0,5345","0","False","0","345","0","INCONCLUSIVE (bars 345 < 2344 for 8 folds)","1"
+"d1 U13 maxexpr L40 S1 rb1","INCONCLUSIVE (P>=0.05, cons<0.6)","1,333","34,55","1,69","14,82","298","0,0505","0","False","0","345","0","INCONCLUSIVE (bars 345 < 352 for 8 folds)","1"
+"d1 U15 maxexpr L40 S1 rb1","INCONCLUSIVE (P>=0.05, cons<0.6)","1,336","35","1,7","14,87","298","0,0515","0","False","0","345","0","INCONCLUSIVE (bars 345 < 352 for 8 folds)","1"
+"d1 U13 2-1 L40 S20 rb21","REJECTED (PF<1.3, trades<30, P>=0.05, cons<0.6)","0,841","-0,97","0,11","22,71","16","0,6315","0","False","0","345","0","INCONCLUSIVE (bars 345 < 664 for 8 folds)","0"
+"d1 U15 2-1 L40 S20 rb21","REJECTED (PF<1.3, trades<30, P>=0.05, cons<0.6)","0,841","-0,93","0,1","21,77","16","0,6315","0","False","0","345","0","INCONCLUSIVE (bars 345 < 664 for 8 folds)","0"

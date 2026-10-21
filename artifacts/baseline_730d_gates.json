@@ -1,0 +1,65 @@
+{
+    "ticker":  "CNYRUBF",
+    "timeframe":  "MINUTE_10",
+    "days":  730,
+    "status":  "REJECTED",
+    "liveAllowed":  false,
+    "liveApprovalActive":  false,
+    "researchMode":  true,
+    "confirmedForProduction":  false,
+    "frozenConfidenceThreshold":  0.6,
+    "checks":  [
+                   {
+                       "key":  "backtest",
+                       "label":  "???°?·????N??? backtest",
+                       "passed":  false,
+                       "detail":  "Sharpe=0,244 MDD=0,004 PF=1,062 trades=58"
+                   },
+                   {
+                       "key":  "walk_forward",
+                       "label":  "Walk-forward OOS",
+                       "passed":  false,
+                       "detail":  "consistency=0,375 oosTrades=56 oosSharpe=-1,619 oosPF=0,584"
+                   },
+                   {
+                       "key":  "walk_forward_sample",
+                       "label":  "????N?N??°N???N?????N?N?N? OOS-??N??±??N????? WFA",
+                       "passed":  false,
+                       "detail":  "need \u003e= 100, got 56"
+                   },
+                   {
+                       "key":  "consistency",
+                       "label":  "??????N???N?N??µ??N?????N?N?N? N????»??????",
+                       "passed":  false,
+                       "detail":  "need \u003e= 0,600, got 0,375"
+                   },
+                   {
+                       "key":  "edge_significance",
+                       "label":  "??N??°N?. ?·???°N???????N?N?N? edge (dev-WFA OOS)",
+                       "passed":  false,
+                       "detail":  "probabilityOfNoEdge=0,948 significant=false"
+                   },
+                   {
+                       "key":  "holdout",
+                       "label":  "?¤?????°?»N???N??? holdout",
+                       "passed":  false,
+                       "detail":  "holdoutReturn=-0,001 trades=24 passable=false"
+                   },
+                   {
+                       "key":  "holdout_sample",
+                       "label":  "????N?N??°N???N?????N?N?N? holdout-??N??±??N?????",
+                       "passed":  false,
+                       "detail":  "need \u003e= 30, got 24"
+                   },
+                   {
+                       "key":  "robustness",
+                       "label":  "Monte Carlo + stress",
+                       "passed":  false,
+                       "detail":  "mcRobust=false p5=-0,007 pLoss=0,407 stressFailed=5"
+                   }
+               ],
+    "timestamp":  "2026-10-08T11:59:08.079086200",
+    "PSComputerName":  "localhost",
+    "RunspaceId":  "f7e92c84-5c59-4f84-86ac-23cc32b27ad4",
+    "PSShowComputerName":  false
+}

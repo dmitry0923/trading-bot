@@ -468,6 +468,145 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `passive fill improves long equity versus taker on flat candles`() =
+        runBlocking {
+            // Research a2 (PLAN-001 §5.1): тот же вход/сделка, но maker-цена на своей
+            // стороне спреда. На плоской свече (high 101, low 99 → halfSpread 0.5)
+            // taker покупает по 100.5 и продаёт по 99.5 (убыток), maker — по 99.5/100.5.
+            val takerEngine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val makerEngine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    backtestConfig =
+                        BacktestConfig().apply {
+                            executionPassiveFillEnabled = true
+                        },
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val takerResult = takerEngine.simulate("SBER", flatCandles())
+            val makerResult = makerEngine.simulate("SBER", flatCandles())
+
+            assertTrue(takerResult.totalTrades > 0, "fixture must produce a trade")
+            assertEquals(
+                takerResult.totalTrades,
+                makerResult.totalTrades,
+                "пассивное исполнение не должно менять набор сделок",
+            )
+            assertTrue(
+                makerResult.totalReturn > takerResult.totalReturn,
+                "maker-вход ниже mid должен улучшить доходность: taker=${takerResult.totalReturn} maker=${makerResult.totalReturn}",
+            )
+        }
+
+    @Test
+    fun `passive fill query override beats config default`() =
+        runBlocking {
+            // Query-оверрайд (`executionPassiveFill`) должен перекрывать bt.-дефолт:
+            // simulate(passiveFillEnabled = true) на конфиге без флага обязан дать
+            // тот же результат, что и конфиг с включённым maker-исполнением.
+            val makerEngine =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    backtestConfig =
+                        BacktestConfig().apply {
+                            executionPassiveFillEnabled = true
+                        },
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                )
+            val overrideResult =
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                ).simulate("SBER", flatCandles(), passiveFillEnabled = true)
+
+            val makerResult = makerEngine.simulate("SBER", flatCandles())
+            assertEquals(makerResult.totalReturn, overrideResult.totalReturn, 1e-9)
+            assertEquals(makerResult.totalTrades, overrideResult.totalTrades)
+        }
+
+    @Test
+    fun `passive fill mirrors taker slippage for futures ignoring candle range`() {
+        // Regression (PLAN-001 a2): maker-филл обязан зеркалить taker-филл
+        // относительно reference и использовать ТУ ЖЕ базу спреда. Раньше maker
+        // брал диапазон свечи (estimateHalfSpread), а фьючерсный taker — bps/тики,
+        // что завышало выгоду maker в разы. Свеча с огромным диапазоном
+        // (range/4 = 50) не должна влиять на филл фьючерса.
+        val instruments =
+            InstrumentsConfig().apply {
+                instruments =
+                    listOf(
+                        InstrumentsConfig.InstrumentSpec(
+                            ticker = "SIF",
+                            type = "FUTURES",
+                            lotSize = 1,
+                            priceStep = BigDecimal("0.01"),
+                            priceStepCost = BigDecimal("10.0"),
+                            go = BigDecimal("1000"),
+                            leverage = BigDecimal("1.0"),
+                            baseAsset = "USD",
+                            slippageBps = BigDecimal("1.0"),
+                        ),
+                    )
+            }
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = instruments,
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+        val spec = instruments.find("SIF")
+        val reference = BigDecimal("100")
+        val candle =
+            Candle(
+                ticker = "SIF",
+                timeframe = "MINUTE_10",
+                openPrice = reference,
+                highPrice = BigDecimal("300"),
+                lowPrice = BigDecimal("-100"),
+                closePrice = reference,
+                volume = 1L,
+                time = LocalDateTime.now(),
+            )
+
+        val taker =
+            engine.executionFill(
+                instrument = spec,
+                ticker = "SIF",
+                reference = reference,
+                isBuy = true,
+                slippageMultiplier = 1.0,
+                candle = candle,
+                passiveFillEnabled = false,
+            )
+        val maker =
+            engine.executionFill(
+                instrument = spec,
+                ticker = "SIF",
+                reference = reference,
+                isBuy = true,
+                slippageMultiplier = 1.0,
+                candle = candle,
+                passiveFillEnabled = true,
+            )
+
+        assertTrue(taker.price > reference, "taker buy must pay above reference")
+        assertTrue(maker.price < reference, "maker buy must be below reference")
+        assertEquals(
+            0,
+            (taker.price - reference).compareTo(reference - maker.price),
+            "maker must mirror taker around reference (taker=${taker.price} maker=${maker.price})",
+        )
+        assertTrue(
+            taker.price - reference < BigDecimal("1"),
+            "futures slippage must come from bps/tick, not candle range/4: taker=${taker.price}",
+        )
+    }
+
+    @Test
     fun `initial capital from config scales equity proportionally`() {
         val base = runBlocking { engine.simulate("SBER", trendingCandles()) }
         val big =
@@ -1119,6 +1258,221 @@ class BacktestEngineTest {
         assertTrue(result.totalTrades > 0, "выключенный фильтр не должен блокировать сделки")
     }
 
+    // ------------------------------------------------------------------
+    // Research P4 (docs/27-funding-window-capture): funding-window capture.
+    // Сторона выбирается ПО СТАВКЕ последнего клиринга (strictly before bar date,
+    // lowerEntry — без lookahead); детерминированный генератор сигналов обходится.
+    // ------------------------------------------------------------------
+
+    /** Плоские свечи CNYRUBF (high=low=open=close): SL/TP не задеваются, P&L определяется funding. */
+    private fun flatCnyCandles(
+        count: Int = 200,
+        // Пн 12.01.2026 — рабочий день (праздники 1–8 янв вне серии, иначе клиринги нет).
+        start: LocalDateTime = LocalDateTime.of(2026, 1, 12, 10, 0),
+        price: BigDecimal = BigDecimal("12.5"),
+    ): List<Candle> =
+        (0 until count).map { i ->
+            Candle(
+                ticker = "CNYRUBF",
+                timeframe = "MINUTE_10",
+                openPrice = price,
+                highPrice = price,
+                lowPrice = price,
+                closePrice = price,
+                volume = 1000L,
+                time = start.plusMinutes(10L * i),
+            )
+        }
+
+    private fun fundingWindowEngine(
+        repo: FundingHistoryRepository,
+        directionAware: Boolean = true,
+        meterRegistry: SimpleMeterRegistry? = null,
+        generator: BacktestSignalGenerator = ConstantSignalGenerator(StrategyAction.HOLD),
+        randomSide: Boolean = false,
+    ): BacktestEngine =
+        BacktestEngine(
+            CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+            meterRegistry = meterRegistry,
+            backtestConfig =
+                BacktestConfig().apply {
+                    fundingWindowEnabled = true
+                    fundingWindowLongThresholdRub = 2.0
+                    fundingWindowShortThresholdRub = 2.0
+                    fundingWindowBlockOnUnknown = true
+                    fundingWindowRandomSide = randomSide
+                    fundingDirectionAware = directionAware
+                },
+            signalGenerator = generator,
+            fundingHistoryRepository = repo,
+        )
+
+    @Test
+    fun `funding window opens short on positive rate and direction-aware funding credits short`() {
+        val series = flatCnyCandles()
+        // Ставка 30.0 (>= порога 2.0) на все даты серии + запись строго раньше первого бара.
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+        val awareEngine = fundingWindowEngine(repo, directionAware = true)
+
+        val aware = runBlocking { awareEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        val awareTrade = aware.trades[0]
+        assertEquals(1, aware.totalTrades, "при ставке выше порога открывается ровно одна позиция")
+        assertEquals(PositionDirection.SHORT, awareTrade.direction, "положительная ставка → SHORT (short платит лонгу)")
+        assertTrue(
+            awareTrade.funding < 0.0,
+            "направленный funding: SHORT получает ставку (funding < 0), got ${awareTrade.funding}",
+        )
+        assertTrue(aware.totalReturn > 0.0, "кредит funding покрывает комиссию/slippage → pnl > 0, got ${aware.totalReturn}")
+
+        // Контроль legacy (direction-aware=false): та же ставка СПИСЫВАЕТСЯ обеим сторонам.
+        val legacyEngine = fundingWindowEngine(repo, directionAware = false)
+        val legacy = runBlocking { legacyEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        val legacyTrade = legacy.trades[0]
+        assertEquals(1, legacy.totalTrades)
+        assertTrue(
+            legacyTrade.funding > 0.0,
+            "legacy-модель списывает ставку SHORT-позиции (funding > 0), got ${legacyTrade.funding}",
+        )
+        assertTrue(legacy.totalReturn < 0.0, "legacy: списанный funding → pnl < 0, got ${legacy.totalReturn}")
+    }
+
+    @Test
+    fun `funding window opens long on negative rate`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("-30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("-30.0"))
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(1, result.totalTrades, "отрицательная ставка → ровно одна позиция")
+        assertEquals(PositionDirection.LONG, result.trades[0].direction, "ставка <= −порога → LONG")
+    }
+
+    @Test
+    fun `funding window stays flat when rate below threshold`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("1.0"), LocalDate.of(2026, 1, 9) to BigDecimal("1.0"))
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(0, result.totalTrades, "ставка 1.0 < порога 2.0 → FLAT, входов нет")
+    }
+
+    @Test
+    fun `funding window blocks unknown rate fail-closed and counts metric`() {
+        val meterRegistry = SimpleMeterRegistry()
+        val emptyRepo = fundingRepoReturning()
+        val windowEngine = fundingWindowEngine(emptyRepo, meterRegistry = meterRegistry)
+
+        val candles = flatCnyCandles()
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", candles, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(0, result.totalTrades, "нет ряда funding + block-on-unknown → fail-closed FLAT")
+        val unknown = meterRegistry.counter("bt_funding_window_unknown_total", "ticker", "CNYRUBF").count()
+        assertTrue(unknown > 0, "метрика unknown должна увеличиваться, got $unknown")
+    }
+
+    @Test
+    fun `funding window bypasses deterministic signal generator when enabled`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+        // HOLD-генератор: без P4 сделок не было бы вовсе; включённый P4-блок его обходит.
+        val holdEngine = fundingWindowEngine(repo)
+
+        val withFlagOn = runBlocking { holdEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(1, withFlagOn.totalTrades, "включённый P4-блок входит по ставке, игнорируя HOLD-сигнал")
+
+        val flagOffConfig =
+            BacktestConfig().apply {
+                fundingWindowEnabled = false
+                fundingWindowLongThresholdRub = 2.0
+                fundingWindowShortThresholdRub = 2.0
+            }
+        val flagOffEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig = flagOffConfig,
+                signalGenerator = ConstantSignalGenerator(StrategyAction.HOLD),
+                fundingHistoryRepository = repo,
+            )
+
+        val withFlagOff = runBlocking { flagOffEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(0, withFlagOff.totalTrades, "выключенный флаг: P4 не работает, HOLD-генератор не входит")
+    }
+
+    @Test
+    fun `funding window exits position when rate falls below threshold`() {
+        val series = flatCnyCandles()
+        // Бары 12 янв видят ставку 9 янв (30.0 → SHORT); бары 13 янв видят ставку 12 янв (1.0 → FLAT).
+        val repo =
+            fundingRepoReturning(
+                LocalDate.of(2026, 1, 9) to BigDecimal("30.0"),
+                LocalDate.of(2026, 1, 12) to BigDecimal("1.0"),
+            )
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(1, result.totalTrades, "позиция открывается и закрывается один раз")
+        assertEquals("FUNDING_WINDOW_EXIT", result.trades[0].closeReason, "ослабление ставки → выход по фазе, не по SL/TP")
+        assertEquals(PositionDirection.SHORT, result.trades[0].direction)
+    }
+
+    @Test
+    fun `funding window flips position when target side changes`() {
+        val series = flatCnyCandles()
+        // Бары 12 янв: ставка 9 янв = +30.0 → SHORT; бары 13 янв: ставка 12 янв = −30.0 → LONG.
+        val repo =
+            fundingRepoReturning(
+                LocalDate.of(2026, 1, 9) to BigDecimal("30.0"),
+                LocalDate.of(2026, 1, 12) to BigDecimal("-30.0"),
+            )
+        val windowEngine = fundingWindowEngine(repo)
+
+        val result = runBlocking { windowEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(2, result.totalTrades, "разворот: закрытие SHORT + открытие LONG")
+        assertEquals("FUNDING_WINDOW_FLIP", result.trades[0].closeReason, "SHORT закрыт сменой цели")
+        assertEquals(PositionDirection.SHORT, result.trades[0].direction)
+        assertEquals(PositionDirection.LONG, result.trades[1].direction, "после разворота удерживается LONG до конца периода")
+    }
+
+    @Test
+    fun `funding window random side placebo keeps in-market days but ignores rate sign`() {
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+
+        // Основной режим: сторона по знаку ставки (+30 → SHORT на обе даты серии) → 1 сделка.
+        val signEngine = fundingWindowEngine(repo)
+        val signResult = runBlocking { signEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+        assertEquals(1, signResult.totalTrades, "режим по ставке: одна SHORT-позиция на обе даты")
+        assertEquals(PositionDirection.SHORT, signResult.trades[0].direction)
+
+        // Placebo §7.2: те же дни в рынке (|ставка| >= порога), но сторона — по (ticker, дата).
+        val placeboEngine = fundingWindowEngine(repo, randomSide = true)
+        val placebo = runBlocking { placeboEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+
+        assertEquals(2, placebo.totalTrades, "соседние даты дают разные стороны → разворот на границе дня")
+        assertEquals("FUNDING_WINDOW_FLIP", placebo.trades[0].closeReason, "разворот placebo-стороны")
+        assertTrue(
+            placebo.trades[0].direction != placebo.trades[1].direction,
+            "placebo игнорирует знак ставки: стороны соседних дней противоположны",
+        )
+        // Направленный funding согласован с фактической стороной: SHORT получает (+30 → funding < 0), LONG платит.
+        placebo.trades.forEach { trade ->
+            val shortCredits = trade.direction == PositionDirection.SHORT
+            assertTrue(
+                (trade.funding < 0.0) == shortCredits,
+                "funding ${trade.funding} должен соответствовать стороне ${trade.direction}",
+            )
+        }
+    }
+
     private class BtRecordingModel(
         private val probability: Double,
     ) : MlModel {
@@ -1466,9 +1820,13 @@ class BacktestEngineTest {
 
         val result = runBlocking { buyEngine.simulate("SBER", candles) }
 
-        // Реалистичные спреды шире фиксированных 0.1%: повторный вход на баре 2
-        // (fill 102.125) тоже стоп-аутится на баре 3 → STOP ×2 + END_OF_PERIOD.
-        assertEquals(3, result.totalTrades, "два стопа по SL и закрытие конца периода")
+        // SL/TP выводятся из ЦЕНЫ РЕШЕНИЯ (open входа), как в live
+        // (DecisionEngine: SL/TP от snapshot-цены, а не от фактического филла).
+        // Поэтому при повторном входе на баре 2 стоп (98.98 = 101.0×0.98) не
+        // пробивается низом бара 3 (99.5) — в отличие от старой fill-based
+        // привязки (102.125×0.98 = 100.08). Итог: один стоп по SL + закрытие
+        // конца периода = 2 сделки.
+        assertEquals(2, result.totalTrades, "один стоп по SL и закрытие конца периода")
         assertEquals(candles.size, result.equityCurve.size, "по одной точке на свечу без дубликатов на закрытии")
     }
 

@@ -1,6 +1,7 @@
 package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.SlaTimers
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.microstructure.MicropriceCalculator
 import com.trading.bot.domain.microstructure.ObiCalculator
@@ -660,8 +661,12 @@ class AlorClient(
         operation: String,
         startMs: Long,
     ) {
-        meterRegistry
-            .timer("alor.api.latency", Tags.of("operation", operation))
-            .record(System.currentTimeMillis() - startMs, TimeUnit.MILLISECONDS)
+        SlaTimers.record(
+            meterRegistry,
+            "alor.api.latency",
+            Tags.of("operation", operation),
+            System.currentTimeMillis() - startMs,
+            TimeUnit.MILLISECONDS,
+        )
     }
 }

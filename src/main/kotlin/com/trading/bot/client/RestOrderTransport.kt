@@ -1,6 +1,7 @@
 package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.SlaTimers
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.service.LiveFrozenStrategyResolver
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -336,8 +337,12 @@ class RestOrderTransport(
         operation: String,
         startMs: Long,
     ) {
-        meterRegistry
-            .timer("alor.api.latency", Tags.of("operation", operation))
-            .record(System.currentTimeMillis() - startMs, TimeUnit.MILLISECONDS)
+        SlaTimers.record(
+            meterRegistry,
+            "alor.api.latency",
+            Tags.of("operation", operation),
+            System.currentTimeMillis() - startMs,
+            TimeUnit.MILLISECONDS,
+        )
     }
 }

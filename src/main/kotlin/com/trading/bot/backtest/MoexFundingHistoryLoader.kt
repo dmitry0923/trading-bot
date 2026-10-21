@@ -80,10 +80,15 @@ class MoexFundingHistoryLoader(
                     start,
                     ticker,
                 )
-            if (page.isEmpty()) break
-            records.addAll(page)
-            start += page.size
-            if (page.size < pageSize || start > 200_000) break
+            // Пагинация идёт по ЧИСЛУ СЫРЫХ строк ISS, а не по числу валидных
+            // записей: у валютных перпетуалов SWAPRATE пуст до 2023-01-03,
+            // поэтому страница 2022 года даёт 100 сырых строк и 0 валидных.
+            // Прежний `page.isEmpty()` обрывал обход на такой странице, и
+            // донакачка CNYRUBF/USDRUBF/EURRUBF возвращала loaded=0.
+            if (page.rawRows == 0) break
+            records.addAll(page.records)
+            start += page.rawRows
+            if (page.rawRows < pageSize || start > 200_000) break
         }
         val distinct = records.distinctBy { it.clearingDate }
         val saved = fundingHistoryRepository.saveAll(distinct)
@@ -92,6 +97,15 @@ class MoexFundingHistoryLoader(
         return LoadResult(ticker = ticker, loaded = distinct.size, saved = saved)
     }
 
+    /**
+     * Страница ISS history: [rawRows] — сколько строк данных вернул сервер
+     * (решает пагинацию), [records] — валидные записи после фильтра пустых SWAPRATE.
+     */
+    internal data class Page(
+        val records: List<FundingHistoryRecord>,
+        val rawRows: Int,
+    )
+
     private suspend fun fetchPage(
         template: String,
         effectiveTicker: String,
@@ -99,7 +113,7 @@ class MoexFundingHistoryLoader(
         till: LocalDate,
         start: Int,
         originalTicker: String,
-    ): List<FundingHistoryRecord> {
+    ): Page {
         val url =
             template
                 .replace("{ticker}", effectiveTicker)
@@ -115,11 +129,18 @@ class MoexFundingHistoryLoader(
                     .bodyToMono(String::class.java)
                     .timeout(Duration.ofMillis(fundingConfig.requestTimeoutMs))
                     .awaitSingle()
-            parseHistory(raw, originalTicker)
+            Page(parseHistory(raw, originalTicker), countRawRows(raw))
         } catch (e: Exception) {
             logger.warn(e) { "MoexFundingHistoryLoader: MOEX history failed for $originalTicker at start=$start" }
-            emptyList()
+            Page(emptyList(), 0)
         }
+    }
+
+    /** Число сырых строк ISS в блоке с колонкой funding (независимо от заполненности SWAPRATE). */
+    internal fun countRawRows(raw: String): Int {
+        val root = objectMapper.readTree(raw)
+        val block = firstBlockWithColumn(root, fundingConfig.moexColumn) ?: return 0
+        return block.path("data").size()
     }
 
     /**

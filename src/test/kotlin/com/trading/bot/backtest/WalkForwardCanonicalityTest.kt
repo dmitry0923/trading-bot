@@ -73,6 +73,7 @@ class WalkForwardCanonicalityTest {
                         anyOrNull(),
                         anyOrNull(),
                         anyOrNull(),
+                        anyOrNull(),
                     ),
                 ).thenReturn(strongTrades(3))
                 val viaRun = validator.run("SBER", candles, WfaConfig(folds = 3))
@@ -140,6 +141,7 @@ class WalkForwardCanonicalityTest {
                     anyOrNull(),
                     anyOrNull(),
                     any(),
+                    anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),
                     anyOrNull(),

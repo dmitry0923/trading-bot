@@ -1,0 +1,4 @@
+Level,Universe,Days,Folds,Extra,Bars,RanFolds,Consistency,Robust,AggPf,AggRetPct,AggSharpe,AggMddPct,Trades,PNoEdge,Ci95Low,Ci95High,ServiceVerdict,Secs
+L3 rb42 (folds=7),"GAZP,LKOH,MGNT,NVTK,PLZL,ROSN,SBER,TATN",3220,7,rebalanceBars=42,2330,7,0.571,False,1.29,20.74,0.63,19.34,30,0.3215,-19439.46,37889.28,"REJECTED (consistency 0,571)",0
+L3 rb10,"GAZP,LKOH,MGNT,NVTK,PLZL,ROSN,SBER,TATN",3220,8,rebalanceBars=10,2330,8,0.625,False,1.392,30.27,1.12,9.72,80,0.151,-2989.67,11400.75,"INCONCLUSIVE (P(noEdge) 0,151)",0
+L3 L187 rb21,"GAZP,LKOH,MGNT,NVTK,PLZL,ROSN,SBER,TATN",3220,8,lookbackBars=187,2330,8,0.75,False,1.368,42.23,1.12,24.01,80,0.152,-5034.5,15508.62,"INCONCLUSIVE (P(noEdge) 0,152)",0

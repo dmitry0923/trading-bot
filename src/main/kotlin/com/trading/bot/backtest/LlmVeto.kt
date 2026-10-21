@@ -10,6 +10,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.FundamentalReport
 import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.dto.TechnicalReport
+import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.DistributionSummary
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -17,6 +18,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Query-оверрайды research-LLM-veto (паттерн funding-veto/ML: null → `bt.llm-veto-*`).
@@ -74,7 +76,11 @@ data class LlmVetoSettings(
 ) {
     init {
         require(sampleEvery >= 0) { "bt.llm-veto-sample-every must be >= 0, got $sampleEvery" }
-        require(budgetMs >= 0) { "bt.llm-veto-budget-ms must be >= 0, got $budgetMs" }
+        require(budgetMs > 0) {
+            "bt.llm-veto-budget-ms must be > 0, got $budgetMs: withTimeout(0) отменяет вызов до старта " +
+                "и срезает fail-closed блоком (BUDGET_TIMEOUT) каждый кандидат. " +
+                "Выключать veto нужно флагом bt.llm-veto-enabled=false, а не нулевым бюджетом"
+        }
         require(minScore == null || minScore in 0.0..1.0) {
             "bt.llm-veto-min-score must be within 0.0..1.0, got $minScore"
         }
@@ -146,23 +152,65 @@ class LlmVeto(
     data class Verdict(
         val allow: Boolean,
         val reason: String,
+        /**
+         * Диагностика для WARN-лога блокировки: отказ LLM, код отказа схемы, класс
+         * исключения. Именно этого не хватало в прогоне 2026-10-05: по метрикам
+         * видно «BLOCK», но не видно, настоящий это вердикт арбитра или отказ LLM,
+         * срезанный fail-closed (см. docs/20 §10.7).
+         */
+        val detail: String? = null,
     )
 
     private val memo = ConcurrentHashMap<String, Verdict>()
-    private var uniqueCandidates = 0
+
+    /**
+     * Счётчик уникальных кандидатов для `sampleEvery`.
+     *
+     * Атомарный: WFA-фолды считаются параллельно (reactor-nio), а `+= 1` на обычном
+     * `Int` терял бы обновления — выборка «каждый N-й» становилась бы
+     * недетерминированной между прогонами одного и того же конфига.
+     */
+    private val uniqueCandidates = AtomicInteger()
+
+    private val log = KotlinLogging.logger {}
 
     /** Причины блокировки — значения тега `reason` метрики. */
     object Reason {
         const val ALLOWED = "ALLOWED"
         const val SAMPLED_OUT = "SAMPLED_OUT"
+
+        /** Настоящий вердикт арбитра: отвергнуть вход. */
         const val ARB_HOLD = "ARB_HOLD"
+
+        /** Настоящий вердикт арбитра в score-режиме: score ниже порога. */
         const val ARB_SCORE_LOW = "ARB_SCORE_LOW"
+
+        /** CRITICAL от контрариана — блок до вызова арбитра. */
         const val CHALLENGE_CRITICAL = "CHALLENGE_CRITICAL"
+
+        /** Отказ LLM на стороне контрариана (недоступен/схема/парсинг). */
         const val LLM_FAILURE = "LLM_FAILURE"
+
+        /** Отказ LLM на стороне арбитра (`final.overrideReason != null`). */
+        const val ARB_FAILURE = "ARB_FAILURE"
+
+        /** Отказ LLM, не срезанный fail-closed (`blockOnUnknown = false`). */
         const val LLM_FAILURE_PASSED = "LLM_FAILURE_PASSED"
+
+        /** Исчерпан `bt.llm-veto-budget-ms` на паре вызовов. */
         const val BUDGET_TIMEOUT = "BUDGET_TIMEOUT"
+
+        /** Нет детерминированных индикаторов для бара. */
         const val NO_INDICATORS = "NO_INDICATORS"
+
+        /** Непредвиденное исключение агента. */
         const val ERROR = "ERROR"
+
+        /** Настоящие вердикты LLM — отделены от fail-closed отказов (см. [detail]). */
+        val DECISIONS = setOf(ARB_HOLD, ARB_SCORE_LOW, CHALLENGE_CRITICAL)
+
+        /** Отказы контура: блок fail-closed, а не решение LLM. */
+        val FAILURES = setOf(LLM_FAILURE, ARB_FAILURE, BUDGET_TIMEOUT, NO_INDICATORS, ERROR)
     }
 
     /**
@@ -184,13 +232,18 @@ class LlmVeto(
             meterRegistry.counter("bt_llm_veto_cache_hits_total", Tags.of("ticker", ticker)).increment()
             return it
         }
-        val candidate = uniqueCandidates++
+        val candidate = uniqueCandidates.getAndIncrement()
         if (settings.sampleEvery > 1 && candidate % settings.sampleEvery != 0) {
             return Verdict(allow = true, reason = Reason.SAMPLED_OUT).also { memo[key] = it }
         }
         meterRegistry.counter("bt_llm_veto_candidates_total", Tags.of("ticker", ticker)).increment()
         val verdict = decide(ticker, action, strength, snapshot, indicators, cycleId)
         record(ticker, verdict)
+        if (!verdict.allow) {
+            log.warn {
+                "LLM-veto BLOCK reason=${verdict.reason} detail=${verdict.detail} ticker=$ticker bar=$barTime action=$action"
+            }
+        }
         memo[key] = verdict
         return verdict
     }
@@ -240,16 +293,28 @@ class LlmVeto(
                         bypassCache = true,
                     )
                 when {
-                    !challenge.llmAvailable -> unknown(Reason.LLM_FAILURE, ticker)
-                    challenge.riskLevel == RISK_CRITICAL -> Verdict(false, Reason.CHALLENGE_CRITICAL)
-                    else -> adjudicate(draft, challenge, tech, fund, snapshot, cycleId, ticker)
+                    !challenge.llmAvailable -> {
+                        unknown(Reason.LLM_FAILURE, ticker, detail = "contrarian: llmAvailable=false")
+                    }
+
+                    challenge.riskLevel == RISK_CRITICAL -> {
+                        Verdict(
+                            allow = false,
+                            reason = Reason.CHALLENGE_CRITICAL,
+                            detail = "contrarian risk=${challenge.riskLevel}",
+                        )
+                    }
+
+                    else -> {
+                        adjudicate(draft, challenge, tech, fund, snapshot, cycleId, ticker)
+                    }
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            unknown(Reason.BUDGET_TIMEOUT, ticker)
+            unknown(Reason.BUDGET_TIMEOUT, ticker, detail = "budget ${settings.budgetMs}ms exhausted")
         } catch (e: Exception) {
             // Сбой veto не должен ронять прогон: fail-closed (или пропуск) по флагу.
-            unknown(Reason.ERROR, ticker)
+            unknown(Reason.ERROR, ticker, detail = "${e::class.simpleName}: ${e.message}")
         }
     }
 
@@ -280,14 +345,17 @@ class LlmVeto(
                 temperature = settings.temperature,
                 cacheNamespace = settings.cacheNamespace,
             )
-        if (final.action != StrategyAction.HOLD) return scoreVerdict(final.signalStrength, ticker)
-        // overrideReason != null ⇒ это не вердикт, а отказ (LLM_UNAVAILABLE /
-        // SCHEMA_REJECTED / PARSE_ERROR) — такие решает флаг, а не veto.
-        return if (final.overrideReason != null) {
-            unknown(Reason.LLM_FAILURE, ticker)
-        } else {
-            Verdict(allow = false, reason = Reason.ARB_HOLD)
+        // `overrideReason != null` ⇒ это НЕ вердикт, а отказ (LLM_UNAVAILABLE /
+        // SCHEMA_REJECTED / PARSE_ERROR). Проверять его надо ДО действия: путь
+        // guardrail-override в арбитре отдаёт `action` вместе с `overrideReason`
+        // (ArbitratorAgent: `dec.copy(action = guarded.signal.action, …)`), и прежний
+        // порядок «сначала action, потом overrideReason» трактовал такой отказ как
+        // «вход разрешён» — fail-open в контуре, который везде объявлен fail-closed.
+        if (final.overrideReason != null) {
+            return unknown(Reason.ARB_FAILURE, ticker, detail = "arbitrator: ${final.overrideReason}")
         }
+        if (final.action != StrategyAction.HOLD) return scoreVerdict(final.signalStrength, ticker)
+        return Verdict(allow = false, reason = Reason.ARB_HOLD)
     }
 
     /**
@@ -319,11 +387,12 @@ class LlmVeto(
     private fun unknown(
         reason: String,
         @Suppress("UNUSED_PARAMETER") ticker: String,
+        detail: String? = null,
     ): Verdict =
         if (settings.blockOnUnknown) {
-            Verdict(allow = false, reason = reason)
+            Verdict(allow = false, reason = reason, detail = detail)
         } else {
-            Verdict(allow = true, reason = Reason.LLM_FAILURE_PASSED)
+            Verdict(allow = true, reason = Reason.LLM_FAILURE_PASSED, detail = detail)
         }
 
     private fun record(

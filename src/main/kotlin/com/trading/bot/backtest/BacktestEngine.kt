@@ -27,6 +27,8 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.util.NavigableMap
+import java.util.TreeMap
 import java.util.UUID
 import kotlin.math.sqrt
 
@@ -113,6 +115,8 @@ class BacktestEngine(
      * Прогон бэктеста по тикеру за N дней.
      *
      * @param ticker тикер инструмента
+     * @param passiveFillEnabled research (PLAN-001 §5.1, a2): пассивное (maker)
+     *   исполнение входов/рыночных выходов; null → `bt.execution-passive-fill-enabled`.
      * @param days глубина истории в днях (по умолчанию `bt.days`)
      * @param timeframe таймфрейм свечей (по умолчанию `bt.timeframe`)
      * @param initialCapital стартовый капитал (по умолчанию `bt.initial-capital`)
@@ -146,6 +150,7 @@ class BacktestEngine(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
         val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
@@ -176,6 +181,7 @@ class BacktestEngine(
                 fundingVetoShortThresholdRub,
                 fundingVetoBlockOnUnknown,
                 maxHoldBars,
+                passiveFillEnabled,
             )
         persistResult(ticker, result, days, timeframe, initialCapital, minBarsForSignal, slPercent, tpPercent)
         return result
@@ -258,9 +264,14 @@ class BacktestEngine(
         fundingVetoShortThresholdRub: Double? = null,
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BacktestResult {
         val effectiveCapitalSlice = capitalSlice ?: backtestConfig.capitalSlice
         val effectiveSignalGenerator = signalGeneratorOverride ?: signalGenerator
+        // Research a2: пассивное (maker) исполнение входов и рыночных выходов.
+        // null → bt.execution-passive-fill-enabled; защитные SL/TP/ликвидация
+        // остаются taker (передаётся passiveEligible=false).
+        val effectivePassiveFill = passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled
         var cash = initialCapital
         val equityCurve = ArrayList<BigDecimal>()
         val equityTimestamps = ArrayList<LocalDateTime>()
@@ -320,6 +331,11 @@ class BacktestEngine(
                 emptyMap()
             }
 
+        // Research P4 (docs/27): расписание цели funding-window строится по последнему
+        // клирингу СТРОГО раньше даты бара (lowerEntry — без lookahead). null → фича off.
+        val fundingWindowDates: NavigableMap<LocalDate, BigDecimal>? =
+            if (backtestConfig.fundingWindowEnabled) TreeMap(fundingHistory) else null
+
         fun recordEquity(
             price: BigDecimal,
             time: LocalDateTime,
@@ -358,6 +374,7 @@ class BacktestEngine(
                             slippageMultiplier,
                             current,
                             applySlippage = !backtestConfig.realisticExecution,
+                            passiveEligible = false,
                             fundingHistory = fundingHistory,
                             tradeLog = tradeLog,
                         )
@@ -386,6 +403,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
+                                passiveEligible = false,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
                             )
@@ -409,6 +427,7 @@ class BacktestEngine(
                                 slippageMultiplier,
                                 current,
                                 applySlippage = !backtestConfig.realisticExecution,
+                                passiveEligible = false,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
                             )
@@ -444,9 +463,112 @@ class BacktestEngine(
                         current,
                         fundingHistory = fundingHistory,
                         tradeLog = tradeLog,
+                        passiveFillEnabled = effectivePassiveFill,
                     )
                 recordRiskSimClose(ticker, maxHoldPosition, "MAX_HOLD", current.closePrice, i, sorted, cash)
                 position = null
+            }
+
+            // Research P4 (docs/27-funding-window-capture): funding-window capture.
+            // Сторона выбирается ПО СТАВКЕ (последний клиринг строго раньше даты бара),
+            // а не по цене; позиция удерживается через клиринги, при слабой ставке — FLAT.
+            // Детерминированный генератор сигналов и входные фильтры при этом обходятся.
+            if (fundingWindowDates != null) {
+                val (windowTarget, windowUnknown) =
+                    fundingWindowTarget(
+                        ticker,
+                        current.time,
+                        fundingWindowDates,
+                        backtestConfig.fundingWindowLongThresholdRub,
+                        backtestConfig.fundingWindowShortThresholdRub,
+                    )
+                if (windowUnknown) {
+                    meterRegistry?.counter("bt_funding_window_unknown_total", "ticker", ticker)?.increment()
+                }
+                // fail-closed: неизвестная ставка → FLAT; при block-on-unknown=false — позицию не трогаем.
+                if (!windowUnknown || backtestConfig.fundingWindowBlockOnUnknown) {
+                    val windowPosition = position
+                    when {
+                        windowTarget == null && windowPosition != null -> {
+                            cash =
+                                closePosition(
+                                    ticker,
+                                    windowPosition,
+                                    "FUNDING_WINDOW_EXIT",
+                                    current.openPrice,
+                                    cash,
+                                    i,
+                                    tradeReturns,
+                                    tradeHoldBars,
+                                    commissionAccumulator,
+                                    commissionMultiplier,
+                                    slippageMultiplier,
+                                    current,
+                                    fundingHistory = fundingHistory,
+                                    tradeLog = tradeLog,
+                                    passiveFillEnabled = effectivePassiveFill,
+                                )
+                            recordRiskSimClose(ticker, windowPosition, "FUNDING_WINDOW_EXIT", current.openPrice, i, sorted, cash)
+                            position = null
+                            meterRegistry?.counter("bt_funding_window_exit_total", "ticker", ticker)?.increment()
+                        }
+
+                        windowTarget != null && windowPosition?.direction != windowTarget -> {
+                            if (windowPosition != null) {
+                                cash =
+                                    closePosition(
+                                        ticker,
+                                        windowPosition,
+                                        "FUNDING_WINDOW_FLIP",
+                                        current.openPrice,
+                                        cash,
+                                        i,
+                                        tradeReturns,
+                                        tradeHoldBars,
+                                        commissionAccumulator,
+                                        commissionMultiplier,
+                                        slippageMultiplier,
+                                        current,
+                                        fundingHistory = fundingHistory,
+                                        tradeLog = tradeLog,
+                                        passiveFillEnabled = effectivePassiveFill,
+                                    )
+                                recordRiskSimClose(ticker, windowPosition, "FUNDING_WINDOW_FLIP", current.openPrice, i, sorted, cash)
+                                position = null
+                            }
+                            val windowAction =
+                                if (windowTarget == PositionDirection.LONG) StrategyAction.BUY else StrategyAction.SELL
+                            val windowEntry =
+                                openPosition(
+                                    ticker,
+                                    windowAction,
+                                    current.openPrice,
+                                    cash,
+                                    i,
+                                    slPercent,
+                                    tpPercent,
+                                    slippageMultiplier,
+                                    sorted.subList(0, i),
+                                    slPoints,
+                                    tpPoints,
+                                    current,
+                                    leverage,
+                                    effectiveCapitalSlice,
+                                    riskPerTradePercent,
+                                    futuresMaxContractsPerPosition,
+                                    passiveFillEnabled = effectivePassiveFill,
+                                )
+                            if (windowEntry != null) {
+                                position = windowEntry
+                                cash = applyOpen(cash, windowEntry, ticker, commissionMultiplier)
+                                recordRiskSimOpen(ticker, windowEntry, sorted)
+                                meterRegistry?.counter("bt_funding_window_entry_total", "ticker", ticker)?.increment()
+                            }
+                        }
+                    }
+                }
+                recordEquity(current.closePrice, current.time)
+                continue
             }
 
             val signal = effectiveSignalGenerator.signal(ticker, sorted, i - 1, minBarsForSignal, cycleId)
@@ -484,6 +606,7 @@ class BacktestEngine(
                                 current,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
+                                passiveFillEnabled = effectivePassiveFill,
                             )
                         recordRiskSimClose(ticker, curPos, "ML_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -527,6 +650,7 @@ class BacktestEngine(
                                 current,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
+                                passiveFillEnabled = effectivePassiveFill,
                             )
                         recordRiskSimClose(ticker, curPos, "MTF_FILTER_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -585,6 +709,7 @@ class BacktestEngine(
                                 current,
                                 fundingHistory = fundingHistory,
                                 tradeLog = tradeLog,
+                                passiveFillEnabled = effectivePassiveFill,
                             )
                         recordRiskSimClose(ticker, curPos, "FUNDING_VETO_REVERSAL", current.openPrice, i, sorted, cash)
                         position = null
@@ -638,6 +763,7 @@ class BacktestEngine(
                             current,
                             fundingHistory = fundingHistory,
                             tradeLog = tradeLog,
+                            passiveFillEnabled = effectivePassiveFill,
                         )
                     recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
                     position =
@@ -658,6 +784,7 @@ class BacktestEngine(
                             effectiveCapitalSlice,
                             riskPerTradePercent,
                             futuresMaxContractsPerPosition,
+                            passiveFillEnabled = effectivePassiveFill,
                         )
                     if (position != null) {
                         cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -687,6 +814,7 @@ class BacktestEngine(
                     effectiveCapitalSlice,
                     riskPerTradePercent,
                     futuresMaxContractsPerPosition,
+                    passiveFillEnabled = effectivePassiveFill,
                 )
             if (position != null) {
                 cash = applyOpen(cash, position, ticker, commissionMultiplier)
@@ -713,6 +841,7 @@ class BacktestEngine(
                     sorted.last(),
                     fundingHistory = fundingHistory,
                     tradeLog = tradeLog,
+                    passiveFillEnabled = effectivePassiveFill,
                 )
             recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
@@ -786,7 +915,19 @@ class BacktestEngine(
     }
 
     /**
-     * Цена исполнения market-ордера с проскальзыванием:
+     * Цена исполнения market-ордера с проскальзыванием.
+     *
+     * Пассивный (maker) режим research (PLAN-001 §5.1, a2,
+     * [BacktestConfig.executionPassiveFillEnabled]): покупка по bid = mid − halfSpread,
+     * продажа по ask = mid + halfSpread ([SimulatedExecution.passiveFill]), где
+     * `halfSpread = |takerFill − reference|` — **зеркало taker-филла** относительно
+     * reference. Единая база спреда/проскальзывания для обеих сторон обязательна:
+     * если фьючерсный taker идёт по bps/тикам, а maker — по диапазону свечи
+     * (`estimateHalfSpread`), выгода maker завышается в разы (CNYRUBF: bps ≈ 0.00125 ₽
+     * против диапазона/4 ≈ 0.00275 ₽ на сторону). Применяется к входам и рыночным
+     * выходам (не к защитным SL/TP/ликвидации — их вызовы передают `passiveEligible=false`).
+     *
+     * Taker-филл ([takerFill]):
      * - фьючерсы — в ТИКАХ (пунктах), как при исполнении на бирже; процентная
      *   ставка от цены фьючерса непропорционально велика (0.1% Si ≈ 92 пункта >
      *   стоп в [com.trading.bot.config.RiskConfig.defaultStopLossPoints] пунктов);
@@ -795,13 +936,32 @@ class BacktestEngine(
      *   продажа по mid − halfSpread;
      * - иначе (флаг выключен или свеча недоступна) — фиксированная ставка 0.1%.
      */
-    private fun executionFill(
+    internal fun executionFill(
         instrument: InstrumentsConfig.InstrumentSpec?,
         ticker: String,
         reference: BigDecimal,
         isBuy: Boolean,
         slippageMultiplier: Double,
         candle: Candle? = null,
+        passiveEligible: Boolean = true,
+        passiveFillEnabled: Boolean? = null,
+    ): SimulatedExecution.Fill {
+        val taker = takerFill(instrument, ticker, reference, isBuy, slippageMultiplier, candle)
+        if (!((passiveFillEnabled ?: backtestConfig.executionPassiveFillEnabled) && passiveEligible)) {
+            return taker
+        }
+        val halfSpread = taker.price.subtract(reference).abs()
+        return SimulatedExecution.passiveFill(reference, isBuy, halfSpread)
+    }
+
+    /** Taker-филл market-ордера (без passive-ветки — см. [executionFill]). */
+    private fun takerFill(
+        instrument: InstrumentsConfig.InstrumentSpec?,
+        ticker: String,
+        reference: BigDecimal,
+        isBuy: Boolean,
+        slippageMultiplier: Double,
+        candle: Candle?,
     ): SimulatedExecution.Fill =
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
             val bps = instrument.slippageBps
@@ -875,6 +1035,61 @@ class BacktestEngine(
         return instrument?.lotSize?.toBigDecimal() ?: BigDecimal.ONE
     }
 
+    /**
+     * Целевая сторона funding-window (research P4, docs/27-funding-window-capture.md):
+     * последняя ИЗВЕСТНАЯ ставка `funding_history` со датой клиринга СТРОГО раньше даты
+     * бара [barTime] (без lookahead). SHORT при `r >= +shortThresholdRub`, LONG при
+     * `r <= -longThresholdRub`, иначе FLAT (null).
+     *
+     * При `fundingWindowRandomSide=true` (placebo §7.2) набор «дней в рынке» тот же
+     * (по |r| >= порога), но сторона — детерминированный псевдослучайный поток по
+     * (ticker, дата бара), а не знак ставки. Контроль отделяет доход самой ставки от
+     * ценового шума пребывания в рынке.
+     *
+     * @return целевая сторона (null = FLAT) и признак «ставка неизвестна» (fail-closed)
+     */
+    private fun fundingWindowTarget(
+        ticker: String,
+        barTime: LocalDateTime,
+        fundingByDate: NavigableMap<LocalDate, BigDecimal>,
+        longThresholdRub: Double,
+        shortThresholdRub: Double,
+    ): Pair<PositionDirection?, Boolean> {
+        val lookup = fundingByDate.lowerEntry(barTime.toLocalDate()) ?: return null to true
+        val rate = lookup.value
+        val inMarket =
+            rate.compareTo(BigDecimal(shortThresholdRub)) >= 0 ||
+                rate.compareTo(BigDecimal(longThresholdRub).negate()) <= 0
+        if (!inMarket) {
+            return null to false
+        }
+        if (backtestConfig.fundingWindowRandomSide) {
+            val parity = ((ticker.hashCode().toLong() + barTime.toLocalDate().toEpochDay()) % 2L + 2L) % 2L
+            val randomSide = if (parity == 0L) PositionDirection.LONG else PositionDirection.SHORT
+            return randomSide to false
+        }
+        val target =
+            when {
+                rate.compareTo(BigDecimal(shortThresholdRub)) >= 0 -> PositionDirection.SHORT
+                rate.compareTo(BigDecimal(longThresholdRub).negate()) <= 0 -> PositionDirection.LONG
+                else -> null
+            }
+        return target to false
+    }
+
+    /**
+     * Знак ставки funding в P&L (research P4, docs/27): направленная модель — LONG платит
+     * положительную ставку (+1), SHORT её получает (−1). При
+     * `bt.funding-direction-aware=false` — историческая direction-agnostic модель (+1,
+     * ставка списывается обеим сторонам; воспроизводимость прежних артефактов).
+     */
+    private fun fundingChargeSign(direction: PositionDirection): BigDecimal =
+        if (backtestConfig.fundingDirectionAware && direction == PositionDirection.SHORT) {
+            BigDecimal.ONE.negate()
+        } else {
+            BigDecimal.ONE
+        }
+
     private fun openPosition(
         ticker: String,
         signal: StrategyAction,
@@ -892,6 +1107,7 @@ class BacktestEngine(
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercent: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
+        passiveFillEnabled: Boolean? = null,
     ): PositionSim? {
         if (cash <= BigDecimal.ZERO) return null
         val instrument = instrumentsConfig.find(ticker)
@@ -923,21 +1139,28 @@ class BacktestEngine(
                 direction == PositionDirection.LONG,
                 slippageMultiplier,
                 candle,
+                passiveEligible = true,
+                passiveFillEnabled = passiveFillEnabled,
             )
         val atr = Atr.calculate(history, riskConfig.futuresAtrStopPeriod)
         val atrPercent =
-            if (atr != null && fill.price > BigDecimal.ZERO) {
-                atr.divide(fill.price, 6, RoundingMode.HALF_UP).multiply(BigDecimal(100)).toDouble()
+            if (atr != null && price > BigDecimal.ZERO) {
+                atr.divide(price, 6, RoundingMode.HALF_UP).multiply(BigDecimal(100)).toDouble()
             } else {
                 null
             }
         val volatilityPercent = volatility20(history)
+        // Уровни стопа/тейка выводятся из ЦЕНЫ РЕШЕНИЯ (`price`), а не из цены филла:
+        // исполнение (taker/passive) не должно менять решения стратегии, иначе A/B по
+        // стоимости исполнения некорректен (лучший вход сдвигал бы и стоп, оставляя
+        // R-мультипл неизменным — эффект мейкера исчезал бы). `entryPrice` — фактический
+        // филл, по нему считается P&L.
         return PositionSim(
             direction = direction,
             quantity = sized.quantity,
             entryPrice = fill.price,
-            stopLoss = stopPrice(ticker, instrument, direction, fill.price, slPercent, stopPoints, slPoints),
-            takeProfit = takePrice(ticker, instrument, direction, fill.price, tpPercent, tpPoints),
+            stopLoss = stopPrice(ticker, instrument, direction, price, slPercent, stopPoints, slPoints),
+            takeProfit = takePrice(ticker, instrument, direction, price, tpPercent, tpPoints),
             entryBars = bar,
             liquidationPrice = sized.liquidationPrice,
             entryTime = candle?.time,
@@ -1149,8 +1372,10 @@ class BacktestEngine(
         slippageMultiplier: Double = 1.0,
         candle: Candle? = null,
         applySlippage: Boolean = true,
+        passiveEligible: Boolean = true,
         fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
         tradeLog: MutableList<BacktestTradeRecord>? = null,
+        passiveFillEnabled: Boolean? = null,
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill =
@@ -1162,6 +1387,8 @@ class BacktestEngine(
                     pos.direction == PositionDirection.SHORT,
                     slippageMultiplier,
                     candle,
+                    passiveEligible,
+                    passiveFillEnabled,
                 )
             } else {
                 SimulatedExecution.Fill(price)
@@ -1174,10 +1401,12 @@ class BacktestEngine(
                 PositionDirection.LONG -> fill.price.subtract(pos.entryPrice)
                 PositionDirection.SHORT -> pos.entryPrice.subtract(fill.price)
             }.multiply(profitMultiplierPerLot(ticker, instrument)).multiply(BigDecimal(pos.quantity))
-        // Funding (CNYRUBF): вычитается за каждый клиринг, который позиция пережила
+        // Funding (CNYRUBF): списывается за каждый клиринг, который позиция пережила
         // между открытием и закрытием (паритет live PnlCalculator.futures).
         // Если доступен исторический ряд (funding_history) — per-date значения;
         // иначе fallback на конфигурационное значение.
+        // Research P4 (docs/27): при `bt.funding-direction-aware=true` ставка направленная —
+        // LONG платит положительную, SHORT её получает (знак [fundingChargeSign]).
         val funding =
             if (instrument != null && instrumentsConfig.isFutures(ticker) &&
                 pos.entryTime != null && candle != null
@@ -1188,13 +1417,14 @@ class BacktestEngine(
                         candle.time,
                         (moexHolidayCalendar ?: MoexHolidayCalendar())::isTradingDay,
                     )
+                val fundingSign = fundingChargeSign(pos.direction)
                 if (dates.isEmpty()) {
                     BigDecimal.ZERO
                 } else if (fundingHistory.isNotEmpty()) {
                     val fundingSum = dates.fold(BigDecimal.ZERO) { acc, date -> acc.add(fundingHistory[date] ?: BigDecimal.ZERO) }
-                    fundingSum.multiply(BigDecimal(pos.quantity))
+                    fundingSign.multiply(fundingSum).multiply(BigDecimal(pos.quantity))
                 } else if (instrument.fundingPerClearing() > BigDecimal.ZERO) {
-                    instrument.fundingPerClearing().multiply(
+                    fundingSign.multiply(instrument.fundingPerClearing()).multiply(
                         BigDecimal(pos.quantity).multiply(BigDecimal(dates.size)),
                     )
                 } else {

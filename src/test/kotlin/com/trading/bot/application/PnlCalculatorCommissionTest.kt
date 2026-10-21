@@ -261,4 +261,65 @@ class PnlCalculatorCommissionTest {
         assertEquals(0, pnl.compareTo(BigDecimal("1494")))
         assertEquals(true, unknownFired)
     }
+
+    // ── futures: направленный funding (docs/27 §3, конвенция MOEX «+ = long платит») ──
+
+    private fun futuresShortCrossedClearing(): Position =
+        Position(
+            id = 5L,
+            ticker = "CNYRUBF",
+            direction = PositionDirection.SHORT,
+            quantity = 3,
+            entryPrice = BigDecimal("12.50"),
+            instrumentType = InstrumentType.FUTURES,
+        ).apply {
+            openedAt = java.time.LocalDateTime.of(2026, 9, 8, 10, 0)
+            closedAt = java.time.LocalDateTime.of(2026, 9, 9, 17, 0)
+        }
+
+    @Test
+    fun `futures SHORT receives positive funding as credit`() {
+        // SHORT 12.50 → 12.00 (прибыль): gross = (12.50 − 12.00) × 1000 × 3 = 1500;
+        // commission = 1.0 × 3 × 2 = 6; funding +0.5 ₽ × 1 клиринг × 3 = кредит +1.5 ₽.
+        val pnl =
+            futuresWithFunding.pnl(
+                futuresShortCrossedClearing(),
+                BigDecimal("12.50"),
+                BigDecimal("12.00"),
+                BigDecimal(3),
+            )
+        assertEquals(0, pnl.compareTo(BigDecimal("1495.5")))
+    }
+
+    @Test
+    fun `futures LONG is credited on negative funding`() {
+        // r = −0.5 ₽/клиринг → long получает: 1500 − 6 + 1.5 = 1495.5 (legacy takeIf дал бы 1494).
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                commissionRub = { BigDecimal("1.0") },
+                fundingPerClearing = { _, clearings -> BigDecimal("-0.5").multiply(BigDecimal(clearings.size)) },
+            )
+        val pnl = calc.pnl(futuresPosCrossedClearing(), BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+        assertEquals(0, pnl.compareTo(BigDecimal("1495.5")))
+    }
+
+    @Test
+    fun `futures SHORT pays on negative funding`() {
+        // r = −0.5 ₽/клиринг → short платит: 1500 − 6 − 1.5 = 1492.5.
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                commissionRub = { BigDecimal("1.0") },
+                fundingPerClearing = { _, clearings -> BigDecimal("-0.5").multiply(BigDecimal(clearings.size)) },
+            )
+        val pnl =
+            calc.pnl(
+                futuresShortCrossedClearing(),
+                BigDecimal("12.50"),
+                BigDecimal("12.00"),
+                BigDecimal(3),
+            )
+        assertEquals(0, pnl.compareTo(BigDecimal("1492.5")))
+    }
 }

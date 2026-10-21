@@ -1,0 +1,15 @@
+batch,ticker,secs,ret_pct,pf,sharpe,mdd_pct,trades,win_pct,passable,prob_no_edge,edge_sig,ci95_low,ci95_high
+stocks,GAZP,1784,-4.005,0.8355,-0.8,7.21,94,34,False,0.8005,False,-140.78,59.98
+stocks,SBER,1784,-5.807,0.6382,-1.669,7.57,74,32.4,False,0.953,False,-164.45,16.22
+stocks,NVTK,1784,-0.566,0.9799,-0.082,6.56,114,37.7,False,0.533,False,-101.59,92.43
+stocks,PLZL,1784,-3.28,0.8952,-0.535,8.77,134,33.6,False,0.7225,False,-101.94,56.19
+stocks,MGNT,1784,-5.258,0.8312,-0.995,9.75,129,34.1,False,0.8385,False,-123.87,43
+stocks,LKOH,1784,-4.561,0.7746,-1.02,6.42,96,35.4,False,0.8665,False,-129.62,41.06
+stocks,VTBR,1784,0,0,0,0,0,0,False,1,False,0,0
+futures,ROSN,1178,-7.939,0.7421,-1.491,12.13,120,33.3,False,0.922,False,-152.25,24.38
+futures,TATN,1178,-5.834,0.803,-0.994,7.55,114,34.2,False,0.857,False,-146.58,38.47
+futures,CNYRUBF,1178,0.258,1.1309,0.517,0.46,83,28.9,False,0.319,False,-9.04,15.67
+futures,USDRUBF,1178,5.44,1.4629,1.593,3.04,76,25,True,0.101,False,-39.06,185.72
+futures,EURRUBF,1178,1.528,1.095,0.398,5.3,95,18.9,False,0.3775,False,-76.65,111.33
+futures,GLDRUBF,1178,-0.75,0.2778,-2.686,0.77,122,39.3,False,1,False,-7.81,-4.36
+futures,IMOEXF,1178,1.163,1.1674,0.513,1.88,89,21.3,False,0.294,False,-31.64,62.83

@@ -274,6 +274,30 @@ class OrderExecutionEngineEntryReservationTest {
     }
 
     @Test
+    fun `unfilled working entry stays pending instead of becoming phantom position`() {
+        stubReserve(1L)
+        stubEntryPlaceOrder(successResult("e1"))
+        stubEntryFill(AlorClient.OrderExecution(status = "WORKING", filledQuantity = 0, avgPrice = null))
+        stubSaveReturnsArg()
+
+        val result =
+            runBlocking {
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
+                    buildPos(o, p, pr, q)
+                })
+            }
+
+        assertNull(result)
+        assertTrue(savedPos!!.pendingEntry, "unfilled order must be reconciled, not treated as OPEN")
+        assertEquals(0, openedCount.get())
+        runBlocking {
+            Mockito.verify(tradeEventService, never()).recordPositionOpened(anyPosition())
+            Mockito.verify(positionRepo, never()).releaseEntry(eqString("Si"), Mockito.isNull())
+        }
+        assertEquals(1.0, meterRegistry.counter("test.entry.unfilled", Tags.of("ticker", "Si")).count())
+    }
+
+    @Test
     fun `definitive rejection releases reservation and places nothing`() {
         stubReserve(1L)
         stubEntryPlaceOrder(OrderOutboxService.PlaceOrderResult(UUID.randomUUID(), null, success = false))

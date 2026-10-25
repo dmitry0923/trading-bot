@@ -153,6 +153,15 @@ class OrderOutboxService(
     }
 
     /**
+     * Связывает outbox-строку входа с позицией, созданной после отправки ордера.
+     * Без этого `resolveEntryViaOutbox` не находит строку (positionId = null).
+     */
+    suspend fun linkPosition(
+        outboxId: UUID,
+        positionId: Long,
+    ) = outboxRepo.linkPosition(outboxId, positionId)
+
+    /**
      * Гарантированная отмена биржевой заявки (защитные SL/TP при закрытии позиции,
      * снятие старой заявки при перевыставлении) — тоже через outbox, чтобы отмена
      * дошла даже после падения бота.

@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.util.UUID
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
@@ -301,14 +302,24 @@ class OrderExecutionEngine(
         var placedRef: OrderOutboxService.PlaceOrderResult? = null
         try {
             val side = if (direction == PositionDirection.LONG) "buy" else "sell"
-            val placed = orderOutboxService.placeOrder(ticker, side, qty, entryPrice, "limit", accountId = accountId)
+            val placed =
+                orderOutboxService.placeOrder(
+                    ticker,
+                    side,
+                    qty,
+                    entryPrice,
+                    "limit",
+                    purpose = "entry",
+                    accountId = accountId,
+                )
             placedRef = placed
             outboxCommitted = placed.success || placed.uncertain
             if (!placed.success || placed.alorOrderId == null) {
                 if (placed.uncertain) {
                     logger.warn { "Entry for $ticker UNCERTAIN (outbox=${placed.outboxId}); position created as pendingEntry" }
                     val pos = buildPosition(null, true, entryPrice, qty).also { it.accountId = accountId }
-                    positionRepo.save(pos)
+                    val saved = positionRepo.save(pos)
+                    linkOutbox(placed.outboxId, saved)
                     meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
                 } else {
                     logger.error { "Order failed for $ticker" }
@@ -325,26 +336,51 @@ class OrderExecutionEngine(
                     "verifyOrder UNKNOWN for $ticker (order=$orderId) — entry kept as pendingEntry until confirmed"
                 }
                 val unknownPos = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
-                positionRepo.save(unknownPos)
+                val saved = positionRepo.save(unknownPos)
+                linkOutbox(placed.outboxId, saved)
                 meterRegistry.counter("$metricPrefix.entry.uncertain", Tags.of("ticker", ticker)).increment()
                 return null
             }
             val fillPrice = execution.avgPrice ?: entryPrice
-            val filledQty = execution.filledQuantity.takeIf { it in 1 until qty }
+            // FILLED без filledQuantity (API не вернул поле) — доверяем статусу;
+            // 0 при NEW/WORKING/CANCELED/REJECTED — НЕ полный филл. Раньше 0
+            // проваливался в ветку «полный филл» и создавал фантомную позицию
+            // с SL/TP, которых нет на бирже.
+            val filled =
+                if (execution.filledQuantity > 0) {
+                    execution.filledQuantity
+                } else if (execution.status.uppercase() in FILLED_STATUSES) {
+                    qty
+                } else {
+                    0
+                }
 
-            if (filledQty != null) {
+            if (filled <= 0) {
                 logger.warn {
-                    "PARTIAL entry $ticker: filled=$filledQty of $qty (order=$orderId) — " +
+                    "Entry NOT filled $ticker (order=$orderId, status=${execution.status}) — pendingEntry until reconciliation"
+                }
+                val unfilledPos = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
+                val saved = positionRepo.save(unfilledPos)
+                linkOutbox(placed.outboxId, saved)
+                meterRegistry.counter("$metricPrefix.entry.unfilled", Tags.of("ticker", ticker)).increment()
+                return null
+            }
+
+            if (filled < qty) {
+                logger.warn {
+                    "PARTIAL entry $ticker: filled=$filled of $qty (order=$orderId) — " +
                         "pendingEntry until remainder cancelled/filled"
                 }
-                val partialPos = buildPosition(orderId, true, fillPrice, filledQty).also { it.accountId = accountId }
-                positionRepo.save(partialPos)
+                val partialPos = buildPosition(orderId, true, fillPrice, filled).also { it.accountId = accountId }
+                val saved = positionRepo.save(partialPos)
+                linkOutbox(placed.outboxId, saved)
                 meterRegistry.counter("$metricPrefix.entry.partial", Tags.of("ticker", ticker)).increment()
                 return null
             }
 
             val pos = buildPosition(orderId, false, fillPrice, qty).also { it.accountId = accountId }
             val savedPos = positionRepo.save(pos)
+            linkOutbox(placed.outboxId, savedPos)
             tradeEventService.recordPositionOpened(savedPos)
             onEntryOpened(savedPos)
             protection.attachProtectionOrders(savedPos)
@@ -363,7 +399,8 @@ class OrderExecutionEngine(
                 try {
                     val orderId = placedRef?.alorOrderId
                     val pending = buildPosition(orderId, true, entryPrice, qty).also { it.accountId = accountId }
-                    positionRepo.save(pending)
+                    val saved = positionRepo.save(pending)
+                    linkOutbox(placedRef?.outboxId, saved)
                 } catch (e2: Exception) {
                     logger.error(e2) { "Failed to persist pendingEntry compensation for $ticker — slot left for reconciliation" }
                 }
@@ -556,5 +593,28 @@ class OrderExecutionEngine(
 
         // Close confirmation (pendingClose) — delta model
         return closeFill.handlePendingCloseReport(pos, report)
+    }
+
+    /**
+     * Связывает entry-outbox с позицией (best-effort): без связи pendingEntry
+     * не разрешается реконсилятором, но сбой записи не должен ломать уже
+     * отправленный ордер — позиция всё равно сохранена.
+     */
+    private suspend fun linkOutbox(
+        outboxId: UUID?,
+        position: Position,
+    ) {
+        val outbox = outboxId ?: return
+        val positionId = position.id ?: return
+        try {
+            orderOutboxService.linkPosition(outbox, positionId)
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to link entry outbox $outbox to position $positionId — reconciliation may lag" }
+        }
+    }
+
+    private companion object {
+        /** Статусы, при которых отсутствие `filledQuantity` означает исполнение. */
+        val FILLED_STATUSES = setOf("FILLED", "EXECUTED", "MATCHED")
     }
 }

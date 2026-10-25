@@ -5,6 +5,7 @@ import com.trading.bot.config.security.ScrapeTokenFilter
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.security.authentication.AuthenticationManager
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
@@ -67,8 +68,23 @@ class SecurityConfig(
                         "/api/v1/auth/refresh",
                         "/api/v1/auth/logout",
                     ).permitAll()
-                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/v1/**")
+                    .requestMatchers(HttpMethod.POST, "/api/v1/**")
                     .hasRole("ADMIN")
+                    // ANALYTICS — строго read-only: изменение/удаление аккаунтов,
+                    // запуск валидации и ротация одобрений меняют состояние.
+                    .requestMatchers(HttpMethod.PUT, "/api/v1/**")
+                    .hasRole("ADMIN")
+                    .requestMatchers(HttpMethod.PATCH, "/api/v1/**")
+                    .hasRole("ADMIN")
+                    .requestMatchers(HttpMethod.DELETE, "/api/v1/**")
+                    .hasRole("ADMIN")
+                    .requestMatchers(
+                        HttpMethod.GET,
+                        "/api/v1/backtest/*/deployment-gate",
+                        "/api/v1/backtest/*/validate",
+                        "/api/v1/backtest/*/funding-history",
+                        "/api/v1/macro/rates-history",
+                    ).hasRole("ADMIN")
                     .requestMatchers("/api/v1/**", "/actuator/**")
                     .authenticated()
                     .anyRequest()

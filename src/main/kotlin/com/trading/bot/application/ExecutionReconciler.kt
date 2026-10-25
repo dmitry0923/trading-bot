@@ -104,7 +104,9 @@ class ExecutionReconciler(
                 logger.error { "Pending entry ${pos.ticker} has no id — cannot reconcile via outbox" }
                 return
             }
-        val outbox = orderOutboxRepo.findLatestByPositionId(positionId)
+        val outbox =
+            orderOutboxRepo.findLatestByPositionId(positionId, PURPOSE_ENTRY)
+                ?: orderOutboxRepo.findLatestByPositionId(positionId)
         if (outbox == null) {
             logger.warn { "No outbox row for pending entry ${pos.id}/${pos.ticker}; leaving pending" }
             return
@@ -112,7 +114,9 @@ class ExecutionReconciler(
         when {
             outbox.status == OutboxStatus.SENT && outbox.alorOrderId != null -> {
                 val execution = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId)) ?: return
-                if (isGoneStatus(execution)) {
+                // Отмена/экспирация НЕ отменяет уже исполненный объём: локально его
+                // нельзя закрывать «в ноль» — иначе на бирже остаётся позиция без учёта.
+                if (isGoneStatus(execution) && execution.filledQuantity <= 0) {
                     abandonEntry(pos, CloseReason.ENTRY_REJECTED)
                     return
                 }
@@ -338,5 +342,10 @@ class ExecutionReconciler(
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
         onAbandonCleanup(pos.id)
         meterRegistry.counter("$metricPrefix.entry.abandoned", Tags.of("ticker", pos.ticker, "reason", reason.code)).increment()
+    }
+
+    private companion object {
+        /** `purpose` entry-ордера в outbox (фильтр от SL/TP/close строк позиции). */
+        const val PURPOSE_ENTRY = "entry"
     }
 }

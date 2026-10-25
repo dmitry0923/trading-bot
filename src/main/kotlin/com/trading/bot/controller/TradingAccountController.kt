@@ -23,6 +23,7 @@ import org.springframework.web.server.ResponseStatusException
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Управление торговыми аккаунтами (multi-account, roadmap v2.2).
@@ -50,6 +51,14 @@ class TradingAccountController(
     private val aumProvider: AumProvider,
     private val drawdownProtectionService: DrawdownProtectionService,
 ) {
+    /**
+     * Торговый день считается по МСК, как в [DrawdownProtectionService]
+     * (`Clock.system(Europe/Moscow)`). Раньше здесь использовалась зона JVM:
+     * на UTC-сервере с 00:00 до 03:00 МСК `realizedPnlToday` и `dailyPnl`
+     * в одном ответе относились к разным дням.
+     */
+    private val businessZone: ZoneId = ZoneId.of("Europe/Moscow")
+
     @GetMapping
     suspend fun list(): List<Map<String, Any?>> =
         tradingAccountService.findAll().map { account ->
@@ -83,7 +92,7 @@ class TradingAccountController(
                 ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
         val openPositions = positionRepository.findOpenByAccount(id)
         val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
-        val todayStart = LocalDate.now().atStartOfDay()
+        val todayStart = LocalDate.now(businessZone).atStartOfDay()
         val closedToday = positionRepository.findClosedByAccountSince(id, todayStart)
         val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
         // DailyRiskSnapshotRepository — блокирующий (Mono.block) репозиторий для синхронного
@@ -110,7 +119,7 @@ class TradingAccountController(
             "openPnl" to BigDecimal(openPnl),
             "realizedPnlToday" to BigDecimal(realizedPnlToday),
             "closedTodayCount" to closedToday.size,
-            "timestamp" to LocalDateTime.now().toString(),
+            "timestamp" to LocalDateTime.now(businessZone).toString(),
         )
     }
 

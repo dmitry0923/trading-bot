@@ -136,6 +136,27 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `analytics token cannot update or delete accounts`() {
+        val id = createAccount().get("id").asLong()
+        val analyticsToken = login("test-analytics", "test-analytics-pass").get("accessToken").asString()
+
+        val update =
+            putJson(
+                "/api/v1/accounts/$id",
+                """{"name":"Hijacked","alorPortfolio":"P9","weight":1}""",
+                analyticsToken,
+            )
+        assertEquals(403, update.statusCode())
+
+        val deletion = delete("/api/v1/accounts/$id", analyticsToken)
+        assertEquals(403, deletion.statusCode())
+
+        // Аккаунт не изменился и не удалён.
+        val fetched = objectMapper.readTree(get("/api/v1/accounts/$id", adminToken()).body())
+        assertEquals("Alpha", fetched.get("name").asString())
+    }
+
+    @Test
     fun `dashboard aggregates aum limits and open and closed positions per account`() {
         val id = createAccountWithAum().get("id").asLong()
         runBlocking {

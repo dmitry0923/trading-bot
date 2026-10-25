@@ -892,7 +892,7 @@ class BacktestEngine(
      *
      * @param quantity количество лотов
      */
-    private fun computeCommission(
+    internal fun computeCommission(
         ticker: String,
         price: BigDecimal,
         quantity: Int,
@@ -906,7 +906,9 @@ class BacktestEngine(
                 return SimulatedExecution.commissionOn(price, quantity * lotSize, commissionRate(commissionMultiplier))
             }
             return SimulatedExecution.commissionFixed(
-                fixedPerLot.multiply(BigDecimal.valueOf(commissionMultiplier.toLong())),
+                // Дробный множитель (1.5/0.5 в стресс-сценариях) нельзя усекать до Long:
+                // 1.5 → 1 превращал стресс в baseline, 0.5 → 0 обнулял комиссию фьючерса.
+                fixedPerLot.multiply(BigDecimal.valueOf(commissionMultiplier)),
                 quantity,
             )
         }
@@ -1125,6 +1127,7 @@ class BacktestEngine(
                 capitalSlice,
                 riskPerTradePercent,
                 futuresMaxContractsPerPosition,
+                percentSlOverride = slPercent * 100.0,
             )
         if (sized.quantity <= 0) return null
         logger.debug {
@@ -1210,6 +1213,7 @@ class BacktestEngine(
         capitalSlice: Double = backtestConfig.capitalSlice,
         riskPerTradePercentOverride: Double? = null,
         futuresMaxContractsPerPosition: Int? = null,
+        percentSlOverride: Double? = null,
     ): SizedPosition {
         val futuresSizer = positionSizer
         if (instrument != null && instrumentsConfig.isFutures(ticker) && futuresSizer != null) {
@@ -1257,7 +1261,8 @@ class BacktestEngine(
                 0
             }
         val effectiveSl =
-            instrument?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
+            instrument?.slPercent
+                ?: percentSlOverride?.let { BigDecimal.valueOf(it) }
                 ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = instrument?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
         val effectiveRiskPercent = riskPerTradePercentOverride ?: riskConfig.riskPerTradePercent.toDouble()

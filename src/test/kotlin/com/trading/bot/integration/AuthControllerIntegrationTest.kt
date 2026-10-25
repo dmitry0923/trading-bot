@@ -151,6 +151,17 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `analytics token cannot trigger state-changing research endpoints`() {
+        val accessToken = login("test-analytics", "test-analytics-pass").get("accessToken").asString()
+
+        // Выполняют запись в БД/меняют live-одобрение: только ADMIN.
+        assertEquals(403, get("/api/v1/backtest/CNYRUBF/validate", accessToken).statusCode())
+        assertEquals(403, get("/api/v1/backtest/CNYRUBF/deployment-gate", accessToken).statusCode())
+        assertEquals(403, get("/api/v1/backtest/CNYRUBF/funding-history", accessToken).statusCode())
+        assertEquals(403, get("/api/v1/macro/rates-history", accessToken).statusCode())
+    }
+
+    @Test
     fun `prometheus metrics require scrape token`() {
         assertEquals(401, get("/actuator/prometheus").statusCode())
         assertEquals(401, get("/actuator/prometheus", "wrong-token").statusCode())

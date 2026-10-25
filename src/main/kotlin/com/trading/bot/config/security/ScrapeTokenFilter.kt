@@ -15,6 +15,9 @@ import java.util.Enumeration
  *
  * - Путь `/actuator/prometheus` объявлен `permitAll` в SecurityConfig (см.
  *   [com.trading.bot.config.SecurityConfig]): этот фильтр сам является единственной проверкой доступа.
+ * - При **пустом** `METRICS_SCRAPE_TOKEN` эндпоинт закрыт (401), а не открыт:
+ *   иначе контур, где токен не задан (CI/deploy по умолчанию), публиковал бы метрики
+ *   без аутентификации. Локально для скрейпа токен нужно задать явно.
  * - При валидном токене `Authorization` маскируется в обёртке запроса, чтобы
  *   [org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter]
  *   не пытался распарсить scrape-токен как JWT (иначе — 500/401 независимо от токена).
@@ -23,14 +26,19 @@ import java.util.Enumeration
 class ScrapeTokenFilter(
     private val scrapeToken: String,
 ) : OncePerRequestFilter() {
-    override fun shouldNotFilter(request: HttpServletRequest): Boolean =
-        scrapeToken.isBlank() || !request.requestURI.startsWith("/actuator/prometheus")
+    override fun shouldNotFilter(request: HttpServletRequest): Boolean = !request.requestURI.startsWith("/actuator/prometheus")
 
     override fun doFilterInternal(
         request: HttpServletRequest,
         response: HttpServletResponse,
         filterChain: FilterChain,
     ) {
+        if (scrapeToken.isBlank()) {
+            response.status = HttpServletResponse.SC_UNAUTHORIZED
+            response.contentType = "application/json"
+            response.writer.write("""{"error":"metrics_scrape_token_not_configured"}""")
+            return
+        }
         val header = request.getHeader(HttpHeaders.AUTHORIZATION)
         if (header != null && header == "Bearer $scrapeToken") {
             filterChain.doFilter(StripAuthHeaderRequest(request), response)

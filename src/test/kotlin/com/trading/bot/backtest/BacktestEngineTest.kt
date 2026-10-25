@@ -2044,6 +2044,104 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `fractional commission multiplier scales fixed per-lot commission`() {
+        val instruments =
+            InstrumentsConfig().apply {
+                instruments =
+                    mutableListOf(
+                        InstrumentsConfig.InstrumentSpec(
+                            ticker = "CNYRUBF",
+                            type = "FUTURES",
+                            lotSize = 1000,
+                            priceStep = BigDecimal("0.001"),
+                            priceStepCost = BigDecimal("0.001"),
+                            go = BigDecimal("1000"),
+                            leverage = BigDecimal("1.0"),
+                            baseAsset = "CNY",
+                            brokerCommissionRub = BigDecimal("1.0"),
+                            exchangeFeeRub = BigDecimal("0.5"),
+                        ),
+                    )
+            }
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = instruments,
+            )
+
+        // 1.5 ₽/контракт/сторона: дробный множитель не должен усекаться до Long.
+        assertEquals(0, BigDecimal("3.0").compareTo(engine.computeCommission("CNYRUBF", BigDecimal("12"), 2, 1.0)))
+        assertEquals(0, BigDecimal("1.5").compareTo(engine.computeCommission("CNYRUBF", BigDecimal("12"), 2, 0.5)))
+        assertEquals(0, BigDecimal("4.5").compareTo(engine.computeCommission("CNYRUBF", BigDecimal("12"), 2, 1.5)))
+    }
+
+    @Test
+    fun `stock sizing risk cap uses the requested stop percent`() =
+        runBlocking {
+            val instruments =
+                InstrumentsConfig().apply {
+                    instruments =
+                        mutableListOf(
+                            InstrumentsConfig.InstrumentSpec(
+                                ticker = "SBER",
+                                type = "STOCK",
+                                lotSize = 10,
+                                priceStep = BigDecimal("0.01"),
+                                priceStepCost = BigDecimal("0.01"),
+                                go = BigDecimal.ZERO,
+                                leverage = BigDecimal("1.0"),
+                                baseAsset = "RUB",
+                            ),
+                        )
+                }
+            val flat =
+                (0 until 40).map { i ->
+                    Candle(
+                        ticker = "SBER",
+                        timeframe = "MINUTE_10",
+                        openPrice = BigDecimal("100"),
+                        highPrice = BigDecimal("100.5"),
+                        lowPrice = BigDecimal("99.5"),
+                        closePrice = BigDecimal("100"),
+                        volume = 1000L,
+                        time = LocalDateTime.now().plusMinutes(10L * i),
+                    )
+                }
+
+            suspend fun quantityFor(slPercent: Double): Int {
+                val engine =
+                    BacktestEngine(
+                        CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                        instrumentsConfig = instruments,
+                        riskConfig = RiskConfig(),
+                        signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                    )
+                val result =
+                    engine.simulate(
+                        "SBER",
+                        flat,
+                        initialCapital = BigDecimal("100000"),
+                        minBarsForSignal = 1,
+                        slPercent = slPercent,
+                        tpPercent = 0.5,
+                        leverage = 5.0,
+                        capitalSlice = 1.0,
+                        riskPerTradePercent = 1.0,
+                    )
+                return result.trades.first().quantity
+            }
+
+            val tight = quantityFor(0.01)
+            val wide = quantityFor(0.03)
+            // Риск-кап 1% от leveraged cash (100k × 5 = 500k): убыток на лот
+            // 100 × SL% × 10, поэтому стоп 3% обязан дать втрое меньший размер,
+            // а не сайзиться под дефолтные 2%.
+            assertTrue(tight > wide, "tight=$tight wide=$wide")
+            assertEquals(500, tight)
+            assertEquals(166, wide)
+        }
+
+    @Test
     fun `per-instrument commissionRub is used instead of universal rate`() =
         runBlocking {
             val instruments =

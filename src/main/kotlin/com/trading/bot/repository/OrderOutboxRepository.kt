@@ -177,6 +177,33 @@ class OrderOutboxRepository(
     }
 
     /**
+     * Привязывает entry-ордер к позиции, созданной после отправки.
+     *
+     * Entry-outbox пишется до позиции (`positionId = null`), а реконсилятор ищет
+     * строку по `payload->>'positionId'`. Без связи каждый `pendingEntry`
+     * остаётся неразрешённым. UPDATE идемпотентен: меняет только строку,
+     * у которой `position_id` ещё NULL.
+     */
+    suspend fun linkPosition(
+        id: UUID,
+        positionId: Long,
+    ) {
+        databaseClient
+            .sql(
+                """
+                UPDATE order_outbox
+                SET position_id = :positionId,
+                    payload = jsonb_set(payload, '{positionId}', to_jsonb(CAST(:positionId AS bigint)))
+                WHERE id = :id AND position_id IS NULL
+                """.trimIndent(),
+            ).bind("positionId", positionId)
+            .bind("id", id)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
+    }
+
+    /**
      * Последняя outbox-запись для позиции (для сверки входов/закрытий).
      *
      * @param purpose назначение ордера ("entry"/"close"/"sl"/"tp") — фильтр по

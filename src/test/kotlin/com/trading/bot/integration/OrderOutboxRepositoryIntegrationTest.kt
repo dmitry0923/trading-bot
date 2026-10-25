@@ -50,6 +50,24 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
         )
 
     @Test
+    fun `linkPosition attaches entry outbox to created position and is idempotent`() {
+        runBlocking {
+            val saved = repo.save(row("idem-link"))
+            repo.linkPosition(saved.id!!, 42L)
+
+            val linked = repo.findLatestByPositionId(42L)
+            assertEquals(saved.id, linked?.id)
+            assertEquals(42L, linked?.positionId)
+            val normalized = linked?.payloadJson?.replace(" ", "")
+            assertTrue(normalized?.contains("\"positionId\":42") == true, "payload=$normalized")
+
+            // Повторная привязка (ретрай/реконсиляция) не перетирает уже связанную строку.
+            repo.linkPosition(saved.id, 99L)
+            assertEquals(42L, repo.findLatestByPositionId(42L)?.positionId)
+        }
+    }
+
+    @Test
     fun `duplicate idempotency key returns existing row without second insert`() {
         runBlocking {
             val first = repo.save(row("idem-dup-1"))

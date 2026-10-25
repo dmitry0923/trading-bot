@@ -131,6 +131,10 @@ microstructure:
   rest-poll-interval-ms: ${MICROSTRUCTURE_REST_POLL_INTERVAL_MS:1000}
   rest-depth: ${MICROSTRUCTURE_REST_DEPTH:1}
   rest-timeout-ms: ${MICROSTRUCTURE_REST_TIMEOUT_MS:5000}
+  # Максимальный возраст котировки по времени биржи (ms_timestamp), мс.
+  # Вне сессии Alor отдаёт последний стакан -> без гейта в БД пишутся
+  # выходные/ночные дубли (десятки тысяч одинаковых строк). 0 = выключить.
+  rest-max-quote-age-ms: ${MICROSTRUCTURE_REST_MAX_QUOTE_AGE_MS:30000}
 
 llm:
   provider: ${LLM_PROVIDER:ROUTER_AI}

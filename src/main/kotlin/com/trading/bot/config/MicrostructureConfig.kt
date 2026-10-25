@@ -27,6 +27,11 @@ import org.springframework.stereotype.Component
  * @property restPollIntervalMs период поллинга по всем тикерам, мс
  * @property restDepth глубина стакана в запросе (1 = только L1)
  * @property restTimeoutMs таймаут одного REST-запроса стакана, мс
+ * @property restMaxQuoteAgeMs максимальный возраст котировки по времени биржи
+ *   (`ms_timestamp`), мс; более старые снимки **не записываются**.
+ *   Вне торговой сессии API продолжает отдавать последний стакан, и без этого
+ *   гейта в БД попадают десятки тысяч одинаковых строк (выходные/ночь), которые
+ *   искажают forward-статистику. `<= 0` — гейт выключен (не рекомендуется).
  */
 @Component
 @ConfigurationProperties(prefix = "microstructure")
@@ -40,4 +45,5 @@ class MicrostructureConfig {
     var restPollIntervalMs: Long = 1_000L
     var restDepth: Int = 1
     var restTimeoutMs: Long = 5_000L
+    var restMaxQuoteAgeMs: Long = 30_000L
 }

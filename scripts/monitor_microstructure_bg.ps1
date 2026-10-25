@@ -12,8 +12,19 @@ $pollsPerHang = [math]::Max(1, [int]($HangMinutes * 60 / $IntervalSec))
 $zeroStreak = 0
 $lastCount = -1
 $lastSample = Get-Date
+$mskZone = [TimeZoneInfo]::FindSystemTimeZoneById('Russian Standard Time')
+$sessionOpen = [TimeSpan]::new(6, 50, 0)
+$sessionClose = [TimeSpan]::new(23, 50, 0)
 while ($true) {
   $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+  # Вне сессии сбор намеренно не пишет (гейт свежести REST-снимка):
+  # отсутствие прироста ночью/в выходные — не зависание.
+  $mskNow = [TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $mskZone)
+  $marketOpen =
+    $mskNow.DayOfWeek -ne [DayOfWeek]::Saturday -and
+    $mskNow.DayOfWeek -ne [DayOfWeek]::Sunday -and
+    $mskNow.TimeOfDay -ge $sessionOpen -and
+    $mskNow.TimeOfDay -lt $sessionClose
   $alive = $false
   if ($BotPid -gt 0) {
     try { $alive = [bool](Get-Process -Id $BotPid -ErrorAction SilentlyContinue) } catch { $alive = $false }
@@ -26,6 +37,7 @@ while ($true) {
   $delta = 0
   if ($lastCount -ge 0 -and $count -ge 0) { $delta = $count - $lastCount }
   if ($count -ge 0 -and $delta -le 0) { $zeroStreak++ } elseif ($delta -gt 0) { $zeroStreak = 0 }
+  if (-not $marketOpen) { $zeroStreak = 0 }
   $rssMb = 0; $cpuSec = 0
   if ($BotPid -gt 0) {
     try {
@@ -43,7 +55,7 @@ while ($true) {
       $errCount = ($tail | Select-String -Pattern '"level":"ERROR"' -SimpleMatch).Count
     }
   } catch {}
-  $line = "$ts alive=$alive pid=$BotPid rows=$count delta10m=$delta zeroStreak=$zeroStreak rssMb=$rssMb cpuSec=$cpuSec errorsInTail=$errCount"
+  $line = "$ts alive=$alive pid=$BotPid rows=$count delta10m=$delta zeroStreak=$zeroStreak marketOpen=$marketOpen rssMb=$rssMb cpuSec=$cpuSec errorsInTail=$errCount"
   Add-Content -Path $OutLog -Value $line -Encoding UTF8
   if ($zeroStreak -ge $pollsPerHang) {
     Add-Content -Path $OutLog -Value "$ts [HANG DETECTED] rows не растут >= $HangMinutes мин — нужен ручной разбор" -Encoding UTF8

@@ -156,9 +156,21 @@ forward. До этого они жили только в памяти `MarketDat
   lookahead. Тикер, вставший на паузу, закрывается по протуханию (3 бакета) и по `@PreDestroy`.
 - **Конфиг** (`microstructure.*`, env `MICROSTRUCTURE_*`): `enabled`=**false** (research-сбор,
   включать осознанно), `bucket-ms`=1000, `flush-interval-ms`=5000, `max-queue-size`=20000,
-  `tickers`=**пусто** (инструменты сбора; пусто = брать `trading.tickers`).
+  `tickers`=**пусто** (инструменты сбора; пусто = брать `trading.tickers`),
+  `rest-max-quote-age-ms`=30000 (гейт свежести REST-снимка, см. ниже).
 - **Метрики:** `microstructure.recorded`, `microstructure.skipped`, `microstructure.flush.rows`,
-  `microstructure.flush.dropped`, `microstructure.flush.errors`.
+  `microstructure.flush.dropped`, `microstructure.flush.errors`,
+  `microstructure.rest.bbo{reason=incomplete|stale|future|missing_exchange_time}`.
+- **Гейт свежести REST-снимка (фикс 2026-10-25, дефект пилота):** вне торговой сессии Alor
+  отдаёт **последний** стакан, а поллер опрашивает API 24/7 → за 4 суток 43% строк (104 309)
+  были выходными/ночными дублями одной книги (bid 12.04/ask 12.06, spread 16.6 bps, 1
+  уникальное OBI). Теперь снимок пишется только если `ms_timestamp` (время биржи) не старше
+  `microstructure.rest-max-quote-age-ms` (env `MICROSTRUCTURE_REST_MAX_QUOTE_AGE_MS`, default
+  **30000**); неизвестное/будущее время — пропуск (fail-closed по данным), `0` выключает гейт.
+  Пропуски — `microstructure.rest.bbo{reason=stale|future|missing_exchange_time}`. `ms_timestamp`
+  принимается как epoch-ms (живой ответ), epoch-s и ISO-8601 (старая форма; раньше ISO-строка
+  молча давала `null`). Найденные 104 309 строк удалены; собранное до фикса непригодно для
+  forward-статистики «плоских» окон.
 - **Платящий L2 (инструмент `OrderBook`) не проверен** — доступность по тарифу не выяснена;
   подписка идёт только на `Quotations` (L1).
 - **Источник L1 для пилота — REST Alor, не WS** (`rest-polling-enabled`, дефолт **off**;

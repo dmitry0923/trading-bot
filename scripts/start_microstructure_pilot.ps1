@@ -27,6 +27,13 @@ foreach ($line in (Get-Content $envFile)) {
 }
 foreach ($k in $envMap.Keys) { Set-Item -Path "Env:$k" -Value $envMap[$k] }
 
+# В .env нет DB_* (это локальные креды docker-compose), без них бот падает на
+# R2DBC при flush. Дефолты совпадают с docker-compose.yml; переопределяются env.
+if (-not $env:DB_USER) { $env:DB_USER = "trader" }
+if (-not $env:DB_NAME) { $env:DB_NAME = "trading_bot" }
+if (-not $env:DB_PASS) { $env:DB_PASS = "backtest123" }
+if (-not $env:JWT_SECRET) { throw "JWT_SECRET отсутствует в .env — бот не стартует" }
+
 if (-not $envMap.ContainsKey('ALOR_REFRESH_TOKEN') -or -not $envMap['ALOR_REFRESH_TOKEN']) {
   throw "ALOR_REFRESH_TOKEN отсутствует в .env — без него WS не авторизуется"
 }

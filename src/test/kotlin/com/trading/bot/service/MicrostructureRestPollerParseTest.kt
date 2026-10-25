@@ -3,6 +3,7 @@ package com.trading.bot.service
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.ObjectMapper
+import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -124,6 +125,105 @@ class MicrostructureRestPollerParseTest {
     }
 
     @Test
+    fun `parses live numeric ms_timestamp as exchange time`() {
+        val node =
+            mapper.readTree(
+                """
+                {
+                  "bids": [{"price": 12.04, "volume": 60}],
+                  "asks": [{"price": 12.06, "volume": 1}],
+                  "timestamp": 1792801688,
+                  "ms_timestamp": 1792812488024,
+                  "existing": true
+                }
+                """.trimIndent(),
+            )
+
+        val tick = poller.parse("CNYRUBF", node)
+
+        assertNotNull(tick)
+        assertEquals(Instant.ofEpochMilli(1792812488024L), tick.exchangeTime)
+    }
+
+    @Test
+    fun `parses epoch seconds in ms_timestamp without losing the tick`() {
+        val node =
+            mapper.readTree(
+                """
+                {
+                  "bids": [{"price": 12.04, "volume": 60}],
+                  "asks": [{"price": 12.06, "volume": 1}],
+                  "ms_timestamp": 1792801688
+                }
+                """.trimIndent(),
+            )
+
+        val tick = poller.parse("CNYRUBF", node)
+
+        assertNotNull(tick)
+        assertEquals(Instant.ofEpochSecond(1792801688L), tick.exchangeTime)
+    }
+
+    @Test
+    fun `parses textual ms_timestamp of the legacy Alor payload`() {
+        val node =
+            mapper.readTree(
+                """
+                {
+                  "bids": [{"price": 12.441, "volume": 564}],
+                  "asks": [{"price": 12.442, "volume": 570}],
+                  "ms_timestamp": "2026-10-02T13:21:17.000Z"
+                }
+                """.trimIndent(),
+            )
+
+        val tick = poller.parse("CNYRUBF", node)
+
+        assertNotNull(tick)
+        assertEquals(Instant.parse("2026-10-02T13:21:17.000Z"), tick.exchangeTime)
+    }
+
+    @Test
+    fun `rejects quote older than max age`() {
+        val now = Instant.parse("2026-10-25T12:00:00Z")
+        val tick = tickAt(now.minusSeconds(120))
+
+        assertEquals("stale", poller.stalenessReason(tick, now, 30_000L))
+    }
+
+    @Test
+    fun `accepts fresh quote within max age`() {
+        val now = Instant.parse("2026-10-25T12:00:00Z")
+        val tick = tickAt(now.minusMillis(5_000))
+
+        assertNull(poller.stalenessReason(tick, now, 30_000L))
+    }
+
+    @Test
+    fun `rejects quote without exchange time instead of trusting local clock`() {
+        val now = Instant.parse("2026-10-25T12:00:00Z")
+        val tick = tickAt(null)
+
+        assertEquals("missing_exchange_time", poller.stalenessReason(tick, now, 30_000L))
+    }
+
+    @Test
+    fun `rejects quote dated far in the future`() {
+        val now = Instant.parse("2026-10-25T12:00:00Z")
+        val tick = tickAt(now.plusSeconds(600))
+
+        assertEquals("future", poller.stalenessReason(tick, now, 30_000L))
+    }
+
+    @Test
+    fun `stale gate can be disabled with non-positive max age`() {
+        val now = Instant.parse("2026-10-25T12:00:00Z")
+        val tick = tickAt(now.minusSeconds(86_400))
+
+        assertNull(poller.stalenessReason(tick, now, 0L))
+    }
+
+    @Test
     fun `collection tickers narrow the pilot and never fall back to trading watchlist`() {
         val micro =
             com.trading.bot.config
@@ -152,6 +252,17 @@ class MicrostructureRestPollerParseTest {
 
         assertEquals(listOf("SBER", "GAZP"), fallback.tickers)
     }
+
+    private fun tickAt(exchangeTime: Instant?): com.trading.bot.client.QuoteTick =
+        com.trading.bot.client.QuoteTick(
+            ticker = "CNYRUBF",
+            price = 12.04.toBigDecimal(),
+            bid = 12.04.toBigDecimal(),
+            ask = 12.06.toBigDecimal(),
+            bidSize = 60L,
+            askSize = 1L,
+            exchangeTime = exchangeTime,
+        )
 
     private fun newPoller(
         tickers: com.trading.bot.config.MicrostructureConfig,

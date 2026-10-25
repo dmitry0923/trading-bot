@@ -49,6 +49,15 @@ import java.time.Instant
  *
  * Fail-soft: пустой/неполный стакан и ошибка запроса пропускаются (счётчик),
  * сбор не прерывается — отсутствие наблюдения лучше падения цикла.
+ *
+ * ## Гейт свежести
+ * Вне торговой сессии (ночь, выходные) REST-эндпоинт продолжает отдавать
+ * **последний** стакан, и наивная запись давала десятки тысяч одинаковых строк
+ * на выходных — шум, искажающий forward-статистику (нулевая волатильность,
+ * постоянный OBI). Поэтому снимок пишется только если время биржи
+ * (`ms_timestamp`) не старше [MicrostructureConfig.restMaxQuoteAgeMs].
+ * Неизвестное время биржи трактуется как несвежее (fail-closed по данным):
+ * лучше пропустить наблюдение, чем записать его с неверной меткой времени.
  */
 @Service
 class MicrostructureRestPoller(
@@ -141,8 +150,38 @@ class MicrostructureRestPoller(
             meterRegistry.counter("microstructure.rest.bbo", Tags.of("ticker", ticker, "reason", "incomplete")).increment()
             return
         }
+        val stale = stalenessReason(tick, Instant.now(), microstructureConfig.restMaxQuoteAgeMs)
+        if (stale != null) {
+            meterRegistry.counter("microstructure.rest.bbo", Tags.of("ticker", ticker, "reason", stale)).increment()
+            logger.debug { "microstructure REST quote skipped for $ticker: $stale (exchangeTime=${tick.exchangeTime})" }
+            return
+        }
         recorder.record(tick)
         meterRegistry.counter("microstructure.rest.poll", Tags.of("ticker", ticker, "status", "ok")).increment()
+    }
+
+    /**
+     * Причина пропуска снимка по свежести или `null`, если снимок свежий.
+     *
+     * Вынесено из [pollOne] без сетевых зависимостей, чтобы гейт можно было
+     * проверить юнит-тестом: ошибка здесь либо пропускает торговый день,
+     * либо снова наполняет БД выходными дублями.
+     *
+     * @param maxAgeMs `<= 0` — гейт выключен (обратная совместимость)
+     */
+    internal fun stalenessReason(
+        tick: QuoteTick,
+        now: Instant,
+        maxAgeMs: Long,
+    ): String? {
+        if (maxAgeMs <= 0L) return null
+        val exchangeTime = tick.exchangeTime ?: return "missing_exchange_time"
+        val ageMs = Duration.between(exchangeTime, now).toMillis()
+        return when {
+            ageMs > maxAgeMs -> "stale"
+            ageMs < -maxAgeMs -> "future"
+            else -> null
+        }
     }
 
     /**
@@ -157,12 +196,7 @@ class MicrostructureRestPoller(
         val bid = bestSide(node.path("bids"), higherIsBetter = true) ?: return null
         val ask = bestSide(node.path("asks"), higherIsBetter = false) ?: return null
         val mid = bid.first.add(ask.first).divide(BigDecimal(2), PRICE_SCALE, RoundingMode.HALF_UP)
-        val exchangeTime =
-            node
-                .path("ms_timestamp")
-                .asLong(0L)
-                .takeIf { it > 0L }
-                ?.let { Instant.ofEpochMilli(it) }
+        val exchangeTime = exchangeTime(node)
         return QuoteTick(
             ticker = ticker,
             price = mid,
@@ -173,6 +207,32 @@ class MicrostructureRestPoller(
             receivedAt = Instant.now(),
             exchangeTime = exchangeTime,
         )
+    }
+
+    /**
+     * Время биржи из `ms_timestamp`.
+     *
+     * Живой ответ отдаёт **число** epoch-миллисекунд, но в старой форме встречалась
+     * ISO-8601 строка — поддерживаются оба варианта. Раньше числовое поле читалось
+     * корректно, а строковое молча превращалось в `null`, из-за чего гейт свежести
+     * не мог работать: неизвестное время = пропуск снимка.
+     */
+    private fun exchangeTime(node: JsonNode): Instant? {
+        val text = node.path("ms_timestamp").asString("").trim()
+        if (text.isEmpty()) return null
+        val epoch = text.toLongOrNull()
+        return if (epoch != null) {
+            if (epoch <= 0L) {
+                null
+            } else if (epoch < EPOCH_MILLIS_THRESHOLD) {
+                // Секунды: защита от смены единиц в API.
+                Instant.ofEpochSecond(epoch)
+            } else {
+                Instant.ofEpochMilli(epoch)
+            }
+        } else {
+            runCatching { Instant.parse(text) }.getOrNull()
+        }
     }
 
     /**
@@ -205,5 +265,8 @@ class MicrostructureRestPoller(
 
     private companion object {
         const val PRICE_SCALE = 8
+
+        /** Значения меньше этого порога трактуются как секунды, а не миллисекунды. */
+        const val EPOCH_MILLIS_THRESHOLD = 100_000_000_000L
     }
 }

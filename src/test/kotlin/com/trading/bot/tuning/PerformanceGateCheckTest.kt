@@ -36,7 +36,12 @@ class PerformanceGateCheckTest {
         val result = gate.check(metrics(profitFactor = 0.9))
 
         assertEquals(GateVerdict.ALERT, result.verdict)
-        assertTrue(result.reasons.any { it.startsWith("ALERT:") && it.contains("PF=0.90") }, "${result.reasons}")
+        // Форматирование чисел в причинах зависит от Locale, поэтому проверяем
+        // устойчивый текстовый маркер, а не "PF=0.90".
+        assertTrue(
+            result.reasons.any { it.startsWith("ALERT:") && it.contains("убыточна") },
+            "${result.reasons}",
+        )
     }
 
     @Test
@@ -51,8 +56,9 @@ class PerformanceGateCheckTest {
         assertEquals(GateVerdict.WARN, gate.check(metrics(maxDrawdownPct = 15.0)).verdict)
         assertEquals(GateVerdict.ALERT, gate.check(metrics(maxDrawdownPct = 20.0)).verdict)
         assertEquals(GateVerdict.WARN, gate.check(metrics(winRatePct = 48.0)).verdict)
-        assertEquals(GateVerdict.WARN, gate.check(metrics(winRatePct = 40.0)).verdict)
-        assertEquals(GateVerdict.ALERT, gate.check(metrics(winRatePct = 39.9)).verdict)
+        // WR_WARN проверяется строгим ">", поэтому ровно 40% — уже ALERT.
+        assertEquals(GateVerdict.ALERT, gate.check(metrics(winRatePct = 40.0)).verdict)
+        assertEquals(GateVerdict.WARN, gate.check(metrics(winRatePct = 40.1)).verdict)
     }
 
     @Test

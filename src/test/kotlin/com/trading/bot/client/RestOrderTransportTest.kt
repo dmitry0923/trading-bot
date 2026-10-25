@@ -42,28 +42,28 @@ class RestOrderTransportTest {
         )
 
     @Test
-    fun `placeLimit simulates order in non-live`() =
+    fun `placeLimit simulates order in non-live`(): Unit =
         runBlocking {
             val result = transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
             assertEquals("sim-SBER-idem-1", result)
         }
 
     @Test
-    fun `placeConditional simulates order in non-live`() =
+    fun `placeConditional simulates order in non-live`(): Unit =
         runBlocking {
             val result = transport.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1")
             assertEquals("sim-stop-SBER-idem-2", result)
         }
 
     @Test
-    fun `cancel is confirmed in non-live`() =
+    fun `cancel is confirmed in non-live`(): Unit =
         runBlocking {
             val result = transport.cancel("ord-1", "idem-3", "P1")
             assertEquals(CancelResult.CONFIRMED, result)
         }
 
     @Test
-    fun `live placeLimit is blocked for unapproved ticker`() =
+    fun `live placeLimit is blocked for unapproved ticker`(): Unit =
         runBlocking {
             val live = liveTransport(resolver())
             assertFailsWith<OrderInterlockDeniedException> {
@@ -72,7 +72,7 @@ class RestOrderTransportTest {
         }
 
     @Test
-    fun `live placeConditional is blocked for unapproved ticker`() =
+    fun `live placeConditional is blocked for unapproved ticker`(): Unit =
         runBlocking {
             val live = liveTransport(resolver())
             assertFailsWith<OrderInterlockDeniedException> {
@@ -81,7 +81,7 @@ class RestOrderTransportTest {
         }
 
     @Test
-    fun `live placeLimit is blocked when approval service not ready`() =
+    fun `live placeLimit is blocked when approval service not ready`(): Unit =
         runBlocking {
             val live = liveTransport(resolver())
             assertFailsWith<OrderInterlockDeniedException> {
@@ -90,7 +90,7 @@ class RestOrderTransportTest {
         }
 
     @Test
-    fun `live placeLimit close purpose is blocked after revoke without open position`() =
+    fun `live placeLimit close purpose is blocked after revoke without open position`(): Unit =
         runBlocking {
             val live = liveTransport(resolver(reducingAllowed = false))
             assertFailsWith<OrderInterlockDeniedException> {
@@ -99,7 +99,7 @@ class RestOrderTransportTest {
         }
 
     @Test
-    fun `live placeConditional sl purpose is blocked after revoke without open position`() =
+    fun `live placeConditional sl purpose is blocked after revoke without open position`(): Unit =
         runBlocking {
             val live = liveTransport(resolver(reducingAllowed = false))
             assertFailsWith<OrderInterlockDeniedException> {
@@ -108,7 +108,7 @@ class RestOrderTransportTest {
         }
 
     @Test
-    fun `live placeLimit entry still blocked even with reducing allowed (revoke scenario)`() =
+    fun `live placeLimit entry still blocked even with reducing allowed (revoke scenario)`(): Unit =
         runBlocking {
             // P1-a: entry requires full approval even if reducing is allowed via open position
             val live = liveTransport(resolver(entryAllowed = false, reducingAllowed = true))

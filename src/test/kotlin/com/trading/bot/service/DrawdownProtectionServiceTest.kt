@@ -1214,7 +1214,10 @@ class DrawdownProtectionServiceTest {
             // Today: -1500 (below 2% limit of 1000 → daily breached).
             // 7d: only the same -1500 (7% = 3500 → not breached).
             stubClosedPositions(
-                listOf(closedPosition(BigDecimal("-1500"), LocalDateTime.now().minusMinutes(30))),
+                // «Сейчас по Москве»: с now().minusMinutes(30) тест падал в окне
+                // 00:00–00:30 МСК — сделка попадала во вчерашний день, а daily-лимит
+                // считается по московскому календарю.
+                listOf(closedPosition(BigDecimal("-1500"), LocalDateTime.now(ZoneId.of("Europe/Moscow")))),
             )
 
             val s = service()

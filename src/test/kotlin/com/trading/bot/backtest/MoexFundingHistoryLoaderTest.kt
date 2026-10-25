@@ -127,7 +127,7 @@ class MoexFundingHistoryLoaderTest {
     }
 
     @Test
-    fun `blank history url disables backfill`() =
+    fun `blank history url disables backfill`(): Unit =
         runBlocking {
             val loader = loader()
 
@@ -138,7 +138,7 @@ class MoexFundingHistoryLoaderTest {
         }
 
     @Test
-    fun `loads and saves history via HTTP with repository`() =
+    fun `loads and saves history via HTTP with repository`(): Unit =
         runBlocking {
             val body =
                 """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
@@ -150,27 +150,31 @@ class MoexFundingHistoryLoaderTest {
                 val fundingConfig = FundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
-                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(2)
+                val saved = mutableListOf<List<FundingHistoryRecord>>()
+                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenAnswer { invocation ->
+                    @Suppress("UNCHECKED_CAST")
+                    saved += invocation.getArgument(0) as List<FundingHistoryRecord>
+                    2
+                }
                 val loader = loader(fundingConfig = fundingConfig, repo = repo)
 
                 val result = loader.loadAndSave("CNYRUBF", 365)
 
                 assertEquals(2, result.loaded)
                 assertEquals(2, result.saved)
-                Mockito.verify(repo).saveAll(
-                    Mockito.argThat<List<FundingHistoryRecord>> { records ->
-                        records.size == 2 &&
-                            records[0].clearingDate.toString() == "2026-08-03" &&
-                            records.any { it.valueRubPerContract.compareTo(BigDecimal("2.87")) == 0 }
-                    },
-                )
+                // Проверяем фактически сохранённый список (verify() на suspend-функции
+                // с non-null Int возвращал null и падал NPE до сверки аргументов).
+                val records = saved.single()
+                assertEquals(2, records.size)
+                assertEquals("2026-08-03", records[0].clearingDate.toString())
+                assertTrue(records.any { it.valueRubPerContract.compareTo(BigDecimal("2.87")) == 0 })
             } finally {
                 server.stop(0)
             }
         }
 
     @Test
-    fun `perms pages until short page returned`() =
+    fun `perms pages until short page returned`(): Unit =
         runBlocking {
             val requests = AtomicInteger(0)
             val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -183,7 +187,7 @@ class MoexFundingHistoryLoaderTest {
                         ?.toInt() ?: 0
                 val page =
                     if (startParam == 0) {
-                        """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": ${rows(0, 100)}}}"""
+                        """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [${rows(0, 100)}]}}"""
                     } else {
                         """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [["2026-05-01", "0.00250"]]}}"""
                     }
@@ -195,21 +199,26 @@ class MoexFundingHistoryLoaderTest {
                 val fundingConfig = FundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
-                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(101)
+                val saved = mutableListOf<List<FundingHistoryRecord>>()
+                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenAnswer { invocation ->
+                    @Suppress("UNCHECKED_CAST")
+                    saved += invocation.getArgument(0) as List<FundingHistoryRecord>
+                    101
+                }
                 val loader = loader(fundingConfig = fundingConfig, repo = repo)
 
                 val result = loader.loadAndSave("CNYRUBF", 365)
 
                 assertEquals(101, result.loaded)
                 assertEquals(2, requests.get(), "должны уйти 2 страницы (полная + короткая)")
-                Mockito.verify(repo).saveAll(Mockito.argThat<List<FundingHistoryRecord>> { it.size == 101 })
+                assertEquals(101, saved.single().size)
             } finally {
                 server.stop(0)
             }
         }
 
     @Test
-    fun `pages past a full page of blank swaprate rows`() =
+    fun `pages past a full page of blank swaprate rows`(): Unit =
         runBlocking {
             // Регресс: у валютных перпетуалов SWAPRATE пуст до 2023-01-03, поэтому
             // ПЕРВАЯ страница (100 сырых строк) даёт 0 валидных записей. Прежний
@@ -276,6 +285,13 @@ class MoexFundingHistoryLoaderTest {
             ObjectMapper(),
             SimpleMeterRegistry(),
         )
+
+    /**
+     * Матчер «saveAll получил список, удовлетворяющий предикату».
+     *
+     * `Mockito.argThat` в Kotlin возвращает `null`, а параметр `saveAll` non-null —
+     * прямой вызов падал NPE. Helper регистрирует матчер и отдаёт валидный dummy.
+     */
 
     private fun respond(
         exchange: HttpExchange,

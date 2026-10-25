@@ -52,7 +52,7 @@ class RoutedOrderTransportTest {
     }
 
     @Test
-    fun `uses WS when enabled default portfolio and live`() =
+    fun `uses WS when enabled default portfolio and live`(): Unit =
         runBlocking {
             Mockito.`when`(wsOrderTransport.placeLimit("SBER", "buy", 1, price, "idem-1", "P1")).thenReturn("ws-order")
             val result = router.placeLimit("SBER", "buy", 1, price, "idem-1", "P1")
@@ -61,14 +61,15 @@ class RoutedOrderTransportTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyInt(),
-                Mockito.any(BigDecimal::class.java),
+                anyBigDecimal(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                anyPurpose(),
             )
         }
 
     @Test
-    fun `falls back to REST when WS unavailable before send`() =
+    fun `falls back to REST when WS unavailable before send`(): Unit =
         runBlocking {
             Mockito
                 .`when`(wsOrderTransport.placeLimit("SBER", "buy", 1, price, "idem-1", "P1"))
@@ -79,7 +80,7 @@ class RoutedOrderTransportTest {
         }
 
     @Test
-    fun `does not fall back when delivery is uncertain`() =
+    fun `does not fall back when delivery is uncertain`(): Unit =
         runBlocking {
             Mockito
                 .`when`(wsOrderTransport.placeLimit("SBER", "buy", 1, price, "idem-1", "P1"))
@@ -91,14 +92,15 @@ class RoutedOrderTransportTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyInt(),
-                Mockito.any(BigDecimal::class.java),
+                anyBigDecimal(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                anyPurpose(),
             )
         }
 
     @Test
-    fun `uses REST for non-default portfolio`() =
+    fun `uses REST for non-default portfolio`(): Unit =
         runBlocking {
             Mockito.`when`(restOrderTransport.placeLimit("SBER", "buy", 1, price, "idem-1", "P2")).thenReturn("rest-order")
             val result = router.placeLimit("SBER", "buy", 1, price, "idem-1", "P2")
@@ -107,14 +109,15 @@ class RoutedOrderTransportTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyInt(),
-                Mockito.any(BigDecimal::class.java),
+                anyBigDecimal(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                anyPurpose(),
             )
         }
 
     @Test
-    fun `uses REST when WS disabled`() =
+    fun `uses REST when WS disabled`(): Unit =
         runBlocking {
             alorConfig.wsOrdersEnabled = false
             Mockito.`when`(restOrderTransport.placeLimit("SBER", "buy", 1, price, "idem-1", "P1")).thenReturn("rest-order")
@@ -124,14 +127,15 @@ class RoutedOrderTransportTest {
                 Mockito.anyString(),
                 Mockito.anyString(),
                 Mockito.anyInt(),
-                Mockito.any(BigDecimal::class.java),
+                anyBigDecimal(),
                 Mockito.anyString(),
                 Mockito.anyString(),
+                anyPurpose(),
             )
         }
 
     @Test
-    fun `routes conditional to WS primary`() =
+    fun `routes conditional to WS primary`(): Unit =
         runBlocking {
             Mockito
                 .`when`(wsOrderTransport.placeConditional("stop", "SBER", "sell", 1, price, "idem-2", "P1"))
@@ -141,10 +145,25 @@ class RoutedOrderTransportTest {
         }
 
     @Test
-    fun `routes cancel to WS primary`() =
+    fun `routes cancel to WS primary`(): Unit =
         runBlocking {
             Mockito.`when`(wsOrderTransport.cancel("ord-1", "idem-c", "P1")).thenReturn(CancelResult.CONFIRMED)
             val result = router.cancel("ord-1", "idem-c", "P1")
             assertEquals(CancelResult.CONFIRMED, result)
         }
+
+    /** Матчер any(BigDecimal) без null: возвращает реальное значение для non-null параметра. */
+    private fun anyBigDecimal(): BigDecimal {
+        Mockito.any(BigDecimal::class.java)
+        return BigDecimal.ONE
+    }
+
+    /**
+     * Матчер `any(OrderPurpose)`: параметр non-null и его нельзя опускать — иначе
+     * Kotlin вызывает `$default`-мост и Mockito видит 6 матчеров вместо 7.
+     */
+    private fun anyPurpose(): OrderPurpose {
+        Mockito.any(OrderPurpose::class.java)
+        return OrderPurpose.ENTRY
+    }
 }

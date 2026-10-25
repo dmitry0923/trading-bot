@@ -19,6 +19,14 @@
 - Mockito в Kotlin: inline `Mockito.any(SomeClass::class.java)` для non-null типов → NPE; обязателен
   helper-паттерн `{ Mockito.any(X::class.java); return dummy }` (`anyString`, `anyBigDecimal`,
   `anyDirection`, `anyLong`, `anyPosition`, `anyPurpose`).
+- **JUnit 5 не исполняет тест-метод, возвращающий не-`Unit`** (`fun x() = runBlocking { … verify(...) }`
+  или `= assertThrows(...)`). Такой тест **молча пропускается**, оставаясь «зелёным». Правило:
+  объявлять `fun name(): Unit =` / блочное тело. Проверка целостности — сверка числа `@Test`
+  в исходниках с фактически исполненными кейсами в `build/test-results/**/TEST-*.xml`
+  (2026-10-26 так найдено 90 неисполнявшихся тестов в 17 классах).
+- `Mockito.verify(mock).suspendFun(...)` для suspend-функции с non-null возвратом (например
+  `saveAll(...): Int`) бросает NPE — проверять факт вызова через захват аргумента
+  (`thenAnswer { … }` + assert на захваченном), а не через `verify`.
 
 ## Актуальные параметры (production, 2026-09)
 
@@ -1779,13 +1787,16 @@ override реально меняет результат** — иначе «фи�
   подтверждённые P0/P1 исправлены с тестами (ANALYTICS `PUT/PATCH/DELETE`, мутирующие
   GET, fail-closed `METRICS_SCRAPE_TOKEN`, TZ dashboard, усечение `commissionMultiplier`,
   сайзинг акций по фактическому SL, фантомная позиция при 0-fill, связка entry-outbox↔позиция,
-  частичный филл при CANCELED). Не исправлены (меняют published-результаты): проверка SL/TP
-  на баре входа, сдвиг equity-кривой, двойной P&L/`lotSize` в `BacktestRiskSimulator`,
-  lookahead funding-veto, DAY_1-lookback, pairs-beta — см. §2 документа, нужен отдельный
-  предрегистрированный прогон. **Покрытие: глобально LINE 75,8 %** (критический срез
-  domain+decision+risk — 90,96 %, тикерный бэктест — 91,63 %, agent+llm — 91,34 %);
-  до глобальных 90 % нужно ≈ +3 500 строк / ~205 тестов (план §5.3, 2–3 дня).
-  Порог `koverVerify` пока 70; решение «глобальные 90 % vs 90 % на критическом срезе» — за пользователем.
+  частичный филл при CANCELED), плюс `ParameterOptimizer` (краш на `slPoints=0`),
+  404 вместо 500 на `holdout`/`deployment-gate`, `ApiExceptionHandler`
+  (`IllegalArgumentException` → 400). Не исправлены (меняют published-результаты):
+  проверка SL/TP на баре входа, сдвиг equity-кривой, двойной P&L/`lotSize` в
+  `BacktestRiskSimulator`, lookahead funding-veto, DAY_1-lookback, pairs-beta — см. §2.
+  **Покрытие достигнуто 2026-10-26: LINE 92,59 %** (22 912/24 745), BRANCH 72,44 %,
+  METHOD 89,69 %, CLASS 92,33 %, 2 346 тестов / 0 падений (`test`+`integrationTest`,
+  BUILD SUCCESSFUL 19m53s). Критический срез: domain+decision+risk, тикерный бэктест,
+  agent+llm — ≥90 % (были такими и до аудита). Порог `koverVerify` остался 70:
+  поднимать до 90 стоит после стабилизации (сейчас запас 2,6 п.п.).
 - **RESEARCH RESET (2026-10-25, решение пользователя, `docs/29-research-reset-2026-10-25.md`):**
   найденные аудитом P&L-дефекты (docs/28 §2) **предварительно аннулируют все количественные
   результаты стратегий**: таблицы AGENTS «Калибровки», docs/25/26/27, docs/17/24, все

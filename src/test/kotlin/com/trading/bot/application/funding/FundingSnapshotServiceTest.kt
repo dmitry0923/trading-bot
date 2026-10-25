@@ -25,7 +25,7 @@ import java.time.ZoneId
  */
 class FundingSnapshotServiceTest {
     @Test
-    fun `live stores MOEX snapshot under its clearing date`() =
+    fun `live stores MOEX snapshot under its clearing date`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             Mockito
@@ -55,7 +55,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `live MOEX unavailable yields FUNDING_UNKNOWN null with metric`() =
+    fun `live MOEX unavailable yields FUNDING_UNKNOWN null with metric`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             Mockito.`when`(moex.currentSnapshot("CNYRUBF")).thenReturn(null)
@@ -73,7 +73,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `live missing snapshot for one clearing yields FUNDING_UNKNOWN and never substitutes config`() =
+    fun `live missing snapshot for one clearing yields FUNDING_UNKNOWN and never substitutes config`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             Mockito
@@ -106,7 +106,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `live instrument without configured funding never marks unknown`() =
+    fun `live instrument without configured funding never marks unknown`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             val registry = SimpleMeterRegistry()
@@ -124,7 +124,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `simulation uses config funding per clearing`() =
+    fun `simulation uses config funding per clearing`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             val registry = SimpleMeterRegistry()
@@ -138,7 +138,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `intraday position pays no funding`() =
+    fun `intraday position pays no funding`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             val registry = SimpleMeterRegistry()
@@ -150,7 +150,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `refresh skips network when today snapshot is fresh MOEX`() =
+    fun `refresh skips network when today snapshot is fresh MOEX`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             Mockito
@@ -176,7 +176,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `TTL freshness is evaluated on Europe-Moscow clock`() =
+    fun `TTL freshness is evaluated on Europe-Moscow clock`(): Unit =
         runBlocking {
             // Фиксируем "сейчас" в MSK: 2026-09-10 12:00:00. Снапшот из прошлого клиринга
             // (11:59 MSK) — свежий (< moexTtlMs=5min) → refresh НЕ обращается к MOEX.
@@ -211,7 +211,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `stale snapshot older than TTL on Moscow clock triggers re-fetch`() =
+    fun `stale snapshot older than TTL on Moscow clock triggers re-fetch`(): Unit =
         runBlocking {
             // "Сейчас" 12:00 MSK, снапшот 11:50 MSK (10 мин назад > 5 мин TTL) → повторный вызов.
             val fixedClock = Clock.fixed(Instant.parse("2026-09-10T09:00:00Z"), ZoneId.of("Europe/Moscow"))
@@ -245,7 +245,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `latestForVeto live returns fresh MOEX value`() =
+    fun `latestForVeto live returns fresh MOEX value`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             Mockito
@@ -271,7 +271,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `latestForVeto live stale CONFIG fallback is not authoritative`() =
+    fun `latestForVeto live stale CONFIG fallback is not authoritative`(): Unit =
         runBlocking {
             // LIVE без работающего MOEX (или устаревший снапшот) → для veto ставка
             // НЕ подставляется из CONFIG: fail-closed (FundingVetoGate: unknown → BLOCK).
@@ -285,7 +285,7 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `latestForVeto simulation uses config value`() =
+    fun `latestForVeto simulation uses config value`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             val registry = SimpleMeterRegistry()

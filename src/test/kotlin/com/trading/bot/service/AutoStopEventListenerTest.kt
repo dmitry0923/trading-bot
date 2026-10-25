@@ -9,10 +9,14 @@ import java.math.BigDecimal
 /**
  * Авто-стоп (5.8, source=AUTO): слушатель превращает [AutoStopTriggeredEvent] в
  * [EmergencyStopService.stop] с источником AUTO и без ликвидации позиций.
+ *
+ * Матчеры Mockito в Kotlin возвращают nullable и не проходят в non-null параметры,
+ * поэтому используются helper'ы: они регистрируют матчер и возвращают реальное
+ * значение (паттерн из AGENTS.md).
  */
 class AutoStopEventListenerTest {
     @Test
-    fun `publishes emergency stop with AUTO source and no liquidation`() =
+    fun `publishes emergency stop with AUTO source and no liquidation`(): Unit =
         runBlocking {
             val emergencyStopService = Mockito.mock(EmergencyStopService::class.java)
             val listener = AutoStopEventListener(emergencyStopService)
@@ -28,13 +32,13 @@ class AutoStopEventListenerTest {
 
             Mockito.verify(emergencyStopService).stop(
                 Mockito.anyString(),
-                Mockito.eq(EmergencyStopSource.AUTO),
-                Mockito.eq(false),
+                eqSource(EmergencyStopSource.AUTO),
+                eqFlag(false),
             )
         }
 
     @Test
-    fun `includes account id in reason`() =
+    fun `includes account id in reason`(): Unit =
         runBlocking {
             val emergencyStopService = Mockito.mock(EmergencyStopService::class.java)
             val listener = AutoStopEventListener(emergencyStopService)
@@ -49,14 +53,14 @@ class AutoStopEventListenerTest {
             )
 
             Mockito.verify(emergencyStopService).stop(
-                Mockito.argThat { it.contains("account=7") },
-                Mockito.eq(EmergencyStopSource.AUTO),
-                Mockito.eq(false),
+                reasonContaining("account=7"),
+                eqSource(EmergencyStopSource.AUTO),
+                eqFlag(false),
             )
         }
 
     @Test
-    fun `reason shows hourly loss and limit`() =
+    fun `reason shows hourly loss and limit`(): Unit =
         runBlocking {
             val emergencyStopService = Mockito.mock(EmergencyStopService::class.java)
             val listener = AutoStopEventListener(emergencyStopService)
@@ -70,9 +74,26 @@ class AutoStopEventListenerTest {
             )
 
             Mockito.verify(emergencyStopService).stop(
-                Mockito.argThat { it.contains("-6000") && it.contains("60 min") },
-                Mockito.eq(EmergencyStopSource.AUTO),
-                Mockito.eq(false),
+                reasonContaining("-6000", "60 min"),
+                eqSource(EmergencyStopSource.AUTO),
+                eqFlag(false),
             )
         }
+
+    /** Матчер `eq(source)` без null: возвращает реальное значение для non-null параметра. */
+    private fun eqSource(value: EmergencyStopSource): EmergencyStopSource {
+        Mockito.eq(value)
+        return value
+    }
+
+    private fun eqFlag(value: Boolean): Boolean {
+        Mockito.eq(value)
+        return value
+    }
+
+    /** Матчер «reason содержит все фрагменты»; dummy-значение нужно только компилятору. */
+    private fun reasonContaining(vararg parts: String): String {
+        Mockito.argThat<String> { reason -> parts.all { reason.contains(it) } }
+        return parts.first()
+    }
 }

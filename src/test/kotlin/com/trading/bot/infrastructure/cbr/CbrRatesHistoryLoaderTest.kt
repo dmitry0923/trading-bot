@@ -8,6 +8,7 @@ import com.trading.bot.repository.CbrRatesHistoryRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -64,7 +65,7 @@ class CbrRatesHistoryLoaderTest {
     }
 
     @Test
-    fun `loadAndSave fetches both series for clock window and upserts merged rows`() =
+    fun `loadAndSave fetches both series for clock window and upserts merged rows`(): Unit =
         runBlocking {
             val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
             server.createContext("/") { exchange ->
@@ -75,7 +76,12 @@ class CbrRatesHistoryLoaderTest {
             server.start()
             try {
                 val repo = Mockito.mock(CbrRatesHistoryRepository::class.java)
-                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(2)
+                val saved = mutableListOf<List<CbrRateRecord>>()
+                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenAnswer { invocation ->
+                    @Suppress("UNCHECKED_CAST")
+                    saved += invocation.getArgument(0) as List<CbrRateRecord>
+                    2
+                }
                 val loader =
                     loader(
                         url = "http://127.0.0.1:${server.address.port}/DailyInfo.asmx",
@@ -90,21 +96,20 @@ class CbrRatesHistoryLoaderTest {
                 assertEquals(2, result.ruonia)
                 assertEquals(2, result.loaded)
                 assertEquals(2, result.upserted)
-                Mockito.verify(repo).saveAll(
-                    Mockito.argThat<List<CbrRateRecord>> { records ->
-                        records.size == 2 &&
-                            records[0].rateDate.toString() == "2026-10-15" &&
-                            records[0].keyRate != null &&
-                            records[0].ruonia != null
-                    },
-                )
+                // verify() на suspend-функции с non-null возвратом падал NPE, поэтому
+                // проверяем зафиксированный аргумент saveAll.
+                val records = saved.single()
+                assertEquals(2, records.size)
+                assertEquals("2026-10-15", records[0].rateDate.toString())
+                assertNotNull(records[0].keyRate)
+                assertNotNull(records[0].ruonia)
             } finally {
                 server.stop(0)
             }
         }
 
     @Test
-    fun `loadAndSave returns zero when provider is unreachable`() =
+    fun `loadAndSave returns zero when provider is unreachable`(): Unit =
         runBlocking {
             val repo = Mockito.mock(CbrRatesHistoryRepository::class.java)
             Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(0)

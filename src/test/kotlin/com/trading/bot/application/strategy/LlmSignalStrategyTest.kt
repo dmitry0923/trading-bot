@@ -117,7 +117,7 @@ class LlmSignalStrategyTest {
     }
 
     @Test
-    fun `evaluate returns HOLD when llm signal source is disabled`() =
+    fun `evaluate returns HOLD when llm signal source is disabled`(): Unit =
         runBlocking {
             val registry = SimpleMeterRegistry()
             val decision = strategy(registry = registry).evaluate(context)
@@ -138,7 +138,7 @@ class LlmSignalStrategyTest {
     }
 
     @Test
-    fun `evaluate delegates to full llm chain and passes only direction and target through`() =
+    fun `evaluate delegates to full llm chain and passes only direction and target through`(): Unit =
         runBlocking {
             stubChain()
             val cfg = TradingConfig().apply { llmSignalSourceEnabled = true }
@@ -174,7 +174,7 @@ class LlmSignalStrategyTest {
         }
 
     @Test
-    fun `evaluate holds when contrarian unavailable`() =
+    fun `evaluate holds when contrarian unavailable`(): Unit =
         runBlocking {
             val unavailableChallenge = challenge.copy(llmAvailable = false)
             whenever(adaptiveRisk.getAdaptiveConfidenceThreshold("SBER")).thenReturn(0.6)
@@ -193,28 +193,12 @@ class LlmSignalStrategyTest {
 
             assertEquals(StrategyAction.HOLD, decision.action)
             assertEquals(1.0, registry.counter("llm.chain.contrarian_unavailable", "ticker", "SBER").count())
-            Mockito
-                .verify(
-                    arbAgent,
-                    Mockito.never(),
-                ).adjudicate(
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                    Mockito.any(),
-                )
+            // Арбитр не должен вызываться вовсе: цепочка оборвалась на contrarian.
+            Mockito.verifyNoInteractions(arbAgent)
         }
 
     @Test
-    fun `evaluate fails closed with HOLD when chain exceeds budget`() =
+    fun `evaluate fails closed with HOLD when chain exceeds budget`(): Unit =
         runBlocking {
             stubChain()
             val cfg =

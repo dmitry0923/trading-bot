@@ -32,7 +32,7 @@ class MacroContextServiceTest {
     private val clock = Clock.fixed(Instant.parse("2026-10-18T12:00:00Z"), ZoneId.of("Europe/Moscow"))
 
     @Test
-    fun `live rate comes from history when enabled`() =
+    fun `live rate comes from history when enabled`(): Unit =
         runBlocking {
             val registry = SimpleMeterRegistry()
             val repo = repositoryReturning(record("2026-10-16", "14.0"))
@@ -43,7 +43,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `falls back to config when history is empty`() =
+    fun `falls back to config when history is empty`(): Unit =
         runBlocking {
             val repo = repositoryReturning(null)
             val service = service(config = enabledConfig(), repository = repo)
@@ -52,7 +52,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `falls back to config when latest row has no key rate`() =
+    fun `falls back to config when latest row has no key rate`(): Unit =
         runBlocking {
             val repo = repositoryReturning(record("2026-10-16", keyRate = null))
             val service = service(config = enabledConfig(), repository = repo)
@@ -61,7 +61,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `falls back to config when repository throws`() =
+    fun `falls back to config when repository throws`(): Unit =
         runBlocking {
             val repo = Mockito.mock(CbrRatesHistoryRepository::class.java)
             Mockito.`when`(repo.findLatestKeyRateRecord()).thenThrow(RuntimeException("db down"))
@@ -71,7 +71,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `stale rate is still used and marked stale instead of config substitution`() =
+    fun `stale rate is still used and marked stale instead of config substitution`(): Unit =
         runBlocking {
             val registry = SimpleMeterRegistry()
             // 47 дней назад: старше live-rate-stale-days=14
@@ -84,7 +84,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `fresh rate inside stale window is not marked stale`() =
+    fun `fresh rate inside stale window is not marked stale`(): Unit =
         runBlocking {
             val registry = SimpleMeterRegistry()
             val repo = repositoryReturning(record("2026-10-18", "14.0"))
@@ -97,7 +97,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `uses config and never reads repository when disabled`() =
+    fun `uses config and never reads repository when disabled`(): Unit =
         runBlocking {
             val repo = Mockito.mock(CbrRatesHistoryRepository::class.java)
             val config = MacroConfig().apply { liveRateEnabled = false }
@@ -108,7 +108,7 @@ class MacroContextServiceTest {
         }
 
     @Test
-    fun `uses config when repository bean is absent`() =
+    fun `uses config when repository bean is absent`(): Unit =
         runBlocking {
             val service = service(config = enabledConfig(), repository = null)
 

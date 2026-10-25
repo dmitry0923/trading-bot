@@ -52,6 +52,18 @@ class ParameterOptimizerTest {
     }
 
     @Test
+    fun `skips instead of crashing when sl or tp points are zero`() {
+        // generateGrid фильтрует неположительные значения: при 0 сетка пуста и
+        // first()/min()/max() бросали NoSuchElementException (docs/28 §3.1 №33).
+        val zeroSl = optimizer.optimize(futuresParameters.copy(slPoints = 0), tradesCount = 30, profitFactor = 2.0)
+        assertTrue(zeroSl.skipped, "zero SL must skip, not crash: ${zeroSl.reason}")
+        assertEquals(futuresParameters.copy(slPoints = 0), zeroSl.parameters, "parameters must stay unchanged")
+
+        val zeroTp = optimizer.optimize(futuresParameters.copy(tpPoints = 0), tradesCount = 30, profitFactor = 0.9)
+        assertTrue(zeroTp.skipped, "zero TP must skip, not crash: ${zeroTp.reason}")
+    }
+
+    @Test
     fun `profitable strategy keeps the first grid candidate and needs no extra validation`() {
         val result = optimizer.optimize(futuresParameters, tradesCount = 30, profitFactor = 2.0)
 

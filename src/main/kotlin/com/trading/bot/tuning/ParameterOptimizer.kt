@@ -84,6 +84,19 @@ class ParameterOptimizer {
         }
         val candidateSlValues = generateGrid(currentSl.toDouble(), GRID_STEPS)
         val candidateTpValues = generateGrid(currentTp.toDouble(), GRID_STEPS)
+        // generateGrid фильтрует неположительные значения: при SL/TP = 0 сетка пуста,
+        // и `first()`/`min()`/`max()` ниже бросали NoSuchElementException — падал весь
+        // monthly-tuning цикл (docs/28 §3.1 №33). Пустая сетка = нет кандидатов.
+        if (candidateSlValues.isEmpty() || candidateTpValues.isEmpty()) {
+            logger.warn(
+                "ParameterOptimizer: пустая сетка (slPoints=$currentSl, tpPoints=$currentTp) — оптимизация пропущена",
+            )
+            return OptimizationResult(
+                parameters = currentParameters,
+                skipped = true,
+                reason = "Некорректные SL/TP для сетки (slPoints=$currentSl, tpPoints=$currentTp)",
+            )
+        }
 
         // Выбор лучшей комбинации: минимальный риск при текущем PF > 1.2.
         // При PF < 1.2 (WARN) смещаем в сторону более консервативных параметров.

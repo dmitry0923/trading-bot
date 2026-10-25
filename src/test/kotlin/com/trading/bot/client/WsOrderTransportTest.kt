@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -155,7 +156,7 @@ class WsOrderTransportTest {
     }
 
     @Test
-    fun `placeLimit returns orderNumber on confirmed event`() =
+    fun `placeLimit returns orderNumber on confirmed event`(): Unit =
         runBlocking {
             awaitSubscribe()
             val result = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1") }
@@ -165,20 +166,24 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit throws OrderRejectedException on rejected event`() =
+    fun `placeLimit throws OrderRejectedException on rejected event`(): Unit =
         runBlocking {
-            awaitSubscribe()
-            val result = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1") }
-            awaitCommandContaining("idem-1")
-            fakeConnection.inbound.send("""{"id":"idem-1","status":"rejected","error":"not enough money"}""")
-            assertFailsWith<OrderRejectedException> {
-                result.await()
-                Unit
+            // supervisorScope: сбой дочернего async не отменяет runBlocking до await(),
+            // иначе исключение вылетало раньше assertFailsWith.
+            supervisorScope {
+                awaitSubscribe()
+                val result = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1") }
+                awaitCommandContaining("idem-1")
+                fakeConnection.inbound.send("""{"id":"idem-1","status":"rejected","error":"not enough money"}""")
+                assertFailsWith<OrderRejectedException> {
+                    result.await()
+                    Unit
+                }
             }
         }
 
     @Test
-    fun `placeLimit throws OrderDeliveryUncertainException on timeout`() =
+    fun `placeLimit throws OrderDeliveryUncertainException on timeout`(): Unit =
         runBlocking {
             alorConfig.wsOrderTimeoutMs = 50
             awaitSubscribe()
@@ -188,7 +193,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit throws OrderDeliveryUncertainException on send failure`() =
+    fun `placeLimit throws OrderDeliveryUncertainException on send failure`(): Unit =
         runBlocking {
             awaitSubscribe()
             fakeConnection.failSends = true
@@ -198,7 +203,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit throws OrderTransportUnavailableException when disabled`() =
+    fun `placeLimit throws OrderTransportUnavailableException when disabled`(): Unit =
         runBlocking {
             alorConfig.wsOrdersEnabled = false
             assertFailsWith<OrderTransportUnavailableException> {
@@ -207,7 +212,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit throws OrderTransportUnavailableException for non-default portfolio`() =
+    fun `placeLimit throws OrderTransportUnavailableException for non-default portfolio`(): Unit =
         runBlocking {
             awaitSubscribe()
             assertFailsWith<OrderTransportUnavailableException> {
@@ -216,7 +221,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit throws OrderTransportUnavailableException when not live`() =
+    fun `placeLimit throws OrderTransportUnavailableException when not live`(): Unit =
         runBlocking {
             tradingConfig.mode = "SIMULATION"
             assertFailsWith<OrderTransportUnavailableException> {
@@ -225,7 +230,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `cancel returns CONFIRMED on cancelled event`() =
+    fun `cancel returns CONFIRMED on cancelled event`(): Unit =
         runBlocking {
             awaitSubscribe()
             val result = async { transport.cancel("ord-1", "idem-c", "P1") }
@@ -235,7 +240,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `cancel returns UNCERTAIN on timeout`() =
+    fun `cancel returns UNCERTAIN on timeout`(): Unit =
         runBlocking {
             alorConfig.wsOrderTimeoutMs = 50
             awaitSubscribe()
@@ -244,19 +249,21 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `disconnect fails pending place as OrderDeliveryUncertainException`() =
+    fun `disconnect fails pending place as OrderDeliveryUncertainException`(): Unit =
         runBlocking {
-            awaitSubscribe()
-            val place = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1") }
-            awaitCommandContaining("idem-1")
-            fakeConnection.inbound.close()
-            assertFailsWith<OrderDeliveryUncertainException> {
-                place.await()
+            supervisorScope {
+                awaitSubscribe()
+                val place = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1") }
+                awaitCommandContaining("idem-1")
+                fakeConnection.inbound.close()
+                assertFailsWith<OrderDeliveryUncertainException> {
+                    place.await()
+                }
             }
         }
 
     @Test
-    fun `placeLimit is blocked for unapproved ticker in live`() =
+    fun `placeLimit is blocked for unapproved ticker in live`(): Unit =
         runBlocking {
             val blocked =
                 WsOrderTransport(
@@ -274,7 +281,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeConditional is blocked for unapproved ticker in live`() =
+    fun `placeConditional is blocked for unapproved ticker in live`(): Unit =
         runBlocking {
             val blocked =
                 WsOrderTransport(
@@ -292,7 +299,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `placeLimit is blocked when approval service not ready`() =
+    fun `placeLimit is blocked when approval service not ready`(): Unit =
         runBlocking {
             val blocked =
                 WsOrderTransport(
@@ -310,7 +317,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `cancel remains available without approval`() =
+    fun `cancel remains available without approval`(): Unit =
         runBlocking {
             val isolatedConnection = FakeConnection()
             val transport2 =
@@ -330,7 +337,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `close placeLimit passes interlock when open position exists after revoke`() =
+    fun `close placeLimit passes interlock when open position exists after revoke`(): Unit =
         runBlocking {
             // P1-a: тикер revoked (frozen = null -> entry denied), но риск-reducing
             // закрытие разрешено, т.к. для тикера есть открытая позиция.
@@ -355,7 +362,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `close placeLimit blocked after revoke without open position`() =
+    fun `close placeLimit blocked after revoke without open position`(): Unit =
         runBlocking {
             val blocked =
                 WsOrderTransport(
@@ -373,7 +380,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `entry placeLimit still blocked after revoke even with open position`() =
+    fun `entry placeLimit still blocked after revoke even with open position`(): Unit =
         runBlocking {
             // P1-a: наличие открытой позиции НЕ легитимирует новый entry.
             val blocked =
@@ -392,7 +399,7 @@ class WsOrderTransportTest {
         }
 
     @Test
-    fun `tp placeConditional blocked after revoke without open position`() =
+    fun `tp placeConditional blocked after revoke without open position`(): Unit =
         runBlocking {
             val blocked =
                 WsOrderTransport(

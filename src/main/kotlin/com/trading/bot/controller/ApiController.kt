@@ -1518,6 +1518,14 @@ class ApiController(
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        // Holdout без данных падал IllegalArgumentException → 500 (нет @ControllerAdvice).
+        // Явный 404 позволяет отличить «нет истории» от реального прогона (docs/28 §3 №34).
+        if (candles.isEmpty()) {
+            throw ResponseStatusException(
+                HttpStatus.NOT_FOUND,
+                "no candles for $ticker/$effectiveTimeframe in the last $effectiveDays days",
+            )
+        }
         val mlOverrides =
             MlDirectionOverrides(
                 enabled = mlDirectionEnabled,
@@ -1764,6 +1772,15 @@ class ApiController(
         }
         val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
         val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        // Deployment-gate без данных падал 500 внутри валидаторов; отдаём 404
+        // (docs/28 §3 №34): пустой прогон неотличим от «всё провалено», а это
+        // влияет на решение о LIVE.
+        if (candles.isEmpty()) {
+            throw ResponseStatusException(
+                HttpStatus.NOT_FOUND,
+                "no candles for $ticker/$effectiveTimeframe in the last $effectiveDays days",
+            )
+        }
         // Final deployment pipeline использует ЗАМОРОЖЕННЫЙ production-confidence
         // (bt.adaptive-confidence-threshold), НЕ свободный request-параметр — иначе
         // можно было бы подбирать confidence по holdout (confidence=0.60..0.64 и

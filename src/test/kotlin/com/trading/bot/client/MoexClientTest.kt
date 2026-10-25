@@ -63,7 +63,12 @@ class MoexClientTest {
                 assertEquals("SBER", candles[0].ticker)
                 assertEquals("MINUTE_10", candles[0].timeframe)
                 assertEquals(50L, candles[0].volume)
-                assertTrue(server.requests.single().path.contains("/boards/TQBR/securities/SBER/candles.json"))
+                assertTrue(
+                    server.requests
+                        .single()
+                        .path
+                        .contains("/boards/TQBR/securities/SBER/candles.json"),
+                )
             }
         }
 
@@ -132,7 +137,9 @@ class MoexClientTest {
                 server.statusCode = 500
                 val client = client(server)
 
-                assertTrue(client.getCandlesPaged("SBER", LocalDateTime.of(2026, 8, 7, 10, 0), LocalDateTime.of(2026, 8, 8, 10, 0)).isEmpty())
+                assertTrue(
+                    client.getCandlesPaged("SBER", LocalDateTime.of(2026, 8, 7, 10, 0), LocalDateTime.of(2026, 8, 8, 10, 0)).isEmpty(),
+                )
             }
         }
 
@@ -160,7 +167,10 @@ class MoexClientTest {
         runBlocking {
             FakeIssServer().use { server ->
                 server.indexDaily =
-                    """{"candles":{"columns":["begin","close"],"data":[["2026-08-06","20.5"],["2026-08-07","bad"],["2026-08-05","18.0"]]}}"""
+                    """
+                    {"candles":{"columns":["begin","close"],
+                     "data":[["2026-08-06","20.5"],["2026-08-07","bad"],["2026-08-05","18.0"]]}}
+                    """.trimIndent()
                 val client = client(server)
 
                 assertEquals(listOf(18.0, 20.5), client.getVolatilityIndexDailyCloses(from = LocalDate.of(2026, 7, 1)))
@@ -179,7 +189,8 @@ class MoexClientTest {
             FakeIssServer().use { server ->
                 server.options =
                     """
-                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE","UNDERLYINGASSET","UNDERLYINGSETTLEPRICE"],
+                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE",
+                        "UNDERLYINGASSET","UNDERLYINGSETTLEPRICE"],
                       "data":[["RIU6C90000","RI","C","90000","2026-09-03","RI","90500"],
                               ["RIU6P90000","RI","P","90000","2026-09-03","RI",null],
                               ["MARGIN","RI","X","1","2026-09-03","RI","1"],
@@ -236,7 +247,7 @@ class MoexClientTest {
                 val contractPaths =
                     server.requests
                         .filter { it.path.contains("/boards/RFUD/securities/") && it.path.endsWith("/candles.json") }
-                        .map { it.path.substringAfterLast('/').substringBefore('.') }
+                        .map { it.path.substringAfterLast("/securities/").substringBefore("/candles.json") }
                 assertEquals(listOf("RIU6", "RIZ6", "RI").sorted(), contractPaths.sorted())
             }
         }
@@ -262,7 +273,9 @@ class MoexClientTest {
                     """{"securities":{"columns":["SECID","LASTDELDATE"],"data":[["SBER","2026-06-30"]]}}"""
                 val client = client(server)
 
-                assertTrue(client.getFuturesCandlesPaged("RI", LocalDateTime.of(2026, 5, 1, 10, 0), LocalDateTime.of(2026, 5, 2, 10, 0)).isEmpty())
+                assertTrue(
+                    client.getFuturesCandlesPaged("RI", LocalDateTime.of(2026, 5, 1, 10, 0), LocalDateTime.of(2026, 5, 2, 10, 0)).isEmpty(),
+                )
             }
         }
 
@@ -312,10 +325,17 @@ class MoexClientTest {
             val ticker = uri.path.substringAfterLast("/securities/").substringBefore("/candles.json")
             return when {
                 uri.path.contains("/markets/shares/") -> {
-                    val start = uri.rawQuery?.substringAfter("start=", "0")?.substringBefore("&")?.toIntOrNull() ?: 0
+                    val start =
+                        uri.rawQuery
+                            ?.substringAfter("start=", "0")
+                            ?.substringBefore("&")
+                            ?.toIntOrNull() ?: 0
                     paginatedStock?.invoke(start) ?: stockCandles
                 }
-                else -> futuresCandlesByTicker[ticker] ?: futuresCandles
+
+                else -> {
+                    futuresCandlesByTicker[ticker] ?: futuresCandles
+                }
             }
         }
 

@@ -78,7 +78,7 @@ class FuturesEntryProfilePostSizingTest {
         )
 
     @Test
-    fun `missing instrument spec blocks entry fail-closed`() =
+    fun `missing instrument spec blocks entry fail-closed`(): Unit =
         runBlocking {
             val risk = Mockito.mock(RiskManagementService::class.java)
             val result = profile(risk).postSizingChecks(request("UNKNOWN"), PositionDirection.LONG, size(BigDecimal("1000")), emptyList())
@@ -88,7 +88,7 @@ class FuturesEntryProfilePostSizingTest {
         }
 
     @Test
-    fun `zero size maps to ZERO_RISK_SIZE before spec lookup`() =
+    fun `zero size maps to ZERO_RISK_SIZE before spec lookup`(): Unit =
         runBlocking {
             val risk = Mockito.mock(RiskManagementService::class.java)
             val zero =
@@ -106,7 +106,7 @@ class FuturesEntryProfilePostSizingTest {
         }
 
     @Test
-    fun `margin gate receives candidate GO times stressed margin multiplier`() =
+    fun `margin gate receives candidate GO times stressed margin multiplier`(): Unit =
         runBlocking {
             val risk = Mockito.mock(RiskManagementService::class.java)
             // exceedsMarginUtilization — false (лимит не превышен), exceedsPortfolioLimits — false.
@@ -132,7 +132,7 @@ class FuturesEntryProfilePostSizingTest {
         }
 
     @Test
-    fun `unavailable margin data of open positions blocks entry fail-closed`() =
+    fun `unavailable margin data of open positions blocks entry fail-closed`(): Unit =
         runBlocking {
             val risk = Mockito.mock(RiskManagementService::class.java)
             // Данные о ГО существующих позиций недоступны (API down + устаревший кэш /
@@ -148,7 +148,7 @@ class FuturesEntryProfilePostSizingTest {
         }
 
     @Test
-    fun `snapshot GO map is passed to freshMarginOfPositions as precomputed data`() =
+    fun `snapshot GO map is passed to freshMarginOfPositions as precomputed data`(): Unit =
         runBlocking {
             val risk = Mockito.mock(RiskManagementService::class.java)
             val captured = AtomicReference<Map<String, BigDecimal>?>()

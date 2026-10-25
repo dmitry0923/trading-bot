@@ -136,7 +136,7 @@ class OrderExecutionEngineProtectionReplaceTest {
     // ── UNCERTAIN ─────────────────────────────────────────────────────────
 
     @Test
-    fun `uncertain cancel keeps replace pending and retry reuses same idempotency key`() =
+    fun `uncertain cancel keeps replace pending and retry reuses same idempotency key`(): Unit =
         runBlocking {
             stubVerifyOrderById()
             stubNewProtectionPlacementSafe()
@@ -174,7 +174,7 @@ class OrderExecutionEngineProtectionReplaceTest {
     // - UNKNOWN tests: checkProtectionFills gets null → skip; finishProtectionReplacement gets REJECTED → verify → null → return
 
     @Test
-    fun `SL rejected + verify FILLED closes position atomically`() =
+    fun `SL rejected + verify FILLED closes position atomically`(): Unit =
         runBlocking {
             stubVerifyOrderById(
                 slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
@@ -191,7 +191,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `SL FILLED close is atomic - transitionToClosed before any premature save`() =
+    fun `SL FILLED close is atomic - transitionToClosed before any premature save`(): Unit =
         runBlocking {
             stubVerifyOrderById(
                 slResult = AlorClient.OrderExecution(status = "FILLED", filledQuantity = 1, avgPrice = BigDecimal("149500")),
@@ -229,7 +229,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `SL rejected + verify CANCELED clears SL ID via checkProtectionFills`() =
+    fun `SL rejected + verify CANCELED clears SL ID via checkProtectionFills`(): Unit =
         runBlocking {
             stubVerifyOrderById(
                 slResult = AlorClient.OrderExecution(status = "CANCELED", filledQuantity = 0, avgPrice = null),
@@ -247,7 +247,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `SL rejected + verify null preserves SL ID (UNKNOWN)`() =
+    fun `SL rejected + verify null preserves SL ID (UNKNOWN)`(): Unit =
         runBlocking {
             stubVerifyOrderById()
             stubCancelOrderSafe()
@@ -262,7 +262,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `SL rejected + verify unknown status preserves SL ID`() =
+    fun `SL rejected + verify unknown status preserves SL ID`(): Unit =
         runBlocking {
             stubVerifyOrderById(
                 slResult = AlorClient.OrderExecution(status = "PARTIALLY_FILLED", filledQuantity = 0, avgPrice = null),
@@ -281,7 +281,7 @@ class OrderExecutionEngineProtectionReplaceTest {
     // ── REJECTED state machine: TP ────────────────────────────────────────
 
     @Test
-    fun `TP rejected + verify CANCELED clears TP ID`() =
+    fun `TP rejected + verify CANCELED clears TP ID`(): Unit =
         runBlocking {
             val pos =
                 pendingReplacePos().copy(
@@ -304,7 +304,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `TP rejected + verify null preserves TP ID (UNKNOWN)`() =
+    fun `TP rejected + verify null preserves TP ID (UNKNOWN)`(): Unit =
         runBlocking {
             val pos =
                 pendingReplacePos().copy(
@@ -439,7 +439,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         )
 
     @Test
-    fun `CANCEL_REJECTED entry keeps position pending`() =
+    fun `CANCEL_REJECTED entry keeps position pending`(): Unit =
         runBlocking {
             val pos = pendingEntryPos()
             whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
@@ -454,7 +454,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `CANCELED entry is abandoned`() =
+    fun `CANCELED entry is abandoned`(): Unit =
         runBlocking {
             val pos = pendingEntryPos()
             whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
@@ -470,7 +470,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `REJECTED entry is abandoned`() =
+    fun `REJECTED entry is abandoned`(): Unit =
         runBlocking {
             val pos = pendingEntryPos()
             whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
@@ -486,7 +486,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `EXPIRED entry is abandoned`() =
+    fun `EXPIRED entry is abandoned`(): Unit =
         runBlocking {
             val pos = pendingEntryPos()
             whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
@@ -502,7 +502,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `UNKNOWN entry status keeps position pending`() =
+    fun `UNKNOWN entry status keeps position pending`(): Unit =
         runBlocking {
             val pos = pendingEntryPos()
             whenever(orderOutboxRepo.findLatestByPositionId(10L)).thenReturn(entryOutbox())
@@ -519,7 +519,7 @@ class OrderExecutionEngineProtectionReplaceTest {
     // ── Orphan SL/TP cleanup for CLOSED positions ──────────────────────────
 
     @Test
-    fun `closed position with orphan SL gets cancel scheduled via outbox`() =
+    fun `closed position with orphan SL gets cancel scheduled via outbox`(): Unit =
         runBlocking {
             val pos =
                 Position(
@@ -539,14 +539,16 @@ class OrderExecutionEngineProtectionReplaceTest {
 
             engine.reconcilePosition(pos)
 
-            assertEquals(null, pos.slOrderId, "orphan SL ID must be cleared")
-            assertEquals(null, pos.slOrderPrice, "orphan SL price must be cleared")
+            // Дизайн: id НЕ обнуляется сразу — иначе можно выставить дубль защиты,
+            // пока отмена не подтверждена. Ставится флаг cancelPending.
+            assertTrue(pos.slCancelPending, "orphan SL must be scheduled for cancel")
+            assertEquals("orphan-sl", pos.slOrderId, "ID stays until cancellation is confirmed")
             Mockito.verify(orderOutboxService).placeCancelOrder(20L, "orphan-sl", accountId = 1L)
             Mockito.verify(positionRepo).save(pos)
         }
 
     @Test
-    fun `closed position with orphan TP gets cancel scheduled via outbox`() =
+    fun `closed position with orphan TP gets cancel scheduled via outbox`(): Unit =
         runBlocking {
             val pos =
                 Position(
@@ -566,13 +568,13 @@ class OrderExecutionEngineProtectionReplaceTest {
 
             engine.reconcilePosition(pos)
 
-            assertEquals(null, pos.tpOrderId, "orphan TP ID must be cleared")
-            assertEquals(null, pos.tpOrderPrice, "orphan TP price must be cleared")
+            assertTrue(pos.tpCancelPending, "orphan TP must be scheduled for cancel")
+            assertEquals("orphan-tp", pos.tpOrderId, "ID stays until cancellation is confirmed")
             Mockito.verify(orderOutboxService).placeCancelOrder(21L, "orphan-tp", accountId = 1L)
         }
 
     @Test
-    fun `closed position without orphan SL and TP does not trigger cancel`() =
+    fun `closed position without orphan SL and TP does not trigger cancel`(): Unit =
         runBlocking {
             val pos =
                 Position(
@@ -594,7 +596,7 @@ class OrderExecutionEngineProtectionReplaceTest {
     // ── closeConfirmedByPositionDelta conservative ──────────────────────────
 
     @Test
-    fun `verifyOrder null + partial position reduction does NOT close`() =
+    fun `verifyOrder null + partial position reduction does NOT close`(): Unit =
         runBlocking {
             val pos =
                 Position(
@@ -625,7 +627,7 @@ class OrderExecutionEngineProtectionReplaceTest {
         }
 
     @Test
-    fun `verifyOrder null + position gone confirms close`() =
+    fun `verifyOrder null + position gone confirms close`(): Unit =
         runBlocking {
             val pos =
                 Position(

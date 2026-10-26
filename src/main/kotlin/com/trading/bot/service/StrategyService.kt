@@ -48,6 +48,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Оркестратор стратегического цикла (мульти-тикер, параллельный).
@@ -111,6 +112,14 @@ class StrategyService(
             ?.confidenceThreshold
 
     /**
+     * In-process guard от наложения циклов. Redis-лок по умолчанию выключен
+     * (`distributed-lock.enabled=false`), поэтому два запуска могли идти параллельно:
+     * дубли LLM-вызовов и `strategy`-записей (docs/28 §3.1 №36). CAS: второй запуск
+     * пропускается, флаг снимается в `finally` корутины.
+     */
+    private val cycleInFlight = AtomicBoolean(false)
+
+    /**
      * Scheduled-точка входа стратегического цикла. Не блокирует поток планировщика:
      * вся работа выполняется в фоновом CoroutineScope.
      */
@@ -124,24 +133,33 @@ class StrategyService(
         }
         // Мульти-реплика: стратегический цикл выполняет только лидер (взял distributed lock).
         // Конкуренция = другая реплика уже работает; сбой Redis = fail-open (цикл всё равно гоняем).
-        scope.launch(TraceContext.mdcContext()) {
-            distributedLockService.runExclusive(
-                name = "scheduler:strategy-cycle",
-                ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
-            ) {
-                val cycleId =
-                    com.trading.bot.infrastructure.UuidV7
-                        .uuidString()
-                logger.info { "=== STRATEGY CYCLE $cycleId ===" }
-                meterRegistry.counter("strategy.cycle").increment()
-                // trace_id = cycleId: единый идентификатор для всего цикла (JSON-логи,
-                // agent_logs, позиции, события). MDC-контекст копируется в coroutine,
-                // поэтому дочерние корутины (включая LLM-вызовы) наследуют trace_id.
-                TraceContext.put(TraceContext.TRACE_ID, cycleId)
-                TraceContext.put(TraceContext.CYCLE_ID, cycleId)
-                executeCycle(cycleId)
-            }
+        // In-process guard: второй цикл не стартует, пока первый не завершён
+        // (Redis-лок по умолчанию выключен, docs/28 §3.1 №36).
+        if (!cycleInFlight.compareAndSet(false, true)) {
+            logger.warn { "Strategy cycle skipped - previous cycle still in flight" }
+            meterRegistry.counter("strategy.skipped", Tags.of("reason", "IN_FLIGHT")).increment()
+            return
         }
+        val cycleJob =
+            scope.launch(TraceContext.mdcContext()) {
+                distributedLockService.runExclusive(
+                    name = "scheduler:strategy-cycle",
+                    ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
+                ) {
+                    val cycleId =
+                        com.trading.bot.infrastructure.UuidV7
+                            .uuidString()
+                    logger.info { "=== STRATEGY CYCLE $cycleId ===" }
+                    meterRegistry.counter("strategy.cycle").increment()
+                    // trace_id = cycleId: единый идентификатор для всего цикла (JSON-логи,
+                    // agent_logs, позиции, события). MDC-контекст копируется в coroutine,
+                    // поэтому дочерние корутины (включая LLM-вызовы) наследуют trace_id.
+                    TraceContext.put(TraceContext.TRACE_ID, cycleId)
+                    TraceContext.put(TraceContext.CYCLE_ID, cycleId)
+                    executeCycle(cycleId)
+                }
+            }
+        cycleJob.invokeOnCompletion { cycleInFlight.set(false) }
         TraceContext.put(TraceContext.TRACE_ID, null)
         TraceContext.put(TraceContext.CYCLE_ID, null)
     }

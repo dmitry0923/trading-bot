@@ -1,6 +1,7 @@
 package com.trading.bot.tuning
 
 import org.springframework.stereotype.Component
+import java.util.Locale
 
 /**
  * Gate Check для Monthly Tuning Engine (docs/24, Фаза 3.5).
@@ -80,42 +81,42 @@ class PerformanceGateCheck {
         // 1. Profit Factor
         verdicts +=
             when {
-                metrics.profitFactor > PF_PASS -> GateVerdict.PASS to "PF=%.2f > $PF_PASS".format(metrics.profitFactor)
-                metrics.profitFactor > PF_WARN -> GateVerdict.WARN to "PF=%.2f (${PF_WARN}..${PF_PASS}]".format(metrics.profitFactor)
-                else -> GateVerdict.ALERT to "PF=%.2f ≤ $PF_WARN (стратегия убыточна)".format(metrics.profitFactor)
+                metrics.profitFactor > PF_PASS -> GateVerdict.PASS to fmt("PF=%.2f > $PF_PASS", metrics.profitFactor)
+                metrics.profitFactor > PF_WARN -> GateVerdict.WARN to fmt("PF=%.2f (${PF_WARN}..${PF_PASS}]", metrics.profitFactor)
+                else -> GateVerdict.ALERT to fmt("PF=%.2f ≤ $PF_WARN (стратегия убыточна)", metrics.profitFactor)
             }
 
         // 2. Max Drawdown
         verdicts +=
             when {
                 metrics.maxDrawdownPct < DD_PASS -> {
-                    GateVerdict.PASS to "DD=%.1f%% < $DD_PASS%%".format(metrics.maxDrawdownPct)
+                    GateVerdict.PASS to fmt("DD=%.1f%% < $DD_PASS%%", metrics.maxDrawdownPct)
                 }
 
                 metrics.maxDrawdownPct < DD_WARN -> {
                     GateVerdict.WARN to
-                        "DD=%.1f%% (${DD_PASS}..${DD_WARN}%%)".format(metrics.maxDrawdownPct)
+                        fmt("DD=%.1f%% (${DD_PASS}..${DD_WARN}%%)", metrics.maxDrawdownPct)
                 }
 
                 else -> {
-                    GateVerdict.ALERT to "DD=%.1f%% > $DD_WARN%% (критическая просадка)".format(metrics.maxDrawdownPct)
+                    GateVerdict.ALERT to fmt("DD=%.1f%% > $DD_WARN%% (критическая просадка)", metrics.maxDrawdownPct)
                 }
             }
 
         // 3. Win Rate
         verdicts +=
             when {
-                metrics.winRatePct > WR_PASS -> GateVerdict.PASS to "WinRate=%.1f%% > $WR_PASS%%".format(metrics.winRatePct)
-                metrics.winRatePct > WR_WARN -> GateVerdict.WARN to "WinRate=%.1f%% (${WR_WARN}..${WR_PASS}%%)".format(metrics.winRatePct)
-                else -> GateVerdict.ALERT to "WinRate=%.1f%% ≤ $WR_WARN%%".format(metrics.winRatePct)
+                metrics.winRatePct > WR_PASS -> GateVerdict.PASS to fmt("WinRate=%.1f%% > $WR_PASS%%", metrics.winRatePct)
+                metrics.winRatePct > WR_WARN -> GateVerdict.WARN to fmt("WinRate=%.1f%% (${WR_WARN}..${WR_PASS}%%)", metrics.winRatePct)
+                else -> GateVerdict.ALERT to fmt("WinRate=%.1f%% ≤ $WR_WARN%%", metrics.winRatePct)
             }
 
         // 4. Sharpe
         verdicts +=
             when {
-                metrics.sharpe > SHARPE_PASS -> GateVerdict.PASS to "Sharpe=%.2f > $SHARPE_PASS".format(metrics.sharpe)
-                metrics.sharpe >= SHARPE_WARN -> GateVerdict.WARN to "Sharpe=%.2f (${SHARPE_WARN}..${SHARPE_PASS}]".format(metrics.sharpe)
-                else -> GateVerdict.ALERT to "Sharpe=%.2f < $SHARPE_WARN".format(metrics.sharpe)
+                metrics.sharpe > SHARPE_PASS -> GateVerdict.PASS to fmt("Sharpe=%.2f > $SHARPE_PASS", metrics.sharpe)
+                metrics.sharpe >= SHARPE_WARN -> GateVerdict.WARN to fmt("Sharpe=%.2f (${SHARPE_WARN}..${SHARPE_PASS}]", metrics.sharpe)
+                else -> GateVerdict.ALERT to fmt("Sharpe=%.2f < $SHARPE_WARN", metrics.sharpe)
             }
 
         // 5. Минимальное количество сделок
@@ -166,4 +167,11 @@ class PerformanceGateCheck {
         const val MIN_TRADES_PASS = 20
         const val MIN_TRADES_WARN = 10
     }
+
+    /** Locale-независимое форматирование: строки-причины попадают в metrics/notes
+     *  и алерты, где запятая как десятичный разделитель ломает разбор (docs/28 §3.1 №37). */
+    private fun fmt(
+        pattern: String,
+        vararg args: Any?,
+    ): String = String.format(Locale.ROOT, pattern, *args)
 }

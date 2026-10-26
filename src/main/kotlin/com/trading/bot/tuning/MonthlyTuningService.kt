@@ -49,6 +49,8 @@ class MonthlyTuningService(
         val requiresExtraValidation: Boolean,
         val tradingStopped: Boolean,
         val alertSent: Boolean,
+        /** SENT | NOT_CONFIGURED | FAILED | NOT_REQUIRED — контракт email-канала (docs/28 §3.1 №35). */
+        val alertEmailStatus: String = "NOT_REQUIRED",
         val newVersion: StrategyVersion?,
     )
 
@@ -76,6 +78,7 @@ class MonthlyTuningService(
 
         var tradingStopped = false
         var alertSent = false
+        var alertEmailStatus = AlertEmailStatus.NOT_REQUIRED
 
         // Шаг 2: При ALERT — автоостановка торговли.
         if (gateResult.verdict == GateVerdict.ALERT) {
@@ -84,7 +87,8 @@ class MonthlyTuningService(
                     "Причины: ${gateResult.reasons.joinToString("; ")}",
             )
             tradingStopped = true
-            alertSent = sendAlertEmail(periodStr, gateResult)
+            alertEmailStatus = sendAlertEmail(periodStr, gateResult)
+            alertSent = alertEmailStatus == AlertEmailStatus.SENT
         }
 
         // Шаг 3: Оптимизация параметров (только при PASS/WARN и достаточном числе сделок).
@@ -128,22 +132,30 @@ class MonthlyTuningService(
             requiresExtraValidation = optimizationResult.requiresExtraValidation,
             tradingStopped = tradingStopped,
             alertSent = alertSent,
+            alertEmailStatus = alertEmailStatus.name,
             newVersion = newVersion,
         )
     }
 
+    /** Статус email-канала: контракт вместо «молча false» (docs/28 §3.1 №35). */
+    enum class AlertEmailStatus { SENT, NOT_CONFIGURED, FAILED, NOT_REQUIRED }
+
     /**
      * Отправляет email-уведомление при ALERT gate check.
      *
-     * @return true — письмо отправлено, false — email недоступен.
+     * @return статус канала: `SENT`, `NOT_CONFIGURED` (транспорт не подключён),
+     *   `FAILED` (ошибка отправки).
      */
     private fun sendAlertEmail(
         period: String,
         gateResult: PerformanceGateCheck.GateCheckResult,
-    ): Boolean {
+    ): AlertEmailStatus {
         if (mailSender == null) {
-            logger.warn("MonthlyTuningService: JavaMailSender не настроен, email не отправлен")
-            return false
+            logger.warn(
+                "MonthlyTuningService: JavaMailSender не настроен (нет spring-boot-starter-mail) — " +
+                    "ALERT email НЕ отправлен; статус ${AlertEmailStatus.NOT_CONFIGURED} уходит в результат",
+            )
+            return AlertEmailStatus.NOT_CONFIGURED
         }
         return try {
             val message =
@@ -155,10 +167,10 @@ class MonthlyTuningService(
                 }
             mailSender.send(message)
             logger.info("MonthlyTuningService: ALERT email отправлен на $ALERT_EMAIL")
-            true
+            AlertEmailStatus.SENT
         } catch (e: Exception) {
             logger.error("MonthlyTuningService: ошибка отправки email: ${e.message}", e)
-            false
+            AlertEmailStatus.FAILED
         }
     }
 

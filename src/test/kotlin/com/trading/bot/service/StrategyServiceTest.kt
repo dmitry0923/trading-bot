@@ -352,6 +352,32 @@ class StrategyServiceTest {
      * Подменяет distributed lock: блок выполняется синхронно внутри замоканного
      * [DistributedLockService.runExclusive], после завершения вызывается [onCompleted].
      */
+    @Test
+    fun `second cycle is skipped while the first is still in flight`() {
+        // Redis-лок по умолчанию выключен: без in-process guard два цикла могли
+        // идти параллельно (docs/28 §3.1 №36).
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        runBlocking {
+            Mockito
+                .`when`(lockService.runExclusive(Mockito.anyString(), Mockito.anyLong(), Mockito.anyBoolean(), anyBlock()))
+                .thenAnswer { invocation ->
+                    val block = invocation.getArgument<suspend () -> Unit>(3)
+                    started.countDown()
+                    release.await(10, TimeUnit.SECONDS)
+                    runBlocking { block() }
+                    DistributedLockService.LockExecutionResult.COMPLETED
+                }
+        }
+
+        service.run()
+        assertTrue(started.await(10, TimeUnit.SECONDS), "first cycle must start")
+        service.run()
+
+        assertEquals(1.0, meterRegistry.counter("strategy.skipped", "reason", "IN_FLIGHT").count())
+        release.countDown()
+    }
+
     private fun stubLock(onCompleted: () -> Unit) {
         runBlocking {
             Mockito

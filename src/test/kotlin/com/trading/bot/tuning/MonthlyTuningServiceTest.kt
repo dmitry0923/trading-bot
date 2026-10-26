@@ -83,6 +83,8 @@ class MonthlyTuningServiceTest {
         assertEquals(GateVerdict.ALERT, result.gateVerdict)
         assertTrue(result.tradingStopped, "ALERT must stop trading")
         assertFalse(result.alertSent, "no mail sender → email is not sent")
+        // Контракт: отсутствие транспорта — явный статус, а не «тихий false».
+        assertEquals("NOT_CONFIGURED", result.alertEmailStatus)
         assertTrue(result.optimizationSkipped, "optimization must be skipped on ALERT")
         assertTrue(result.gateReasons.any { it.startsWith("ALERT:") }, "${result.gateReasons}")
 

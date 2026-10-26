@@ -24,6 +24,9 @@ class RiskConfigBindingTest {
                     "risk.max-rolling-loss-7d-percent" to "3.0",
                     "risk.max-rolling-loss-30d-percent" to "4.5",
                     "risk.max-portfolio-var-percent" to "1.5",
+                    // Единственный источник лимита открытых позиций (env MAX_OPEN_POS):
+                    // раньше ключ жил в trading.* и нигде не читался (скан-6 P2).
+                    "risk.max-open-positions" to "2",
                 ),
             )
 
@@ -35,5 +38,6 @@ class RiskConfigBindingTest {
         assertEquals(3.0, config.maxRollingLoss7dPercent)
         assertEquals(4.5, config.maxRollingLoss30dPercent)
         assertEquals(1.5, config.maxPortfolioVarPercent)
+        assertEquals(2, config.maxOpenPositions)
     }
 }

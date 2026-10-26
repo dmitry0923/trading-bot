@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -17,5 +18,5 @@ data class FundingHistoryRecord(
     val rawValue: BigDecimal,
     val valueRubPerContract: BigDecimal,
     val source: String = "MOEX",
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
 )

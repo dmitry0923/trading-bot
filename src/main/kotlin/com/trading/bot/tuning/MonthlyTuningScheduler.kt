@@ -7,6 +7,8 @@ import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import java.time.YearMonth
+import java.time.ZoneId
 
 /**
  * Cron-планировщик Monthly Tuning Engine (docs/24, Фаза 3.5).
@@ -31,42 +33,75 @@ class MonthlyTuningScheduler(
 ) {
     private val logger = LoggerFactory.getLogger(MonthlyTuningScheduler::class.java)
 
-    // Сбор метрик — suspend (R2DBC), поэтому цикл запускается в корутине.
+    // Цикл асинхронный (suspend/R2DBC), поэтому запускается в корутине.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
+
+    /** Защита от наложения: ручной запуск во время планового не стартует второй цикл. */
+    @Volatile
+    private var running: Boolean = false
+
     /**
-     * Автоматический запуск в первый рабочий день месяца в 09:05 МСК.
+     * Период последнего выполненного цикла (YYYY-MM).
      *
-     * Cron: `0 5 9 1-7 * MON-FRI` — 1-7 число месяца, пн-пт, 09:05.
+     * Cron `0 5 9 1-7 * MON-FRI` в Spring означает «каждый будний день с 1 по 7 число»
+     * (day-of-month и day-of-week соединяются по AND), т.е. до 5 запусков в месяц, а не
+     * «первый рабочий день». Повторный цикл в том же периоде падал на unique-индексе
+     * `strategy_versions(version)` и повторно дёргал ALERT-остановку торговли —
+     * поэтому период идемпотентен (скан-6 P2).
+     */
+    @Volatile
+    private var lastRunPeriod: String? = null
+
+    /**
+     * Автоматический цикл: будни 1–7 числа в 09:05 МСК (фактически — первый рабочий день,
+     * т.к. повтор в том же месяце отсекается [lastRunPeriod]).
      */
     @Scheduled(cron = "0 5 9 1-7 * MON-FRI", zone = "Europe/Moscow")
     fun runMonthlyTuning() {
-        logger.info("MonthlyTuningScheduler: запуск планового цикла тюнинга")
-        runCycle()
+        logger.info("MonthlyTuningScheduler: плановый запуск месячного тюнинга")
+        runCycle(force = false)
     }
 
     /**
      * Ручной запуск цикла тюнинга (для тестирования или force-tuning).
      *
-     * Вызывается через API или вручную в коде.
+     * Вызывается через API или вручную; период-гард игнорируется (force), но защита от
+     * наложения активна.
      */
     fun runNow() {
-        logger.info("MonthlyTuningScheduler: ручной запуск цикла тюнинга")
-        runCycle()
+        logger.info("MonthlyTuningScheduler: ручной запуск месячного тюнинга")
+        runCycle(force = true)
     }
 
-    private fun runCycle() {
+    internal fun currentPeriod(): String = YearMonth.now(moscowZone).toString()
+
+    private fun runCycle(force: Boolean) {
+        val period = currentPeriod()
+        if (running) {
+            logger.warn("MonthlyTuningScheduler: цикл уже выполняется - запуск за период $period пропущен")
+            return
+        }
+        if (!force && lastRunPeriod == period) {
+            logger.info("MonthlyTuningScheduler: тюнинг за $period уже выполнен - пропуск")
+            return
+        }
+        running = true
         scope.launch {
             try {
                 val (metrics, parameters) = tuningMetricsProvider.collectCurrentMonthlyData()
                 val result = monthlyTuningService.runTuningCycle(metrics, parameters)
+                lastRunPeriod = result.period.ifBlank { period }
                 logger.info(
-                    "MonthlyTuningScheduler: цикл завершён — " +
+                    "MonthlyTuningScheduler: цикл завершён - " +
                         "period=${result.period}, gate=${result.gateVerdict}, " +
                         "tradingStopped=${result.tradingStopped}",
                 )
             } catch (e: Exception) {
                 logger.error("MonthlyTuningScheduler: ошибка в цикле тюнинга: ${e.message}", e)
+            } finally {
+                running = false
             }
         }
     }

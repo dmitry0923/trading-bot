@@ -52,6 +52,23 @@ class AgentLogRepositoryIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `strategy decision is resolved per ticker inside the same cycle`() {
+        // Один цикл = все тикеры × таймфреймы: без фильтра по тикеру решение бралось
+        // у последней записанной пары и ML-датасет размечивался чужим сигналом (скан-6 P2).
+        val cycle = "INT_DECISION_CYCLE"
+        runBlocking {
+            repo.save(strategistLog(cycle, "SBER", "BUY", 0.70))
+            Thread.sleep(20)
+            repo.save(strategistLog(cycle, "CNYRUBF", "SELL", 0.55))
+
+            assertEquals("BUY", repo.findStrategyDecision(cycle, "SBER")?.action)
+            assertEquals("SELL", repo.findStrategyDecision(cycle, "CNYRUBF")?.action)
+            // Без тикера поведение прежнее (последняя запись цикла) — обратная совместимость.
+            assertEquals("SELL", repo.findStrategyDecision(cycle)?.action)
+        }
+    }
+
+    @Test
     fun `empty or blank cycle ids return empty map`() {
         runBlocking {
             assertTrue(repo.findStrategySignalStrengthByCycleIds("SBER", emptyList()).isEmpty())

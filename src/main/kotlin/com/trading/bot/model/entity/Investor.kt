@@ -1,6 +1,7 @@
 package com.trading.bot.model.entity
 
 import com.trading.bot.infrastructure.UuidV7
+import com.trading.bot.model.BusinessTime
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.util.UUID
@@ -16,7 +17,7 @@ data class Investor(
     val name: String,
     val email: String? = null,
     val status: String = "ACTIVE",
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
 )
 
 enum class InvestorTransactionType {
@@ -32,8 +33,8 @@ data class InvestorAccount(
     val balance: BigDecimal = BigDecimal.ZERO,
     val totalDeposited: BigDecimal = BigDecimal.ZERO,
     val totalWithdrawn: BigDecimal = BigDecimal.ZERO,
-    val createdAt: LocalDateTime = LocalDateTime.now(),
-    val updatedAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
+    val updatedAt: LocalDateTime = BusinessTime.now(),
 )
 
 data class InvestorTransaction(
@@ -46,7 +47,7 @@ data class InvestorTransaction(
     val sharesAtTime: BigDecimal? = null,
     val equityAtTime: BigDecimal? = null,
     val description: String? = null,
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
 )
 
 data class InvestorAllocation(
@@ -54,5 +55,5 @@ data class InvestorAllocation(
     val investorId: UUID,
     val accountId: UUID,
     val amount: BigDecimal,
-    val allocatedAt: LocalDateTime = LocalDateTime.now(),
+    val allocatedAt: LocalDateTime = BusinessTime.now(),
 )

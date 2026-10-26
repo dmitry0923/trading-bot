@@ -56,7 +56,9 @@ class MacroSnapshotCollector(
             val ctx = macroContextService.fetch()
             macroSnapshotRepository.save(
                 MacroSnapshot(
-                    capturedAt = LocalDateTime.now(),
+                    capturedAt =
+                        com.trading.bot.model.BusinessTime
+                            .now(),
                     cbrRate = ctx.cbrRate,
                     brentPrice = ctx.brentPrice,
                     usdRub = ctx.usdRub,

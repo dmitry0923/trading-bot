@@ -2,6 +2,7 @@ package com.trading.bot.event
 
 import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.dto.ExecutionReport
+import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -14,6 +15,8 @@ import java.math.BigDecimal
 class TradingEventPublisher(
     private val publisher: ApplicationEventPublisher,
 ) {
+    private val logger = KotlinLogging.logger {}
+
     fun publishPriceChanged(
         ticker: String,
         price: BigDecimal,
@@ -44,11 +47,20 @@ class TradingEventPublisher(
     }
 
     fun publishPositionClosed(position: com.trading.bot.model.entity.Position) {
+        val pnl = position.pnl
+        if (pnl == null) {
+            // Ноль вместо неизвестного P&L занижает дневной убыток (fail-open для лимита),
+            // поэтому хотя бы фиксируем это в лог (скан-6).
+            logger.warn {
+                "PositionClosedEvent without P&L: ${position.ticker} id=${position.id} " +
+                    "reason=${position.closeReason?.code} - daily limit sees 0"
+            }
+        }
         publisher.publishEvent(
             PositionClosedEvent(
                 positionId = position.id ?: -1L,
                 ticker = position.ticker,
-                pnl = position.pnl ?: BigDecimal.ZERO,
+                pnl = pnl ?: BigDecimal.ZERO,
                 reason = position.closeReason?.code ?: "CLOSED",
                 cycleId = position.cycleId,
                 accountId = position.accountId,

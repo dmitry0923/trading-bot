@@ -177,12 +177,12 @@ object ExitRules {
     }
 
     /**
-     * Направленное округление цены до шага сетки.
+     * Выравнивание уровня по шагу цены (сетка тика).
      *
-     * @param roundingMode определяет направление:
-     *   - [RoundingMode.FLOOR] — от entry для LONG SL / к прибыли для SHORT TP / tighter trailing SHORT
-     *   - [RoundingMode.CEILING] — от entry для SHORT SL / к прибыли для LONG TP / tighter trailing LONG
-     *   - [RoundingMode.HALF_UP] — нейтральное (entry price)
+     * @param roundingMode требуемое направление:
+     *   - [RoundingMode.FLOOR] — не «уже» для LONG SL / не «выгоднее» для SHORT TP;
+     *   - [RoundingMode.CEILING] — для SHORT SL / LONG TP;
+     *   - [RoundingMode.HALF_UP] — безразлично (entry price).
      */
     fun alignToGrid(
         price: BigDecimal,
@@ -193,6 +193,28 @@ object ExitRules {
         val scale = priceStep.scale()
         return price.divide(priceStep, 0, roundingMode).multiply(priceStep).setScale(scale, roundingMode)
     }
+
+    /**
+     * ATR-стопы активны только если заданы ОБА множителя и ATR доступен.
+     *
+     * Общий предикат для сайзера ([com.trading.bot.application.decision.StockEntryProfile])
+     * и билдера заявки ([com.trading.bot.application.OrderBuilder]): при расхождении
+     * сайзер считал риск по ATR, а заявка получала процентный стоп (в разы шире) —
+     * позиция превышала риск-кап (скан-6 P3).
+     */
+    fun useAtrStops(
+        frozenSlPercent: BigDecimal?,
+        frozenTpPercent: BigDecimal?,
+        atr: BigDecimal?,
+        atrSlMultiplier: BigDecimal,
+        atrTpMultiplier: BigDecimal,
+    ): Boolean =
+        frozenSlPercent == null &&
+            frozenTpPercent == null &&
+            atr != null &&
+            atr > BigDecimal.ZERO &&
+            atrSlMultiplier > BigDecimal.ZERO &&
+            atrTpMultiplier > BigDecimal.ZERO
 
     /**
      * Подтягивание трейлинг-стопа по текущей цене (акции / FX).

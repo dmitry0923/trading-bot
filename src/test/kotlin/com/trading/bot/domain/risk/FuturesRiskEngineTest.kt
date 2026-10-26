@@ -112,6 +112,25 @@ class FuturesRiskEngineTest {
         }
 
     @Test
+    fun `open stock position does not consume the futures position limit`() =
+        runBlocking {
+            // Лимит futures-max-open-positions считается только по фьючерсам: открытая
+            // акция в портфеле не должна блокировать вход по фьючерсу (скан-6 P2).
+            val stock =
+                Position(
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 10,
+                    entryPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                )
+
+            val result = engine().canEnter(entryRequest(openPositions = listOf(stock)))
+
+            assertEquals(RiskVerdict.Allowed, result)
+        }
+
+    @Test
     fun `entry blocked when position already open`() =
         runBlocking {
             val open =

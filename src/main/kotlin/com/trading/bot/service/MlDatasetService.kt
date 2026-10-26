@@ -102,7 +102,7 @@ class MlDatasetService(
                 }
             val macroSource = if (snapshot != null) MACRO_SOURCE_SNAPSHOT else MACRO_SOURCE_CURRENT
             meterRegistry.counter("ml.dataset.macro.source", Tags.of("source", macroSource)).increment()
-            val strategyLog = position.cycleId?.let { agentLogRepository.findStrategyDecision(it) }
+            val strategyLog = position.cycleId?.let { agentLogRepository.findStrategyDecision(it, position.ticker) }
             rows +=
                 buildRow(
                     position = position,

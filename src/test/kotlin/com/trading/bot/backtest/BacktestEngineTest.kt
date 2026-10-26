@@ -942,6 +942,38 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `candles override bypasses the repository load`() {
+        // Research-эндпоинты с ресемплингом передают готовые свечи: `run()` не должен
+        // ходить в БД (иначе `timeframe=HOUR_1` читал нативный ТФ) — скан-6 P1.
+        val candles =
+            (0 until 200).map { i ->
+                Candle(
+                    ticker = "CNYRUBF",
+                    timeframe = "HOUR_1",
+                    openPrice = BigDecimal("12.35"),
+                    highPrice = BigDecimal("12.36"),
+                    lowPrice = BigDecimal("12.34"),
+                    closePrice = BigDecimal("12.35"),
+                    volume = 1000L,
+                    time = LocalDateTime.now().plusMinutes(60L * i),
+                )
+            }
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = InstrumentsConfig(),
+                positionSizer = FuturesPositionSizer(RiskConfig(), InstrumentsConfig()),
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val result = runBlocking { engine.run("CNYRUBF", days = 30, candlesOverride = candles) }
+
+        assertEquals(BACKTEST_ENGINE_VERSION, result.engineVersion)
+        assertTrue(result.totalTrades >= 1, "override-свечи должны дойти до движка, trades=${result.totalTrades}")
+    }
+
+    @Test
     fun `explicit slPoints tpPoints override atr and default stop for futures`() {
         // Вход на баре 1 (открытие 92000, fill 92000.01). Бар 2 ныряет до 91999.9 —
         // на 10 пунктов ниже входа, но не на 100. При slPoints=10 стоп (91999.91)

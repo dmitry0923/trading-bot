@@ -293,6 +293,8 @@ class StateReconciliationServicePathsTest {
                     .subtract((spec.totalCommissionPerLotSide() ?: BigDecimal.ZERO).multiply(BigDecimal(10)).multiply(BigDecimal(2)))
             assertEquals(0, expected.compareTo(closed.pnl!!), "реализованный P&L записан: ${closed.pnl} (ожидалось $expected)")
             verify(tradeEventService).recordPositionClosed(anyPosition(), Mockito.anyString())
+            // Дневной лимит/просадка копят P&L из событий — публикация обязательна.
+            verify(eventPublisher).publishPositionClosed(anyPosition())
             verify(positionRepo).releaseEntry("SBER", null)
         }
 

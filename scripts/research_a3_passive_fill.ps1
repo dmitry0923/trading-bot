@@ -119,15 +119,15 @@ if ($RunGate) {
             $sw.Stop()
             $gateFile = Join-Path $OutDir "a3_passive_gate_${Days}d_f${Folds}.json"
             $g | ConvertTo-Json -Depth 8 | Set-Content -Path $gateFile
-            Write-Hb ("GATE DONE verdict={0} liveAllowed={1} ({2}s) -> {3}" -f $g.verdict, $g.liveAllowed, [math]::Round($sw.Elapsed.TotalSeconds, 0), $gateFile)
+            Write-Hb ("GATE DONE verdict={0} liveAllowed={1} ({2}s) -> {3}" -f $g.status, $g.liveAllowed, [math]::Round($sw.Elapsed.TotalSeconds, 0), $gateFile)
         } catch {
             $sw.Stop()
-            Write-Hb ("GATE FAILED ({0}s): {1}" -f [math]::Round($sw.Elapsed.TotalSeconds, 0), $_.Exception.Message)
+            Write-Host ("GATE FAILED ({0}s): {1}" -f [math]::Round($sw.Elapsed.TotalSeconds, 0), $_.Exception.Message)
         }
     } else {
-        Write-Hb ("GATE SKIPPED: passive PF {0} < 1.30" -f [math]::Round($passPf, 3))
+        Write-Host ("GATE SKIPPED: passive PF {0} < 1.30" -f [math]::Round($passPf, 3))
     }
 }
 
-Write-Hb ("FINISHED csv=$csv")
+Write-Host ("FINISHED csv=$csv")
 Write-Output "RESULT_CSV=$csv"

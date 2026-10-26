@@ -64,16 +64,23 @@ class AgentLogRepository(
      * Используется экспортом ML-датасета (roadmap v2.4): action + signalStrength
      * стратега на входе в позицию.
      */
-    suspend fun findStrategyDecision(cycleId: String): AgentLog? =
-        databaseClient
-            .sql(
-                "SELECT * FROM agent_logs WHERE cycle_id = :cycleId AND agent_name = :agentName " +
-                    "ORDER BY created_at DESC LIMIT 1",
-            ).bind("cycleId", cycleId)
-            .bind("agentName", STRATEGY_AGENT)
+    suspend fun findStrategyDecision(
+        cycleId: String,
+        ticker: String? = null,
+    ): AgentLog? {
+        // Один цикл = все тикеры × все таймфреймы: без фильтра по тикеру решение
+        // бралось у последней записанной пары и ML-датасет размечивался чужим
+        // сигналом (скан-6 P2).
+        val sql =
+            "SELECT * FROM agent_logs WHERE cycle_id = :cycleId AND agent_name = :agentName " +
+                (if (ticker == null) "" else "AND ticker = :ticker ") +
+                "ORDER BY created_at DESC LIMIT 1"
+        val spec = databaseClient.sql(sql).bind("cycleId", cycleId).bind("agentName", STRATEGY_AGENT)
+        return (if (ticker == null) spec else spec.bind("ticker", ticker))
             .map { row, _ -> toAgentLog(row) }
             .one()
             .awaitSingleOrNull()
+    }
 
     /**
      * Все записи агентов цикла в хронологическом порядке (lineage): цепочка

@@ -83,3 +83,5 @@ databaseChangeLog:
       file: db/changelog/changes/041-trade-events-sequence-unique.sql
   - include:
       file: db/changelog/changes/042-investor-clearing-idempotency.sql
+  - include:
+      file: db/changelog/changes/043-candles-drop-retention.sql

@@ -101,10 +101,15 @@ class OrderBuilder(
         // ATR-адаптивность, ровно как в перевалидированном backtest.
         val frozenSl = frozenSlPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
         val frozenTp = frozenTpPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
+        // Общий предикат с сайзером: иначе риск-кап и фактический стоп расходятся (скан-6 P3).
         val useAtr =
-            frozenSl == null && frozenTp == null &&
-                atr != null && atr > BigDecimal.ZERO &&
-                riskConfig.atrSlMultiplier > BigDecimal.ZERO && riskConfig.atrTpMultiplier > BigDecimal.ZERO
+            ExitRules.useAtrStops(
+                frozenSlPercent = frozenSl,
+                frozenTpPercent = frozenTp,
+                atr = atr,
+                atrSlMultiplier = riskConfig.atrSlMultiplier,
+                atrTpMultiplier = riskConfig.atrTpMultiplier,
+            )
         val stopLoss =
             when {
                 frozenSl != null -> {

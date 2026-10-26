@@ -99,7 +99,7 @@ try {
     $sw.Stop()
     $gateFile = Join-Path $PSScriptRoot "riskgrid_gate_best.json"
     $g | ConvertTo-Json -Depth 6 | Set-Content -Path $gateFile
-    Write-Host ("verdict={0} liveAllowed={1} ({2}s) -> {3}" -f $g.verdict, $g.liveAllowed, [math]::Round($sw.Elapsed.TotalSeconds, 0), $gateFile)
+    Write-Host ("verdict={0} liveAllowed={1} ({2}s) -> {3}" -f $g.status, $g.liveAllowed, [math]::Round($sw.Elapsed.TotalSeconds, 0), $gateFile)
 } catch {
     $sw.Stop()
     Write-Host ("GATE FAILED ({0}s): {1}" -f [math]::Round($sw.Elapsed.TotalSeconds, 0), $_.Exception.Message)

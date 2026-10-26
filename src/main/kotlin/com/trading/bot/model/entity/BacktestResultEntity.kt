@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.time.LocalDateTime
 
 /**
@@ -15,5 +16,5 @@ data class BacktestResultEntity(
     val params: String,
     val metrics: String,
     val oos: String? = null,
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
 )

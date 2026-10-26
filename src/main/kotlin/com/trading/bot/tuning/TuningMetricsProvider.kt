@@ -4,8 +4,10 @@ import com.trading.bot.backtest.StrategyParameters
 import com.trading.bot.repository.PositionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
+import java.time.Clock
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Провайдер метрик для Monthly Tuning Engine (docs/24, Фаза 3.5).
@@ -20,6 +22,11 @@ import java.time.LocalDateTime
 class TuningMetricsProvider(
     private val positionRepository: PositionRepository,
     private val strategyVersionRepository: StrategyVersionRepository,
+    /**
+     * Бизнес-клок (МСК): окно месяца не должно сдвигаться на 3 часа в UTC-JVM
+     * (скан-6 P3).
+     */
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = LoggerFactory.getLogger(TuningMetricsProvider::class.java)
 
@@ -37,7 +44,7 @@ class TuningMetricsProvider(
      * @return метрики прошедшего месяца и текущие параметры стратегии.
      */
     suspend fun collectCurrentMonthlyData(): MonthlyData {
-        val now = LocalDate.now()
+        val now = LocalDate.now(clock)
         val monthStart = now.withDayOfMonth(1).minusMonths(1)
         val monthEnd = now.withDayOfMonth(1).atStartOfDay()
 

@@ -412,6 +412,9 @@ class StateReconciliationService(
         }
         positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason.code)
+        // Событие обязательно: `DailyLossCircuitBreaker` копит дневной P&L из событий,
+        // поэтому без публикации убыток не попадал в дневной лимит/просадку (скан-6).
+        eventPublisher.publishPositionClosed(pos)
         pos.ticker.let { positionRepo.releaseEntry(it, pos.accountId) }
         meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "PHANTOM", "ticker", pos.ticker.uppercase())).increment()
     }

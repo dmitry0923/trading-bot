@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -25,6 +26,6 @@ data class TradingAccount(
     var maxOpenPositions: Int? = null,
     var maxDailyLossRub: BigDecimal? = null,
     var weight: Int = 1,
-    var createdAt: LocalDateTime = LocalDateTime.now(),
-    var updatedAt: LocalDateTime = LocalDateTime.now(),
+    var createdAt: LocalDateTime = BusinessTime.now(),
+    var updatedAt: LocalDateTime = BusinessTime.now(),
 )

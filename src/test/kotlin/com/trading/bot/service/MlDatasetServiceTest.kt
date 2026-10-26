@@ -76,7 +76,7 @@ class MlDatasetServiceTest {
                 .thenReturn(candles(60, openedAt))
                 .thenReturn(candles(60, openedAt.plusDays(1)))
             Mockito
-                .`when`(agentLogRepository.findStrategyDecision("c1"))
+                .`when`(agentLogRepository.findStrategyDecision("c1", "SBER"))
                 .thenReturn(AgentLog(cycleId = "c1", agentName = "Agent-3-Strategist", action = "BUY", signalStrength = 0.85))
             Mockito
                 .`when`(blindSpotRepository.findByIsActiveTrue())

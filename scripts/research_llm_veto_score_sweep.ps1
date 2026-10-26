@@ -65,7 +65,7 @@ function BlockedCount {
         $sum = 0.0
         foreach ($msr in $b.measurements) { if ($msr.statistic -eq "COUNT") { $sum += [double]$msr.value } }
         return $sum
-    } catch { return 0.0 }
+    } catch { return $null }
 }
 
 $out = if ($OutCsv) { $OutCsv } else { Join-Path $PSScriptRoot "llmveto_score_sweep_${Days}d.csv" }
@@ -81,10 +81,12 @@ foreach ($t in $Thresholds) {
         $r = Invoke-WithAuth $u
         $sw.Stop()
         $secs = [math]::Round($sw.Elapsed.TotalSeconds, 0)
-        $blocked = [math]::Round((BlockedCount) - $before, 0)
-        if ($blocked -lt 0) { $blocked = "n/a" }
+        $after = BlockedCount
+        # 0.0 при ошибке actuator неотличим от «блокировок не было»: пишем n/a (скан-6 P3).
+        $blocked = if ($null -eq $before -or $null -eq $after) { "n/a" } else { [math]::Round($after - $before, 0) }
+        if ($blocked -ne "n/a" -and $blocked -lt 0) { $blocked = "n/a" }
         $line = "{0},{1},{2},{3},{4},{5},{6},{7}" -f `
-            $t, $secs, $r.totalTrades, [math]::Round([double]$r.profitFactor, 3),
+            $t, $secs, $r.totalTrades, $(if ($null -eq $r.profitFactor) { "n/a" } else { [math]::Round([double]$r.profitFactor, 3) }),
             [math]::Round([double]$r.totalReturn * 100, 3), [math]::Round([double]$r.winRate * 100, 1),
             [math]::Round([double]$r.maxDrawdown * 100, 3), $blocked
         $line | Add-Content -Path $out

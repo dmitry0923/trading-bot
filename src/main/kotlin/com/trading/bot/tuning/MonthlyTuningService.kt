@@ -8,6 +8,7 @@ import org.springframework.mail.javamail.JavaMailSender
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -65,7 +66,7 @@ class MonthlyTuningService(
     suspend fun runTuningCycle(
         metrics: PerformanceGateCheck.MonthlyMetrics,
         currentParameters: StrategyParameters,
-        period: YearMonth = YearMonth.now().minusMonths(1),
+        period: YearMonth = YearMonth.now(ZoneId.of("Europe/Moscow")).minusMonths(1),
     ): TuningCycleResult {
         val periodStr = period.format(DateTimeFormatter.ofPattern("yyyy-MM"))
         logger.info("MonthlyTuningService: старт цикла тюнинга за период $periodStr")

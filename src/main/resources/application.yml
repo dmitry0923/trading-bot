@@ -379,7 +379,6 @@ trading:
   bot-interval-ms: ${BOT_INTERVAL_MS:300000}
   strategy-interval-ms: ${STRATEGY_INTERVAL_MS:600000}
   monitor-interval-ms: ${MONITOR_INTERVAL_MS:10000}
-  max-open-positions-for-new-entry: ${MAX_OPEN_POS:3}
   timeframe: MINUTE_10
   timeframes:
     - MINUTE_10
@@ -814,7 +813,8 @@ risk:
   enabled: true
   max-position-rub: 50000
   max-daily-loss-rub: 5000
-  max-open-positions: 3
+  # Единственный источник лимита: 0 = блокировать все входы (скан-6 P2).
+  max-open-positions: ${MAX_OPEN_POS:3}
   futures-max-open-positions: 1
   max-sector-exposure: 2
   max-volatility-percent: 5.0

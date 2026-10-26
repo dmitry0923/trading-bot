@@ -151,9 +151,15 @@ class BacktestEngine(
         fundingVetoBlockOnUnknown: Boolean? = null,
         maxHoldBars: Int? = null,
         passiveFillEnabled: Boolean? = null,
+        /**
+         * Готовые свечи вместо чтения из БД (research-эндпоинты с ресемплингом старшего ТФ):
+         * иначе `/backtest?timeframe=HOUR_1` читал нативный ТФ и молча терял конфигурацию
+         * (скан-6 P1).
+         */
+        candlesOverride: List<Candle>? = null,
     ): BacktestResult {
         val from = LocalDateTime.now().minusDays(days.toLong())
-        val candles = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
+        val candles = candlesOverride ?: candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
         if (candles.size < minBarsForSignal + 2) {
             logger.warn { "Backtest $ticker: insufficient candles (${candles.size})" }
             return emptyResult(ticker)

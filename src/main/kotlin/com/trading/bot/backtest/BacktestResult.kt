@@ -163,7 +163,9 @@ data class BacktestResult(
             "sortinoRatio" to sortinoRatio,
             "maxDrawdown" to maxDrawdown,
             "winRate" to winRate,
-            "profitFactor" to profitFactor,
+            // ∞ (нет убыточных сделок) в JSON превращается в строку "Infinity" и ломает
+            // парсинг: для артефакта отдаём -1.0 как «не определено» (скан-6 P2).
+            "profitFactor" to if (profitFactor.isFinite()) profitFactor else -1.0,
             "totalTrades" to totalTrades,
             "avgHoldBars" to avgHoldBars,
             "expectancy" to expectancy,

@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -54,7 +55,7 @@ data class OrderOutbox(
     val retryCount: Int = 0,
     val positionId: Long? = null,
     val accountId: Long? = null,
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
     val processedAt: LocalDateTime? = null,
     val errorMessage: String? = null,
 )

@@ -42,6 +42,7 @@ import com.trading.bot.model.dto.TradeStats
 import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.BlindSpotEntity
 import com.trading.bot.model.entity.BotSettings
+import com.trading.bot.model.entity.Candle
 import com.trading.bot.model.entity.StrategyAdjustment
 import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.AgentLogRepository
@@ -556,8 +557,17 @@ class ApiController(
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(required = false) executionPassiveFill: Boolean?,
+        // Research-оверрайды, которые движок поддерживает, а эндпоинт не объявлял:
+        // IS-прескрины слали их и молча получали другую конфигурацию (скан-6 P1).
+        @RequestParam(required = false) timeframe: String?,
+        @RequestParam(required = false) wfaSlPoints: Int?,
+        @RequestParam(required = false) wfaTpPoints: Int?,
+        @RequestParam(required = false) riskPerTradePercent: Double?,
+        @RequestParam(required = false) futuresMaxContractsPerPosition: Int?,
+        @RequestParam(required = false) leverage: Double?,
+        @RequestParam(required = false) capitalSlice: Double?,
         @RequestParam(defaultValue = "false") includeTrades: Boolean,
-    ): Map<String, Any> {
+    ): Map<String, Any?> {
         meterRegistry
             .counter(
                 "api.backtest",
@@ -565,9 +575,18 @@ class ApiController(
                     .of("ticker", ticker),
             ).increment()
         val effectiveDays = days ?: backtestConfig.days
+        val effectiveTimeframe = timeframe ?: backtestConfig.timeframe
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
+        // Ресемплируемый ТФ считается из базового MINUTE_10 (как /validate): иначе
+        // timeframe в запросе игнорировался или давал пустую историю (скан-6 P1).
+        val resampledCandles =
+            if (effectiveTimeframe != backtestConfig.timeframe) {
+                researchCandles(ticker, effectiveTimeframe, effectiveDays)
+            } else {
+                null
+            }
         val mlOverrides =
             MlDirectionOverrides(
                 enabled = mlDirectionEnabled,
@@ -654,6 +673,7 @@ class ApiController(
             backtestEngine.run(
                 ticker,
                 effectiveDays,
+                timeframe = effectiveTimeframe,
                 signalGeneratorOverride =
                     if (
                         mlOverrides.anyProvided ||
@@ -676,6 +696,13 @@ class ApiController(
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars,
                 passiveFillEnabled = executionPassiveFill,
+                slPoints = wfaSlPoints,
+                tpPoints = wfaTpPoints,
+                riskPerTradePercent = riskPerTradePercent,
+                futuresMaxContractsPerPosition = futuresMaxContractsPerPosition,
+                leverage = leverage ?: 1.0,
+                capitalSlice = capitalSlice ?: backtestConfig.capitalSlice,
+                candlesOverride = resampledCandles,
             )
         return mapOf(
             "ticker" to result.ticker,
@@ -684,7 +711,7 @@ class ApiController(
             "sharpeRatio" to result.sharpeRatio,
             "maxDrawdown" to result.maxDrawdown,
             "winRate" to result.winRate,
-            "profitFactor" to result.profitFactor,
+            "profitFactor" to result.profitFactor.takeIf { it.isFinite() },
             "totalTrades" to result.totalTrades,
             "edgeStatisticallySignificant" to result.edgeStatisticallySignificant,
             "probabilityOfNoEdge" to result.probabilityOfNoEdge,
@@ -780,7 +807,7 @@ class ApiController(
     @PostMapping("/backtest/panel")
     suspend fun panelBacktest(
         @RequestBody request: PanelBacktestRequest,
-    ): Map<String, Any> {
+    ): Map<String, Any?> {
         meterRegistry.counter("api.backtest.panel").increment()
         if (request.tickers.isEmpty()) {
             throw ResponseStatusException(HttpStatus.BAD_REQUEST, "tickers must not be empty")
@@ -803,7 +830,7 @@ class ApiController(
                         "sortinoRatio" to r.sortinoRatio,
                         "maxDrawdown" to r.maxDrawdown,
                         "winRate" to r.winRate,
-                        "profitFactor" to r.profitFactor,
+                        "profitFactor" to r.profitFactor.takeIf { it.isFinite() },
                         "totalTrades" to r.totalTrades,
                         "edgeStatisticallySignificant" to r.edgeStatisticallySignificant,
                         "probabilityOfNoEdge" to r.probabilityOfNoEdge,
@@ -832,7 +859,7 @@ class ApiController(
      * PASS хотя бы у большинства (14.9). Прогон на уже сохранённых свечах.
      */
     @PostMapping("/backtest/portfolio-check")
-    suspend fun portfolioBacktestCheck(): Map<String, Any> {
+    suspend fun portfolioBacktestCheck(): Map<String, Any?> {
         meterRegistry.counter("api.backtest.portfolio.check").increment()
         val check = portfolioBacktestGuard.checkPortfolio()
         return mapOf(
@@ -851,7 +878,7 @@ class ApiController(
                         "sharpeRatio" to r.sharpeRatio,
                         "maxDrawdown" to r.maxDrawdown,
                         "winRate" to r.winRate,
-                        "profitFactor" to r.profitFactor,
+                        "profitFactor" to r.profitFactor.takeIf { it.isFinite() },
                         "totalTrades" to r.totalTrades,
                         "edgeStatisticallySignificant" to r.edgeStatisticallySignificant,
                         "probabilityOfNoEdge" to r.probabilityOfNoEdge,
@@ -1248,8 +1275,7 @@ class ApiController(
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
-        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val candles = researchCandles(ticker, effectiveTimeframe, effectiveDays)
         // B1: standalone robustness обязан верифицировать ЗАМОРОЖЕННУЮ стратегию тикера
         // (в т.ч. futures SL/TP в пунктах), а не config-дефолты 2%/15% (или 2%/4% legacy).
         // Без frozen-параметров фьючерсный MC-прогон деградирует до нерепрезентативных
@@ -1508,6 +1534,14 @@ class ApiController(
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(required = false) executionPassiveFill: Boolean?,
+        // Research-оверрайды, которые уже принимает /deployment-gate: без них holdout
+        // проверял конфигурацию БЕЗ veto/SL-TP отбора (скан-6 P1).
+        @RequestParam(required = false) fundingVetoEnabled: Boolean?,
+        @RequestParam(required = false) fundingVetoLongThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoShortThresholdRub: Double?,
+        @RequestParam(required = false) fundingVetoBlockOnUnknown: Boolean?,
+        @RequestParam(required = false) wfaSlPoints: Int?,
+        @RequestParam(required = false) wfaTpPoints: Int?,
     ): Map<String, Any> {
         meterRegistry
             .counter(
@@ -1521,8 +1555,7 @@ class ApiController(
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
-        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val candles = researchCandles(ticker, effectiveTimeframe, effectiveDays)
         // Holdout без данных падал IllegalArgumentException → 500 (нет @ControllerAdvice).
         // Явный 404 позволяет отличить «нет истории» от реального прогона (docs/28 §3 №34).
         if (candles.isEmpty()) {
@@ -1613,10 +1646,14 @@ class ApiController(
                 sampleEvery = llmVetoSampleEvery,
                 minScore = llmVetoMinScore,
             )
+        if (adaptiveConfidenceThreshold != null) {
+            // Request-параметр confidence НЕ применяется: он подбирался бы на том же
+            // holdout, по которому выносится вердикт (deployment-gate сознательно его
+            // игнорирует) — скан-6 P2.
+            logger.warn { "holdout: adaptiveConfidenceThreshold из запроса игнорируется (утечка OOS)" }
+        }
         val signalGeneratorOverride =
-            if (adaptiveConfidenceThreshold != null) {
-                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
-            } else if (
+            if (
                 mlOverrides.anyProvided ||
                 entryOverrides.anyProvided ||
                 vetoOverrides.anyProvided ||
@@ -1638,6 +1675,12 @@ class ApiController(
                 signalGeneratorOverride = signalGeneratorOverride,
                 maxHoldBars = maxHoldBars,
                 passiveFillEnabled = executionPassiveFill,
+                fundingVetoEnabled = fundingVetoEnabled,
+                fundingVetoLongThresholdRub = fundingVetoLongThresholdRub,
+                fundingVetoShortThresholdRub = fundingVetoShortThresholdRub,
+                fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
+                slPoints = wfaSlPoints,
+                tpPoints = wfaTpPoints,
             )
         return mapOf(
             "ticker" to ticker,
@@ -1762,7 +1805,9 @@ class ApiController(
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
         @RequestParam(required = false) executionPassiveFill: Boolean?,
-    ): Map<String, Any> {
+        @RequestParam(required = false) wfaSlPoints: Int?,
+        @RequestParam(required = false) wfaTpPoints: Int?,
+    ): Map<String, Any?> {
         meterRegistry
             .counter(
                 "api.backtest.deployment.gate",
@@ -1775,8 +1820,7 @@ class ApiController(
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
-        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, effectiveTimeframe, from, LocalDateTime.now())
+        val candles = researchCandles(ticker, effectiveTimeframe, effectiveDays)
         // Deployment-gate без данных падал 500 внутри валидаторов; отдаём 404
         // (docs/28 §3 №34): пустой прогон неотличим от «всё провалено», а это
         // влияет на решение о LIVE.
@@ -1895,6 +1939,8 @@ class ApiController(
                 fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                 maxHoldBars = maxHoldBars,
                 passiveFillEnabled = executionPassiveFill,
+                slPoints = wfaSlPoints,
+                tpPoints = wfaTpPoints,
             )
         // Базовый backtest и WFA берём из holdout-валидации (уже на dev-данных):
         // отдельный прогон на всей истории протекал бы holdout в edge-проверку.
@@ -1918,7 +1964,6 @@ class ApiController(
                 maxHoldBars = maxHoldBars,
                 passiveFillEnabled = executionPassiveFill,
             )
-
         val decision =
             DeploymentGate.decide(
                 DeploymentCriteria(
@@ -1979,7 +2024,7 @@ class ApiController(
         )
     }
 
-    private fun stressToMap(scenario: com.trading.bot.backtest.StressScenarioResult): Map<String, Any> =
+    private fun stressToMap(scenario: com.trading.bot.backtest.StressScenarioResult): Map<String, Any?> =
         mapOf(
             "name" to scenario.name,
             "description" to scenario.description,
@@ -1989,7 +2034,7 @@ class ApiController(
             "sharpeRatio" to scenario.sharpeRatio,
             "sortinoRatio" to scenario.sortinoRatio,
             "maxDrawdown" to scenario.maxDrawdown,
-            "profitFactor" to scenario.profitFactor,
+            "profitFactor" to scenario.profitFactor.takeIf { it.isFinite() },
             "winRate" to scenario.winRate,
             "totalTrades" to scenario.totalTrades,
             "passable" to scenario.passable,
@@ -2007,6 +2052,33 @@ class ApiController(
         } catch (_: IllegalArgumentException) {
             false
         }
+
+    /**
+     * Свечи для research-прогона (robustness/holdout/gate): ресемплируемые ТФ
+     * (HOUR_1/DAY_1) строятся из базового MINUTE_10 — ровно так же, как в `/validate`.
+     *
+     * Раньше эти эндпоинты читали нативный ТФ, поэтому гейт мог проверять другой набор
+     * баров, чем тот, на котором шёл отбор (а для тикеров без нативного ТФ — отдавать
+     * пустой результат) — скан-6 P1.
+     */
+    private suspend fun researchCandles(
+        ticker: String,
+        timeframe: String,
+        days: Int,
+    ): List<Candle> {
+        val from = LocalDateTime.now().minusDays(days.toLong())
+        val baseTimeframe = backtestConfig.timeframe
+        val needsResample = timeframe != baseTimeframe && isResampleTimeframe(timeframe)
+        val sourceTimeframe = if (needsResample) baseTimeframe else timeframe
+        val loaded =
+            candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                ticker,
+                sourceTimeframe,
+                from,
+                LocalDateTime.now(),
+            )
+        return if (needsResample) CandleResampler.resample(loaded, timeframe) else loaded
+    }
 
     private suspend fun persistValidationResult(
         ticker: String,

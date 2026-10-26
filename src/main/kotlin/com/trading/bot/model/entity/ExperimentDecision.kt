@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -52,5 +53,5 @@ data class ExperimentDecision(
     val executed: Boolean = false,
     val resultPnl: BigDecimal? = null,
     val closed: Boolean = false,
-    val decidedAt: LocalDateTime = LocalDateTime.now(),
+    val decidedAt: LocalDateTime = BusinessTime.now(),
 )

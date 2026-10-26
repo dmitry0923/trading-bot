@@ -137,13 +137,20 @@ class StockEntryProfile(
                 ?: spec?.effectiveSlPercent(riskConfig.defaultStopLossPercent)
                 ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = spec?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
+        val frozenTpPercent = frozen?.tpPercent?.takeIf { it > 0.0 }?.let { BigDecimal.valueOf(it) }
+        // Тот же предикат, что и в OrderBuilder: ATR-сайзинг без ATR-стопа
+        // завышал лоты в разы (скан-6 P3).
         val useAtr =
-            frozenSlPercent == null &&
-                request.atr != null && request.atr > BigDecimal.ZERO &&
-                riskConfig.atrSlMultiplier > BigDecimal.ZERO
+            com.trading.bot.domain.risk.ExitRules.useAtrStops(
+                frozenSlPercent = frozenSlPercent,
+                frozenTpPercent = frozenTpPercent,
+                atr = request.atr,
+                atrSlMultiplier = riskConfig.atrSlMultiplier,
+                atrTpMultiplier = riskConfig.atrTpMultiplier,
+            )
         val slDistance =
             if (useAtr) {
-                request.atr.multiply(riskConfig.atrSlMultiplier)
+                request.atr!!.multiply(riskConfig.atrSlMultiplier)
             } else {
                 entryPrice.multiply(effectiveSlPercent).divide(BigDecimal("100"), 6, RoundingMode.HALF_UP)
             }

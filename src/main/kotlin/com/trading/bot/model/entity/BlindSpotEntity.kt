@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.time.LocalDateTime
 
 data class BlindSpotEntity(
@@ -10,6 +11,6 @@ data class BlindSpotEntity(
     var occurrenceCount: Int,
     val recommendation: String,
     var isActive: Boolean = true,
-    val detectedAt: LocalDateTime = LocalDateTime.now(),
+    val detectedAt: LocalDateTime = BusinessTime.now(),
     var resolvedAt: LocalDateTime? = null,
 )

@@ -97,6 +97,12 @@ class FinalHoldoutValidator(
          * иначе dev/holdout шли бы taker-филлом при passive-переборе.
          */
         passiveFillEnabled: Boolean? = null,
+        /**
+         * Research override сетки SL/TP **в пунктах** (как в `/validate`): иначе holdout
+         * проверяется на дефолтной сетке 25–600, а не на той, которой шёл отбор (скан-6 P1).
+         */
+        slPoints: Int? = null,
+        tpPoints: Int? = null,
     ): HoldoutValidation {
         require(holdoutFraction > 0.0 && holdoutFraction < 1.0) { "holdoutFraction must be in (0, 1)" }
         val sorted = candles.sortedBy { it.time }
@@ -137,6 +143,8 @@ class FinalHoldoutValidator(
                     fundingVetoBlockOnUnknown = fundingVetoBlockOnUnknown,
                     maxHoldBars = maxHoldBars ?: backtestConfig.maxHoldBars,
                     passiveFillEnabled = passiveFillEnabled,
+                    slPoints = slPoints,
+                    tpPoints = tpPoints,
                 ),
             )
 

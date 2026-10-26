@@ -69,7 +69,10 @@ class FuturesRiskEngine(
             return reject("MARKET_STRESS")
         }
 
-        if (request.openPositions.size >= (request.maxOpenPositions ?: riskConfig.futuresMaxOpenPositions)) {
+        // Считаем только фьючерсные позиции: иначе открытая акция в общем портфеле
+        // блокировала любой вход по фьючерсу (скан-6 P2).
+        val openFutures = request.openPositions.count { instrumentsConfig.isFutures(it.ticker) }
+        if (openFutures >= (request.maxOpenPositions ?: riskConfig.futuresMaxOpenPositions)) {
             return reject("MAX_POSITIONS")
         }
 

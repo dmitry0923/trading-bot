@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import java.time.LocalDateTime
 
 data class AgentLog(
@@ -16,5 +17,5 @@ data class AgentLog(
     val isCached: Boolean = false,
     val overrideReason: String? = null,
     val storageKey: String? = null,
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
 )

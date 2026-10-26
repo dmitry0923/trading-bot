@@ -37,6 +37,11 @@ param(
     [double]$Conf = 0.60,
     [string]$RiskPct = "30",
     [string]$MaxC = "100",
+    # Research-оверрайды, которые принимают /holdout и /deployment-gate:
+    # плечо отбора и сетка SL/TP в пунктах (иначе гейт проверяет дефолты).
+    [double]$Leverage = 1.0,
+    [int]$SlPoints = 0,
+    [int]$TpPoints = 0,
     [double]$HoldoutFraction = 0.30,
     [double]$MinOosPf = 1.3,
     [int]$MinOosTrades = 30,
@@ -79,10 +84,15 @@ function Get-Headers {
 }
 $headers = Get-Headers
 
+// confidence сюда НЕ передаётся: сервер сознательно берёт bt.adaptive-confidence-threshold,
+// иначе он подбирался бы на том же holdout (скан-6 P2).
+$gridQuery = "&leverage=$Leverage"
+if ($SlPoints -gt 0) { $gridQuery += "&wfaSlPoints=$SlPoints" }
+if ($TpPoints -gt 0) { $gridQuery += "&wfaTpPoints=$TpPoints" }
 $base = "$BaseUrl/api/v1/backtest/$Ticker/holdout?days=$Days&folds=$Folds&holdoutFraction=$HoldoutFraction" +
-    "&adaptiveConfidenceThreshold=$Conf&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false"
+    "&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false$gridQuery"
 $gateBase = "$BaseUrl/api/v1/backtest/$Ticker/deployment-gate?days=$Days&folds=$Folds&holdoutFraction=$HoldoutFraction" +
-    "&adaptiveConfidenceThreshold=$Conf&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false"
+    "&riskPerTradePercent=$RiskPct&futuresMaxContractsPerPosition=$MaxC&loadHistory=false$gridQuery"
 
 $configs = if ($ConfigCsv.Count -eq 0) {
     @(@{ Name = "baseline (все фильтры off)"; Query = "" })
@@ -90,6 +100,9 @@ $configs = if ($ConfigCsv.Count -eq 0) {
     $out = @()
     foreach ($c in $ConfigCsv) {
         if (-not $c) { continue }
+        if (-not $c.Contains(";")) {
+            throw ("ConfigCsv: элемент без разделителя "";"" (нужно ""имя;query""): " + $c)
+        }
         $parts = $c.Split(";", 2)
         $out += @{ Name = $parts[0]; Query = if ($parts.Count -gt 1) { $parts[1] } else { "" } }
     }
@@ -120,13 +133,16 @@ foreach ($cfg in $configs) {
     $sw.Stop()
 
     # OOS = holdout-сегмент (последние HoldoutFraction истории).
-    $oosPf = [double]$r.holdoutProfitFactor
+    # PF может быть null: сервер отдаёт null вместо "Infinity" (нет убыточных сделок).
+    $oosPfRaw = $r.holdoutProfitFactor
+    $oosPf = if ($null -eq $oosPfRaw) { $null } else { [double]$oosPfRaw }
     $oosTrades = [int]$r.holdoutTrades
     $oosRetPct = [math]::Round([double]$r.holdoutReturn * 100, 2)
     $oosSharpe = [math]::Round([double]$r.holdoutSharpe, 2)
     $oosMddPct = [math]::Round([double]$r.holdoutMaxDrawdown * 100, 2)
 
-    $verdict = if ($oosPf -lt $MinOosPf) { "REJECTED (OOS PF < $MinOosPf)" }
+    $verdict = if ($null -eq $oosPf) { "INCONCLUSIVE (PF n/a: нет убыточных сделок)" }
+    elseif ($oosPf -lt $MinOosPf) { "REJECTED (OOS PF < $MinOosPf)" }
     elseif ($oosTrades -lt $MinOosTrades) { "INCONCLUSIVE (OOS trades $oosTrades < $MinOosTrades)" }
     else { "PASS (OOS) — research-кандидат" }
 
@@ -149,7 +165,7 @@ foreach ($cfg in $configs) {
     $rows += [pscustomobject]@{
         Config = $cfg.Name
         Verdict = $verdict
-        OOS_PF = [math]::Round($oosPf, 3)
+        OOS_PF = if ($null -eq $oosPf) { "n/a" } else { [math]::Round($oosPf, 3) }
         OOS_RetPct = $oosRetPct
         OOS_Sharpe = $oosSharpe
         OOS_MDD_Pct = $oosMddPct
@@ -187,7 +203,7 @@ foreach ($cfg in $configs) {
     Write-Host ""
     $rows | Format-Table -AutoSize
     Write-Status ("done: {0} -> {1} PF={2} trades={3} ret={4}% {5}s" -f `
-            $cfg.Name, $verdict, [math]::Round($oosPf, 3), $oosTrades, $oosRetPct, [math]::Round($sw.Elapsed.TotalSeconds, 0))
+            $cfg.Name, $verdict, $(if ($null -eq $oosPf) { "n/a" } else { [math]::Round($oosPf, 3) }), $oosTrades, $oosRetPct, [math]::Round($sw.Elapsed.TotalSeconds, 0))
 }
 $swAll.Stop()
 

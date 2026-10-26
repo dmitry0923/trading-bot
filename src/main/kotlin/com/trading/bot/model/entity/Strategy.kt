@@ -1,5 +1,6 @@
 package com.trading.bot.model.entity
 
+import com.trading.bot.model.BusinessTime
 import com.trading.bot.model.StrategyAction
 import java.math.BigDecimal
 import java.time.LocalDateTime
@@ -20,5 +21,5 @@ data class Strategy(
     val validUntil: LocalDateTime,
     val timeframe: String = "MINUTE_10",
     val strategyName: String? = null,
-    val createdAt: LocalDateTime = LocalDateTime.now(),
+    val createdAt: LocalDateTime = BusinessTime.now(),
 )

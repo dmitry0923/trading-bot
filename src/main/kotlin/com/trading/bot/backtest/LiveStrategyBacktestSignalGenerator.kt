@@ -1315,7 +1315,20 @@ class LiveStrategyBacktestSignalGenerator(
             val duration =
                 runCatching { CandleResampler.durationMinutes(timeframe) }.getOrNull()
                     ?: return emptyList()
-            val barsPerBucket = (duration / BASE_BAR_MINUTES).coerceAtLeast(1L)
+            // Базовый ТФ берём из самих данных: на /validate?timeframe=HOUR_1/DAY_1
+            // Медиана положительных дельт последних ≤20 баров: одна пара может
+            // попасть на гэп/выходные и дать часы вместо минут (скан-3 P2).
+            val deltas =
+                candles
+                    .takeLast(21)
+                    .zipWithNext { a, b ->
+                        java.time.Duration
+                            .between(a.time, b.time)
+                            .toMinutes()
+                    }.filter { it > 0 }
+                    .sorted()
+            val baseMinutes = deltas.getOrNull(deltas.size / 2) ?: BASE_BAR_MINUTES
+            val barsPerBucket = (duration / baseMinutes).coerceAtLeast(1L)
             val needed = (bars * barsPerBucket).coerceAtMost(MAX_HIGHER_TF_LOOKBACK_BARS.toLong())
             var from = (index + 1 - needed).coerceAtLeast(0L).toInt()
             if (from > 0) {

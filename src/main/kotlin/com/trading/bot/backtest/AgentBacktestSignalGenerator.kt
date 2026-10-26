@@ -83,6 +83,8 @@ class AgentBacktestSignalGenerator(
         cycleId: String,
     ): StrategyAction {
         if (index < minBars) return StrategyAction.HOLD
+        // sampleEvery = 0 давал деление на ноль и ронял весь прогон (скан-2 P2).
+        require(config.sampleEvery > 0) { "bt.agent.sample-every must be > 0, got ${config.sampleEvery}" }
         if (index % config.sampleEvery != 0) return StrategyAction.HOLD
         meterRegistry.counter("backtest.agent.evaluations", Tags.of("ticker", ticker)).increment()
         return evaluate(ticker, candles, index, cycleId)

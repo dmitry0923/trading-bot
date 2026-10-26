@@ -245,6 +245,10 @@ class RiskExposureService(
         val dailyVols = resolveDailyVolPercent(tickers)
         if (dailyVols.isEmpty()) return 0.0
         val corr = resolveCorrelationMatrix(tickers)
+        // Матрица построена по DISTINCT тикерам, а позиции могут повторяться
+        // (multi-account один тикер): индексы обязаны идти через маппинг,
+        // иначе corr[i][j] выходит за границы → 500 (скан-2 P2).
+        val posToMatrix = open.map { tickers.indexOf(it.ticker) }
         val weights = open.map { signedNotional(it) / gross }
         var variance = 0.0
         for (i in open.indices) {
@@ -254,7 +258,7 @@ class RiskExposureService(
             for (j in i + 1 until open.size) {
                 val wj = weights[j]
                 val sj = (dailyVols[open[j].ticker] ?: 0.0) / 100.0
-                variance += 2.0 * wi * wj * si * sj * corr[i][j]
+                variance += 2.0 * wi * wj * si * sj * corr[posToMatrix[i]][posToMatrix[j]]
             }
         }
         return 1.645 * sqrt(variance.coerceAtLeast(0.0)) * gross

@@ -152,22 +152,37 @@ object WsOrderMessages {
         guid: String,
     ): MatchResult {
         val j = parseOrNull(json) ?: return MatchResult.NotMatch
-        val clientId = j.path("id").asString("")
-        val requestId = j.path("requestId").asString("")
+        // Alor оборачивает payload в `data` (см. AlorWebSocketClient.parseExecution):
+        // без разворота matchPlace/matchCancel не находят id → каждый ордер ждёт
+        // 10 с и уходит в UNCERTAIN (скан-2 P1).
+        // Разворачиваем `data` ТОЛЬКО когда в корне нет идентификаторов: иначе
+        // ответ вида {"id":"<idem>","data":{…}} потерял бы clientId (скан-3 P2).
+        val root =
+            if (j.path("data").isObject &&
+                j.path("id").asString("").isBlank() &&
+                j.path("orderNumber").asString("").isBlank() &&
+                j.path("requestId").asString("").isBlank()
+            ) {
+                j.path("data")
+            } else {
+                j
+            }
+        val clientId = root.path("id").asString("")
+        val requestId = root.path("requestId").asString("")
         if (clientId != idempotencyKey && requestId != guid) return MatchResult.NotMatch
 
-        val status = j.path("status").asString("").lowercase()
-        val error = j.path("error").asString("").takeIf { it.isNotBlank() }
-        val requestStatus = j.path("requestStatus").asString("").lowercase()
+        val status = root.path("status").asString("").lowercase()
+        val error = root.path("error").asString("").takeIf { it.isNotBlank() }
+        val requestStatus = root.path("requestStatus").asString("").lowercase()
         if (status.contains("reject") || requestStatus == "error" || error != null || requestStatus == "rejected") {
             return MatchResult.Rejected(error ?: "order rejected by Alor (status=$status)")
         }
 
         val orderNumber =
-            j
+            root
                 .path("orderNumber")
                 .asString("")
-                .ifBlank { j.path("orderNo").asString("") }
+                .ifBlank { root.path("orderNo").asString("") }
         return if (orderNumber.isNotBlank()) {
             MatchResult.Confirmed(orderNumber)
         } else {
@@ -187,19 +202,34 @@ object WsOrderMessages {
         guid: String,
     ): MatchResult {
         val j = parseOrNull(json) ?: return MatchResult.NotMatch
+        // Alor оборачивает payload в `data` (см. AlorWebSocketClient.parseExecution):
+        // без разворота matchPlace/matchCancel не находят id → каждый ордер ждёт
+        // 10 с и уходит в UNCERTAIN (скан-2 P1).
+        // Разворачиваем `data` ТОЛЬКО когда в корне нет идентификаторов: иначе
+        // ответ вида {"id":"<idem>","data":{…}} потерял бы clientId (скан-3 P2).
+        val root =
+            if (j.path("data").isObject &&
+                j.path("id").asString("").isBlank() &&
+                j.path("orderNumber").asString("").isBlank() &&
+                j.path("requestId").asString("").isBlank()
+            ) {
+                j.path("data")
+            } else {
+                j
+            }
         val eventOrderId =
-            j
+            root
                 .path("orderNumber")
                 .asString("")
-                .ifBlank { j.path("orderNo").asString("") }
-        val requestId = j.path("requestId").asString("")
+                .ifBlank { root.path("orderNo").asString("") }
+        val requestId = root.path("requestId").asString("")
         val isRequestAck = requestId == guid
 
         if (eventOrderId != orderId && !isRequestAck) return MatchResult.NotMatch
 
-        val status = j.path("status").asString("").lowercase()
-        val requestStatus = j.path("requestStatus").asString("").lowercase()
-        val error = j.path("error").asString("").takeIf { it.isNotBlank() }
+        val status = root.path("status").asString("").lowercase()
+        val requestStatus = root.path("requestStatus").asString("").lowercase()
+        val error = root.path("error").asString("").takeIf { it.isNotBlank() }
         val cancelled = status.contains("cancel") || requestStatus.contains("cancel") || requestStatus == "success"
         val rejected = status.contains("reject") || requestStatus.contains("reject") || requestStatus == "error" || error != null
         return when {

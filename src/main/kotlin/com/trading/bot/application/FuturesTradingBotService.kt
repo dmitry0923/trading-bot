@@ -239,6 +239,10 @@ class FuturesTradingBotService(
                     name = "scheduler:reconcile-futures",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
+                    // DEGRADED снимаем только после ЧИСТОГО прохода: per-position и
+                    // внешние исключения раньше проглатывались и входы снова
+                    // разрешались без сверки (скан-2 P2 / скан-3 P1).
+                    var hadErrors = false
                     try {
                         val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
                         for (pos in open) {
@@ -254,14 +258,18 @@ class FuturesTradingBotService(
                                 engine.reconcilePosition(pos)
                             } catch (e: Exception) {
                                 logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
+                                hadErrors = true
                             }
                         }
                     } catch (e: Exception) {
                         logger.error(e) { "Futures reconciler error" }
+                        hadErrors = true
                     }
-                    // После успешного reconcile-прохода снимаем DEGRADED с входов
-                    // (EntryLeaseRecoveryGate) — инстанс сверил broker↔DB.
-                    entryLeaseRecoveryGate.recoverAll()
+                    if (hadErrors) {
+                        logger.warn { "Reconcile pass had errors - DEGRADED stays until a clean pass" }
+                    } else {
+                        entryLeaseRecoveryGate.recoverAll()
+                    }
                 }
             } finally {
                 reconcileRunning.set(false)

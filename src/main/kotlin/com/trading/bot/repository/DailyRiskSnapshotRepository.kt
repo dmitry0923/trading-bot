@@ -6,7 +6,9 @@ import io.r2dbc.spi.Row
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * R2DBC-репозиторий дневных риск-снапшотов.
@@ -64,7 +66,10 @@ class DailyRiskSnapshotRepository(
     ): List<DailyRiskSnapshot> {
         // Окно — ровно [days] дней ВКЛЮЧАЯ сегодня (KDoc), поэтому нижняя граница
         // `today - (days - 1)`: с `today - days` и `>=` окно было days+1 день.
-        val sinceDate = LocalDate.now().minusDays((days - 1).coerceAtLeast(0).toLong())
+        // Московская бизнес-дата: writer (`DrawdownProtectionService`) использует
+        // Clock(Europe/Moscow); JVM-зона на UTC-хосте давала сдвиг на день
+        // в 00:00–03:00 МСК (скан-2 P2).
+        val sinceDate = LocalDate.now(Clock.system(ZoneId.of("Europe/Moscow"))).minusDays((days - 1).coerceAtLeast(0).toLong())
         val sql =
             if (accountId == null) {
                 "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate AND account_id IS NULL ORDER BY trade_date ASC"

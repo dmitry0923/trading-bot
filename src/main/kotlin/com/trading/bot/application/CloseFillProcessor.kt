@@ -197,6 +197,17 @@ class CloseFillProcessor(
             val prevApplied = fresh.cumulativeCloseFillQty
             val delta = cumulativeFill - prevApplied
             if (delta <= 0) {
+                if (isGoneStatus(execution)) {
+                    // Терминальный close-ордер без исполнения (REJECTED/CANCELED/EXPIRED):
+                    // раньше просто «skipping» → pendingClose навсегда, монитор позицию
+                    // не трогает, каждые 15 с REST-запрос (скан-2 P1).
+                    logger.warn {
+                        "Close order $orderId for ${fresh.ticker} is ${execution.status} without fill — " +
+                            "resetting close state so the monitor can retry"
+                    }
+                    resetCloseState(fresh)
+                    return
+                }
                 logger.debug {
                     "confirmCloseFill delta=0 for ${fresh.ticker}: REST cumulative=$cumulativeFill " +
                         "already_applied=$prevApplied — skipping"

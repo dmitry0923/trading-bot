@@ -97,12 +97,12 @@ class PerformanceFeedbackAgent(
                 mapOf(
                     "ticker" to ticker,
                     "totalTrades" to stats.totalTrades,
-                    "winRate" to String.format("%.1f", stats.winRate * 100),
-                    "profitFactor" to String.format("%.2f", stats.profitFactor),
+                    "winRate" to String.format(java.util.Locale.ROOT, "%.1f", stats.winRate * 100),
+                    "profitFactor" to String.format(java.util.Locale.ROOT, "%.2f", stats.profitFactor),
                     "avgWin" to stats.avgWin,
                     "avgLoss" to stats.avgLoss,
-                    "slHitRate" to String.format("%.1f", stats.slHitRate * 100),
-                    "tpHitRate" to String.format("%.1f", stats.tpHitRate * 100),
+                    "slHitRate" to String.format(java.util.Locale.ROOT, "%.1f", stats.slHitRate * 100),
+                    "tpHitRate" to String.format(java.util.Locale.ROOT, "%.1f", stats.tpHitRate * 100),
                     "maxConsecutiveLosses" to stats.maxConsecutiveLosses,
                     "bestEntryHour" to (stats.bestEntryHour ?: "N/A"),
                     "worstEntryHour" to (stats.worstEntryHour ?: "N/A"),
@@ -273,7 +273,11 @@ class PerformanceFeedbackAgent(
                     oldValue = BigDecimal.ZERO,
                     newValue = BigDecimal(feedback.confidenceAdjustment),
                     triggeredBy = "META_AGENT",
-                    reason = "Win Rate ${String.format("%.0f", stats.winRate * 100)}%, PF ${String.format("%.2f", stats.profitFactor)}",
+                    reason = "Win Rate ${String.format(
+                        java.util.Locale.ROOT,
+                        "%.0f",
+                        stats.winRate * 100,
+                    )}%, PF ${String.format(java.util.Locale.ROOT, "%.2f", stats.profitFactor)}",
                 ),
             )
         }
@@ -285,7 +289,7 @@ class PerformanceFeedbackAgent(
                     oldValue = BigDecimal.ZERO,
                     newValue = BigDecimal(feedback.slAdjustmentPercent),
                     triggeredBy = "META_AGENT",
-                    reason = "SL hit rate ${String.format("%.0f", stats.slHitRate * 100)}%",
+                    reason = "SL hit rate ${String.format(java.util.Locale.ROOT, "%.0f", stats.slHitRate * 100)}%",
                 ),
             )
         }
@@ -297,7 +301,7 @@ class PerformanceFeedbackAgent(
                     oldValue = BigDecimal.ZERO,
                     newValue = BigDecimal(feedback.tpAdjustmentPercent),
                     triggeredBy = "META_AGENT",
-                    reason = "TP hit rate ${String.format("%.0f", stats.tpHitRate * 100)}%",
+                    reason = "TP hit rate ${String.format(java.util.Locale.ROOT, "%.0f", stats.tpHitRate * 100)}%",
                 ),
             )
         }

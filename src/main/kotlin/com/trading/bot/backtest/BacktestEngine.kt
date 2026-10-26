@@ -455,7 +455,15 @@ class BacktestEngine(
         for (i in 1 until sorted.size) {
             val current = sorted[i]
             // Позиция, удерживаемая с прошлых баров: сначала защитные выходы.
+            val hadPositionAtBarStart = position != null
             handleProtectiveExits(i, current)
+            if (hadPositionAtBarStart && position == null) {
+                // Защитный выход случился внутри этого бара: вход по open этого бара —
+                // это цена ДО срабатывания стопа (lookahead) + повторная проверка
+                // high/low бара задним числом. Вход в таком баре запрещён (скан-2 P1).
+                recordEquity(current.closePrice, current.time)
+                continue
+            }
 
             // Max-hold (research, 2026-09-21): принудительный выход по времени
             // удержания в барах. Позиция без SL/TP-срабатывания закрывается по цене
@@ -485,6 +493,10 @@ class BacktestEngine(
                     )
                 recordRiskSimClose(ticker, maxHoldPosition, "MAX_HOLD", current.closePrice, i, sorted, cash)
                 position = null
+                // Выход по max-hold: вход в этом же баре запрещён — цена open была
+                // бы «до» выхода (скан-3 P2).
+                recordEquity(current.closePrice, current.time)
+                continue
             }
 
             // Research P4 (docs/27-funding-window-capture): funding-window capture.

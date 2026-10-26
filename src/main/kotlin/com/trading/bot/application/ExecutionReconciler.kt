@@ -175,9 +175,15 @@ class ExecutionReconciler(
                             }
                             AlorClient.CancelResult.UNCERTAIN
                         }
-                    if (cancelled != AlorClient.CancelResult.CONFIRMED) return
+                    // Уже отменённая/истёкшая заявка: повторный cancel даёт 4xx →
+                    // REJECTED, и вход навсегда оставался pendingEntry. Для
+                    // терминального ордера остаток уже не исполнится — финализируем
+                    // по фактическому объёму (скан-2 P1).
+                    if (!isGoneStatus(execution) && cancelled != AlorClient.CancelResult.CONFIRMED) return
                     val finalExec = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId))
-                    val finalQty = (finalExec?.filledQuantity ?: cumulative).coerceIn(1, requestedQty)
+                    // Пустой/нулевой filledQuantity в повторном verifyOrder не должен схлопывать
+                    // объём в 1 — берём уже известный cumulative (скан-3 P1).
+                    val finalQty = (finalExec?.filledQuantity?.takeIf { it > 0 } ?: cumulative).coerceIn(1, requestedQty)
                     pos.alorOrderId = outbox.alorOrderId
                     pos.pendingEntry = false
                     pos.entryPrice = finalExec?.avgPrice ?: execution.avgPrice ?: pos.entryPrice
@@ -290,7 +296,9 @@ class ExecutionReconciler(
         // опоздал»: раньше здесь писали только WARN, позиция навсегда оставалась
         // pendingClose, а реконсилятор дёргал REST на каждом тике (docs/28 §3.3,
         // скан-1 P1-2). Применяем филл через дельта-модель.
-        if (isFilledStatus(execution)) {
+        if (isFilledStatus(execution) ||
+            (execution.filledQuantity <= 0 && execution.status.uppercase() in FILLED_WITHOUT_QTY_STATUSES)
+        ) {
             logger.warn {
                 "Close order $orderId for ${pos.ticker} is FILLED/PARTIALLY_FILLED " +
                     "(status=${execution.status}, filled=${execution.filledQuantity}) — applying fill, not waiting"

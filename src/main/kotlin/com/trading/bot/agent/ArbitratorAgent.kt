@@ -150,13 +150,13 @@ class ArbitratorAgent(
                 mapOf(
                     "action" to draft.action.name,
                     "targetPrice" to draft.targetPrice.toPlainString(),
-                    "signalStrength" to String.format("%.2f", draft.signalStrength),
+                    "signalStrength" to String.format(java.util.Locale.ROOT, "%.2f", draft.signalStrength),
                     "strategyReasoning" to draft.reasoning,
                     "riskLevel" to challenge.riskLevel,
                     "critique" to challenge.critique,
                     "techConclusion" to tech.conclusion,
                     "techTrend" to tech.trend,
-                    "techRsi" to String.format("%.1f", tech.rsi),
+                    "techRsi" to String.format(java.util.Locale.ROOT, "%.1f", tech.rsi),
                     "fundConclusion" to fund.conclusion,
                     "currentPrice" to snapshot.currentPrice.toPlainString(),
                     "adaptiveThreshold" to adaptiveConfidence,
@@ -175,8 +175,8 @@ class ArbitratorAgent(
                         challenge.riskLevel,
                         tech.conclusion,
                         tech.trend,
-                        String.format("%.1f", tech.rsi),
-                        String.format("%.2f", adaptiveConfidence),
+                        String.format(java.util.Locale.ROOT, "%.1f", tech.rsi),
+                        String.format(java.util.Locale.ROOT, "%.2f", adaptiveConfidence),
                     )
                 }
 
@@ -307,7 +307,7 @@ class ArbitratorAgent(
         meterRegistry.counter("agent.arbitrator.decision", Tags.of("action", dec.action.name, "ticker", ticker)).increment()
         logger.info {
             "Agent 5 FINAL: ${dec.action} @ ${dec.targetPrice} " +
-                "conf=${String.format("%.2f", dec.signalStrength)} override=${dec.overrideReason}"
+                "conf=${String.format(java.util.Locale.ROOT, "%.2f", dec.signalStrength)} override=${dec.overrideReason}"
         }
         return dec
     }

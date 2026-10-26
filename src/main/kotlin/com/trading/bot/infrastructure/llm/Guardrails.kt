@@ -77,6 +77,20 @@ class Guardrails(
             return GuardedSignal(current, overridden = true, overrideReason = "GUARDRAIL: LOW_CONFIDENCE", appliedRules = applied)
         }
 
+        // Нулевая/отрицательная цена в снапшоте: деление ниже бросило бы
+        // ArithmeticException и уронило бы весь LLM-цикл вместо fail-closed HOLD
+        // (скан-3 P2). Проверяем до всех вычислений.
+        if (marketPrice <= BigDecimal.ZERO) {
+            recordOverride("INVALID_MARKET_PRICE")
+            applied += "marketPrice=$marketPrice <= 0 -> HOLD"
+            return GuardedSignal(
+                hold(marketPrice),
+                overridden = true,
+                overrideReason = "GUARDRAIL: INVALID_MARKET_PRICE",
+                appliedRules = applied,
+            )
+        }
+
         val deviation =
             current.targetPrice
                 .subtract(marketPrice)

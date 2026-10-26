@@ -278,9 +278,26 @@ class ProtectionOrderManager(
         if (dirty) positionRepo.save(pos)
     }
 
+    /**
+     * `FILLED` без количества (Alor иногда не отдаёт ни filledQty, ни filledQtyBatch)
+     * означает исполнение всего остатка: синтезируем cumulative = applied + quantity,
+     * иначе биржевой SL/TP «висит» и P&L теряется (скан-2 P1).
+     */
+    private fun withRemainder(
+        pos: Position,
+        execution: AlorClient.OrderExecution,
+        applied: Int,
+    ): AlorClient.OrderExecution =
+        if (execution.filledQuantity <= 0 && execution.status.uppercase() in FILLED_WITHOUT_QTY_STATUSES) {
+            execution.copy(filledQuantity = applied + pos.quantity)
+        } else {
+            execution
+        }
+
     private suspend fun checkProtectionFills(pos: Position) {
         pos.slOrderId?.let { id ->
-            val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
+            val raw = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
+            val ex = withRemainder(pos, raw, pos.cumulativeSlFillQty)
             if (isFilledStatus(ex)) {
                 applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
                 return
@@ -308,7 +325,8 @@ class ProtectionOrderManager(
         }
         pos.tpOrderId?.let { id ->
             if (pos.status != PositionStatus.OPEN) return@let
-            val ex = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
+            val raw = alorClient.verifyOrder(id, portfolio = portfolioResolver(pos.accountId)) ?: return@let
+            val ex = withRemainder(pos, raw, pos.cumulativeTpFillQty)
             if (isFilledStatus(ex)) {
                 applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
                 return
@@ -565,3 +583,6 @@ class ProtectionOrderManager(
             else -> false
         }
 }
+
+/** Статусы «исполнен полностью»: при них отсутствие количества = весь остаток. */
+private val FILLED_WITHOUT_QTY_STATUSES: Set<String> = setOf("FILLED", "EXECUTED", "MATCHED")

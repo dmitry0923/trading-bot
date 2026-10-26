@@ -50,7 +50,12 @@ class WsOrderTransportConnectionTest {
                 exchange = "MOEX"
                 token = "tok"
             }
-        tradingConfig = TradingConfig().apply { mode = "LIVE" }
+        tradingConfig =
+            TradingConfig().apply {
+                mode = "LIVE"
+                // WS-транспорт теперь проверяет LIVE-allowlist (второй барьер LIVE-guard).
+                liveTickersAllowlist = listOf("SBER")
+            }
         connection = FakeConnection()
         factory = FakeSocketFactory(connection)
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

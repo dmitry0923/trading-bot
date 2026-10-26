@@ -1851,7 +1851,9 @@ class BacktestEngineTest {
         // Вход по open бара 2 (101.0) с SL=98.98: low этого же бара 97.5 →
         // стоп обязан сработать В БАРЕ ВХОДА (docs/28 §2 №10). Плюс стоп по
         // позиции с бара 1 и закрытие остатка по EOP → 3 сделки.
-        assertEquals(3, result.totalTrades, "стоп в баре входа обязан срабатывать")
+        // Вход в баре защитного выхода запрещён (иначе цена open — ДО стопа, lookahead):
+        // позиция с бара 1 закрыта стопом на баре 2, новая — с бара 3, EOP → 2 сделки.
+        assertEquals(2, result.totalTrades, "повторный вход в баре выхода запрещён")
         assertEquals(candles.size, result.equityCurve.size, "по одной точке на свечу без дубликатов на закрытии")
     }
 
@@ -1937,6 +1939,49 @@ class BacktestEngineTest {
             "защитный выход обязан платить проскальзывание, exit=${stop.exitPrice}",
         )
         assertTrue(stop.exitPrice > BigDecimal("90"), "проскальзывание не должно быть абсурдным: ${stop.exitPrice}")
+    }
+
+    @Test
+    fun `entry bar stop loss closes position within the same bar`() {
+        // Бар входа сам пробивает стоп: SL = 98 (2% от 100), low = 97.
+        // Сделка обязана закрыться в баре входа (holdBars = 0) — иначе движок
+        // «переживает» стоп, который сработал бы в реальности.
+        val base = LocalDateTime.of(2026, 1, 5, 10, 0)
+
+        fun bar(
+            i: Int,
+            o: String,
+            h: String,
+            l: String,
+            c: String,
+        ) = Candle(
+            ticker = "SBER",
+            timeframe = "MINUTE_10",
+            openPrice = BigDecimal(o),
+            highPrice = BigDecimal(h),
+            lowPrice = BigDecimal(l),
+            closePrice = BigDecimal(c),
+            volume = 1000L,
+            time = base.plusMinutes(10L * i),
+        )
+        val candles =
+            listOf(
+                bar(0, "100", "100.5", "99.5", "100"),
+                bar(1, "100", "100.5", "97.0", "99"),
+                bar(2, "99", "99.5", "98.5", "99"),
+                bar(3, "99.2", "99.6", "98.8", "99.1"),
+            )
+
+        val result =
+            runBlocking {
+                BacktestEngine(
+                    CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+                ).simulate("SBER", candles, minBarsForSignal = 1)
+            }
+
+        val first = result.trades.first { it.closeReason == "STOP_LOSS" }
+        assertEquals(0, first.holdBars, "стоп обязан сработать в баре входа")
     }
 
     @Test

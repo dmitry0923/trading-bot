@@ -79,6 +79,23 @@ class WsOrderTransport(
         ticker: String,
         purpose: OrderPurpose,
     ) {
+        // Не LIVE — барьеры не применяем: transport-availability решает requireWsAvailable
+        // (иначе в SIM ENTRY давал бы терминальный Interlock вместо fallback на REST).
+        if (!isLive) return
+        // Второй барьер LIVE-guard (симметрично RestOrderTransport): ENTRY только
+        // по тикерам из liveTickersAllowlist. На WS-пути REST-fallback не вызывается,
+        // поэтому без этой проверки allowlist не действовал на основном транспорте
+        // (скан-2 P1, дыра в LIVE-guard).
+        if (purpose == OrderPurpose.ENTRY && ticker !in tradingConfig.liveTickersAllowlist) {
+            logger.error {
+                "LIVE WS ENTRY BLOCKED for $ticker - ticker not in liveTickersAllowlist " +
+                    "${tradingConfig.liveTickersAllowlist} (LIVE-guard, fail-closed)"
+            }
+            meterRegistry.counter("alor.ws.orders.blocked", Tags.of("reason", "LIVE_TICKER_NOT_ALLOWED", "ticker", ticker)).increment()
+            throw OrderInterlockDeniedException(
+                "LIVE WS order BLOCKED for $ticker - ticker not in liveTickersAllowlist (LIVE-guard, final, not retryable)",
+            )
+        }
         if (liveFrozenStrategyResolver.isOrderAllowed(ticker, purpose)) return
         logger.error {
             "LIVE order BLOCKED for $ticker (purpose=$purpose) — ticker not approved and no open position (execution interlock)"

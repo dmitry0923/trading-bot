@@ -67,6 +67,10 @@ class BacktestRiskSimulator(
     /** Дневной P&L (сумма pnl закрытых сделок за текущий день). Сбрасывается при смене дня. */
     private var dailyPnl: BigDecimal = BigDecimal.ZERO
 
+    /** Время симуляции: rolling-окна статистики считаются от него, а не от wall clock.
+     *  Иначе сайзинг зависит от даты запуска (скан-3 P2). */
+    private var simulationTime: LocalDateTime = LocalDateTime.now()
+
     /** Текущий день (для автосброса dailyPnl). */
     private var currentDay: LocalDate? = null
 
@@ -154,6 +158,8 @@ class BacktestRiskSimulator(
         fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
     ): GateResult {
         val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+        // Время симуляции для rolling-статистики (детерминизм прогона).
+        simulationTime = currentTime
         val spec = instrumentsConfig.find(ticker)
         val lotSize = spec?.lotSize?.coerceAtLeast(1) ?: 1
         val notionalPerLot = entryPrice.multiply(BigDecimal(lotSize))
@@ -514,7 +520,7 @@ class BacktestRiskSimulator(
         val notionalPerLot = entryPrice.multiply(BigDecimal(lotSize))
 
         // 1. Gather stats from trade history
-        val stats = tradeHistory.analyze(currentTime = LocalDateTime.now())[ticker]
+        val stats = tradeHistory.analyze(currentTime = simulationTime)[ticker]
 
         // 2. Kelly base
         val base =
@@ -680,7 +686,7 @@ class BacktestRiskSimulator(
      * null если недостаточно статистики.
      */
     private fun calculateExpectedNet(ticker: String): BigDecimal? {
-        val stats = tradeHistory.analyze(currentTime = LocalDateTime.now())[ticker] ?: return null
+        val stats = tradeHistory.analyze(currentTime = simulationTime)[ticker] ?: return null
         if (stats.totalTrades < riskConfig.kellyMinTrades) return null
         if (stats.avgWin <= BigDecimal.ZERO && stats.avgLoss <= BigDecimal.ZERO) return null
 

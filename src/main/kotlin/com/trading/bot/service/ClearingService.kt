@@ -132,7 +132,11 @@ class ClearingService(
             investorRepo.findAccountByInvestor(investorId)
                 ?: throw IllegalArgumentException("Account not found for investor: $investorId")
 
-        val amount = quote.estimatedWithdrawalAmount
+        // Выплата = капитал + реализованный P&L. Прогнозная компонента — только
+        // информация в quote: включать её в списание нельзя (баланс уходил бы в минус
+        // на величину прогноза, а предикат достаточности `balance + bookedProfit >= amount`
+        // становился бы всегда ложным) — скан-2 P2.
+        val amount = quote.estimatedWithdrawalAmount.subtract(quote.forecastComponent).max(BigDecimal.ZERO)
         if (amount <= BigDecimal.ZERO) {
             logger.info { "Clearing for $investorId on $businessDate: nothing to settle" }
             return quote

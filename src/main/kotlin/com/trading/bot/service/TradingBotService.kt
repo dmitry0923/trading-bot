@@ -401,6 +401,10 @@ class TradingBotService(
                     name = "scheduler:reconcile-stocks",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
+                    // Флаг ошибок: DEGRADED снимаем только после ЧИСТОГО прохода.
+                    // Раньше per-position исключения проглатывались и входы снова
+                    // разрешались, даже если ни одна позиция не сверена (скан-2 P2).
+                    var hadErrors = false
                     try {
                         val open =
                             positionRepo
@@ -411,14 +415,19 @@ class TradingBotService(
                                 engine.reconcilePosition(pos)
                             } catch (e: Exception) {
                                 logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
+                                hadErrors = true
                             }
                         }
                     } catch (e: Exception) {
                         logger.error(e) { "Stock reconciler error" }
+                        hadErrors = true
                     }
-                    // После успешного reconcile-прохода снимаем DEGRADED с входов:
                     // инстанс сверил broker↔DB и может снова открывать позиции вслепую.
-                    entryLeaseRecoveryGate.recoverAll()
+                    if (hadErrors) {
+                        logger.warn { "Reconcile pass had errors — DEGRADED stays until a clean pass" }
+                    } else {
+                        entryLeaseRecoveryGate.recoverAll()
+                    }
                 }
             } finally {
                 reconcileRunning.set(false)

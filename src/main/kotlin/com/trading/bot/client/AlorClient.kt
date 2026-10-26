@@ -397,15 +397,18 @@ class AlorClient(
             val execution =
                 OrderExecution(
                     status = j.path("status").asString("UNKNOWN"),
-                    // EXEC-2 (roadmap 13.27): fallback на filledQuantity, если Alor не
-                    // вернул filledQty (единый парсинг с reconcileOrderByIdempotencyKey,
-                    // getOpenOrders, parseExecution).
+                    // EXEC-2 (roadmap 13.27): приоритет полей как в parseExecution/
+                    // reconcileOrderByIdempotencyKey — filledQtyBatch → filledQty →
+                    // filledQuantity. Раньше batch-поле игнорировалось, и исполненный
+                    // биржевой SL/TP приходил как FILLED с qty=0 (скан-2 P1).
                     filledQuantity =
-                        j
-                            .path("filledQty")
-                            .asInt(0)
-                            .let { if (it == 0) j.path("filledQuantity").asInt(0) else it },
-                    avgPrice = j.path("filledPrice").asString().toBigDecimalOrNull(),
+                        listOf("filledQtyBatch", "filledQty", "filledQuantity")
+                            .firstNotNullOfOrNull { field ->
+                                j.path(field).asInt(0).takeIf { it > 0 }
+                            } ?: 0,
+                    avgPrice =
+                        listOf("avgFillPrice", "filledPrice")
+                            .firstNotNullOfOrNull { field -> j.path(field).asString().toBigDecimalOrNull() },
                 )
             if (expectedPrice != null && execution.avgPrice != null) {
                 recordSlippage(expectedPrice, execution.avgPrice, execution.filledQuantity)

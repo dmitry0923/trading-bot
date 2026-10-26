@@ -32,6 +32,8 @@ class PositionRepository(
     private fun toPosition(row: Row): Position =
         Position(
             id = row.get("id", Long::class.javaObjectType),
+            cumulativeSlFillQty = row.get("cumulative_sl_fill_qty", Int::class.javaObjectType) ?: 0,
+            cumulativeTpFillQty = row.get("cumulative_tp_fill_qty", Int::class.javaObjectType) ?: 0,
             ticker = row.require("ticker", String::class.java),
             direction = enumValueOf(row.require("direction", String::class.java)),
             quantity = row.require("quantity", Int::class.javaObjectType),
@@ -596,6 +598,8 @@ class PositionRepository(
             .bind("realizedPnl", position.realizedPnl)
             .bindOrNull("closeReason", position.closeReason?.code)
             .bind("cumulativeCloseFillQty", position.cumulativeCloseFillQty)
+            .bind("cumulativeSlFillQty", position.cumulativeSlFillQty)
+            .bind("cumulativeTpFillQty", position.cumulativeTpFillQty)
             .bind("openedAt", position.openedAt)
             .bindOrNull("closedAt", position.closedAt)
             .bindOrNull("cycleId", position.cycleId)
@@ -611,14 +615,16 @@ class PositionRepository(
                 alor_order_id, close_order_id, sl_order_id, tp_order_id, sl_order_price, tp_order_price,
                 sl_pending_replace, tp_pending_replace, sl_cancel_pending, tp_cancel_pending,
                 close_cancel_pending, pending_close, pending_entry, realized_pnl, close_reason,
-                cumulative_close_fill_qty, opened_at, closed_at, cycle_id, account_id, funding_unknown)
+                cumulative_close_fill_qty, cumulative_sl_fill_qty, cumulative_tp_fill_qty,
+                opened_at, closed_at, cycle_id, account_id, funding_unknown)
             VALUES (:ticker, :direction, :quantity, :entryPrice, :currentPrice, :closePrice,
                 :stopLoss, :takeProfit, :instrumentType, :leverage, :goPerContract, :marginUsed,
                 :liquidationPrice, :variationMargin, :stopLossPoints, :trailingStopPrice, :pnl, :status,
                 :alorOrderId, :closeOrderId, :slOrderId, :tpOrderId, :slOrderPrice, :tpOrderPrice,
                 :slPendingReplace, :tpPendingReplace, :slCancelPending, :tpCancelPending,
                 :closeCancelPending, :pendingClose, :pendingEntry, :realizedPnl, :closeReason,
-                :cumulativeCloseFillQty, :openedAt, :closedAt, :cycleId, :accountId, :fundingUnknown)
+                :cumulativeCloseFillQty, :cumulativeSlFillQty, :cumulativeTpFillQty,
+                :openedAt, :closedAt, :cycleId, :accountId, :fundingUnknown)
             RETURNING id
             """.trimIndent()
         val id =
@@ -638,30 +644,43 @@ class PositionRepository(
                 ticker = :ticker, direction = :direction,
                 -- Терминальное состояние побеждает: закрытую позицию нельзя «воскресить»
                 -- устаревшим save() из монитора/менеджера защиты (скан-1 P1-4).
-                quantity = CASE WHEN positions.status = 'CLOSED' THEN positions.quantity ELSE :quantity END,
-                entry_price = CASE WHEN positions.status = 'CLOSED' THEN positions.entry_price ELSE :entryPrice END,
-                current_price = :currentPrice, close_price = :closePrice, stop_loss = :stopLoss,
-                take_profit = :takeProfit, instrument_type = :instrumentType, leverage = :leverage,
+                quantity = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.quantity ELSE :quantity END,
+                entry_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.entry_price ELSE :entryPrice END,
+                current_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.current_price ELSE :currentPrice END,
+                close_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.close_price ELSE :closePrice END,
+                stop_loss = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.stop_loss ELSE :stopLoss END,
+                take_profit = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.take_profit ELSE :takeProfit END, instrument_type = :instrumentType, leverage = :leverage,
                 go_per_contract = :goPerContract, margin_used = :marginUsed, liquidation_price = :liquidationPrice,
                 variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
-                trailing_stop_price = :trailingStopPrice, pnl = :pnl,
-                status = CASE WHEN positions.status = 'CLOSED' THEN positions.status ELSE :status END,
-                alor_order_id = :alorOrderId,
-                close_order_id = CASE WHEN positions.status = 'CLOSED' THEN positions.close_order_id ELSE :closeOrderId END,
-                sl_order_id = :slOrderId, tp_order_id = :tpOrderId,
-                sl_order_price = :slOrderPrice, tp_order_price = :tpOrderPrice,
-                sl_pending_replace = :slPendingReplace, tp_pending_replace = :tpPendingReplace,
-                sl_cancel_pending = :slCancelPending, tp_cancel_pending = :tpCancelPending,
+                trailing_stop_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.trailing_stop_price ELSE :trailingStopPrice END,
+                pnl = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.pnl ELSE :pnl END,
+                status = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.status ELSE :status END,
+                alor_order_id = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.alor_order_id ELSE :alorOrderId END,
+                close_order_id = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.close_order_id ELSE :closeOrderId END,
+                sl_order_id = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.sl_order_id ELSE :slOrderId END,
+                tp_order_id = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.tp_order_id ELSE :tpOrderId END,
+                sl_order_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.sl_order_price ELSE :slOrderPrice END,
+                tp_order_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.tp_order_price ELSE :tpOrderPrice END,
+                sl_pending_replace = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.sl_pending_replace ELSE :slPendingReplace END,
+                tp_pending_replace = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.tp_pending_replace ELSE :tpPendingReplace END,
+                sl_cancel_pending = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.sl_cancel_pending ELSE :slCancelPending END,
+                tp_cancel_pending = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.tp_cancel_pending ELSE :tpCancelPending END,
                 close_cancel_pending = :closeCancelPending,
-                pending_close = CASE WHEN positions.status = 'CLOSED' THEN FALSE ELSE :pendingClose END,
-                pending_entry = CASE WHEN positions.status = 'CLOSED' THEN FALSE ELSE :pendingEntry END,
-                realized_pnl = :realizedPnl,
-                close_reason = CASE WHEN positions.status = 'CLOSED' THEN positions.close_reason ELSE :closeReason END,
+                pending_close = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN FALSE ELSE :pendingClose END,
+                pending_entry = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN FALSE ELSE :pendingEntry END,
+                realized_pnl = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.realized_pnl ELSE :realizedPnl END,
+                close_reason = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.close_reason ELSE :closeReason END,
                 cumulative_close_fill_qty =
-                    CASE WHEN positions.status = 'CLOSED' THEN positions.cumulative_close_fill_qty
+                    CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.cumulative_close_fill_qty
                          ELSE :cumulativeCloseFillQty END,
+                cumulative_sl_fill_qty =
+                    CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.cumulative_sl_fill_qty
+                         ELSE :cumulativeSlFillQty END,
+                cumulative_tp_fill_qty =
+                    CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.cumulative_tp_fill_qty
+                         ELSE :cumulativeTpFillQty END,
                 opened_at = :openedAt,
-                closed_at = CASE WHEN positions.status = 'CLOSED' THEN positions.closed_at ELSE :closedAt END,
+                closed_at = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.closed_at ELSE :closedAt END,
                 cycle_id = :cycleId,
                 account_id = :accountId, funding_unknown = :fundingUnknown
             WHERE id = :id

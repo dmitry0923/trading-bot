@@ -153,10 +153,13 @@ class GuardrailsTest {
     }
 
     @Test
-    fun `zero market price throws on deviation calculation`() {
-        assertThrows(ArithmeticException::class.java) {
-            guardrails().apply(buySignal(), marketPrice = BigDecimal.ZERO, adaptiveThreshold = 0.6)
-        }
+    fun `zero market price fails closed to HOLD instead of throwing`() {
+        // Раньше деление на цену 0 бросало ArithmeticException и роняло LLM-цикл;
+        // теперь guardrail возвращает детерминированный HOLD (скан-3 P2).
+        val result = guardrails().apply(buySignal(), marketPrice = BigDecimal.ZERO, adaptiveThreshold = 0.6)
+        assertTrue(result.overridden, "нулевая цена обязана переопределять сигнал")
+        assertEquals(StrategyAction.HOLD, result.signal.action)
+        assertEquals("GUARDRAIL: INVALID_MARKET_PRICE", result.overrideReason)
     }
 
     @Test

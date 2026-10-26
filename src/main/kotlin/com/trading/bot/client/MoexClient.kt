@@ -10,9 +10,11 @@ import org.springframework.web.reactive.function.client.WebClient
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -26,6 +28,11 @@ import java.time.format.DateTimeFormatter
 @Component
 class MoexClient(
     private val objectMapper: ObjectMapper,
+    /**
+     * Бизнес-время (МСК): окно запроса MOEX не должно обрываться на 3 ч раньше
+     * из-за UTC-зоны JVM (скан-2 P2).
+     */
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = KotlinLogging.logger {}
     private val webClient =
@@ -133,7 +140,7 @@ class MoexClient(
         try {
             val url =
                 "$baseUrl/engines/$engine/markets/$market/boards/$board/securities/$ticker/candles.json" +
-                    "?interval=10&from=${from.format(timeFormatter)}&until=${LocalDateTime.now().format(timeFormatter)}"
+                    "?interval=10&from=${from.format(timeFormatter)}&until=${LocalDateTime.now(clock).format(timeFormatter)}"
 
             val raw: String =
                 webClient
@@ -230,7 +237,7 @@ class MoexClient(
             val dateFormatter = DateTimeFormatter.ISO_LOCAL_DATE
             val url =
                 "$baseUrl/engines/stock/markets/index/boards/SNDX/securities/$ticker/candles.json" +
-                    "?interval=24&from=${from.format(dateFormatter)}&until=${LocalDate.now().format(dateFormatter)}"
+                    "?interval=24&from=${from.format(dateFormatter)}&until=${LocalDate.now(clock).format(dateFormatter)}"
             val raw: String =
                 webClient
                     .get()

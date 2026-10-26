@@ -116,8 +116,8 @@ class TradingAccountController(
             "maxOpenPositions" to tradingAccountService.maxOpenPositionsFor(id),
             "openPositions" to openPositions,
             "openPositionsCount" to openPositions.size,
-            "openPnl" to BigDecimal(openPnl),
-            "realizedPnlToday" to BigDecimal(realizedPnlToday),
+            "openPnl" to BigDecimal.valueOf(openPnl).setScale(2, java.math.RoundingMode.HALF_UP),
+            "realizedPnlToday" to BigDecimal.valueOf(realizedPnlToday).setScale(2, java.math.RoundingMode.HALF_UP),
             "closedTodayCount" to closedToday.size,
             "timestamp" to LocalDateTime.now(businessZone).toString(),
         )

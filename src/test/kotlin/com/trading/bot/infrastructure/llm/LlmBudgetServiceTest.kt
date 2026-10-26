@@ -89,6 +89,42 @@ class LlmBudgetServiceTest {
     }
 
     @Test
+    fun `reserve is clamped to the minute ceiling so a single call can pass`() {
+        // Дефолт: max-tokens=4096 > max-tokens-per-minute=4000. Без клампа резерв
+        // (estimate+maxTokens) всегда превышал потолок минуты и первый же вызов
+        // каждой минуты отклонялся — весь LLM-путь молча деградировал (скан-7 P1).
+        val registry = SimpleMeterRegistry()
+        val config =
+            LlmConfig().apply {
+                maxTokens = 4096
+                maxTokensPerMinute = 4000
+            }
+        val redis: StringRedisTemplate = Mockito.mock(StringRedisTemplate::class.java)
+        @Suppress("UNCHECKED_CAST")
+        Mockito
+            .`when`(
+                redis.execute<List<Any?>>(
+                    ArgumentMatchers.any<RedisScript<List<Any?>>>(),
+                    ArgumentMatchers.anyList(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                ),
+            ).thenReturn(listOf("1", ""))
+
+        val decision = service(redis, registry, config, true).reserve("technical", "c", 5000)
+
+        assertTrue(decision.allowed)
+        assertEquals(1.0, registry.counter("llm.budget.clamped", "agent", "technical").count())
+    }
+
+    @Test
     fun `reserve rejects over limit with script reason`() {
         val registry = SimpleMeterRegistry()
 

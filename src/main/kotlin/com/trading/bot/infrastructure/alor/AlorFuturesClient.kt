@@ -197,6 +197,9 @@ class AlorFuturesClient(
                     .asString()
                     .takeIf { it.isNotBlank() }
                     ?.toBigDecimalOrNull()
+                    // 0/отрицательная маржа = нет данных: иначе агрегатный гейт посчитает
+                    // загрузку портфеля нулевой и пропустит вход сверх лимита (скан-7 P3).
+                    ?.takeIf { it.signum() > 0 }
             val short =
                 j
                     .path("short")
@@ -204,6 +207,7 @@ class AlorFuturesClient(
                     .asString()
                     .takeIf { it.isNotBlank() }
                     ?.toBigDecimalOrNull()
+                    ?.takeIf { it.signum() > 0 }
             if (long == null && short == null) null else FuturesGo(long, short, System.currentTimeMillis())
         }.getOrNull()
 

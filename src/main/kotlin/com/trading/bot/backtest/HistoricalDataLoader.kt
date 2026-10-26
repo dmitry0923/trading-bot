@@ -10,7 +10,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.springframework.stereotype.Service
+import java.time.Clock
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Результат загрузки исторических данных по одному тикеру.
@@ -45,6 +47,11 @@ class HistoricalDataLoader(
     private val candleRepo: CandleRepository,
     private val meterRegistry: MeterRegistry,
     private val instrumentsConfig: InstrumentsConfig = InstrumentsConfig(),
+    /**
+     * Бизнес-клок (МСК): окно запроса ISS — московские naive-таймстампы, поэтому
+     * `LocalDateTime.now()` в UTC-JVM обрезал последние ~3 часа истории (скан-7 P3).
+     */
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -59,8 +66,8 @@ class HistoricalDataLoader(
         ticker: String,
         days: Int,
     ): LoadResult {
-        val from = LocalDateTime.now().minusDays(days.toLong())
-        val to = LocalDateTime.now()
+        val from = LocalDateTime.now(clock).minusDays(days.toLong())
+        val to = LocalDateTime.now(clock)
         val candles =
             if (instrumentsConfig.isFutures(ticker)) {
                 moexClient

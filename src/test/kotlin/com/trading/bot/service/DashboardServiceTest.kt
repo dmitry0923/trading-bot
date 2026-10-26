@@ -67,8 +67,8 @@ class DashboardServiceTest {
         val result = runBlocking { service.build() }
 
         assertEquals(null, result["accountId"])
-        assertEquals(BigDecimal("100"), result["openPnl"])
-        assertEquals(BigDecimal("-40"), result["realizedPnlToday"])
+        assertEquals(0, BigDecimal("100").compareTo(result["openPnl"] as BigDecimal))
+        assertEquals(0, BigDecimal("-40").compareTo(result["realizedPnlToday"] as BigDecimal))
         assertEquals(1, result["closedTodayCount"])
         assertEquals(1, result["openPositionsCount"])
         assertEquals(BigDecimal("60"), result["dailyPnl"])
@@ -93,8 +93,8 @@ class DashboardServiceTest {
         val result = runBlocking { service.build(1L) }
 
         assertEquals(1L, result["accountId"])
-        assertEquals(BigDecimal("250"), result["openPnl"])
-        assertEquals(BigDecimal("-150"), result["realizedPnlToday"])
+        assertEquals(0, BigDecimal("250").compareTo(result["openPnl"] as BigDecimal))
+        assertEquals(0, BigDecimal("-150").compareTo(result["realizedPnlToday"] as BigDecimal))
         assertEquals(1, result["closedTodayCount"])
         assertEquals(BigDecimal("100"), result["dailyPnl"])
         runBlocking {

@@ -44,6 +44,17 @@ class WebSocketManagerTest {
     }
 
     @Test
+    fun `snapshot with old exchange time is discarded even if received just now`() {
+        // После реконнекта Alor присылает снапшот: локальное время получения свежее,
+        // а цена может быть 20-минутной давности (скан-7 P2).
+        assertTrue(
+            manager.isQuoteStale("SBER", Instant.now(), 1, Instant.now().minusSeconds(120)),
+            "quote by exchange time older than the ceiling must be discarded",
+        )
+        assertFalse(manager.isQuoteStale("SBER", Instant.now(), 2, Instant.now().minusSeconds(1)))
+    }
+
+    @Test
     fun `out-of-order quote by sequence is discarded when exchange time is absent`() {
         assertFalse(manager.isQuoteStale("SBER", Instant.now(), 5))
         assertTrue(manager.isQuoteStale("SBER", Instant.now(), 4))

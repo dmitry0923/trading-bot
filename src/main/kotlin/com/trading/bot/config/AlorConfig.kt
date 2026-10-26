@@ -48,6 +48,16 @@ class AlorConfig {
     var wsHeartbeatIntervalMs: Long = 30_000
     var wsHeartbeatTimeoutMs: Long = 45_000
     var wsStaleMessageAgeMs: Long = 5_000
+
+    /**
+     * Абсолютный возраст котировки по **биржевому** времени, мс (0 = выключено).
+     *
+     * `wsStaleMessageAgeMs` смотрит только на локальное время получения, поэтому после
+     * реконнекта «снапшот» с биржи принимался как свежий, даже если ему 20 минут:
+     * REST-fallback выключался, входы разрешались по старой цене (скан-7 P2).
+     */
+
+    var wsQuoteMaxExchangeAgeMs: Long = 30_000
     var wsOrdersEnabled: Boolean = false
     var wsOrderTimeoutMs: Long = 10_000
     var entryPartialFillCancelAfterMs: Long = 30_000

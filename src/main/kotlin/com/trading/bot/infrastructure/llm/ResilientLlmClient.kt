@@ -221,6 +221,11 @@ class ResilientLlmClient(
         val response =
             try {
                 llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Отмена (таймаут бюджета сигнала/советника) — не ошибка вызова:
+                // иначе штатный таймаут инкрементил CALL_ERROR и пейджил оператора
+                // вместе с llm.signal.timeout (скан-7 P3).
+                throw e
             } catch (e: Exception) {
                 logger.warn(e) { "LLM call failed for agent=$agent ticker=$ticker" }
                 meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", "CALL_ERROR")).increment()

@@ -283,7 +283,7 @@ class TradingAccountControllerTest {
         assertEquals(true, result["entryBlocked"])
         assertEquals(5, result["maxOpenPositions"])
         assertEquals(1, result["openPositionsCount"])
-        assertEquals(BigDecimal("250"), result["openPnl"])
+        assertEquals(0, BigDecimal("250").compareTo(result["openPnl"] as BigDecimal))
         assertEquals(0, result["closedTodayCount"])
     }
 

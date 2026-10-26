@@ -8,28 +8,38 @@ import com.trading.bot.event.StrategyGeneratedEvent
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.runBlocking
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import tools.jackson.databind.ObjectMapper
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Real-time рассылка дашборда через Server-Sent Events.
+ * Real-time дашборд через Server-Sent Events.
  *
- * - Подписчики получают полный снимок [DashboardService.build] по событиям домена
- *   (открытие/закрытие позиций, стратегия, исполнение, тик цены).
- * - Тики цен дебаунсятся интервалом [minIntervalMs] (2 сек) — WS-котировки могут
- *   приходить чаще, чем имеет смысл обновлять панель.
- * - Каждый подписчик получает поток именованных событий `dashboard` в JSON.
- * - Multi-account (roadmap v2.2): подписчик может указать [accountId] — снимок
- *   фильтруется по аккаунту (см. [DashboardService.build]); null = агрегированный вид.
- * - Метрики: dashboard.sse.connections, dashboard.sse.broadcasts, dashboard.sse.send_error.
+ * - Периодически собирает снимок [DashboardService.build] по событиям домена
+ *   (открытие/закрытие позиций, стратегии, исполнения, тик цены).
+ * - Рассылка по клиентам ограничена [minIntervalMs] (2 сек): поток котировок не должен
+ *   ждать, пока соберётся и разошлётся снапшот.
+ * - Каждое событие маршрутизируется только подходящим подписчикам (по `accountId`).
+ * - Multi-account: подписчик указывает [accountId], снимок фильтруется по счёту.
  *
- * @property dashboardService источник данных панели
- * @property objectMapper сериализация событий
+ * **Почему отдельный поток:** события домена публикуются синхронно из потока котировок
+ * (`PriceChangedEvent` в WS flow), а `build()` делает несколько запросов к БД и
+ * `analyzeLastNDays` (с записью blind spots). Выполнение этого на потоке котировок
+ * останавливало обработку цен: буфер `DROP_OLDEST` терял тики, и SL/TP/trailing не
+ * видели цен по открытым позициям (скан-7 P1). Теперь здесь один выделенный поток,
+ * а событие только помечает «надо пересобрать».
+ *
+ * @property dashboardService сервис сборки снимка
+ * @property objectMapper сериализатор снимка
  * @property meterRegistry метрики Prometheus
  */
 @Service
@@ -40,38 +50,54 @@ class DashboardSseService(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    /** Подписчик: SseEmitter + фильтр по аккаунту (null = агрегированный вид). */
+    /** Подписчик: SseEmitter + фильтр по счёту (null = агрегированный вид). */
     private data class Subscriber(
         val emitter: SseEmitter,
         val accountId: Long?,
     )
 
-    /** Активные подключения (CopyOnWrite: список редко меняется, чтения на каждый тик). */
+    /** Активные подписчики (CopyOnWrite: список редко меняется, часто читается). */
     private val subscribers = CopyOnWriteArrayList<Subscriber>()
 
-    /** Время последней рассылки, мс (для троттлинга ценовых тиков). */
+    /** Время последней рассылки, мс (для антидребезга частых тиков). */
     private val lastBroadcastAt = AtomicLong(0L)
 
-    /** Минимальный интервал между рассылками, мс. */
+    /** Предельное время между рассылками, мс. */
     private val minIntervalMs = 2_000L
 
     /**
      * Таймаут SSE-подключения, мс.
      *
-     * `SseEmitter(0L)` по докам Spring означает «без таймаута», однако на Tomcat
-     * `asyncContext.setTimeout(0)` трактуется как «использовать контейнерный
-     * дефолт» (30с): запрос завершается AsyncRequestTimeoutException → HTTP 503,
-     * и дашборд теряет live-обновления. Поэтому задаём явный длинный таймаут;
-     * «зомби»-подписки (клиент ушёл без закрытия) снимаются при первой же
-     * неудачной рассылке [send].
+     * `SseEmitter(0L)` заставляет Spring ждать «бесконечно», поэтому Tomcat делает
+     * `asyncContext.setTimeout(0)` и логирует предупреждение; при таймауте — 503.
      */
     private val sseTimeoutMs = 3_600_000L
 
     /**
-     * Регистрирует нового подписчика и немедленно отправляет текущий снимок.
+     * Отдельный однопоточный исполнитель для сборки и рассылки снапшота: события домена
+     * публикуются синхронно из потока котировок, и `build()` не должен его занимать.
+     */
+    private val broadcastExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "dashboard-sse-broadcast").apply { isDaemon = true }
+        }
+
+    /** Последнее отложенное событие (для «догоняющего» broadcast). */
+    private val pendingReason = AtomicReference<String?>(null)
+
+    /** Признак уже запланированного «догоняющего» broadcast. */
+    private val trailingScheduled = AtomicBoolean(false)
+
+    @PreDestroy
+    fun shutdown() {
+        broadcastExecutor.shutdownNow()
+    }
+
+    /**
+     * Регистрирует SSE-подписчика.
      *
-     * @param accountId фильтр по аккаунту; null = агрегированный вид
-     * @return [SseEmitter] для эндпоинта `/api/v1/dashboard/stream`
+     * @param accountId фильтр по счёту; null = агрегированный вид
+     * @return [SseEmitter] для контроллера `/api/v1/dashboard/stream`
      */
     fun subscribe(accountId: Long? = null): SseEmitter {
         val emitter = SseEmitter(sseTimeoutMs)
@@ -105,23 +131,67 @@ class DashboardSseService(
     fun onPriceChanged(event: PriceChangedEvent) = throttledBroadcast("PRICE")
 
     /**
-     * Рассылка с троттлингом: не чаще одного раза за [minIntervalMs].
+     * Рассылка с антидребезгом: не чаще [minIntervalMs], но **без потери последнего**
+     * события.
      *
-     * @param reason источник события (для метрики)
+     * Раньше «лишние» события просто отбрасывались: если после закрытия трёх позиций в
+     * одном окне не приходило новых событий, клиенты видели их открытыми до переподключения
+     * (скан-7 P2). Теперь при подавлении планируется один догоняющий broadcast.
+     *
+     * @param reason причина снимка (для метрики)
      */
     private fun throttledBroadcast(reason: String) {
         val now = System.currentTimeMillis()
         val last = lastBroadcastAt.get()
-        if (now - last < minIntervalMs) return
-        if (!lastBroadcastAt.compareAndSet(last, now)) return
-        broadcast(reason)
+        val elapsed = now - last
+        if (elapsed < minIntervalMs) {
+            pendingReason.set(reason)
+            scheduleTrailing((minIntervalMs - elapsed).coerceAtLeast(1L))
+            return
+        }
+        if (!lastBroadcastAt.compareAndSet(last, now)) {
+            pendingReason.set(reason)
+            scheduleTrailing(minIntervalMs)
+            return
+        }
+        enqueueBroadcast(reason)
+    }
+
+    /** Планирует ровно один догоняющий broadcast через [delayMs]. */
+    private fun scheduleTrailing(delayMs: Long) {
+        if (!trailingScheduled.compareAndSet(false, true)) return
+        broadcastExecutor.execute {
+            try {
+                // +50 мс: округление оставшегося интервала до мс не должно «съедать» окно
+                Thread.sleep(delayMs + 50)
+                val now = System.currentTimeMillis()
+                val last = lastBroadcastAt.get()
+                if (now - last >= minIntervalMs && lastBroadcastAt.compareAndSet(last, now)) {
+                    enqueueBroadcast(pendingReason.getAndSet(null) ?: "TRAILING")
+                }
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } finally {
+                trailingScheduled.set(false)
+            }
+        }
+    }
+
+    private fun enqueueBroadcast(reason: String) {
+        broadcastExecutor.execute {
+            try {
+                broadcast(reason)
+            } catch (e: Exception) {
+                logger.warn(e) { "Dashboard SSE broadcast failed (reason=$reason)" }
+            }
+        }
     }
 
     /**
-     * Полная рассылка снимка всем активным подписчикам. Снимок строится один раз
-     * на уникальный фильтр (accountId) и рассылается всем подписчикам этого фильтра.
+     * Рассылает снимок всем подписчикам. Снимок собирается один раз на уникальный
+     * фильтр (accountId) и рассылается всем подписчикам этого фильтра.
      *
-     * @param reason источник события
+     * @param reason причина снимка
      */
     private fun broadcast(reason: String) {
         meterRegistry.counter("dashboard.sse.broadcasts", Tags.of("reason", reason)).increment()
@@ -132,11 +202,11 @@ class DashboardSseService(
     }
 
     /**
-     * Отправляет снимок конкретному подписчику. Некорректный подписчик удаляется.
+     * Отправляет снимок конкретному подписчику. Недоступные подписчики удаляются.
      *
      * @param emitter подписчик
-     * @param accountId фильтр по аккаунту (null = агрегированный вид)
-     * @param payload готовый JSON (если null — строится заново)
+     * @param accountId фильтр по счёту (null = агрегированный вид)
+     * @param payload готовый JSON (если null — собирается здесь)
      */
     private fun send(
         emitter: SseEmitter,

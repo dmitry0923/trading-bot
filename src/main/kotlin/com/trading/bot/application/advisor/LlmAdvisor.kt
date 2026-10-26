@@ -89,14 +89,14 @@ class LlmAdvisor(
                     "ticker" to context.ticker,
                     "signal" to decision.action.name,
                     "targetPrice" to decision.targetPrice.toPlainString(),
-                    "signalStrength" to String.format("%.2f", decision.signalStrength),
+                    "signalStrength" to String.format(java.util.Locale.ROOT, "%.2f", decision.signalStrength),
                     "signalReasoning" to decision.reasoning,
                     "currentPrice" to context.snapshot.currentPrice.toPlainString(),
                     "regime" to (regime?.describe() ?: "UNKNOWN"),
                     "trend" to (indicators?.trend ?: "UNKNOWN"),
                     "techConclusion" to (indicators?.conclusion ?: "UNKNOWN"),
-                    "rsi" to String.format("%.1f", indicators?.rsi ?: 50.0),
-                    "adaptiveThreshold" to String.format("%.2f", adaptiveConfidence),
+                    "rsi" to String.format(java.util.Locale.ROOT, "%.1f", indicators?.rsi ?: 50.0),
+                    "adaptiveThreshold" to String.format(java.util.Locale.ROOT, "%.2f", adaptiveConfidence),
                     "contextPrompt" to (context.contextPrompt ?: ""),
                 )
 
@@ -108,8 +108,13 @@ class LlmAdvisor(
                     regime?.describe(),
                     indicators?.trend,
                     indicators?.conclusion,
-                    String.format("%.1f", indicators?.rsi ?: 50.0),
-                    String.format("%.2f", adaptiveConfidence),
+                    String.format(java.util.Locale.ROOT, "%.1f", indicators?.rsi ?: 50.0),
+                    String.format(java.util.Locale.ROOT, "%.2f", adaptiveConfidence),
+                    // Цена и сила сигнала в ключе: иначе совет другого бара (например
+                    // +0.15 к слабому 0.50) применялся к текущему сигналу (скан-7 P2).
+                    context.snapshot.currentPrice.toPlainString(),
+                    decision.targetPrice.toPlainString(),
+                    String.format(java.util.Locale.ROOT, "%.2f", decision.signalStrength),
                 )
 
             val prompt = promptRegistry.getTemplate("advisor", version)

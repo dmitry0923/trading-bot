@@ -196,6 +196,24 @@ class AlorFuturesClientFreshnessTest {
     }
 
     @Test
+    fun `zero initial margin from the exchange is treated as missing data`() {
+        // 0/отрицательная маржа = нет данных: иначе агрегатный гейт считал загрузку
+        // портфеля нулевой и пропускал вход сверх лимита (скан-7 P3).
+        val ctx =
+            liveServer(
+                goBody = """{"long": {"initialMargin": "0"}, "short": {"initialMargin": "-1"}}""",
+                summariesBody = """{"moneyAmount": "50000"}""",
+                maxGoAgeMs = 30_000,
+            )
+        try {
+            assertNull(runBlocking { ctx.client.getFuturesGO("CNYRUBF", PositionDirection.LONG) })
+            assertNull(runBlocking { ctx.client.getFuturesGO("CNYRUBF", PositionDirection.SHORT) })
+        } finally {
+            ctx.server.stop(0)
+        }
+    }
+
+    @Test
     fun `live GO takes token from token provider instead of stale config`(): Unit =
         runBlocking {
             // Регресс: futures-клиент читал alorConfig.token напрямую → после refresh

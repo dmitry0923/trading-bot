@@ -177,6 +177,12 @@ class ArbitratorAgent(
                         tech.trend,
                         String.format(java.util.Locale.ROOT, "%.1f", tech.rsi),
                         String.format(java.util.Locale.ROOT, "%.2f", adaptiveConfidence),
+                        // Цена и сила сигнала входят в ключ: иначе вердикт другого бара
+                        // (с другим targetPrice) возвращался как свой, и риск-гейт
+                        // снимал сигнал как «протухший» (скан-7 P2).
+                        String.format(java.util.Locale.ROOT, "%.3f", snapshot.currentPrice),
+                        String.format(java.util.Locale.ROOT, "%.3f", draft.targetPrice),
+                        String.format(java.util.Locale.ROOT, "%.2f", draft.signalStrength),
                     )
                 }
 

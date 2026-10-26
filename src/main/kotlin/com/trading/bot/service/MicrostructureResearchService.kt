@@ -208,9 +208,11 @@ class MicrostructureResearchService(
         /** Размер выгрузки по умолчанию, если `limit` не задан. */
         const val DEFAULT_LIMIT = 100_000
 
-        /** Жёсткий потолок выгрузки одного запроса. */
-        const val MAX_LIMIT = 1_000_000
-
+        /**
+         * Потолок выгрузки: CSV собирается в памяти одной строкой, 1 000 000 строк ≈ 100 МБ
+         * и мог уронить контейнер по OOM авторизованным read-запросом (скан-7 P3).
+         */
+        const val MAX_LIMIT = 100_000
         private const val SNAPSHOT_HEADER =
             "ticker,time,update_count,price,bid,ask,bid_size,ask_size," +
                 "spread_bps,obi,microprice,microprice_deviation_bps"

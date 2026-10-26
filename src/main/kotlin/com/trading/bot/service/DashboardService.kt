@@ -83,14 +83,14 @@ class DashboardService(
             "tradingMode" to tradingConfig.mode,
             "tickers" to tradingConfig.tickers,
             "dailyPnl" to dailyPnl,
-            "openPnl" to BigDecimal(openPnl),
-            "realizedPnlToday" to BigDecimal(realizedPnlToday),
+            "openPnl" to BigDecimal.valueOf(openPnl).setScale(2, java.math.RoundingMode.HALF_UP),
+            "realizedPnlToday" to BigDecimal.valueOf(realizedPnlToday).setScale(2, java.math.RoundingMode.HALF_UP),
             "closedTodayCount" to closedToday.size,
             "strategiesToday" to strategiesToday,
             "openPositionsCount" to openPositions.size,
             "openPositions" to openPositions,
             "pausedTickers" to (pausedTickers + adaptivePaused).toSet(),
-            "timestamp" to LocalDateTime.now().toString(),
+            "timestamp" to LocalDateTime.now(clock).toString(),
         )
     }
 }

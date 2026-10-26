@@ -80,11 +80,22 @@ class LlmBudgetService(
                 "llm:budget:day:$day",
                 "llm:budget:cost:$day",
             )
+        // Резерв не может превышать потолок минуты: иначе при `max-tokens` >= `max-tokens-per-minute`
+        // (дефолт 4096 против 4000) первый же вызов каждой минуты отклонялся бы и весь
+        // LLM-путь молча деградировал в fallback (скан-7 P1).
+        val reserveTokens = estimatedTokens.coerceAtMost(llmConfig.maxTokensPerMinute.coerceAtLeast(1))
+        if (reserveTokens < estimatedTokens) {
+            meterRegistry.counter("llm.budget.clamped", Tags.of("agent", agent)).increment()
+            logger.warn {
+                "LLM budget: reserve $estimatedTokens > max-tokens-per-minute " +
+                    "${llmConfig.maxTokensPerMinute} - clamped (проверьте llm.max-tokens)"
+            }
+        }
         val costEstimate =
-            estimatedTokens / MILLION.toDouble() * llmConfig.tokenCostRubPerMillion
+            reserveTokens / MILLION.toDouble() * llmConfig.tokenCostRubPerMillion
         val args =
             listOf(
-                estimatedTokens.toString(),
+                reserveTokens.toString(),
                 llmConfig.maxTokensPerMinute.toString(),
                 llmConfig.maxTokensPerCycle.toString(),
                 llmConfig.maxTokensPerDay.toString(),

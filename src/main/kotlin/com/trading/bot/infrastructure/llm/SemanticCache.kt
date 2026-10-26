@@ -169,6 +169,20 @@ class SemanticCache(
         versionSeed: String? = null,
     ) {
         if (!llmConfig.semanticCacheEnabled || response.isFallback) return
+        // Кэшируем только синтаксически валидный JSON: ответ, не прошедший schema-валидацию
+        // (нет обязательного поля и т.п.), иначе «отравлял» ключ на весь TTL и все
+        // последующие бары получали fail-closed HOLD без обращения к LLM (скан-7 P2).
+        if (!isJsonContent(response.content)) {
+            meterRegistry.counter("llm.cache.skip", Tags.of("agent", agent, "reason", "INVALID_JSON")).increment()
+            return
+        }
+        // Кэшируем только синтаксически валидный JSON: ответ, не прошедший schema-валидацию
+        // (нет обязательного поля и т.п.), иначе «отравлял» ключ на весь TTL и все
+        // последующие бары получали fail-closed HOLD без обращения к LLM (скан-7 P2).
+        if (!isJsonContent(response.content)) {
+            meterRegistry.counter("llm.cache.skip", Tags.of("agent", agent, "reason", "INVALID_JSON")).increment()
+            return
+        }
         val key = key(agent, ticker, fingerprint, namespace, versionSeed)
         try {
             redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(response), ttl)
@@ -179,7 +193,18 @@ class SemanticCache(
         }
     }
 
-    /** Сессия дня по бизнес-часам проекта (не по зоне JVM). */
+    /**
+     * Похоже ли содержимое ответа на JSON-объект/массив.
+     *
+     * Все агенты возвращают JSON (схема обязательна), поэтому не-JSON ответ заведомо
+     * испорчен и кэшировать его нельзя.
+     */
+    private fun isJsonContent(content: String): Boolean {
+        val trimmed = content.trim()
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false
+        return runCatching { objectMapper.readTree(trimmed) }.isSuccess
+    }
+
     private fun currentSession(): String = sessionOf(LocalTime.now(businessClock ?: BUSINESS_CLOCK))
 
     /** Сессия дня для ключа кэша: MORNING (<13ч), DAY (13-16ч), EVENING (>16ч). */

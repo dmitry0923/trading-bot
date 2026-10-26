@@ -182,6 +182,36 @@ class SemanticCacheUnitTest {
     }
 
     @Test
+    fun `put skips non json content that would poison the cache`() {
+        // Ответ, не прошедший schema-валидацию (не JSON вовсе), раньше кэшировался и на весь
+        // TTL заставлял все последующие бары fail-closed (скан-7 P2).
+        val redisTemplate: StringRedisTemplate = mock()
+        val valueOps: ValueOperations<String, String> = mock()
+        Mockito.`when`(redisTemplate.opsForValue()).thenReturn(valueOps)
+        val cache = cache(enabled = true, redisTemplate = redisTemplate, registry = SimpleMeterRegistry())
+
+        cache.put("contrarian", "SBER", "fp", LlmResponse(content = "not a json at all"))
+
+        Mockito
+            .verify(valueOps, Mockito.never())
+            .set(ArgumentMatchers.anyString(), ArgumentMatchers.anyString(), ArgumentMatchers.any<Duration>())
+    }
+
+    @Test
+    fun `put skips json content that does not parse`() {
+        val redisTemplate: StringRedisTemplate = mock()
+        val valueOps: ValueOperations<String, String> = mock()
+        Mockito.`when`(redisTemplate.opsForValue()).thenReturn(valueOps)
+        val cache = cache(enabled = true, redisTemplate = redisTemplate, registry = SimpleMeterRegistry())
+
+        cache.put("contrarian", "SBER", "fp", LlmResponse(content = """{"isValid":}"""))
+
+        Mockito
+            .verify(valueOps, Mockito.never())
+            .set(ArgumentMatchers.anyString(), ArgumentMatchers.anyString(), ArgumentMatchers.any<Duration>())
+    }
+
+    @Test
     fun `put writes with ttl and hashed key`() {
         val redisTemplate: StringRedisTemplate = mock()
         val valueOps: ValueOperations<String, String> = mock()

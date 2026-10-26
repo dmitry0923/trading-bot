@@ -169,6 +169,10 @@ class ApiController(
         io.github.oshai.kotlinlogging.KotlinLogging
             .logger {}
 
+    /** Бизнес-зона (МСК) для payload-таймстампов: JVM в Docker живёт в UTC. */
+
+    private val businessClock: java.time.Clock = java.time.Clock.system(java.time.ZoneId.of("Europe/Moscow"))
+
     /**
      * Сборка [LiveStrategyBacktestSignalGenerator] с research-оверрайдами ML-фильтра
      * направления и входных фильтров (session/pullback). [overrides] null или пустой
@@ -2196,11 +2200,11 @@ class ApiController(
         return mapOf(
             "totalTickersAnalyzed" to stats.size,
             "totalTradesLast7Days" to totalTrades,
-            "averageWinRate" to String.format("%.2f", avgWinRate * 100) + "%",
+            "averageWinRate" to String.format(java.util.Locale.ROOT, "%.2f", avgWinRate * 100) + "%",
             "pausedTickers" to stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys,
             "timestamp" to
                 LocalDateTime
-                    .now()
+                    .now(businessClock)
                     .toString(),
         )
     }

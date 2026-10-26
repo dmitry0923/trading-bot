@@ -215,6 +215,21 @@ class WebSocketManager(
         }
 
         if (exchangeTime != null) {
+            val maxExchangeAgeMs = alorConfig.wsQuoteMaxExchangeAgeMs
+            if (maxExchangeAgeMs > 0) {
+                val exchangeAgeMs = Duration.between(exchangeTime, Instant.now()).toMillis()
+                if (exchangeAgeMs > maxExchangeAgeMs) {
+                    // Время получения свежее, а цена с биржи старая (снапшот после реконнекта).
+                    meterRegistry
+                        .counter("alor.ws.quotes.stale_exchange_time", Tags.of("ticker", key))
+                        .increment()
+                    logger.warn {
+                        "WS quotes: DISCARDED quote $key by exchange time " +
+                            "(age=${exchangeAgeMs}ms > ${maxExchangeAgeMs}ms)"
+                    }
+                    return true
+                }
+            }
             val last = lastQuoteTimeByTicker[key]?.get()
             if (last != null && exchangeTime.toEpochMilli() <= last) {
                 meterRegistry.counter("alor.ws.quotes.out_of_order", Tags.of("ticker", key)).increment()

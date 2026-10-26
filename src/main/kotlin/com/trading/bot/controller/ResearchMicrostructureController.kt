@@ -77,6 +77,11 @@ class ResearchMicrostructureController(
             } catch (e: IllegalArgumentException) {
                 throw ResponseStatusException(HttpStatus.BAD_REQUEST, e.message, e)
             }
+        // Тикер приходит из query и попадает в заголовок ответа: без фильтра `?ticker=A"B`
+        // ломает header (скан-7 P3).
+        if (!ticker.matches(Regex("[A-Za-z0-9._-]+"))) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid ticker in export request")
+        }
         val filename = "microstructure_${source.lowercase()}_$ticker.csv"
         return ResponseEntity
             .ok()

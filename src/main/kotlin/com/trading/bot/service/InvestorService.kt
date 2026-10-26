@@ -100,7 +100,7 @@ class InvestorService(
                 description = description ?: "Ручной вывод",
             )
         } catch (e: Exception) {
-            investorRepo.creditDeposit(account.id, amount, LocalDateTime.now(clock))
+            investorRepo.reverseBalance(account.id, amount, LocalDateTime.now(clock))
             throw e
         }
         logger.info { "Withdrawal for $investorId: $amount ₽" }
@@ -172,7 +172,7 @@ class InvestorService(
                 ),
             )
         } catch (e: Exception) {
-            investorRepo.debitBalanceIfSufficient(account.id, amount, LocalDateTime.now(clock))
+            investorRepo.reverseBalance(account.id, amount.negate(), LocalDateTime.now(clock))
             throw e
         }
     }

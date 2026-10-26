@@ -79,7 +79,7 @@ class PortfolioRiskEngineClusterTest {
         runBlocking {
             riskConfig.portfolioEffectiveWarnPositions = 2.0
             riskConfig.minEffectivePositions = 1.5
-            riskConfig.maxPortfolioVaRPercent = 5.0
+            riskConfig.maxPortfolioVarPercent = 5.0
             stubVols(listOf("BTC", "ETH", "SOL"), 1.0)
             stubCorrelations(listOf("BTC", "ETH", "SOL"), 0.75)
 
@@ -169,7 +169,7 @@ class PortfolioRiskEngineClusterTest {
     fun `moderate var scales down position size instead of blocking`() =
         runBlocking {
             riskConfig.portfolioVarWarnPercent = 3.0
-            riskConfig.maxPortfolioVaRPercent = 5.0
+            riskConfig.maxPortfolioVarPercent = 5.0
             riskConfig.minPortfolioScaleFactor = 0.25
             // Stress Loss отключён — тест интерполяции SCALE по parametric VaR.
             riskConfig.portfolioStressSigma = 0.0

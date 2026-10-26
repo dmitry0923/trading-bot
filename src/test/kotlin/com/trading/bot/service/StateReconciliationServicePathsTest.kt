@@ -7,6 +7,7 @@ import com.trading.bot.client.WsConnectionEvent
 import com.trading.bot.client.WsConnectionStatus
 import com.trading.bot.client.WsStream
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.model.CloseReason
@@ -50,6 +51,7 @@ class StateReconciliationServicePathsTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val tradingAccountService = mock<TradingAccountService>()
     private val recoveryGate = mock<EntryLeaseRecoveryGate>()
+    private val tradeEventService = mock<TradeEventService>()
 
     private fun service(): StateReconciliationService {
         runBlocking {
@@ -66,6 +68,8 @@ class StateReconciliationServicePathsTest {
             meterRegistry,
             tradingAccountService,
             recoveryGate,
+            InstrumentsConfig(),
+            tradeEventService,
         )
     }
 
@@ -262,6 +266,34 @@ class StateReconciliationServicePathsTest {
             service.reconcile()
 
             verify(positionRepo, Mockito.atLeastOnce()).save(anyPosition())
+            verify(recoveryGate, never()).recoverAll()
+        }
+
+    @Test
+    fun `phantom close books realized pnl and releases the entry slot`(): Unit =
+        runBlocking {
+            stubLocal(openPosition())
+            stubExchange(trades = listOf(trade(price = "94.0")))
+            val service = service()
+
+            service.reconcile()
+
+            val captor = argumentCaptor<Position>()
+            verify(positionRepo).save(captor.capture())
+            val closed = captor.firstValue
+            assertEquals(PositionStatus.CLOSED, closed.status)
+            // P&L считается по спеке инструмента (lotSize/комиссия как в TradingBotService):
+            // LONG 10 @100 закрыт по 94 → (94−100)·10·lotSize минус round-trip комиссия.
+            val spec = InstrumentsConfig().find("SBER")!!
+            val expected =
+                BigDecimal("94")
+                    .subtract(BigDecimal("100"))
+                    .multiply(BigDecimal(10))
+                    .multiply(BigDecimal(spec.lotSize))
+                    .subtract((spec.totalCommissionPerLotSide() ?: BigDecimal.ZERO).multiply(BigDecimal(10)).multiply(BigDecimal(2)))
+            assertEquals(0, expected.compareTo(closed.pnl!!), "реализованный P&L записан: ${closed.pnl} (ожидалось $expected)")
+            verify(tradeEventService).recordPositionClosed(anyPosition(), Mockito.anyString())
+            verify(positionRepo).releaseEntry("SBER", null)
         }
 
     // ─── multi-account ──────────────────────────────────────────────

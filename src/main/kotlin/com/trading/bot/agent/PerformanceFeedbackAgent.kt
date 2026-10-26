@@ -208,12 +208,23 @@ class PerformanceFeedbackAgent(
         return value.coerceIn(min, max)
     }
 
-    private fun hashStats(stats: TradeStats): String {
-        val raw = "${stats.ticker}:${stats.totalTrades}:${stats.winRate}:${stats.slHitRate}:${stats.tpHitRate}"
+    internal fun hashStats(stats: TradeStats): String {
+        // В ключ входят ВСЕ входы промпта: иначе окна с одинаковыми ставками, но разными
+        // avgWin/avgLoss/PF/серией убытков получают чужой вердикт из кэша (скан-5 P3).
+        val raw =
+            buildString {
+                append(stats.ticker).append(':').append(stats.totalTrades)
+                append(':').append(stats.winRate).append(':').append(stats.profitFactor)
+                append(':').append(stats.avgWin).append(':').append(stats.avgLoss)
+                append(':').append(stats.slHitRate).append(':').append(stats.tpHitRate)
+                append(':').append(stats.maxConsecutiveLosses)
+                append(':').append(stats.bestEntryHour).append(':').append(stats.worstEntryHour)
+                append(':').append(stats.blindSpots.joinToString("|") { it.conditionPattern })
+            }
         return MessageDigest
             .getInstance("SHA-256")
             .digest(raw.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+            .joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
             .take(16)
     }
 

@@ -1318,8 +1318,13 @@ class LiveStrategyBacktestSignalGenerator(
             // Базовый ТФ берём из самих данных: на /validate?timeframe=HOUR_1/DAY_1
             // Медиана положительных дельт последних ≤20 баров: одна пара может
             // попасть на гэп/выходные и дать часы вместо минут (скан-3 P2).
+            // Оценка длительности базового бара — только по видимой истории до [index]
+            // включительно: `takeLast` по всему списку смотрел в будущее (догрузка свечей
+            // меняла окно старшего ТФ для всех предыдущих баров) — скан-5 P2.
+            val visibleUntil = (index + 1).coerceAtMost(candles.size)
             val deltas =
                 candles
+                    .subList(0, visibleUntil)
                     .takeLast(21)
                     .zipWithNext { a, b ->
                         java.time.Duration

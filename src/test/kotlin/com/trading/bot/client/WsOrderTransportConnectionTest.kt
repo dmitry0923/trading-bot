@@ -114,6 +114,9 @@ class WsOrderTransportConnectionTest {
             assertEquals("P1", first.path("portfolio").asString())
             assertEquals("MOEX", first.path("exchange").asString())
             assertEquals("tok", first.path("token").asString())
+            // Завершение collect обязано закрывать сокет, иначе при shutdown/реконнекте
+            // соединение живёт до серверного таймаута (скан-5 P3).
+            assertTrue(connection.closeCount.get() >= 1, "socket close() не вызывался, closes=${connection.closeCount.get()}")
         }
 
     @Test
@@ -187,6 +190,7 @@ class WsOrderTransportConnectionTest {
         val inbound = Channel<String>(capacity = 100)
         val sent: MutableList<String> = CopyOnWriteArrayList()
         var closeOnSubscribe = false
+        val closeCount = AtomicInteger()
 
         override val messages: Flow<String> = inbound.receiveAsFlow()
 
@@ -212,7 +216,9 @@ class WsOrderTransportConnectionTest {
             }
         }
 
-        override suspend fun close() = Unit
+        override suspend fun close() {
+            closeCount.incrementAndGet()
+        }
     }
 
     private class FakeSocketFactory(

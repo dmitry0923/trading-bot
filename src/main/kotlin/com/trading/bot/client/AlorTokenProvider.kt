@@ -82,6 +82,22 @@ class AlorTokenProvider(
         }
     }
 
+    /**
+     * Принудительная инвалидация access-токена — реакция на 401/403 от API.
+     *
+     * Без неё `actualToken()` продолжает отдавать протухший токен до истечения
+     * `exp` (Alor TTL ~30 мин): REST-вызовы отвечают 401, котировки/ГО/баланс
+     * приходят `null`, сверка заявок — `Unknown`, входы fail-closed заблокированы
+     * (скан-5 P2). Сбрасываем и backoff, чтобы refresh случился немедленно.
+     */
+    fun invalidate() {
+        accessToken = ""
+        tokenExpiresAt = Instant.EPOCH
+        nextAttemptAt = Instant.EPOCH
+        consecutiveFailures = 0
+        logger.warn { "Alor access token invalidated (401/403 from API) - refresh on next call" }
+    }
+
     private fun isFresh(): Boolean = accessToken.isNotBlank() && Instant.now().isBefore(tokenExpiresAt.minusSeconds(60))
 
     /** Абсолютный запрет refresh до [nextAttemptAt] (сбой уже случился). */

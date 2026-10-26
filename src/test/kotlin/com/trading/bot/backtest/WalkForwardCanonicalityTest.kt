@@ -43,7 +43,8 @@ class WalkForwardCanonicalityTest {
         BacktestMetrics.compute(
             "SBER",
             List(n + 1) { BigDecimal("100000").add(BigDecimal.valueOf(it * 40L)) },
-            tradeReturns = List(n) { 40.0 },
+            // Нужна хотя бы одна убыточная сделка: PF=∞ не проходит гейт (скан-5 P2).
+            tradeReturns = List(n) { if (it % 50 == 0) -10.0 else 40.0 },
         )
 
     @Test

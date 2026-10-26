@@ -209,14 +209,15 @@ class ApiController(
     }
 
     @GetMapping("/settings")
-    fun getSettings(): BotSettings = settingsService.getSettings()
+    fun getSettings(): BotSettings = settingsService.getSettingsMasked()
 
     @PostMapping("/settings")
     suspend fun updateSettings(
         @RequestBody settings: BotSettings,
     ): BotSettings {
-        settingsService.updateSettings(settings)
-        return settings
+        // Маскированная форма присылает пустой ключ = «не менять» (скан-5 P2).
+        settingsService.updateSettingsFromUi(settings)
+        return settingsService.getSettingsMasked()
     }
 
     /**
@@ -235,7 +236,7 @@ class ApiController(
         val current = settingsService.getSettings()
         val updated = current.copy(experimentEnabled = enabled)
         settingsService.updateSettings(updated)
-        return updated
+        return settingsService.getSettingsMasked()
     }
 
     /**

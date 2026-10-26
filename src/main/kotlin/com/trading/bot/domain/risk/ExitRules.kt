@@ -184,7 +184,7 @@ object ExitRules {
      *   - [RoundingMode.CEILING] — от entry для SHORT SL / к прибыли для LONG TP / tighter trailing LONG
      *   - [RoundingMode.HALF_UP] — нейтральное (entry price)
      */
-    private fun alignToGrid(
+    fun alignToGrid(
         price: BigDecimal,
         priceStep: BigDecimal,
         roundingMode: RoundingMode,

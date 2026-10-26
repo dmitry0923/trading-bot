@@ -54,10 +54,39 @@ class SettingsService(
     fun getSettings(): BotSettings = settings
 
     /**
-     * Заменяет настройки бота новыми значениями, персистит их и применяет
-     * в runtime-конфиги (риск, плечо) — без перезапуска.
+     * Текущие настройки **без секретов**: `llmApiKey` не сериализуется в ответ
+     * (read-only роль ANALYTICS получала ключ провайдера открытым текстом),
+     * вместо значения отдаётся флаг `llmApiKeyConfigured` (скан-5 P2).
+     */
+    fun getSettingsMasked(): BotSettings =
+        settings.copy(
+            llmApiKey = "",
+            llmApiKeyConfigured = settings.llmApiKey.isNotBlank(),
+        )
+
+    /**
+     * Полная замена настроек (внутренний/тестовый путь): значения применяются как есть.
      */
     suspend fun updateSettings(newSettings: BotSettings) {
+        apply(newSettings.copy(llmApiKeyConfigured = false))
+    }
+
+    /**
+     * Сохранение настроек из UI: `llmApiKey` приходит маскированным (пустым), поэтому
+     * пустое значение означает «не менять» — иначе каждое сохранение формы стирало бы
+     * ключ провайдера (скан-5 P2). Полная очистка ключа делается явным [updateSettings].
+     */
+    suspend fun updateSettingsFromUi(newSettings: BotSettings) {
+        val merged =
+            if (newSettings.llmApiKey.isBlank()) {
+                newSettings.copy(llmApiKey = settings.llmApiKey)
+            } else {
+                newSettings
+            }
+        apply(merged.copy(llmApiKeyConfigured = false))
+    }
+
+    private suspend fun apply(newSettings: BotSettings) {
         settings = newSettings
         settingsRepository.saveSettings(newSettings)
         applyRuntimeConfig(newSettings)
@@ -92,8 +121,8 @@ class SettingsService(
         leverageConfig.maxLeverage = BigDecimal(s.maxLeverage)
 
         riskConfig.maxDailyLossPercent = s.maxDailyLossPercent
-        riskConfig.maxRollingLossPercent7d = s.maxRollingLossPercent7d
-        riskConfig.maxRollingLossPercent30d = s.maxRollingLossPercent30d
+        riskConfig.maxRollingLoss7dPercent = s.maxRollingLossPercent7d
+        riskConfig.maxRollingLoss30dPercent = s.maxRollingLossPercent30d
         riskConfig.maxConsecutiveLosses = s.maxConsecutiveLosses
         riskConfig.shadowModeEnabled = s.shadowModeEnabled
         riskConfig.shadowModeCooldownHours = s.shadowModeCooldownHours

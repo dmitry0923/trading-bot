@@ -307,7 +307,7 @@ class RiskExposureService(
         val maxEffectiveDenominator = riskConfig.maxOpenPositions * 2.0
         val effScore =
             (1.0 - (effectivePositions - 1.0) / maxEffectiveDenominator).coerceIn(0.0, 1.0)
-        val varScore = (varPercent / riskConfig.maxPortfolioVaRPercent).coerceIn(0.0, 1.0)
+        val varScore = (varPercent / riskConfig.maxPortfolioVarPercent).coerceIn(0.0, 1.0)
         val grossScore = (grossPercent / riskConfig.maxGrossExposurePercent).coerceIn(0.0, 1.0)
         val netScore = (abs(netPercent) / riskConfig.maxNetExposurePercent).coerceIn(0.0, 1.0)
 

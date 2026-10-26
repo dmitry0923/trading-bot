@@ -49,7 +49,7 @@ import kotlin.math.sqrt
  * 6. Направленная концентрация = |net| / gross · 100%.
  *
  * Режимы реакции (BLOCK + SCALE):
- * - BLOCK ([RiskConfig.portfolioRiskBlocked]): effectiveVaR95 > [RiskConfig.maxPortfolioVaRPercent]%
+ * - BLOCK ([RiskConfig.portfolioRiskBlocked]): effectiveVaR95 > [RiskConfig.maxPortfolioVarPercent]%
  *   AUM; effectivePositions < [RiskConfig.minEffectivePositions]; направленная
  *   концентрация > [RiskConfig.maxDirectionalConcentrationPercent]%; отсутствие
  *   данных о волатильности -> PORTFOLIO_DATA_INSUFFICIENT (вместо прежнего
@@ -132,7 +132,7 @@ class PortfolioRiskEngineImpl(
         val varPercent = effectiveVar95Rub / request.aum.toDouble() * 100.0
 
         // SCALE: минимум факторов по всем метрикам (1.0 = без изменений).
-        var factor = scaleHigherIsWorse(varPercent, riskConfig.portfolioVarWarnPercent, riskConfig.maxPortfolioVaRPercent)
+        var factor = scaleHigherIsWorse(varPercent, riskConfig.portfolioVarWarnPercent, riskConfig.maxPortfolioVarPercent)
         factor =
             minOf(
                 factor,
@@ -160,7 +160,7 @@ class PortfolioRiskEngineImpl(
         if (riskConfig.portfolioRiskBlocked && volQuality == PortfolioDataQuality.INSUFFICIENT) {
             reasons += "PORTFOLIO_DATA_INSUFFICIENT"
         }
-        if (riskConfig.portfolioRiskBlocked && varPercent > riskConfig.maxPortfolioVaRPercent) reasons += "PORTFOLIO_VAR"
+        if (riskConfig.portfolioRiskBlocked && varPercent > riskConfig.maxPortfolioVarPercent) reasons += "PORTFOLIO_VAR"
         if (riskConfig.portfolioRiskBlocked && tickers.size >= 2 && effectivePositions < riskConfig.minEffectivePositions) {
             reasons += "PORTFOLIO_CONCENTRATION"
         }

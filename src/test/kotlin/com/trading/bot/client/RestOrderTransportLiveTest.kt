@@ -62,14 +62,32 @@ class RestOrderTransportLiveTest {
         }
 
     @Test
-    fun `placeLimit returns null when response has no orderNumber`() =
+    fun `placeLimit treats 2xx without orderNumber as uncertain delivery`() =
         runBlocking {
+            // Биржа могла принять заявку: `null` («не отправлено») заставил бы outbox
+            // переотправить её и получить дубль (скан-5 P3).
             FakeAlorServer().use { server ->
                 server.responseBody = """{"status":"accepted"}"""
                 val transport = transport(server)
 
-                assertNull(transport.placeLimit("CNYRUBF", "buy", 1, BigDecimal("12.3"), "idem-2", "P1", OrderPurpose.ENTRY))
+                assertFailsWith<OrderDeliveryUncertainException> {
+                    transport.placeLimit("CNYRUBF", "buy", 1, BigDecimal("12.3"), "idem-2", "P1", OrderPurpose.ENTRY)
+                }
                 assertEquals(0.0, registry.counter("alor.order.placed", "type", "limit", "status", "OK").count())
+            }
+        }
+
+    @Test
+    fun `placeLimit reads orderNumber nested in the data envelope`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                server.responseBody = """{"data":{"orderNumber":"ord-nested-1"}}"""
+                val transport = transport(server)
+
+                assertEquals(
+                    "ord-nested-1",
+                    transport.placeLimit("CNYRUBF", "buy", 1, BigDecimal("12.3"), "idem-2n", "P1", OrderPurpose.ENTRY),
+                )
             }
         }
 

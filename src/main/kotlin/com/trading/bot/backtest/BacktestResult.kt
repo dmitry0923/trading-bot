@@ -20,8 +20,11 @@ import kotlin.math.sqrt
  * с баром 0 и без дубля последней метки; `BacktestRiskSimulator` (сброс истории, один
  * учёт P&L, `pointValue` вместо `lotSize`); funding-veto по предыдущему клирингу;
  * pairs beta/z на `i-1`; проскальзывание защитных выходов.
+ *
+ * 2026-10-26.2 — уровни SL/TP фьючерсов выравниваются по шагу цены (а не до 2 знаков);
+ * окно старшего ТФ оценивается только по видимой истории (`subList(0, index+1)`).
  */
-const val BACKTEST_ENGINE_VERSION: String = "2026-10-26.1"
+const val BACKTEST_ENGINE_VERSION: String = "2026-10-26.2"
 
 /**
  * Запись одной закрытой сделки бэктеста (research, 2026-09-23): полный трейд-лог
@@ -139,6 +142,9 @@ data class BacktestResult(
         val mddThreshold = if (isFutures) 0.40 else 0.15
         return sharpeRatio > 1.2 &&
             maxDrawdown <= mddThreshold &&
+            // PF = ∞ (ни одной убыточной сделки) не проходит гейт: на 10 сделках это
+            // шум, а не качество, и гейт должен требовать ≥1 убытка (скан-5 P2).
+            profitFactor.isFinite() &&
             profitFactor > 1.3 &&
             totalTrades >= tradesThreshold
     }

@@ -35,6 +35,8 @@ data class ValidationResult(
      */
     fun isRobust(): Boolean =
         aggregateOutOfSample.sharpeRatio > 0.5 &&
+            // PF = ∞ (нет убыточных сделок) — не устойчивость, а артефакт выборки.
+            aggregateOutOfSample.profitFactor.isFinite() &&
             aggregateOutOfSample.profitFactor > 1.1 &&
             consistency >= 0.6 &&
             aggregateOutOfSample.totalTrades >= 100
@@ -412,7 +414,10 @@ class BacktestValidator(
             candidates.maxWithOrNull(
                 compareBy<Candidate>(
                     { it.result.totalTrades >= 30 },
-                    { it.result.profitFactor },
+                    // PF = ∞ (нет убыточных сделок) не должен выигрывать подбор: на 2 сделках
+                    // это шум, и такой кандидат вытеснял добросовестный стоп с 20 сделками
+                    // (скан-5 P2). Бесконечность ранжируется ниже любого конечного PF.
+                    { if (it.result.profitFactor.isFinite()) it.result.profitFactor else 0.0 },
                     { it.result.sharpeRatio },
                 ),
             )

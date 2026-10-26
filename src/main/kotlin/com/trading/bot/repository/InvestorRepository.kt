@@ -181,6 +181,39 @@ class InvestorRepository(
             .awaitSingleOrNull()
     }
 
+    /**
+     * Компенсация неудавшейся проводки: вернуть баланс ровно на [delta], **не** меняя
+     * кумулятивные счётчики (`total_deposited`/`total_withdrawn`).
+     *
+     * `creditDeposit`/`debitBalanceIfSufficient` двигают ещё и статистику, поэтому
+     * для откатов непригодны: откат ввода завышал бы `total_withdrawn`, откат вывода —
+     * `total_deposited` (скан-5).
+     *
+     * @param delta положительное — зачислить, отрицательное — списать.
+     */
+    suspend fun reverseBalance(
+        accountId: UUID,
+        delta: BigDecimal,
+        now: LocalDateTime = LocalDateTime.now(),
+    ): BigDecimal? {
+        val sql =
+            """
+            UPDATE investor_accounts SET
+                balance = balance + :delta,
+                updated_at = :now
+            WHERE id = :id
+            RETURNING balance
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("delta", delta)
+            .bind("now", now)
+            .bind("id", accountId)
+            .map { row, _ -> row.require("balance", BigDecimal::class.java) }
+            .one()
+            .awaitSingleOrNull()
+    }
+
     suspend fun saveTransaction(transaction: InvestorTransaction) {
         databaseClient
             .sql(

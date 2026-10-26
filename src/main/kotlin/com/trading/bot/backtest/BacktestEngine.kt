@@ -1395,7 +1395,7 @@ class BacktestEngine(
      * Per-instrument SL% (InstrumentsConfig.InstrumentSpec.slPercent) имеет приоритет над глобальным.
      * Параметр [slPercent] (из API/конфига) используется как fallback перед RiskConfig.
      */
-    private fun stopPrice(
+    internal fun stopPrice(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
         direction: PositionDirection,
@@ -1407,10 +1407,21 @@ class BacktestEngine(
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
             val points = slPoints ?: stopPoints ?: riskConfig.defaultStopLossPoints
             val offset = BigDecimal(points).multiply(instrument.priceStep)
-            return when (direction) {
-                PositionDirection.LONG -> fillPrice.subtract(offset)
-                PositionDirection.SHORT -> fillPrice.add(offset)
-            }.setScale(2, RoundingMode.HALF_UP)
+            val raw =
+                when (direction) {
+                    PositionDirection.LONG -> fillPrice.subtract(offset)
+                    PositionDirection.SHORT -> fillPrice.add(offset)
+                }
+            // Уровень обязан лежать на сетке шага цены (как live `ExitRules.calcSL`):
+            // округление до 2 знаков давало off-tick стоп, дистанция которого отличается
+            // от заданной на ±priceStep/2 (для CNYRUBF 0.001 — до ±5 пт от узкого стопа) —
+            // скан-5 P2.
+            val rounding =
+                when (direction) {
+                    PositionDirection.LONG -> RoundingMode.FLOOR
+                    PositionDirection.SHORT -> RoundingMode.CEILING
+                }
+            return ExitRules.alignToGrid(raw, instrument.priceStep, rounding)
         }
         val effectiveSl = instrument?.slPercent ?: BigDecimal(slPercent * 100.0)
         return ExitRules.calcSL(fillPrice, direction, effectiveSl, instrument?.priceStep ?: BigDecimal("0.01"))
@@ -1419,7 +1430,7 @@ class BacktestEngine(
     /** Тейк-профит: для фьючерсов — пункты, для акций — процент (см. [stopPrice]).
      * Per-instrument TP% (InstrumentsConfig.InstrumentSpec.tpPercent) имеет приоритет над глобальным.
      * Параметр [tpPercent] (из API/конфига) используется как fallback перед RiskConfig. */
-    private fun takePrice(
+    internal fun takePrice(
         ticker: String,
         instrument: InstrumentsConfig.InstrumentSpec?,
         direction: PositionDirection,
@@ -1429,10 +1440,18 @@ class BacktestEngine(
     ): BigDecimal {
         if (instrument != null && instrumentsConfig.isFutures(ticker)) {
             val offset = BigDecimal(tpPoints ?: riskConfig.defaultTakeProfitPoints).multiply(instrument.priceStep)
-            return when (direction) {
-                PositionDirection.LONG -> fillPrice.add(offset)
-                PositionDirection.SHORT -> fillPrice.subtract(offset)
-            }.setScale(2, RoundingMode.HALF_UP)
+            val raw =
+                when (direction) {
+                    PositionDirection.LONG -> fillPrice.add(offset)
+                    PositionDirection.SHORT -> fillPrice.subtract(offset)
+                }
+            // Сетка шага цены (как live `ExitRules.calcTP`) — скан-5 P2.
+            val rounding =
+                when (direction) {
+                    PositionDirection.LONG -> RoundingMode.CEILING
+                    PositionDirection.SHORT -> RoundingMode.FLOOR
+                }
+            return ExitRules.alignToGrid(raw, instrument.priceStep, rounding)
         }
         val effectiveTp = instrument?.tpPercent ?: BigDecimal(tpPercent * 100.0)
         return ExitRules.calcTP(fillPrice, direction, effectiveTp, instrument?.priceStep ?: BigDecimal("0.01"))

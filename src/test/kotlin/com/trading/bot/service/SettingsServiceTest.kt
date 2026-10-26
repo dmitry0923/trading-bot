@@ -135,8 +135,8 @@ class SettingsServiceTest {
         assertEquals(0, leverageConfig.userLeverage.compareTo(BigDecimal("5.0")))
         assertEquals(0, leverageConfig.maxLeverage.compareTo(BigDecimal("10.0")))
         assertEquals(12.0, riskConfig.maxDailyLossPercent)
-        assertEquals(20.0, riskConfig.maxRollingLossPercent7d)
-        assertEquals(30.0, riskConfig.maxRollingLossPercent30d)
+        assertEquals(20.0, riskConfig.maxRollingLoss7dPercent)
+        assertEquals(30.0, riskConfig.maxRollingLoss30dPercent)
         assertEquals(5, riskConfig.maxConsecutiveLosses)
         assertFalse(riskConfig.shadowModeEnabled)
         assertEquals(12L, riskConfig.shadowModeCooldownHours)
@@ -162,4 +162,46 @@ class SettingsServiceTest {
             Mockito.verify(repo, Mockito.never()).saveSettings(any())
         }
     }
+
+    @Test
+    fun `settings response hides the llm api key but reports it as configured`(): Unit =
+        runBlocking {
+            // Ключ провайдера не должен попадать в HTTP-ответ (роль ANALYTICS read-only),
+            // UI получает только признак «задан» (скан-5 P2).
+            Mockito.`when`(repo.loadSettings()).thenReturn(BotSettings(llmApiKey = "sk-secret"))
+            service.init()
+
+            val masked = service.getSettingsMasked()
+
+            assertEquals("", masked.llmApiKey)
+            assertTrue(masked.llmApiKeyConfigured)
+            assertEquals("sk-secret", service.getSettings().llmApiKey, "внутренний путь ключ сохраняет")
+        }
+
+    @Test
+    fun `blank llm api key from the ui keeps the stored key`(): Unit =
+        runBlocking {
+            // Форма настроек отправляет маскированное (пустое) значение — это «не менять»,
+            // иначе каждое сохранение стирало бы ключ (скан-5 P2).
+            Mockito.`when`(repo.loadSettings()).thenReturn(BotSettings(llmApiKey = "sk-secret"))
+            service.init()
+
+            service.updateSettingsFromUi(BotSettings(llmApiKey = "", maxOpenPositions = 2))
+
+            assertEquals("sk-secret", service.getSettings().llmApiKey)
+            assertEquals(2, service.getSettings().maxOpenPositions)
+            assertEquals(2, riskConfig.maxOpenPositions)
+        }
+
+    @Test
+    fun `explicit update replaces settings including the llm api key`(): Unit =
+        runBlocking {
+            // Внутренний путь (тесты/операторские скрипты) остаётся полной заменой.
+            Mockito.`when`(repo.loadSettings()).thenReturn(BotSettings(llmApiKey = "sk-secret"))
+            service.init()
+
+            service.updateSettings(BotSettings(llmApiKey = "", maxOpenPositions = 1))
+
+            assertEquals("", service.getSettings().llmApiKey)
+        }
 }

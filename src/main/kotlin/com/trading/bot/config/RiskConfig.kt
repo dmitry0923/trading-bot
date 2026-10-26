@@ -373,10 +373,10 @@ class RiskConfig {
     var maxDailyLossPercent: Double = 2.0
 
     /** Скользящий лимит убытка за 7 дней, % от AUM (защита от «смерти от тысячи порезов»). */
-    var maxRollingLossPercent7d: Double = 7.0
+    var maxRollingLoss7dPercent: Double = 7.0
 
     /** Скользящий лимит убытка за 30 дней, % от AUM. */
-    var maxRollingLossPercent30d: Double = 12.0
+    var maxRollingLoss30dPercent: Double = 12.0
 
     /**
      * Автоматический emergency stop (5.8, source=AUTO): если реализованный убыток
@@ -430,7 +430,7 @@ class RiskConfig {
      * Лимит однодневного VaR95 портфеля, % от AUM. VaR95 = 1.645·σp·grossExposure.
      * Выше — вход запрещён (PORTFOLIO_VAR).
      */
-    var maxPortfolioVaRPercent: Double = 5.0
+    var maxPortfolioVarPercent: Double = 5.0
 
     /** Warn-порог VaR95 (% AUM): выше — размер позиции начинает уменьшаться (SCALE). */
     var portfolioVarWarnPercent: Double = 3.0

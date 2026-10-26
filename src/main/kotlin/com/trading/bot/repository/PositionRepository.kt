@@ -667,7 +667,14 @@ class PositionRepository(
                 ticker = :ticker, direction = :direction,
                 -- Терминальное состояние побеждает: закрытую позицию нельзя «воскресить»
                 -- устаревшим save() из монитора/менеджера защиты (скан-1 P1-4).
-                quantity = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.quantity ELSE :quantity END,
+                -- Объём существующей позиции: пока строка помечена pending_entry, объём может
+                -- РАСТИ (частичный вход догоняется до cumulative из сверки), после подтверждения
+                -- входа — только убывает (частичные филы/закрытия). Иначе stale-копия монитора
+                -- возвращает старый размер и закрытие закроет больше, чем открыто (скан-5).
+                quantity =
+                    CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.quantity
+                         WHEN positions.pending_entry THEN GREATEST(positions.quantity, :quantity)
+                         ELSE LEAST(positions.quantity, :quantity) END,
                 entry_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.entry_price ELSE :entryPrice END,
                 current_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.current_price ELSE :currentPrice END,
                 close_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.close_price ELSE :closePrice END,

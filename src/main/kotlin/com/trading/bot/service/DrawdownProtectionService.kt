@@ -232,8 +232,8 @@ class DrawdownProtectionService(
         val rolling7d = sumPnl(closedSince30d.filter { isClosedOnOrAfter(it, now.minusDays(7)) })
         val rolling30d = sumPnl(closedSince30d)
 
-        val rolling7dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent7d)
-        val rolling30dLimit = percentOfAum(aum, riskConfig.maxRollingLossPercent30d)
+        val rolling7dLimit = percentOfAum(aum, riskConfig.maxRollingLoss7dPercent)
+        val rolling30dLimit = percentOfAum(aum, riskConfig.maxRollingLoss30dPercent)
 
         // 5.8 (source=AUTO): реализованный убыток закрытых позиций за окно больше
         // autoStopHourlyLossPercent % AUM → автоматический emergency stop. Single-fire:
@@ -342,10 +342,10 @@ class DrawdownProtectionService(
             dailyLimitRub = dailyLimit,
             dailyLimitBreached = dailyLimitReached,
             rolling7dPnlRub = BigDecimal.ZERO,
-            rolling7dLimitRub = percentOfAum(aum, riskConfig.maxRollingLossPercent7d),
+            rolling7dLimitRub = percentOfAum(aum, riskConfig.maxRollingLoss7dPercent),
             rolling7dBreached = false,
             rolling30dPnlRub = BigDecimal.ZERO,
-            rolling30dLimitRub = percentOfAum(aum, riskConfig.maxRollingLossPercent30d),
+            rolling30dLimitRub = percentOfAum(aum, riskConfig.maxRollingLoss30dPercent),
             rolling30dBreached = false,
             consecutiveLosses = 0,
             maxConsecutiveLosses = riskConfig.maxConsecutiveLosses,

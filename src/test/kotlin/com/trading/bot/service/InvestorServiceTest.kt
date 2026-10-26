@@ -108,7 +108,9 @@ class InvestorServiceTest {
                 runBlocking { service.withdraw(investor.id, BigDecimal("500")) }
             }
 
-            Mockito.verify(investorRepo).creditDeposit(anyAccountId(), anyAmount(), anyLocalDateTime())
+            Mockito.verify(investorRepo).reverseBalance(anyAccountId(), anyAmount(), anyLocalDateTime())
+            // Откат не должен двигать кумулятивную статистику ввода/вывода.
+            Mockito.verify(investorRepo, Mockito.never()).creditDeposit(anyAccountId(), anyAmount(), anyLocalDateTime())
         }
 
     @Test
@@ -134,9 +136,10 @@ class InvestorServiceTest {
                 runBlocking { service.deposit(investor.id, BigDecimal("50")) }
             }
 
-            // Компенсация: зачисление откатывается обратным списанием.
+            // Компенсация: зачисление откатывается обратным движением баланса.
+            Mockito.verify(investorRepo).reverseBalance(anyAccountId(), anyAmount(), anyLocalDateTime())
             Mockito
-                .verify(investorRepo)
+                .verify(investorRepo, Mockito.never())
                 .debitBalanceIfSufficient(anyAccountId(), anyAmount(), anyLocalDateTime(), anyAmount())
         }
 

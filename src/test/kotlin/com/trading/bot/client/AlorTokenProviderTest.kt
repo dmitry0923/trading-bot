@@ -171,4 +171,41 @@ class AlorTokenProviderTest {
                 server.stop(0)
             }
         }
+
+    @Test
+    fun `invalidate forces a refresh before the token expiry`(): Unit =
+        runBlocking {
+            // 401 от биржи не должен ждать истечения TTL (~30 мин): инвалидация
+            // заставляет следующий вызов сходить за новым токеном (скан-5 P2).
+            val logins = AtomicInteger()
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.executor = Executors.newCachedThreadPool()
+            server.createContext("/refresh") { exchange ->
+                val n = logins.incrementAndGet()
+                val body = """{"AccessToken":"token-$n"}""".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            server.start()
+            try {
+                val alorConfig =
+                    AlorConfig().apply {
+                        oauthUrl = "http://127.0.0.1:${server.address.port}/refresh"
+                        token = "stale-token"
+                        refreshToken = "refresh-token"
+                    }
+                val provider = AlorTokenProvider(alorConfig, jacksonObjectMapper())
+
+                assertEquals("token-1", provider.actualToken())
+                assertEquals("token-1", provider.actualToken(), "свежий токен не перезапрашивается")
+
+                provider.invalidate()
+
+                assertEquals("token-2", provider.actualToken())
+                assertEquals(2, logins.get(), "после invalidate выполняется новый refresh")
+            } finally {
+                server.stop(0)
+            }
+        }
 }

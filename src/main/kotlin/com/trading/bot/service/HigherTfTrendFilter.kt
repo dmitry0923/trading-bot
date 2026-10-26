@@ -11,7 +11,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Service
+import java.time.Clock
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Multi-timeframe фильтр тренда входа (roadmap v2.5, раздел 13.12.1).
@@ -43,6 +45,11 @@ class HigherTfTrendFilter(
     private val mtfConfig: MtfConfig,
     private val candleRepository: CandleRepository,
     private val meterRegistry: MeterRegistry,
+    /**
+     * Бизнес-клок (МСК): свечи в БД тоже в МСК, а `LocalDateTime.now()` берёт
+     * зону JVM (в Docker UTC) → окно сдвигалось на 3 часа назад (скан-5 P2).
+     */
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -55,7 +62,7 @@ class HigherTfTrendFilter(
      */
     suspend fun shouldBlock(signal: Signal): String? {
         if (!mtfConfig.enabled || !isDirectional(signal.action)) return null
-        val now = LocalDateTime.now()
+        val now = LocalDateTime.now(clock)
         val lookbackMinutes = mtfConfig.bars * CandleResampler.durationMinutes(mtfConfig.higherTimeframe)
         val candles =
             candleRepository.findByTickerAndTimeframeAndTimeBetween(

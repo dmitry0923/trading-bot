@@ -158,4 +158,39 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
             assertEquals(false, fresh.pendingClose, "pendingClose закрытой позиции не восстанавливается")
         }
     }
+
+    @Test
+    fun `pending entry quantity can grow to the cumulative fill`() {
+        runBlocking {
+            // Частичный вход: сначала сохранён объём 1, сверка догоняет до 3.
+            // Инвариант «только убывает» относится к подтверждённой позиции, не к pending_entry.
+            val saved = repo.save(pos(ticker = "GROW", quantity = 1, pendingEntry = true))
+            val filled = repo.findById(saved.id!!)!!
+            filled.quantity = 3
+            filled.pendingEntry = false
+            repo.save(filled)
+
+            assertEquals(3, repo.findById(saved.id)!!.quantity, "объём входа догоняется до фактического фила")
+        }
+    }
+
+    @Test
+    fun `stale save cannot inflate the quantity of an open position`() {
+        runBlocking {
+            // Монитор цены держит detached-копию и сохраняет её после того, как
+            // частичный фил защитной заявки уже уменьшил объём в БД. Полнострочный
+            // UPDATE не должен возвращать старый объём: иначе следующее закрытие
+            // закрывает больше, чем открыто (скан-4 residual).
+            val saved = repo.save(pos(ticker = "QTY", quantity = 10))
+            val stale = repo.findById(saved.id!!)!!
+            val fresh = repo.findById(saved.id)!!
+            fresh.quantity = 6
+            repo.save(fresh)
+
+            stale.quantity = 10
+            repo.save(stale)
+
+            assertEquals(6, repo.findById(saved.id)!!.quantity, "объём позиции монотонно убывает")
+        }
+    }
 }

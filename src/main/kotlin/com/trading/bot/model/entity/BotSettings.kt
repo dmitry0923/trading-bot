@@ -32,6 +32,11 @@ data class BotSettings(
     val llmModel: String = "",
     val llmBaseUrl: String = "",
     val llmApiKey: String = "",
+    /**
+     * Признак «ключ LLM задан» для UI/API: само значение в ответы не попадает
+     * (скан-5 P2). Заполняется сервисом при маскировании, в БД не значим.
+     */
+    val llmApiKeyConfigured: Boolean = false,
     val forceCloseEnabled: Boolean = false,
     val forceCloseTime: String = "",
     val investorManagementEnabled: Boolean = true,

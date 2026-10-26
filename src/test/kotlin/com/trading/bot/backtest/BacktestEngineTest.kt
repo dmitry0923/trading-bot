@@ -988,6 +988,37 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `futures stop and take levels are aligned to the instrument price step`() {
+        // Шаг CNYRUBF = 0.001. Округление уровня до 2 знаков (12.32 вместо 12.322)
+        // исполняло стоп/тейк по несуществующей цене и меняло их дистанцию — скан-5 P2.
+        val instruments = InstrumentsConfig()
+        val spec = instruments.find("CNYRUBF")!!
+        val engine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                instrumentsConfig = instruments,
+                positionSizer = FuturesPositionSizer(RiskConfig(), instruments),
+                riskConfig = RiskConfig(),
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+        val entry = BigDecimal("12.3475")
+
+        // LONG SL: 12.3475 - 25*0.001 = 12.3225 -> FLOOR на сетке 0.001
+        val longSl = engine.stopPrice("CNYRUBF", spec, PositionDirection.LONG, entry, 2.0, null, 25)
+        assertEquals(0, BigDecimal("12.322").compareTo(longSl), "long SL=$longSl")
+
+        // LONG TP: 12.3475 + 600*0.001 = 12.9475 -> CEILING
+        val longTp = engine.takePrice("CNYRUBF", spec, PositionDirection.LONG, entry, 4.0, 600)
+        assertEquals(0, BigDecimal("12.948").compareTo(longTp), "long TP=$longTp")
+
+        // SHORT SL выше (CEILING), TP ниже (FLOOR)
+        val shortSl = engine.stopPrice("CNYRUBF", spec, PositionDirection.SHORT, entry, 2.0, null, 25)
+        assertEquals(0, BigDecimal("12.373").compareTo(shortSl), "short SL=$shortSl")
+        val shortTp = engine.takePrice("CNYRUBF", spec, PositionDirection.SHORT, entry, 4.0, 600)
+        assertEquals(0, BigDecimal("11.747").compareTo(shortTp), "short TP=$shortTp")
+    }
+
+    @Test
     fun `tick fill applies point-based slippage for futures`() {
         // 1 тик Si = 0.01 ₽: 0.1% цены (92 ₽ ≈ 9200 тиков) нереалистично для
         // биржевого исполнения market-ордера по фьючерсу (исполнение в пунктах).

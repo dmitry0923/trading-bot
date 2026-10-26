@@ -123,7 +123,7 @@ class BacktestValidatorTest {
     }
 
     @Test
-    fun `tuneParams prefers infinite profit factor candidate over mediocre finite`() {
+    fun `tuneParams does not prefer an all-win infinite profit factor candidate`() {
         // Кандидат (0.02, 0.04): 30 сделок без убыточных -> PF = +Inf (нет потерь).
         val infinitePf =
             BacktestMetrics.compute(
@@ -220,10 +220,10 @@ class BacktestValidatorTest {
         // Fold 0: train пуст -> дефолт первой пары сетки. Fold 1/2: train >= 60 -> тюнинг,
         // и выбирается кандидат с бесконечным PF (0.02, 0.04), а не посредственный конечный.
         assertEquals(0.01, result.folds[0].chosenSlPercent)
-        assertEquals(0.02, result.folds[1].chosenSlPercent)
-        assertEquals(0.04, result.folds[1].chosenTpPercent)
-        assertEquals(0.02, result.folds[2].chosenSlPercent)
-        assertEquals(0.04, result.folds[2].chosenTpPercent)
+        assertEquals(0.01, result.folds[1].chosenSlPercent)
+        assertEquals(0.02, result.folds[1].chosenTpPercent)
+        assertEquals(0.01, result.folds[2].chosenSlPercent)
+        assertEquals(0.02, result.folds[2].chosenTpPercent)
     }
 
     @Test
@@ -422,7 +422,8 @@ class BacktestValidatorTest {
 
     @Test
     fun `isRobust passes strong out-of-sample aggregates`() {
-        val returns = List(250) { if (it % 2 == 0) 30.0 else 50.0 }
+        // Должна быть хотя бы одна убыточная сделка: PF=∞ не проходит гейты (скан-5 P2).
+        val returns = List(250) { if (it % 20 == 0) -5.0 else 40.0 }
         val equity = returns.runningFold(BigDecimal("100000")) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
         val strongAggregate = BacktestMetrics.compute("SBER", equity, tradeReturns = returns)
         val folds =
@@ -441,8 +442,19 @@ class BacktestValidatorTest {
     }
 
     @Test
+    fun `isPassable rejects a perfect all-win record with infinite profit factor`() {
+        val returns = List(250) { 40.0 }
+        val equity = returns.runningFold(BigDecimal("100000")) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
+        val metrics = BacktestMetrics.compute("SBER", equity, tradeReturns = returns)
+
+        assertTrue(metrics.profitFactor.isInfinite(), "PF для all-win выборки = ∞")
+        assertFalse(metrics.isPassable(), "PF=∞ — артефакт выборки: гейт требует ≥1 убыточную сделку")
+    }
+
+    @Test
     fun `isPassable requires both robust and passable OOS aggregate`() {
-        val strongReturns = List(250) { if (it % 2 == 0) 30.0 else 50.0 }
+        // Должна быть хотя бы одна убыточная сделка: PF=∞ не проходит гейты (скан-5 P2).
+        val strongReturns = List(250) { if (it % 20 == 0) -5.0 else 40.0 }
         val equity = strongReturns.runningFold(BigDecimal("100000")) { acc, r -> acc.add(BigDecimal.valueOf(r)) }
         val strongAggregate = BacktestMetrics.compute("SBER", equity, tradeReturns = strongReturns)
         val folds =

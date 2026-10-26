@@ -15,6 +15,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -238,6 +239,41 @@ class PerformanceFeedbackAgentTest {
             strategyCloseRate = 0.5,
             bestEntryHour = 14,
             worstEntryHour = 9,
+            blindSpots = emptyList(),
+        )
+
+    @Test
+    fun `cache key includes avg win and profit factor`() {
+        // Окна с одинаковыми ставками (winRate/slHitRate/tpHitRate), но разными avgWin
+        // и PF не должны делить запись кэша — иначе второе окно получает чужой
+        // confidenceAdjustment/slAdjustmentPercent (скан-5 P3).
+        val base = keyStats(avgWin = "100", profitFactor = 0.5)
+        val better = keyStats(avgWin = "900", profitFactor = 4.5)
+
+        assertNotEquals(agent.hashStats(base), agent.hashStats(better))
+        assertEquals(agent.hashStats(base), agent.hashStats(keyStats(avgWin = "100", profitFactor = 0.5)))
+    }
+
+    private fun keyStats(
+        avgWin: String,
+        profitFactor: Double,
+    ): TradeStats =
+        TradeStats(
+            ticker = "SBER",
+            totalTrades = 12,
+            winningTrades = 6,
+            losingTrades = 6,
+            winRate = 0.5,
+            avgWin = BigDecimal(avgWin),
+            avgLoss = BigDecimal("200"),
+            profitFactor = profitFactor,
+            maxConsecutiveLosses = 2,
+            avgHoldTimeMinutes = 60,
+            slHitRate = 0.33,
+            tpHitRate = 0.25,
+            strategyCloseRate = 0.42,
+            bestEntryHour = 10,
+            worstEntryHour = 15,
             blindSpots = emptyList(),
         )
 

@@ -478,12 +478,12 @@ class BacktestRiskSimulator(
         val rolling7dLimit =
             peakEquity
                 .multiply(
-                    BigDecimal(riskConfig.maxRollingLossPercent7d),
+                    BigDecimal(riskConfig.maxRollingLoss7dPercent),
                 ).divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         val rolling30dLimit =
             peakEquity
                 .multiply(
-                    BigDecimal(riskConfig.maxRollingLossPercent30d),
+                    BigDecimal(riskConfig.maxRollingLoss30dPercent),
                 ).divide(BigDecimal("100"), 4, RoundingMode.HALF_UP)
         if (rolling7d <= rolling7dLimit.negate()) return true
         if (rolling30d <= rolling30dLimit.negate()) return true

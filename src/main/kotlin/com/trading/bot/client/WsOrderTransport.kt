@@ -11,9 +11,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -336,10 +338,10 @@ class WsOrderTransport(
     private suspend fun runConnectionLoop() {
         var attempt = 0
         while (true) {
+            var conn: WsOrderSocketConnection? = null
             try {
-                val conn = socketFactory.open()
+                conn = socketFactory.open()
                 session.set(conn)
-                attempt = 0
                 meterRegistry.counter("alor.ws.orders.connected").increment()
                 logger.info { "WS order channel connected" }
                 conn.send(
@@ -350,7 +352,17 @@ class WsOrderTransport(
                         UuidV7.uuidString(),
                     ),
                 )
-                conn.messages.collect { text -> onMessage(text) }
+                // Backoff сбрасывается только после первого принятого сообщения: сервер,
+                // принимающий и сразу рвущий соединение, раньше давал вечный реконнект
+                // раз в секунду (скан-5 P3).
+                var received = false
+                conn.messages.collect { text ->
+                    if (!received) {
+                        received = true
+                        attempt = 0
+                    }
+                    onMessage(text)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -359,6 +371,11 @@ class WsOrderTransport(
                 if (session.getAndSet(null) != null) {
                     meterRegistry.counter("alor.ws.orders.disconnected").increment()
                     failAllPending()
+                }
+                // Сокет обязан закрываться: иначе при shutdown/завершении collect
+                // соединение живёт до серверного таймаута (скан-5 P3).
+                withContext(NonCancellable) {
+                    runCatching { conn?.close() }
                 }
             }
             delay(reconnectDelaySeconds(attempt))
@@ -392,5 +409,7 @@ class WsOrderTransport(
         pending.clear()
     }
 
-    private fun reconnectDelaySeconds(attempt: Int): Long = minOf(1L shl attempt, 60L)
+    // Сдвиг ограничен: `1L shl 63` даёт отрицательное значение и `delay(<0)` рвёт backoff
+    // (скан-5 P3). Плато — 60 с.
+    private fun reconnectDelaySeconds(attempt: Int): Long = minOf(60L, 1L shl attempt.coerceIn(0, 6))
 }

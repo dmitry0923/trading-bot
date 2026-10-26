@@ -1,11 +1,13 @@
 package com.trading.bot.service
 
+import com.trading.bot.application.PnlCalculator
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorClient.ReconcileResult
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.client.WsConnectionEvent
 import com.trading.bot.client.WsConnectionStatus
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
@@ -81,6 +83,10 @@ class StateReconciliationService(
     private val meterRegistry: MeterRegistry,
     private val tradingAccountService: TradingAccountService,
     private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
+    /** Расчёт реализованного P&L для «фантомного» закрытия (путь мимо CloseFillProcessor). */
+    private val instrumentsConfig: InstrumentsConfig,
+    /** Аудит-трейл закрытия: фантомное закрытие обязано оставлять POSITION_CLOSED. */
+    private val tradeEventService: TradeEventService,
     /**
      * Бизнес-время (МСК), как в [com.trading.bot.service.DrawdownProtectionService]:
      * `closed_at` пишется тем же клоком, которым считаются окна дневного/часового
@@ -90,6 +96,17 @@ class StateReconciliationService(
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * P&L закрытия: та же модель, что в `TradingBotService` (lotSize и round-trip
+     * комиссия из спеки инструмента). Отдельным бином не является намеренно —
+     * зеркалит расчёт close-пути.
+     */
+    private val pnlCalculator: PnlCalculator =
+        PnlCalculator.lotBased(
+            lotSize = { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L },
+            commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
+        )
 
     @PreDestroy
     fun close() {
@@ -160,11 +177,13 @@ class StateReconciliationService(
         var closed = 0
         var unknown = 0
         var halted = false
+        var failed = false
         for (unit in units) {
             val outcome = reconcilePortfolio(unit)
             closed += outcome.closed
             unknown += outcome.unknown
             halted = halted || outcome.halted
+            failed = failed || outcome.failed
         }
 
         if (halted) {
@@ -176,7 +195,7 @@ class StateReconciliationService(
         // D1: если сверка сама обнаружила отсройку и перевела бота в halt (`halted=true`),
         // entri в DEGRADED-скоуп НЕ снимаем — иначе на остановленном боте фьючерсная позиция
         // может открыться «вслепую» до разрешения отсройки.
-        if (!halted) {
+        if (!halted && !failed) {
             entryLeaseRecoveryGate.recoverAll()
         }
 
@@ -246,6 +265,7 @@ class StateReconciliationService(
         var closed = 0
         var unknown = 0
         var reconciliationRequired = 0
+        var failures = 0
 
         for (pos in localOpen) {
             try {
@@ -344,6 +364,7 @@ class StateReconciliationService(
                 }
             } catch (e: Exception) {
                 logger.error(e) { "Reconcile error for ${pos.id}/${pos.ticker}" }
+                failures++
             }
         }
 
@@ -362,6 +383,7 @@ class StateReconciliationService(
             closed = closed,
             unknown = unknown,
             halted = closed > 0 || unknown > 0 || reconciliationRequired > 0,
+            failed = failures > 0,
         )
     }
 
@@ -382,8 +404,15 @@ class StateReconciliationService(
         pos.pendingEntry = false
         if (recoveredPrice != null) {
             pos.closePrice = recoveredPrice
+            // Фантомный путь не проходит через CloseFillProcessor, поэтому реализованный
+            // P&L считаем здесь: без него убыток не попадал ни в дневной лимит, ни в
+            // просадку, ни в серию убытков (скан-5 P1).
+            val remainder = pnlCalculator.pnl(pos, pos.entryPrice, recoveredPrice, BigDecimal(pos.quantity))
+            pos.pnl = pos.realizedPnl.add(remainder)
         }
         positionRepo.save(pos)
+        tradeEventService.recordPositionClosed(pos, reason.code)
+        pos.ticker.let { positionRepo.releaseEntry(it, pos.accountId) }
         meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "PHANTOM", "ticker", pos.ticker.uppercase())).increment()
     }
 
@@ -451,5 +480,10 @@ class StateReconciliationService(
         val closed: Int = 0,
         val unknown: Int = 0,
         val halted: Boolean = false,
+        /**
+         * Сверка не доведена до конца (исключение на конкретной позиции): состояние
+         * broker↔DB неизвестно, снимать DEGRADED нельзя (скан-5 P2).
+         */
+        val failed: Boolean = false,
     )
 }

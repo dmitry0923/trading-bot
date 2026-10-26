@@ -4,6 +4,7 @@ import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorClient.ReconcileResult
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
@@ -51,6 +52,8 @@ class StateReconciliationServiceTest {
             meterRegistry,
             tradingAccountService,
             EntryLeaseRecoveryGate(meterRegistry),
+            InstrumentsConfig(),
+            Mockito.mock(TradeEventService::class.java),
         )
 
     @BeforeEach

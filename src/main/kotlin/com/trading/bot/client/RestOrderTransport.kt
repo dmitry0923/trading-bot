@@ -139,17 +139,16 @@ class RestOrderTransport(
                 }
             recordLatency("placeLimitOrder", start)
             val orderNumber =
-                objectMapper
-                    .readTree(raw)
-                    .path("orderNumber")
-                    .asString()
-                    .ifBlank { null }
-            if (orderNumber != null) {
-                meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
-                logger.info { "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$idempotencyKey)" }
-            }
+                parseOrderNumber(raw)
+                    ?: throw OrderDeliveryUncertainException(
+                        "Limit order $ticker accepted with 2xx but no orderNumber - delivery UNCERTAIN, " +
+                            "reconcile before any resend",
+                    )
+            meterRegistry.counter("alor.order.placed", Tags.of("type", "limit", "status", "OK")).increment()
+            logger.info { "Limit order placed $side $qty $ticker @ $price -> $orderNumber (idem=$idempotencyKey)" }
             orderNumber
         } catch (e: WebClientResponseException) {
+            invalidateTokenOnAuthFailure(e)
             meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", "limit")).increment()
             if (isDefinitiveRejection(e)) {
                 logger.error(e) { "Limit order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
@@ -218,17 +217,16 @@ class RestOrderTransport(
                 }
             recordLatency("placeConditionalOrder", start)
             val orderNumber =
-                objectMapper
-                    .readTree(raw)
-                    .path("orderNumber")
-                    .asString()
-                    .ifBlank { null }
-            if (orderNumber != null) {
-                meterRegistry.counter("alor.order.placed", Tags.of("type", type, "status", "OK")).increment()
-                logger.info { "Conditional order placed type=$type $side $qty $ticker @ $stopPrice -> $orderNumber (idem=$idempotencyKey)" }
-            }
+                parseOrderNumber(raw)
+                    ?: throw OrderDeliveryUncertainException(
+                        "$type order $ticker accepted with 2xx but no orderNumber - delivery UNCERTAIN, " +
+                            "reconcile before any resend",
+                    )
+            meterRegistry.counter("alor.order.placed", Tags.of("type", type, "status", "OK")).increment()
+            logger.info { "Conditional order placed type=$type $side $qty $ticker @ $stopPrice -> $orderNumber (idem=$idempotencyKey)" }
             orderNumber
         } catch (e: WebClientResponseException) {
+            invalidateTokenOnAuthFailure(e)
             meterRegistry.counter("alor.order.error", Tags.of("side", side, "type", type)).increment()
             if (isDefinitiveRejection(e)) {
                 logger.error(e) { "$type order REJECTED by Alor $ticker (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
@@ -286,6 +284,7 @@ class RestOrderTransport(
             logger.info { "Order cancelled $orderId (idem=$idempotencyKey)" }
             CancelResult.CONFIRMED
         } catch (e: WebClientResponseException) {
+            invalidateTokenOnAuthFailure(e)
             meterRegistry.counter("alor.order.error", Tags.of("type", "cancel")).increment()
             if (isDefinitiveRejection(e)) {
                 logger.warn(e) { "Order cancel REJECTED $orderId (${e.statusCode.value()}): ${e.responseBodyAsString.take(500)}" }
@@ -340,6 +339,32 @@ class RestOrderTransport(
         t is WebClientResponseException &&
             t.statusCode.value() in DEFINITIVE_REJECTION_CODES
 
+    /**
+     * Номер заявки из ответа биржи. Alor отдаёт его либо в корне, либо внутри `data`;
+     * отсутствие номера при 2xx означает неопределённость доставки, а не «не отправлено»
+     * (иначе outbox переотправлял бы уже принятую заявку) — скан-5 P3.
+     */
+    private fun parseOrderNumber(raw: String): String? {
+        val tree = runCatching { objectMapper.readTree(raw) }.getOrNull() ?: return null
+        return listOf(tree.path("orderNumber"), tree.path("data").path("orderNumber"))
+            .map { it.asString() }
+            .firstOrNull { it.isNotBlank() }
+    }
+
+    /**
+     * Реакция на 401/403 от биржи: токен считается протухшим, следующий вызов
+     * обязан сходить за новым (скан-5 P2). 401/403 не являются решением биржи
+     * по заявке — вызывающий код трактует их как неопределённость доставки.
+     */
+    private fun invalidateTokenOnAuthFailure(e: WebClientResponseException) {
+        if (e.statusCode.value() in AUTH_FAILURE_CODES) {
+            tokenProvider.invalidate()
+            meterRegistry
+                .counter("alor.token.invalidated", Tags.of("status", e.statusCode.value().toString()))
+                .increment()
+        }
+    }
+
     private fun recordLatency(
         operation: String,
         startMs: Long,
@@ -360,5 +385,8 @@ class RestOrderTransport(
          * Всё остальное (401/403/408/429/5xx) — неопределённость доставки.
          */
         private val DEFINITIVE_REJECTION_CODES = setOf(400, 404, 409, 422)
+
+        /** Коды, означающие «токен не принят»: инвалидируем кэш и обновляем его. */
+        private val AUTH_FAILURE_CODES = setOf(401, 403)
     }
 }

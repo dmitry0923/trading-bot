@@ -5,6 +5,7 @@ import com.trading.bot.agent.ContrarianAgent
 import com.trading.bot.application.TradingGate
 import com.trading.bot.application.strategy.MlDirectionOverrides
 import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
+import com.trading.bot.backtest.BACKTEST_ENGINE_VERSION
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestSignalGenerator
 import com.trading.bot.backtest.DeploymentCriteria
@@ -676,6 +677,7 @@ class ApiController(
             )
         return mapOf(
             "ticker" to result.ticker,
+            "engineVersion" to result.engineVersion,
             "totalReturn" to result.totalReturn,
             "sharpeRatio" to result.sharpeRatio,
             "maxDrawdown" to result.maxDrawdown,
@@ -1115,6 +1117,7 @@ class ApiController(
             }
         return mapOf(
             "ticker" to ticker,
+            "engineVersion" to BACKTEST_ENGINE_VERSION,
             "timeframe" to effectiveTimeframe,
             "folds" to result.folds.size,
             "consistency" to result.consistency,

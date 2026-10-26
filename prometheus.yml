@@ -10,6 +10,8 @@ scrape_configs:
     metrics_path: /actuator/prometheus
     authorization:
       type: Bearer
-      credentials: ${METRICS_SCRAPE_TOKEN}
+      # Compose НЕ подставляет env-переменные в конфиг-файлы: токен монтируется файлом
+      # `/etc/prometheus/token` (его пишет деплой из секрета METRICS_SCRAPE_TOKEN).
+      credentials_file: /etc/prometheus/token
     static_configs:
       - targets: ["app:8080"]

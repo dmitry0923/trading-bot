@@ -200,6 +200,11 @@ jobs:
             ANALYTICS_PASSWORD=${{ secrets.ANALYTICS_PASSWORD }}
             EOF
 
+            # Prometheus читает Bearer-токен файлом (compose не подставляет env в конфиг).
+            # Берём значение из уже существующего .env — CI его не знает и не должен.
+            umask 077
+            grep -E "^METRICS_SCRAPE_TOKEN=" .env | cut -d= -f2- > prometheus-token
+
             echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
             COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
             $COMPOSE pull
@@ -303,6 +308,11 @@ jobs:
             ANALYTICS_USER=${{ secrets.ANALYTICS_USER }}
             ANALYTICS_PASSWORD=${{ secrets.ANALYTICS_PASSWORD }}
             EOF
+
+            # Prometheus читает Bearer-токен файлом (compose не подставляет env в конфиг).
+            # Берём значение из уже существующего .env — CI его не знает и не должен.
+            umask 077
+            grep -E "^METRICS_SCRAPE_TOKEN=" .env | cut -d= -f2- > prometheus-token
 
             echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
             COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"

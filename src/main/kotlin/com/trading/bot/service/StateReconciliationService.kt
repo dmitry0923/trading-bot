@@ -102,9 +102,21 @@ class StateReconciliationService(
      * комиссия из спеки инструмента). Отдельным бином не является намеренно —
      * зеркалит расчёт close-пути.
      */
-    private val pnlCalculator: PnlCalculator =
+    private val stockPnlCalculator: PnlCalculator =
         PnlCalculator.lotBased(
             lotSize = { ticker -> instrumentsConfig.find(ticker)?.lotSize?.toLong() ?: 1L },
+            commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
+        )
+
+    /**
+     * Фьючерсный расчёт по pointValue (Si: 1 против 1000 у lotSize): lotBased искажал
+     * фантомный P&L в 1000 раз; funding на этом пути неизвестен и не вычитается (скан-9 P2).
+     */
+    private val futuresPnlCalculator: PnlCalculator =
+        PnlCalculator.futures(
+            pointValue = { ticker ->
+                runCatching { instrumentsConfig.pointValue(ticker) }.getOrDefault(BigDecimal.ZERO)
+            },
             commissionRub = { ticker -> instrumentsConfig.find(ticker)?.totalCommissionPerLotSide() },
         )
 
@@ -388,38 +400,37 @@ class StateReconciliationService(
     }
 
     /**
-     * Помечает локальную позицию закрытой как «фантомную» (на бирже её больше нет).
-     * Если [recoveredPrice] передана — пересчитываем P&L (closedDuringReconcile=false
-     * чтобы P&L pipeline отработал). Иначе — P&L неизвестен, позиция просто снимается с контроля.
+     * Закрывает позицию, закрытую на бирже во время разрыва WS («фантом»).
+     *
+     * @param recoveredPrice цена из сделок (восстановлена вызывающим кодом; иначе —
+     *   `RECONCILIATION_REQUIRED`, эта функция не вызывается)
      */
     private suspend fun finalizePhantom(
         pos: Position,
         reason: CloseReason,
-        recoveredPrice: BigDecimal? = null,
+        recoveredPrice: BigDecimal,
     ) {
         val positionId =
             pos.id ?: run {
                 logger.error { "Phantom finalize without id: ${pos.ticker} - manual intervention required" }
                 return
             }
-        val closePrice = recoveredPrice
-        if (closePrice == null) {
-            // P&L неизвестен: переводим в RECONCILIATION_REQUIRED (ниже по коду), без события.
-            pos.status = PositionStatus.CLOSED
-            pos.closedAt = LocalDateTime.now(clock)
-            pos.closeReason = reason
-            pos.pendingClose = false
-            pos.pendingEntry = false
-            positionRepo.save(pos)
-            return
-        }
-        // Реализованный P&L считаем здесь: путь фантома не проходит через CloseFillProcessor
-        // (скан-5 P1). Фьючерсы — по pointValue, акции — по lotSize.
-        val remainder = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
+        // Реализованный P&L: путь фантома не проходит через CloseFillProcessor (скан-5 P1).
+        // Фьючерсы — по pointValue, акции — по lotSize.
+        val calculator = if (instrumentsConfig.isFutures(pos.ticker)) futuresPnlCalculator else stockPnlCalculator
+        val remainder = calculator.pnl(pos, pos.entryPrice, recoveredPrice, BigDecimal(pos.quantity))
         val realized = pos.realizedPnl.add(remainder)
         // Единственный владелец закрытия: атомарный OPEN→CLOSED. Если close-fill/монитор
-        // успели раньше, событие не публикуем — иначе двойной учёт в дневном лимите (скан-8 P1).
-        if (!positionRepo.transitionToClosed(positionId, PositionStatus.CLOSED, closePrice, reason, realized, pos.cumulativeCloseFillQty)) {
+        // успели раньше, событие не публикуем — иначе двойной учёт (скан-8 P1).
+        if (!positionRepo.transitionToClosed(
+                positionId,
+                PositionStatus.CLOSED,
+                recoveredPrice,
+                reason,
+                realized,
+                pos.cumulativeCloseFillQty,
+            )
+        ) {
             logger.info { "Phantom close for ${pos.ticker} already finalized concurrently - skipping duplicate event" }
             return
         }
@@ -428,12 +439,12 @@ class StateReconciliationService(
         pos.closeReason = reason
         pos.pendingClose = false
         pos.pendingEntry = false
-        pos.closePrice = closePrice
+        pos.closePrice = recoveredPrice
         pos.pnl = realized
-        // Догоняем non-terminal поля (pending_entry/флаги): terminal-guard не даст откатить статус.
+        // Догоняем non-terminal поля: terminal-guard не даст откатить статус/цену/P&L.
         positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason.code)
-        // Событие обязательно: `DailyLossCircuitBreaker` копит дневной P&L из событий (скан-6).
+        // Событие обязательно: `DailyLossCircuitBreaker` копит дневной P&L из событий.
         eventPublisher.publishPositionClosed(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
         meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "PHANTOM", "ticker", pos.ticker.uppercase())).increment()

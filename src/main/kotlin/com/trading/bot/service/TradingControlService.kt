@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -112,24 +113,27 @@ class TradingControlService(
         // Атомарный claim дня + in-flight: два тика 60-секундного fixedDelay (или тик и
         // ручной force-close) не должны закрывать позиции дважды (скан-8 P2).
         if (!forceCloseInFlight.compareAndSet(false, true)) return
-        if (lastForceCloseDate.get() == today) {
-            forceCloseInFlight.set(false)
-            return
-        }
+        if (!scope.isActive) return
         logger.info { "Scheduled force close triggered at ${settings.forceCloseTime}" }
         scope.launch {
             try {
+                var closed = 0
                 distributedLockService.runExclusive(
                     name = "scheduler:force-close",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
-                    lastForceCloseDate.set(today)
-                    forceCloseNow(CloseReason.FORCE_CLOSE_SCHEDULED)
+                    closed = forceCloseNow(CloseReason.FORCE_CLOSE_SCHEDULED)
                 }
+                // День помечаем ПОСЛЕ закрытия: исключение не должно «съесть» попытку
+                // до следующего рестарта (скан-9 P1).
+                lastForceCloseDate.set(today)
+                logger.info { "Scheduled force close done: closed=$closed" }
             } catch (e: kotlinx.coroutines.CancellationException) {
-                // Shutdown не должен оставлять «полузакрытые» позиции молча: пишем след.
                 logger.warn { "Scheduled force close cancelled during shutdown" }
                 throw e
+            } catch (e: Exception) {
+                // Alor/БД/лок: день НЕ помечаем, следующий тик повторит попытку.
+                logger.error(e) { "Scheduled force close failed - will retry on next tick" }
             } finally {
                 forceCloseInFlight.set(false)
             }

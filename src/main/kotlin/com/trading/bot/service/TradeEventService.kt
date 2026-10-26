@@ -1,5 +1,6 @@
 package com.trading.bot.service
 
+import com.trading.bot.model.BusinessTime
 import com.trading.bot.model.entity.Position
 import com.trading.bot.model.entity.TradeEvent
 import com.trading.bot.repository.TradeEventRepository
@@ -53,7 +54,7 @@ class TradeEventService(
                     aggregateId = aggregateId,
                     eventType = type,
                     payload = objectMapper.writeValueAsString(payload),
-                    occurredAt = LocalDateTime.now(),
+                    occurredAt = BusinessTime.now(),
                     sequenceNumber = 0,
                 )
             tradeEventRepo.append(event)

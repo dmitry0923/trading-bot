@@ -10,6 +10,7 @@ import com.trading.bot.domain.risk.Atr
 import com.trading.bot.domain.risk.ExitRules
 import com.trading.bot.domain.risk.FuturesStopResolver
 import com.trading.bot.domain.risk.PositionSizer
+import com.trading.bot.model.BusinessTime
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.BacktestResultEntity
@@ -158,8 +159,18 @@ class BacktestEngine(
          */
         candlesOverride: List<Candle>? = null,
     ): BacktestResult {
-        val from = LocalDateTime.now().minusDays(days.toLong())
-        val candles = candlesOverride ?: candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
+        // Свечи хранятся в МСК: окно считаем бизнес-временем, иначе в UTC-контейнере
+        // последние ~3 часа истории выпадают из прогона (скан-9 P3).
+        val from = BusinessTime.now().minusDays(days.toLong())
+        val now = BusinessTime.now()
+        val candles =
+            candlesOverride
+                ?: candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                    ticker,
+                    timeframe,
+                    from,
+                    now,
+                )
         if (candles.size < minBarsForSignal + 2) {
             logger.warn { "Backtest $ticker: insufficient candles (${candles.size})" }
             return emptyResult(ticker)

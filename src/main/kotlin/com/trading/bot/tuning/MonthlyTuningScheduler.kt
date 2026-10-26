@@ -86,13 +86,14 @@ class MonthlyTuningScheduler(
 
     private fun runCycle(force: Boolean) {
         val period = currentPeriod()
-        // CAS: поток cron и ручной runNow() не должны запустить два цикла (скан-8 P2).
-        if (!running.compareAndSet(false, true)) {
-            logger.warn("MonthlyTuningScheduler: цикл уже выполняется - запуск за период $period пропущен")
-            return
-        }
+        // Период-гард ДО захвата флага: иначе повторный cron-запуск в том же месяце
+        // оставлял running=true и планировщик замолкал навсегда (скан-9 P1).
         if (!force && lastRunPeriod == period) {
             logger.info("MonthlyTuningScheduler: тюнинг за $period уже выполнен - пропуск")
+            return
+        }
+        if (!running.compareAndSet(false, true)) {
+            logger.warn("MonthlyTuningScheduler: цикл уже выполняется - запуск за период $period пропущен")
             return
         }
         scope.launch {

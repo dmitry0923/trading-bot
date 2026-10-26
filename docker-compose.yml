@@ -20,6 +20,9 @@ services:
       POSTGRES_DB: ${DB_NAME:-trading_bot}
       POSTGRES_USER: ${DB_USER:-trader}
       POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required}
+      # МСК: SQL now() должен совпадать с бизнес-временем created_at/occurred_at.
+      TZ: Europe/Moscow
+      PGTZ: Europe/Moscow
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
@@ -34,6 +37,11 @@ services:
     image: redis:7-alpine
     container_name: trading-bot-redis
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -47,6 +55,12 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-01-16T16-07-38Z
     container_name: trading-bot-minio
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     command: server /data --console-address ":9001"
     # MinIO используется только для хранения LLM-трейсов (trace-storage.enabled).
     # Для локальной разработки дефолт minioadmin/minioadmin; на проде задайте
@@ -66,6 +80,12 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: trading-bot-rabbitmq
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     profiles: ["rabbitmq"]
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
@@ -128,7 +148,8 @@ services:
       TRADING_MODE: ${TRADING_MODE:-SIMULATION}
       # LIVE-guard должен приходить из деплоя, а не из yml-дефолтов: без этих переменных
       # контейнер брал watchlist из application.yml и allowlist не управлялся (скан-8 P1).
-      TRADING_TICKERS: ${TRADING_TICKERS:-CNYRUBF}
+      # Дефолт = список из application.yml: пустая строка дала бы пустой watchlist.
+      TRADING_TICKERS: ${TRADING_TICKERS:-Si,RI,CNYRUBF,SBER,GAZP,LKOH,VTBR,ROSN,NVTK,PLZL,MGNT,TATN,CNYRUB_TOM}
       LIVE_TICKERS_ALLOWLIST: ${LIVE_TICKERS_ALLOWLIST:-CNYRUBF}
       # WS-ордера — primary транспорт; без флага LIVE остаётся на REST (скан-8 P2).
       ALOR_WS_ORDERS_ENABLED: ${ALOR_WS_ORDERS_ENABLED:-false}
@@ -146,7 +167,9 @@ services:
       JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-15}
       JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
       # Дефолт как в application.yml: http-деплой должен включать флаг осознанно.
-      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-true}
+      # Дефолт false: текущая топология — http за nginx без TLS, Secure-cookie не отправляется,
+      # и refresh через 15 минут ломается (скан-9 P1). Включать вместе с TLS.
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-false}
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
       LOCKBOX_ENABLED: ${LOCKBOX_ENABLED:-false}
       LOCKBOX_SECRET_ID: ${LOCKBOX_SECRET_ID:-}
@@ -173,10 +196,20 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.1
     container_name: trading-bot-prometheus
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     environment:
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:?METRICS_SCRAPE_TOKEN is required}
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Правила алертов и Bearer-токен: без первого файла Prometheus не стартует,
+      # без второго скрейпы получают 401 (compose не подставляет env в конфиг) — скан-9 P1.
+      - ./prometheus-alerting-rules.yml:/etc/prometheus/prometheus-alerting-rules.yml:ro
+      - ./prometheus-token:/etc/prometheus/token:ro
       - prometheus_data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -186,6 +219,12 @@ services:
   grafana:
     image: grafana/grafana:10.4.2
     container_name: trading-bot-grafana
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD is required}
@@ -203,6 +242,12 @@ services:
     build:
       context: ./frontend
     container_name: trading-bot-frontend
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     ports:
       - "80:80"
     depends_on:

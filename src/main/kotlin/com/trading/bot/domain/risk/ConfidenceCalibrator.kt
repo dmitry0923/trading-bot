@@ -42,6 +42,10 @@ object ConfidenceCalibrator {
         maxThreshold: Double,
         step: Double,
     ): Calibration? {
+        // Шаг <= 0 (или NaN) делает цикл ниже бесконечным: `c` не меняется, а это
+        // suspend-функция торгового пути (getAdaptiveConfidenceThreshold) — бот
+        // зависал бы на первом входе (скан-1, domain/risk P2).
+        require(step.isFinite() && step > 0.0) { "confidence calibration step must be > 0: $step" }
         if (outcomes.size < minTrades) return null
         var best: Calibration? = null
         var c = maxThreshold

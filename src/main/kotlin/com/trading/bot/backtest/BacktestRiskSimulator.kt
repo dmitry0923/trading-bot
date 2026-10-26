@@ -284,7 +284,15 @@ class BacktestRiskSimulator(
 
         // ===== Gate 11: Funding Veto (research, зеркало FundingVetoGate) =====
         if (fundingVetoEnabled) {
-            val fundingRub = fundingHistory[currentTime.toLocalDate()]
+            // Point-in-time как в движке: ставка клиринга дня D на утро D ещё
+            // не известна, берём последний клиринг строго раньше (скан-1 P2).
+            val barDate = currentTime.toLocalDate()
+            val fundingRub =
+                fundingHistory.entries
+                    .asSequence()
+                    .filter { it.key.isBefore(barDate) }
+                    .maxByOrNull { it.key }
+                    ?.value
             val vetoBlocked =
                 when {
                     fundingRub == null && fundingVetoBlockOnUnknown -> true

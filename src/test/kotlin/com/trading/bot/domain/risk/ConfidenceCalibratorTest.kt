@@ -2,6 +2,7 @@ package com.trading.bot.domain.risk
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -136,5 +137,26 @@ class ConfidenceCalibratorTest {
         assertEquals(0.50, result!!.threshold, 1e-9)
         assertEquals(6, result.sampleSize)
         assertEquals(0.83, result.winRate, 1e-9)
+    }
+
+    @Test
+    fun `rejects non-positive step instead of looping forever`() {
+        // step = 0 не меняет c → бесконечный цикл в suspend-функции торгового
+        // пути (getAdaptiveConfidenceThreshold); конфиг не валидировался (скан-1 P2).
+        val outcomes = (0 until 20).map { 0.9 to true }
+        for (badStep in listOf(0.0, -0.05, Double.NaN)) {
+            val error =
+                runCatching {
+                    ConfidenceCalibrator.calibrate(
+                        outcomes = outcomes,
+                        targetWinRate = target,
+                        minTrades = minTrades,
+                        minThreshold = minThreshold,
+                        maxThreshold = maxThreshold,
+                        step = badStep,
+                    )
+                }.exceptionOrNull()
+            assertTrue(error is IllegalArgumentException, "step=$badStep must be rejected, got $error")
+        }
     }
 }

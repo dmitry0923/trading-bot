@@ -161,6 +161,24 @@ class CloseFillProcessorPathsTest {
         }
 
     @Test
+    fun `confirmCloseFill treats FILLED without quantity as a full fill`(): Unit =
+        runBlocking {
+            // SIM и часть ответов Alor: status=FILLED, filledQuantity=0. Раньше
+            // delta=0 → «skipping», и позиция навсегда оставалась OPEN+pendingClose
+            // (docs/28 §3.3, скан-1 P1-1).
+            val pos = openPosition(quantity = 4, cumulativeCloseFillQty = 0)
+            stubFindById(pos)
+            stubTransitionToClosed(succeed = true)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("FILLED", 0, null))
+
+            processor().confirmCloseFill(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
+
+            assertEquals(PositionStatus.CLOSED, pos.status, "FILLED обязан финализировать позицию")
+            assertEquals(false, pos.pendingClose)
+        }
+
+    @Test
     fun `pending close report ignores duplicate cumulative`(): Unit =
         runBlocking {
             val pos = openPosition(quantity = 4, cumulativeCloseFillQty = 6)

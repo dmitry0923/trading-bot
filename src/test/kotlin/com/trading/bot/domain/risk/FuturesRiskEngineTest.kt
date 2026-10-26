@@ -249,8 +249,38 @@ class FuturesRiskEngineTest {
 
         // цена выросла до 94000 → trailing = 94000 * 0.99 = 93060
         ExitRules.updateFuturesTrailingStop(pos, BigDecimal("94000"), riskConfig.trailingStopPercent, BigDecimal("1000"))
-        assertEquals(BigDecimal("93060.0000"), pos.trailingStopPrice)
+        assertEquals(0, BigDecimal("93060").compareTo(pos.trailingStopPrice))
         // вариационная маржа = (94000 - 92000) * 1000 * 1 = 2 000 000 ₽
         assertEquals(0, BigDecimal("2000000").compareTo(pos.variationMargin))
+    }
+
+    @Test
+    fun `futures trailing stop is aligned to the instrument price step`() {
+        // CNYRUBF: priceStep = 0.001. Биржевая стоп-заявка с off-tick ценой
+        // отклоняется либо встаёт на другой уровень → exchangeSlCovers всегда
+        // false и защита перевыставляется бесконечно (скан-1 P1).
+        val pos =
+            Position(
+                ticker = "CNYRUBF",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("12.000"),
+                currentPrice = BigDecimal("12.000"),
+                stopLoss = BigDecimal("11.000"),
+                trailingStopPrice = BigDecimal("11.000"),
+                instrumentType = InstrumentType.FUTURES,
+                variationMargin = BigDecimal.ZERO,
+            )
+
+        ExitRules.updateFuturesTrailingStop(
+            pos,
+            BigDecimal("12.345"),
+            riskConfig.trailingStopPercent,
+            BigDecimal("1"),
+            priceStep = BigDecimal("0.001"),
+        )
+
+        // 12.345 × 0.99 = 12.22155 → CEILING по 0.001 = 12.222
+        assertEquals(0, BigDecimal("12.222").compareTo(pos.trailingStopPrice), "actual=${pos.trailingStopPrice}")
     }
 }

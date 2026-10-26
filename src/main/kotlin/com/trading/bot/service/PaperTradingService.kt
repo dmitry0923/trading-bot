@@ -146,33 +146,49 @@ class PaperTradingService(
 
     /**
      * При закрытии контрольной позиции фиксирует исход обеих рук.
+     *
+     * Матчинг по `(cycleId, ticker, timeframe)`: в одном цикле живёт по строке
+     * на каждый тикер/таймфрейм, поэтому выборка одной записи (`.one()`)
+     * падала на `IncorrectResultSize`, ошибка глушилась WARN-логом, и
+     * `result_pnl/closed` не записывались вообще.
      */
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
         val cycleId = event.cycleId ?: return
         scope.launch {
             try {
-                markOutcome(cycleId, event.pnl)
+                markOutcome(cycleId, event.ticker, event.pnl)
             } catch (e: Exception) {
-                logger.warn(e) { "Failed to mark experiment outcome for cycle $cycleId" }
+                logger.warn(e) { "Failed to mark experiment outcome for cycle $cycleId/${event.ticker}" }
             }
         }
     }
 
     private suspend fun markOutcome(
         cycleId: String,
+        ticker: String,
         pnl: BigDecimal,
     ) {
-        val control = decisionRepository.findByCycleIdAndArm(cycleId, "CONTROL") ?: return
-        decisionRepository.markResult(cycleId, "CONTROL", pnl)
-        recordOutcomeMetrics("CONTROL", pnl)
-        meterRegistry.counter("experiment.outcome.marked", Tags.of("arm", "CONTROL")).increment()
+        val controls = decisionRepository.findByCycleIdArmAndTicker(cycleId, "CONTROL", ticker)
+        if (controls.isEmpty()) return
+        val variants = decisionRepository.findByCycleIdArmAndTicker(cycleId, "VARIANT", ticker)
 
-        val variant = decisionRepository.findByCycleIdAndArm(cycleId, "VARIANT") ?: return
-        val variantPnl = evaluateVariantPnl(variant, control, pnl)
-        decisionRepository.markResult(cycleId, "VARIANT", variantPnl)
-        recordOutcomeMetrics("VARIANT", variantPnl)
-        meterRegistry.counter("experiment.outcome.marked", Tags.of("arm", "VARIANT")).increment()
+        for ((index, control) in controls.withIndex()) {
+            decisionRepository.markResult(cycleId, "CONTROL", control.ticker, control.timeframe, pnl)
+            recordOutcomeMetrics("CONTROL", pnl)
+            meterRegistry.counter("experiment.outcome.marked", Tags.of("arm", "CONTROL")).increment()
+
+            // Вариант того же таймфрейма; при несовпадении (теневая копия без
+            // таймфрейма) — вариант с тем же порядковым номером строки.
+            val variant =
+                variants.firstOrNull { it.timeframe == control.timeframe }
+                    ?: variants.getOrNull(index)
+                    ?: continue
+            val variantPnl = evaluateVariantPnl(variant, control, pnl)
+            decisionRepository.markResult(cycleId, "VARIANT", variant.ticker, variant.timeframe, variantPnl)
+            recordOutcomeMetrics("VARIANT", variantPnl)
+            meterRegistry.counter("experiment.outcome.marked", Tags.of("arm", "VARIANT")).increment()
+        }
     }
 
     /**

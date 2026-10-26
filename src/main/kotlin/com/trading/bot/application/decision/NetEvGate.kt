@@ -61,15 +61,24 @@ class NetEvGate(
         }
 
         val spec = instrumentsConfig.find(ticker)
-        val lotSize = spec?.lotSize?.toLong() ?: 1L
+        // Стоимость в рублях на 1 единицу ЦЕНЫ: фьючерс — pointValue (Si:
+        // priceStepCost/priceStep = 1000 ₽ за пункт), акция — lotSize.
+        // Раньше везде брался lotSize, и для Si/RI гейт был в 1000× мягче
+        // (скан-1, domain/risk P1).
+        val perPriceUnit =
+            if (spec != null && instrumentsConfig.isFutures(ticker)) {
+                instrumentsConfig.pointValue(ticker)
+            } else {
+                BigDecimal(spec?.lotSize?.toLong() ?: 1L)
+            }
 
         // Current spread cost for one round trip (entry + exit).
-        // halfSpread × lotSize = cost of crossing the spread once.
+        // halfSpread × perPriceUnit = cost of crossing the spread once.
         // × 2 for round trip, then × adverseSelectionMultiplier for slippage.
         val halfSpread = currentHalfSpread(snapshot, spec?.priceStep)
         val executionCostPerLot =
             halfSpread
-                .multiply(BigDecimal(lotSize))
+                .multiply(perPriceUnit)
                 .multiply(BigDecimal("2")) // round trip
                 .multiply(riskConfig.netEvAdverseSelectionMultiplier)
                 .setScale(6, RoundingMode.HALF_UP)

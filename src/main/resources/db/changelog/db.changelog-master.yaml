@@ -81,3 +81,5 @@ databaseChangeLog:
       file: db/changelog/changes/040-cbr-rates-history.sql
   - include:
       file: db/changelog/changes/041-trade-events-sequence-unique.sql
+  - include:
+      file: db/changelog/changes/042-investor-clearing-idempotency.sql

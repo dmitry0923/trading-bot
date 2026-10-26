@@ -81,18 +81,6 @@ class ExperimentDecisionRepository(
         return decision.copy(id = id)
     }
 
-    suspend fun findByCycleIdAndArm(
-        cycleId: String,
-        arm: String,
-    ): ExperimentDecision? =
-        databaseClient
-            .sql("SELECT * FROM experiment_decisions WHERE cycle_id = :cycleId AND arm = :arm")
-            .bind("cycleId", cycleId)
-            .bind("arm", arm)
-            .map { row, _ -> toDecision(row) }
-            .one()
-            .awaitSingleOrNull()
-
     /** Последние решения (все руки). */
     suspend fun findRecent(limit: Int): List<ExperimentDecision> =
         databaseClient
@@ -104,12 +92,38 @@ class ExperimentDecisionRepository(
             .awaitSingle()
 
     /**
-     * Фиксирует результат руки при закрытии контрольной позиции.
+     * Все решения конкретной руки по тикеру в цикле. В одном цикле на каждый
+     * тикер (и таймфрейм) пишется своя строка, поэтому результат — список,
+     * а не одна запись: `LIMIT 1`/`.one()` теряли остальные строки.
+     */
+    suspend fun findByCycleIdArmAndTicker(
+        cycleId: String,
+        arm: String,
+        ticker: String,
+    ): List<ExperimentDecision> =
+        databaseClient
+            .sql(
+                "SELECT * FROM experiment_decisions WHERE cycle_id = :cycleId AND arm = :arm AND ticker = :ticker ORDER BY decided_at ASC",
+            ).bind("cycleId", cycleId)
+            .bind("arm", arm)
+            .bind("ticker", ticker)
+            .map { row, _ -> toDecision(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /**
+     * Фиксирует результат конкретной строки руки при закрытии контрольной позиции.
      * result_pnl: CONTROL — фактический P&L, VARIANT — гипотетический.
+     *
+     * Матчинг по `(cycleId, arm, ticker, timeframe)`: без тикера/таймфрейма P&L
+     * одного инструмента проставлялся всем строкам руки в цикле.
      */
     suspend fun markResult(
         cycleId: String,
         arm: String,
+        ticker: String,
+        timeframe: String?,
         resultPnl: BigDecimal,
     ) {
         databaseClient
@@ -117,11 +131,14 @@ class ExperimentDecisionRepository(
                 """
                 UPDATE experiment_decisions
                 SET result_pnl = :resultPnl, closed = TRUE
-                WHERE cycle_id = :cycleId AND arm = :arm
+                WHERE cycle_id = :cycleId AND arm = :arm AND ticker = :ticker
+                    AND COALESCE(timeframe, '') = COALESCE(:timeframe, '')
                 """.trimIndent(),
             ).bind("resultPnl", resultPnl)
             .bind("cycleId", cycleId)
             .bind("arm", arm)
+            .bind("ticker", ticker)
+            .bindOrNull("timeframe", timeframe)
             .then()
             .awaitSingleOrNull()
     }

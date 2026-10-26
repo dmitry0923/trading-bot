@@ -133,6 +133,12 @@ class LlmBudgetService(
                 // language=lua
                 """
                 local estimate = tonumber(ARGV[1])
+                -- TTL выставляем ДО любых INCRBY: ветки отказа делают DECRBY и
+                -- оставляли бы ключи со значением 0 и без TTL навсегда (скан-1 P2).
+                redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
+                redis.call('EXPIRE', KEYS[2], tonumber(ARGV[8]))
+                redis.call('EXPIRE', KEYS[3], tonumber(ARGV[9]))
+                redis.call('EXPIRE', KEYS[4], tonumber(ARGV[9]))
                 local m = redis.call('INCRBY', KEYS[1], estimate)
                 if m > tonumber(ARGV[2]) then
                     redis.call('DECRBY', KEYS[1], estimate)
@@ -159,10 +165,6 @@ class LlmBudgetService(
                     redis.call('INCRBYFLOAT', KEYS[4], '-' .. ARGV[6])
                     return {'0', 'TOKEN_BUDGET_EXCEEDED:COST'}
                 end
-                redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
-                redis.call('EXPIRE', KEYS[2], tonumber(ARGV[8]))
-                redis.call('EXPIRE', KEYS[3], tonumber(ARGV[9]))
-                redis.call('EXPIRE', KEYS[4], tonumber(ARGV[9]))
                 return {'1', ''}
                 """.trimIndent(),
                 List::class.java,

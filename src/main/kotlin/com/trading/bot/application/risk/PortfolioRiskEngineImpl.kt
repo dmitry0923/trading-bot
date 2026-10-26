@@ -18,6 +18,7 @@ import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.LocalDateTime
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -320,39 +321,46 @@ class PortfolioRiskEngineImpl(
 
     /**
      * Исторический портфельный ряд дневных лог-доходностей: p\[t\] = Σ wᵢ·rᵢ\[t\]
-     * (веса — подписанные, хедж long/short учитывается). Серии выравниваются по
-     * хвосту (минимальная длина). Возвращает null, если истории недостаточно
-     * ([RiskConfig.portfolioHistoricalMinSamples]) — метрики Historical VaR/CVaR
-     * тогда не считаются.
+     * (веса — подписанные, хедж long/short учитывается).
+     *
+     * Серии выравниваются **по дате** (inner join по `Candle.time`, как
+     * [CorrelationMatrixProvider.alignedCloses]), а НЕ по хвосту: у инструментов
+     * разные торговые календари (CNYRUBF до 2026-10-16, GAZP до 2026-10-15) и
+     * «последние n» склеивают доходности РАЗНЫХ дней в одно несуществующее
+     * наблюдение — VaR/CVaR считались бы по несовместным движениям.
+     * Возвращает null, если общих дат меньше
+     * [RiskConfig.portfolioHistoricalMinSamples] или истории нет — метрики
+     * Historical VaR/CVaR тогда не считаются (0, без исключения).
      */
     private fun historicalPortfolioReturnSeries(
         distinctTickers: List<String>,
         weightsByTicker: Map<String, Double>,
     ): List<Double>? {
-        val series = distinctTickers.map { t -> dailyLogReturns(t) }
-        val nonNull = series.filterNotNull()
-        if (nonNull.size != distinctTickers.size) return null
-        val n = nonNull.minOf { it.size }
-        if (n < riskConfig.portfolioHistoricalMinSamples) return null
-        val aligned = nonNull.map { it.takeLast(n) }
-        return (0 until n).map { t ->
-            aligned.indices.sumOf { i -> aligned[i][t] * (weightsByTicker[distinctTickers[i]] ?: 0.0) }
+        val byDate = distinctTickers.map { t -> dailyLogReturns(t)?.toMap() ?: return null }
+        val commonDates = byDate.map { it.keys }.reduce { acc, dates -> acc intersect dates }.sorted()
+        if (commonDates.size < riskConfig.portfolioHistoricalMinSamples) return null
+        return commonDates.map { date ->
+            distinctTickers.indices.sumOf { i ->
+                (byDate[i][date] ?: 0.0) * (weightsByTicker[distinctTickers[i]] ?: 0.0)
+            }
         }
     }
 
     /**
      * Дневные лог-доходности тикера по DAY_1 свечам из кэша (источник тот же,
-     * что и для realized-vol). null — данных недостаточно.
+     * что и для realized-vol) в виде пар `(дата бара, доходность)` — дата нужна
+     * для выравнивания инструментов с разными календарями.
+     * null — данных недостаточно.
      */
-    private fun dailyLogReturns(ticker: String): List<Double>? {
+    private fun dailyLogReturns(ticker: String): List<Pair<LocalDateTime, Double>>? {
         val candles = candleCache.getRecentCandles(ticker, "DAY_1", riskConfig.portfolioHistoricalLookbackDays + 1)
         if (candles.size < riskConfig.portfolioHistoricalMinSamples + 1) return null
-        val returns = ArrayList<Double>(candles.size - 1)
+        val returns = ArrayList<Pair<LocalDateTime, Double>>(candles.size - 1)
         for (i in 1 until candles.size) {
             val prev = candles[i - 1].closePrice
             val curr = candles[i].closePrice
             if (prev <= BigDecimal.ZERO || curr <= BigDecimal.ZERO) continue
-            returns.add(ln(curr.divide(prev, 8, RoundingMode.HALF_UP).toDouble()))
+            returns.add(candles[i].time to ln(curr.divide(prev, 8, RoundingMode.HALF_UP).toDouble()))
         }
         if (returns.size < riskConfig.portfolioHistoricalMinSamples) return null
         return returns

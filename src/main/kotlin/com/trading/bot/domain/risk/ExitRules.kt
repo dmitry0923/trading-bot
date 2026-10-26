@@ -241,6 +241,7 @@ object ExitRules {
         price: BigDecimal,
         percent: Double,
         pointValue: BigDecimal,
+        priceStep: BigDecimal = BigDecimal("0.01"),
     ) {
         val qty = BigDecimal(pos.quantity)
         val variationMargin =
@@ -282,7 +283,12 @@ object ExitRules {
                 PositionDirection.SHORT -> currentStop == null || candidate < currentStop
             }
         if (improved) {
-            pos.trailingStopPrice = candidate.setScale(4, RoundingMode.HALF_UP)
+            // Выравнивание по сетке цены обязательно: биржевая стоп-заявка с
+            // off-tick ценой отклоняется либо встаёт на другой уровень, после чего
+            // `exchangeSlCovers` всегда false и защита перевыставляется бесконечно
+            // (скан-1, domain/risk P1). LONG → CEILING, SHORT → FLOOR (tighter).
+            val mode = if (pos.direction == PositionDirection.LONG) RoundingMode.CEILING else RoundingMode.FLOOR
+            pos.trailingStopPrice = alignToGrid(candidate, priceStep, mode)
         }
     }
 }

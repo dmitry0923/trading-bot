@@ -44,6 +44,7 @@ import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
@@ -91,6 +92,8 @@ class StrategyService(
     private val distributedLockService: DistributedLockService,
     private val distributedLockConfig: DistributedLockConfig,
     private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
+    /** Бизнес-время (МСК): окна выборки свечей. JVM-зона в Docker = UTC. */
+    private val clock: Clock = Clock.system(MOSCOW_ZONE),
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -629,9 +632,13 @@ class StrategyService(
         val cached = candleCache.getRecentCandles(ticker, timeframe, 200)
         if (cached.size >= 50 && isCandlesFresh(cached, timeframe)) return cached.sortedBy { it.time }
 
-        // 2. PostgreSQL — долгосрочное хранение (R2DBC, без Dispatchers.IO)
-        val from = LocalDateTime.now().minusDays(7)
-        val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, LocalDateTime.now())
+        // 2. PostgreSQL — долгосрочное хранение (R2DBC, без Dispatchers.IO).
+        //    Окно — в бизнес-зоне (МСК): `candles.time` пишется временем биржи,
+        //    а `LocalDateTime.now()` в Docker (JVM-зона UTC) отрезает последние
+        //    ~3 часа свечей (и `isCandlesFresh` всегда считает их устаревшими).
+        val now = LocalDateTime.now(clock)
+        val from = now.minusDays(7)
+        val db = candleRepo.findByTickerAndTimeframeAndTimeBetween(ticker, timeframe, from, now)
         if (db.size >= 50 && isCandlesFresh(db, timeframe)) {
             candleCache.addCandles(db)
             return db.sortedBy { it.time }

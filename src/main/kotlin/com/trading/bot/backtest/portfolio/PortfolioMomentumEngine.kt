@@ -308,7 +308,10 @@ object PortfolioMomentumEngine {
         val recent =
             map.entries
                 .asSequence()
-                .filter { !it.key.isAfter(day) }
+                // Point-in-time: ставка клиринга ДНЯ бара на момент решения (утро)
+                // ещё не известна — берём строго более ранние клиринги, как
+                // funding-veto/funding-window в тикерном движке (скан-1 P1).
+                .filter { it.key.isBefore(day) }
                 .sortedByDescending { it.key }
                 .take(params.carryLookbackDays)
                 .toList()

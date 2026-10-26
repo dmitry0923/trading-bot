@@ -19,11 +19,15 @@ import com.trading.bot.service.ProfitForecastService
 import com.trading.bot.service.SettingsService
 import com.trading.bot.service.TradingControlService
 import com.trading.bot.service.TradingHaltService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
@@ -151,6 +155,61 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
         val view = runBlocking { investorService.createInvestor("Алиса", null, BigDecimal("1000")) }
         val ex = runCatching { runBlocking { investorService.withdraw(view.investor.id, BigDecimal("5000")) } }
         assertTrue(ex.isFailure)
+    }
+
+    @Test
+    fun `withdrawal above balance is rejected without ledger drift`() {
+        val view = runBlocking { investorService.createInvestor("БезДрейфа", null, BigDecimal("1000")) }
+
+        val ex = runCatching { runBlocking { investorService.withdraw(view.investor.id, BigDecimal("5000")) } }
+
+        assertTrue(ex.isFailure)
+        val after = runBlocking { investorService.getInvestor(view.investor.id) }
+        val txns = runBlocking { investorService.transactions(view.investor.id) }
+        // Отказ не двигает ни баланс, ни total_withdrawn и не пишет транзакцию:
+        // раньше `max(0, …)` фиксировал полный вывод без списания.
+        assertEquals(0, BigDecimal("1000").compareTo(after.account.balance))
+        assertEquals(0, BigDecimal.ZERO.compareTo(after.account.totalWithdrawn))
+        assertEquals(0, txns.count { it.type == "WITHDRAWAL" })
+    }
+
+    @Test
+    fun `conditional debit is atomic and never goes below zero`() {
+        val view = runBlocking { investorService.createInvestor("Атомарный", null, BigDecimal("1000")) }
+        val account = runBlocking { investorRepository.findAccountByInvestor(view.investor.id) }!!
+
+        val remaining = runBlocking { investorRepository.debitBalanceIfSufficient(account.id, BigDecimal("400")) }
+        assertNotNull(remaining)
+        assertEquals(0, BigDecimal("600").compareTo(remaining!!))
+
+        val rejected = runBlocking { investorRepository.debitBalanceIfSufficient(account.id, BigDecimal("5000")) }
+        assertNull(rejected, "списание больше баланса обязано не выполниться")
+
+        val after = runBlocking { investorRepository.findAccountByInvestor(view.investor.id) }!!
+        assertEquals(0, BigDecimal("600").compareTo(after.balance))
+        assertEquals(0, BigDecimal("400").compareTo(after.totalWithdrawn))
+    }
+
+    @Test
+    fun `parallel settles for one business day create exactly one clearing transaction`() {
+        val view = runBlocking { investorService.createInvestor("Параллельный", null, BigDecimal("1000000")) }
+        saveClosedPosition("SBER", BigDecimal("100"), BigDecimal("110"))
+        saveClosedPosition("SBER", BigDecimal("100"), BigDecimal("115"))
+
+        runBlocking(Dispatchers.Default) {
+            (1..4)
+                .map {
+                    async { clearingService.settleWithdrawal(view.investor.id) }
+                }.awaitAll()
+        }
+
+        val after = runBlocking { investorService.getInvestor(view.investor.id) }
+        val clearing = runBlocking { investorService.transactions(view.investor.id) }.filter { it.type == "CLEARING" }
+        // Идемпотентность на уровне БД (unique index по (investor_id, type, business_date)):
+        // из параллельных вызовов списывает ровно один.
+        assertEquals(1, clearing.size, "должна остаться ровно одна CLEARING-транзакция")
+        assertEquals(0, clearing.single().amount.compareTo(after.account.totalWithdrawn))
+        assertTrue(after.account.balance < view.account.balance)
     }
 
     @Test

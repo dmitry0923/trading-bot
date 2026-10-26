@@ -558,7 +558,7 @@ class BacktestRiskSimulatorTest {
             if (value == null) {
                 emptyMap()
             } else {
-                mapOf(LocalDate.now() to BigDecimal(value))
+                mapOf(LocalDate.now().minusDays(1) to BigDecimal(value))
             }
 
         @Test

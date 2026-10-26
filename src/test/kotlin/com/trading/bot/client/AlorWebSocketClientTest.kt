@@ -4,6 +4,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.model.dto.OrderStatus
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
@@ -40,6 +41,22 @@ class AlorWebSocketClientTest {
         assertEquals(0, BigDecimal("92000").compareTo(report?.avgPrice))
         assertEquals("Si", report?.ticker)
         assertEquals("buy", report?.side)
+    }
+
+    @Test
+    fun `parseExecution does not report full fill when requested qty is missing`() {
+        // Регресс: при отсутствии qtyBatch/qty/quantity requestedQty = 0, и
+        // `filled >= 0` объявляло ЛЮБОЕ частичное исполнение полным — pendingEntry
+        // закрывался, а SL/TP прикрывали только часть реальной позиции.
+        val report =
+            client.parseExecution(
+                """{"opcode":"OrdersGetAndSubscribeV2","data":{"id":"ord-1","status":"filled","filledQtyBatch":2,"avgFillPrice":"92000"}}""",
+            )
+
+        assertEquals(2, report?.cumulativeFilledQty)
+        assertEquals(0, report?.requestedQty)
+        assertNotEquals(OrderStatus.FILLED, report?.status, "полнота ордера из WS без qty не выводится")
+        assertEquals(OrderStatus.PARTIALLY_FILLED, report?.status)
     }
 
     @Test

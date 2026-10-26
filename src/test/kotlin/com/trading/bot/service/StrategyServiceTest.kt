@@ -37,6 +37,7 @@ import org.mockito.Mockito
 import org.slf4j.LoggerFactory
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.concurrent.CountDownLatch
@@ -82,6 +83,9 @@ class StrategyServiceTest {
     private val liveFrozenStrategyResolver = Mockito.mock(LiveFrozenStrategyResolver::class.java)
 
     private val service =
+        buildService()
+
+    private fun buildService(clock: Clock = Clock.system(ZoneId.of("Europe/Moscow"))): StrategyService =
         StrategyService(
             tradingConfig = tradingConfig,
             riskConfig = riskConfig,
@@ -106,6 +110,7 @@ class StrategyServiceTest {
             distributedLockService = lockService,
             distributedLockConfig = lockConfig,
             liveFrozenStrategyResolver = liveFrozenStrategyResolver,
+            clock = clock,
         )
 
     @Test
@@ -187,6 +192,62 @@ class StrategyServiceTest {
                     ),
                 ).thenReturn(emptyList())
         }
+    }
+
+    /**
+     * Окно выборки свечей из БД — в бизнес-зоне (МСК), а не в JVM-зоне.
+     *
+     * В Docker JVM-зона = UTC: `LocalDateTime.now()` отрезал последние ~3 часа
+     * свечей (`candles.time` — Московское время), `isCandlesFresh` всегда видел
+     * устаревшие данные, длинное хранение не использовалось и каждый цикл шёл
+     * в MOEX за 14 тикеров × 2 таймфрейма.
+     */
+    @Test
+    fun `candle fetch window is computed in Moscow business time`() {
+        val done = CountDownLatch(1)
+        stubLock { done.countDown() }
+        Mockito.`when`(settingsService.getSettings()).thenReturn(BotSettings(timeframes = listOf("MINUTE_10")))
+        val moscow = ZoneId.of("Europe/Moscow")
+        val fixedClock =
+            Clock.fixed(
+                LocalDateTime.of(2026, 6, 15, 12, 0).atZone(moscow).toInstant(),
+                moscow,
+            )
+        val windows = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
+        val moexWindows = mutableListOf<LocalDateTime>()
+        Mockito
+            .`when`(candleCache.getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+            .thenReturn(emptyList())
+        runBlocking {
+            Mockito.`when`(adaptiveRisk.shouldPauseTrading(Mockito.anyString())).thenReturn(false)
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyLocalDateTime(),
+                        anyLocalDateTime(),
+                    ),
+                ).thenAnswer { invocation ->
+                    windows +=
+                        invocation.getArgument<LocalDateTime>(2) to invocation.getArgument<LocalDateTime>(3)
+                    emptyList<Candle>()
+                }
+            Mockito
+                .`when`(moexClient.getCandles(Mockito.anyString(), anyLocalDateTime()))
+                .thenAnswer { invocation ->
+                    moexWindows += invocation.getArgument<LocalDateTime>(1)
+                    emptyList<Candle>()
+                }
+        }
+
+        buildService(fixedClock).run()
+
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        val (from, to) = windows.single()
+        assertEquals(LocalDateTime.of(2026, 6, 8, 12, 0), from)
+        assertEquals(LocalDateTime.of(2026, 6, 15, 12, 0), to)
+        assertEquals(LocalDateTime.of(2026, 6, 8, 12, 0), moexWindows.single())
     }
 
     /** Helper-паттерн Mockito: матчер для LocalDateTime + реальный dummy. */

@@ -1,6 +1,8 @@
 package com.trading.bot.service
 
+import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.model.dto.ClearingQuote
+import com.trading.bot.model.entity.InvestorTransaction
 import com.trading.bot.model.entity.InvestorTransactionType
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
@@ -8,7 +10,10 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
@@ -32,6 +37,8 @@ class ClearingService(
     private val positionRepo: PositionRepository,
     private val investorService: InvestorService,
     private val profitForecastService: ProfitForecastService,
+    /** Бизнес-время (МСК): дата клиринга и горизонт прогноза. */
+    private val clock: Clock = Clock.system(BUSINESS_ZONE),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -43,7 +50,7 @@ class ClearingService(
      */
     suspend fun calculateWithdrawal(
         investorId: UUID,
-        requestedDate: LocalDateTime = LocalDateTime.now(),
+        requestedDate: LocalDateTime = LocalDateTime.now(clock),
     ): ClearingQuote {
         val investor =
             investorRepo.findInvestorById(investorId)
@@ -65,7 +72,7 @@ class ClearingService(
         val attributedPnL =
             poolRealized.multiply(share).setScale(2, RoundingMode.HALF_UP)
 
-        val daysUntil = ChronoUnit.DAYS.between(LocalDateTime.now().toLocalDate(), requestedDate.toLocalDate())
+        val daysUntil = ChronoUnit.DAYS.between(LocalDate.now(clock), requestedDate.toLocalDate())
         val forecastComponent =
             if (daysUntil > 0) {
                 val horizon = daysUntil.toInt().coerceAtMost(365)
@@ -108,50 +115,65 @@ class ClearingService(
      * Исполнение клиринга: списание рассчитанной суммы со счёта инвестора
      * с фиксацией транзакции CLEARING и снимка доли/equity.
      *
-     * Идемпотентна: повторный вызов для уже проведённого дня (по метке даты в
-     * description существующей транзакции CLEARING) не списывает средства повторно.
+     * Идемпотентна на уровне БД: уникальный индекс
+     * `(investor_id, type, business_date)` для CLEARING (миграция 042) —
+     * из двух параллельных вызовов за один бизнес-день (МСК) средства
+     * списывает ровно один. Списание атомарное и условное
+     * (`balance + реализованный P&L >= amount`): нехватка средств — отказ,
+     * а не `max(0, …)`.
      */
     suspend fun settleWithdrawal(
         investorId: UUID,
-        requestedDate: LocalDateTime = LocalDateTime.now(),
+        requestedDate: LocalDateTime = LocalDateTime.now(clock),
     ): ClearingQuote {
-        val dateKey = requestedDate.toLocalDate().toString()
-        val alreadySettled =
-            investorRepo.findTransactionsByInvestor(investorId).any { t ->
-                t.type == InvestorTransactionType.CLEARING.name &&
-                    t.description?.contains(dateKey) == true
-            }
-        if (alreadySettled) {
-            logger.info { "Clearing for $investorId on $dateKey already settled — skipped (idempotent)" }
-            return calculateWithdrawal(investorId, requestedDate)
-        }
-
+        val businessDate = requestedDate.toLocalDate()
         val quote = calculateWithdrawal(investorId, requestedDate)
         val account =
             investorRepo.findAccountByInvestor(investorId)
                 ?: throw IllegalArgumentException("Account not found for investor: $investorId")
 
         val amount = quote.estimatedWithdrawalAmount
-        if (amount > BigDecimal.ZERO) {
-            val updated =
-                account.copy(
-                    balance = account.balance.subtract(amount).max(BigDecimal.ZERO),
-                    totalWithdrawn = account.totalWithdrawn.add(amount),
-                )
-            investorRepo.saveAccount(updated)
-            investorRepo.saveTransaction(
-                com.trading.bot.model.entity.InvestorTransaction(
-                    investorId = investorId,
-                    accountId = account.id,
-                    type = InvestorTransactionType.CLEARING.name,
-                    amount = amount,
-                    sharesAtTime = quote.sharesAtTime,
-                    equityAtTime = quote.poolEquity,
-                    description = "Клиринг на дату ${requestedDate.toLocalDate()}: баланс + атрибутированный P&L + прогноз",
-                ),
+        if (amount <= BigDecimal.ZERO) {
+            logger.info { "Clearing for $investorId on $businessDate: nothing to settle" }
+            return quote
+        }
+
+        val transaction =
+            InvestorTransaction(
+                id = UuidV7.uuid(),
+                investorId = investorId,
+                accountId = account.id,
+                type = InvestorTransactionType.CLEARING.name,
+                amount = amount,
+                sharesAtTime = quote.sharesAtTime,
+                equityAtTime = quote.poolEquity,
+                description = "Клиринг на дату $businessDate: баланс + атрибутированный P&L + прогноз",
+            )
+        // Claim дня: единственный победитель вставляет строку, остальные получают
+        // конфликт по уникальному индексу и НЕ списывают средства.
+        if (!investorRepo.saveClearingTransaction(transaction, businessDate)) {
+            logger.info { "Clearing for $investorId on $businessDate already settled — skipped (idempotent)" }
+            return quote
+        }
+
+        val newBalance =
+            investorRepo.debitBalanceIfSufficient(
+                accountId = account.id,
+                amount = amount,
+                now = LocalDateTime.now(clock),
+                // Выплата = капитал + реализованный P&L: прибыль зачисляется на баланс
+                // при выплате, иначе сумма всегда превышала бы баланс (прежний
+                // `max(0, …)` просто прощал разницу).
+                bookedProfit = quote.attributedPnL,
+            )
+        if (newBalance == null) {
+            // Компенсация claim'а: транзакция не должна остаться в леджере без списания.
+            investorRepo.deleteTransaction(transaction.id)
+            throw IllegalArgumentException(
+                "Insufficient balance for clearing $investorId: ${account.balance} < $amount",
             )
         }
-        logger.info { "Clearing settled for $investorId: $amount ₽ on ${requestedDate.toLocalDate()}" }
+        logger.info { "Clearing settled for $investorId: $amount ₽ on $businessDate (balance=$newBalance)" }
         return quote
     }
 
@@ -167,5 +189,9 @@ class ClearingService(
             "poolEquity" to contributed.add(realized),
             "openPositions" to positionRepo.findByStatus(com.trading.bot.model.PositionStatus.OPEN).size,
         )
+    }
+
+    private companion object {
+        private val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
     }
 }

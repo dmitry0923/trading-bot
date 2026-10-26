@@ -94,4 +94,81 @@ class AlorTokenProviderTest {
                 server.stop(0)
             }
         }
+
+    /**
+     * Регресс: при сбое refresh `tokenExpiresAt` оставался EPOCH, поэтому КАЖДЫЙ
+     * `actualToken()` брал мьютекс и делал 5-секундную HTTP-попытку (head-of-line
+     * blocking всех REST/WS-вызовов заказа — «непрерывный цикл Token refresh failed»).
+     * В окне backoff попыток должно быть РОВНО одна.
+     */
+    @Test
+    fun `failed refresh is throttled to one http attempt within backoff window`(): Unit =
+        runBlocking {
+            val attempts = AtomicInteger()
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.executor = Executors.newCachedThreadPool()
+            server.createContext("/refresh") { exchange ->
+                attempts.incrementAndGet()
+                exchange.sendResponseHeaders(500, -1)
+                exchange.close()
+            }
+            server.start()
+            try {
+                val alorConfig =
+                    AlorConfig().apply {
+                        oauthUrl = "http://127.0.0.1:${server.address.port}/refresh"
+                        token = "stale-token"
+                        refreshToken = "refresh-token"
+                    }
+                val provider = AlorTokenProvider(alorConfig, jacksonObjectMapper())
+
+                assertEquals("stale-token", provider.actualToken())
+                assertEquals("stale-token", provider.actualToken())
+                assertEquals("stale-token", provider.actualToken())
+
+                assertEquals(1, attempts.get(), "в окне backoff HTTP-refresh выполняется один раз")
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `refresh is retried after backoff expires`(): Unit =
+        runBlocking {
+            val attempts = AtomicInteger()
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.executor = Executors.newCachedThreadPool()
+            server.createContext("/refresh") { exchange ->
+                if (attempts.incrementAndGet() == 1) {
+                    exchange.sendResponseHeaders(500, -1)
+                } else {
+                    val body = """{"AccessToken":"fresh-token"}""".toByteArray()
+                    exchange.responseHeaders.add("Content-Type", "application/json")
+                    exchange.sendResponseHeaders(200, body.size.toLong())
+                    exchange.responseBody.use { it.write(body) }
+                }
+                exchange.close()
+            }
+            server.start()
+            try {
+                val alorConfig =
+                    AlorConfig().apply {
+                        oauthUrl = "http://127.0.0.1:${server.address.port}/refresh"
+                        token = "stale-token"
+                        refreshToken = "refresh-token"
+                    }
+                val provider = AlorTokenProvider(alorConfig, jacksonObjectMapper())
+
+                assertEquals("stale-token", provider.actualToken())
+                assertEquals(1, attempts.get())
+
+                // Первая пауза backoff — 1 с.
+                Thread.sleep(1_100)
+
+                assertEquals("fresh-token", provider.actualToken())
+                assertEquals(2, attempts.get(), "после backoff refresh повторяется")
+            } finally {
+                server.stop(0)
+            }
+        }
 }

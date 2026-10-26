@@ -182,7 +182,18 @@ class CloseFillProcessor(
             }
             unknownCloseReconcileCounts.remove(positionId)
             val avg = execution.avgPrice ?: expectedPrice
-            val cumulativeFill = execution.filledQuantity
+            // Статус FILLED без количества (Alor иногда не отдаёт ни filledQty,
+            // ни filledQuantity; SIM тоже возвращает FILLED/0) — это полный филл
+            // остатка. Раньше delta = 0 → «skipping», и позиция оставалась
+            // OPEN+pendingClose навсегда (docs/28 §3.3, скан-1 P1-1).
+            val cumulativeFill =
+                if (execution.filledQuantity <= 0 &&
+                    execution.status.uppercase() in FILLED_WITHOUT_QTY_STATUSES
+                ) {
+                    fresh.cumulativeCloseFillQty + fresh.quantity
+                } else {
+                    execution.filledQuantity
+                }
             val prevApplied = fresh.cumulativeCloseFillQty
             val delta = cumulativeFill - prevApplied
             if (delta <= 0) {
@@ -540,6 +551,9 @@ class CloseFillProcessor(
         }
 
     private companion object {
+        /** Статусы «исполнен полностью»: при них отсутствие количества = весь объём. */
+        val FILLED_WITHOUT_QTY_STATUSES: Set<String> = setOf("FILLED", "EXECUTED", "MATCHED")
+
         /** Бизнес-зона бота (Moscow Exchange / авто-стоп/дневные лимиты). */
         val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
     }

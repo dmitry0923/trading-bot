@@ -189,6 +189,19 @@ class DecisionEngine(
         }
 
         val direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
+
+        // OBI-гейт (микроструктура стакана): противодавление сильнее
+        // trading.obi-entry-threshold → вход отклоняется. Порог 0 = выключено
+        // (дефолт: OBI-признак не подтверждён research-прогонами), нет наблюдения
+        // OBI по тикеру — не блокируем.
+        if (marketDataGate.isObiOpposing(ticker, direction)) {
+            logger.warn { "OBI opposing entry $ticker $direction — entry blocked" }
+            meterRegistry
+                .counter("entry.rejected", Tags.of("ticker", ticker, "reason", "OBI_OPPOSING"))
+                .increment()
+            return
+        }
+
         val spec = instrumentsConfig.find(ticker)
         if (spec == null) {
             logger.error { "No instrument spec for $ticker — entry blocked (unknown instrument)" }
@@ -475,7 +488,9 @@ class DecisionEngine(
         // Финальное риск-решение сделки: сигнал + риск-вход + размер + параметры
         // заявки схлопываются в [TradeRiskDecision] и прогоняются через исполнение
         // (position/логи/история стратегии) без дублирования полей.
-        val decision = TradeRiskDecision.from(signal, request, finalSize, params)
+        // requestedQuantity — размер ДО портфельного SCALE (`size`, не `finalSize`):
+        // иначе после SCALE исходный намеренный объём терялся.
+        val decision = TradeRiskDecision.from(signal, request, finalSize, params, requestedQuantity = size.quantity)
         val opened =
             gateway.placeEntryOrder(
                 decision.ticker,

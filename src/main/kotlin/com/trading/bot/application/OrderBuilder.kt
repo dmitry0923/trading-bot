@@ -154,6 +154,7 @@ class OrderBuilder(
         strategyRepo.updateOrderParams(
             cycleId = decision.cycleId,
             ticker = decision.ticker,
+            timeframe = decision.timeframe,
             quantity = decision.quantity,
             stopLoss = decision.stopLoss,
             takeProfit = decision.takeProfit,

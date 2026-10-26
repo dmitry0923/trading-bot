@@ -549,6 +549,37 @@ class DecisionEngineTest {
             1.0,
             meterRegistry.counter("test.portfolio.scaled", Tags.of("ticker", "Si")).count(),
         )
+        // Регресс: после SCALE requestedQuantity обязан остаться ДО-масштабным
+        // (5), иначе исходный намеренный объём терялся и downstream-аналитика
+        // («adaptive qty=…, kelly=…») показывала одно и то же число дважды.
+        assertEquals(2, profile.lastDecision?.quantity)
+        assertEquals(5, profile.lastDecision?.requestedQuantity)
+    }
+
+    @Test
+    fun `obi opposing gate blocks entry without printing an order`() {
+        Mockito.`when`(marketDataGate.isObiOpposing("Si", PositionDirection.LONG)).thenReturn(true)
+        val profile = FakeEntryProfile()
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(
+            1.0,
+            meterRegistry.counter("entry.rejected", Tags.of("ticker", "Si", "reason", "OBI_OPPOSING")).count(),
+        )
+    }
+
+    @Test
+    fun `obi gate pass allows entry`() {
+        Mockito.`when`(marketDataGate.isObiOpposing("Si", PositionDirection.LONG)).thenReturn(false)
+        val profile = FakeEntryProfile()
+        runBlocking {
+            engine(profile).openPosition(signal(), gateway())
+        }
+
+        assertEquals(1, gatewayCalls)
     }
 
     @Test
@@ -682,6 +713,7 @@ class DecisionEngineTest {
         var onOpenedCalls = 0
         var lastSizeForOrderParams: PositionSizeResult? = null
         var lastOpenPositions: List<Position>? = null
+        var lastDecision: TradeRiskDecision? = null
 
         override val instrumentType: InstrumentType = InstrumentType.FUTURES
         override val metricPrefix: String = "test"
@@ -766,6 +798,7 @@ class DecisionEngineTest {
             opened: Position,
         ) {
             onOpenedCalls++
+            lastDecision = decision
         }
     }
 

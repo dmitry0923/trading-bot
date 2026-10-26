@@ -15,7 +15,9 @@ import org.springframework.context.event.EventListener
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
+import java.time.Clock
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -38,6 +40,8 @@ import java.time.format.DateTimeFormatter
 @Service
 class PartitionMaintenanceService(
     private val databaseClient: DatabaseClient,
+    /** Бизнес-время (МСК): `positions.opened_at` пишется Московским временем. */
+    private val clock: Clock = Clock.system(BUSINESS_ZONE),
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -56,6 +60,7 @@ class PartitionMaintenanceService(
         private val MONTH = DateTimeFormatter.ofPattern("yyyyMM")
         private val TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
         private const val LOOKAHEAD_MONTHS = 3
+        private val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
 
         private val TABLES =
             listOf(
@@ -64,11 +69,21 @@ class PartitionMaintenanceService(
             )
     }
 
+    /**
+     * Текущий месяц делового календаря (МСК).
+     *
+     * `YearMonth.now()` брал месяц JVM-зоны (в Docker — UTC): 1-го числа
+     * 00:00–03:00 МСК это ещё прошлый месяц, партиция текущего месяца не
+     * создавалась, строки падали в `positions_default`, а последующий
+     * `CREATE TABLE ... PARTITION OF` падал на ATTACH.
+     */
+    internal fun currentMonth(): YearMonth = YearMonth.now(clock)
+
     /** Стартовая гарантия: партиция текущего месяца создаётся до первого торгового цикла. */
     @EventListener(ApplicationReadyEvent::class)
     fun init() {
         try {
-            runBlocking { ensureMonths(YearMonth.now(), 1) }
+            runBlocking { ensureMonths(currentMonth(), 1) }
         } catch (e: Exception) {
             logger.warn(e) { "Partition maintenance init failed" }
         }
@@ -79,7 +94,7 @@ class PartitionMaintenanceService(
     fun maintain() {
         scope.launch {
             try {
-                ensureMonths(YearMonth.now(), LOOKAHEAD_MONTHS)
+                ensureMonths(currentMonth(), LOOKAHEAD_MONTHS)
             } catch (e: Exception) {
                 logger.error(e) { "Partition maintenance failed" }
             }

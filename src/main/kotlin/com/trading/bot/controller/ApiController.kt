@@ -99,6 +99,7 @@ import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
 import java.time.LocalTime
+import java.time.ZoneId
 import java.util.UUID
 
 /**
@@ -2053,7 +2054,7 @@ class ApiController(
         @RequestParam(defaultValue = "14") days: Int,
     ): Map<String, TradeStats> {
         meterRegistry.counter("api.analytics.trade-stats").increment()
-        return tradeAnalysisService.analyzeLastNDays(days)
+        return tradeAnalysisService.analyzeLastNDays(clampAnalyticsDays(days))
     }
 
     @GetMapping("/analytics/adaptive-params/{ticker}")
@@ -2111,7 +2112,7 @@ class ApiController(
                 Tags
                     .of("ticker", ticker),
             ).increment()
-        return tradeAnalysisService.timePatternAnalysis(ticker, days)
+        return tradeAnalysisService.timePatternAnalysis(ticker, clampAnalyticsDays(days))
     }
 
     @GetMapping("/analytics/health")
@@ -2211,13 +2212,13 @@ class ApiController(
     suspend fun getClearingQuote(
         @RequestParam investorId: UUID,
         @RequestParam(required = false) date: LocalDateTime?,
-    ) = clearingService.calculateWithdrawal(investorId, date ?: LocalDateTime.now())
+    ) = clearingService.calculateWithdrawal(investorId, date ?: LocalDateTime.now(ZoneId.of("Europe/Moscow")))
 
     @PostMapping("/clearing/settle")
     suspend fun settleClearing(
         @RequestParam investorId: UUID,
         @RequestParam(required = false) date: LocalDateTime?,
-    ) = clearingService.settleWithdrawal(investorId, date ?: LocalDateTime.now())
+    ) = clearingService.settleWithdrawal(investorId, date ?: LocalDateTime.now(ZoneId.of("Europe/Moscow")))
 
     @GetMapping("/clearing/pool")
     suspend fun getClearingPool() = clearingService.poolStats()
@@ -2322,3 +2323,11 @@ class ApiController(
         return mapOf("stopped" to false)
     }
 }
+
+/**
+ * Ограничивает окно аналитики допустимым диапазоном (как
+ * `TradingAccountController.dailyPnlHistory`). Без зажима `days=-5` уводил
+ * `since` в будущее, а `days=100000` растягивал окно на всю таблицу сделок
+ * (полный скан на каждый запрос дашборда).
+ */
+internal fun clampAnalyticsDays(days: Int): Int = days.coerceIn(1, 365)

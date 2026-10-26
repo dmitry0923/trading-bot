@@ -128,8 +128,6 @@ class ExecutionReconciler(
                     abandonEntry(pos, CloseReason.ENTRY_REJECTED)
                     return
                 }
-                if (execution.filledQuantity <= 0) return
-
                 val requestedQty =
                     objectMapper
                         .readTree(outbox.payloadJson)
@@ -137,7 +135,15 @@ class ExecutionReconciler(
                         .asInt(0)
                         .takeIf { it > 0 }
                         ?: pos.quantity
-                val cumulative = execution.filledQuantity.coerceIn(1, requestedQty)
+                // FILLED без количества (SIM и часть ответов Alor) — это полный филл:
+                // иначе pendingEntry не разрешается никогда и вход остаётся без SL/TP
+                // (docs/28 §3.3, скан-1 P1-1).
+                val filledWithoutQty =
+                    execution.filledQuantity <= 0 &&
+                        execution.status.uppercase() in FILLED_WITHOUT_QTY_STATUSES
+                if (execution.filledQuantity <= 0 && !filledWithoutQty) return
+                val cumulative =
+                    if (filledWithoutQty) requestedQty else execution.filledQuantity.coerceIn(1, requestedQty)
                 val remainder = requestedQty - cumulative
 
                 if (remainder > 0) {
@@ -280,12 +286,16 @@ class ExecutionReconciler(
             return
         }
 
-        // Order is still live or filled — wait for cancel to complete
+        // Ордер ещё жив ИЛИ уже исполнен. Исполнение — обычная гонка «cancel
+        // опоздал»: раньше здесь писали только WARN, позиция навсегда оставалась
+        // pendingClose, а реконсилятор дёргал REST на каждом тике (docs/28 §3.3,
+        // скан-1 P1-2). Применяем филл через дельта-модель.
         if (isFilledStatus(execution)) {
             logger.warn {
-                "Close order $orderId for ${pos.ticker} still FILLED/PARTIALLY_FILLED " +
-                    "(status=${execution.status}, filled=${execution.filledQuantity}) — waiting for cancel"
+                "Close order $orderId for ${pos.ticker} is FILLED/PARTIALLY_FILLED " +
+                    "(status=${execution.status}, filled=${execution.filledQuantity}) — applying fill, not waiting"
             }
+            confirmCloseFill(pos, pos.currentPrice ?: pos.entryPrice, pos.closeReason ?: CloseReason.RECONCILIATION)
         }
     }
 
@@ -353,6 +363,9 @@ class ExecutionReconciler(
     }
 
     private companion object {
+        /** Статусы «исполнен полностью»: при них отсутствие количества = весь объём. */
+        val FILLED_WITHOUT_QTY_STATUSES: Set<String> = setOf("FILLED", "EXECUTED", "MATCHED")
+
         /** `purpose` entry-ордера в outbox (фильтр от SL/TP/close строк позиции). */
         const val PURPOSE_ENTRY = "entry"
 

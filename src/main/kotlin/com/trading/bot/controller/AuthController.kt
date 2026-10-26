@@ -5,6 +5,7 @@ import com.trading.bot.config.security.JwtService
 import com.trading.bot.config.security.LoginAttemptTracker
 import com.trading.bot.service.RefreshTokenService
 import jakarta.servlet.http.Cookie
+import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.http.HttpStatus
 import org.springframework.security.authentication.AuthenticationManager
@@ -40,8 +41,11 @@ class AuthController(
     suspend fun login(
         @RequestBody request: LoginRequest,
         response: HttpServletResponse,
+        httpRequest: HttpServletRequest,
     ): Map<String, Any> {
-        val key = request.username
+        // Ключ блокировки — username вместе с IP клиента: иначе атакующий блокирует
+        // вход оператору, просто набрав 10 неверных паролей его учётной записи.
+        val key = loginAttemptTracker.keyFor(request.username, httpRequest.remoteAddr)
         loginAttemptTracker.check(key)
         val authentication =
             try {

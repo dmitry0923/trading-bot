@@ -3,11 +3,14 @@ package com.trading.bot.application
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.client.WsStream
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.domain.microstructure.ObiCalculator
+import com.trading.bot.model.PositionDirection
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -29,9 +32,13 @@ import java.util.concurrent.atomic.AtomicLong
  * в течение которого статус формально CONNECTED, а данные уже устарели.
  *
  * Дополнительно (Stage 2 microstructure):
- * - Если OBI (Order Book Imbalance) противоречит направлению входа силаьнее порога
- *   TradingConfig.obiEntryThreshold — вход блокируется (защита от Anti-trend entries).
- *   BUY заблокирован при obi < -threshold, SELL — при obi > threshold.
+ * - Если OBI (Order Book Imbalance) противоречит направлению входа сильнее порога
+ *   [TradingConfig.obiEntryThreshold] — вход блокируется (защита от Anti-trend entries).
+ *   BUY заблокирован при obi < -threshold, SELL — при obi > threshold
+ *   ([com.trading.bot.domain.microstructure.ObiCalculator.isOpposing]); проверка
+ *   вызывается из DecisionEngine. Порог 0.0 = проверка выключена (дефолт — гейт off:
+ *   OBI-признак не подтверждён research-прогонами). Нет наблюдения OBI по тикеру —
+ *   не блокируем (unknown ≠ противодавление).
  * - Последние OBI-значения кэшируются из WS-тиков (внутри TradingBotService).
  *
  * Мониторинг ОТКРЫТЫХ позиций этим gate не блокируется: SL/TP-защита продолжает
@@ -40,7 +47,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Метрики:
  * - market.data.age_ms{ticker} — возраст последнего принятого источника цены
  * - bot.entry.rejected{ticker, reason=STALE_DATA} — блокировка входа
- * - bot.entry.rejected{ticker, reason=OBI_OPPosing} — блокировка по OBI
+ * - entry.rejected{ticker, reason=OBI_OPPOSING} — блокировка по OBI (DecisionEngine)
  * - market.data.obi{ticker} — последний известный OBI
  */
 @Component
@@ -81,6 +88,31 @@ class MarketDataGate(
                 meterRegistry.gauge("market.data.obi", Tags.of("ticker", t), ref) { it.get().toDouble() / 10000.0 }
                 ref
             }.set(scaled)
+    }
+
+    /**
+     * Противоречит ли последний известный OBI направлению входа сильнее порога
+     * [TradingConfig.obiEntryThreshold] (микроструктурный гейт входа).
+     *
+     * Конфигурация: порог `<= 0` — проверка выключена (дефолт, гейт off); нет
+     * наблюдения OBI по тикеру — тоже не блокируем (unknown ≠ противодавление).
+     * Иначе BUY (LONG) блокируется при `obi < -threshold`, SELL (SHORT) — при
+     * `obi > threshold` (та же семантика, что [ObiCalculator.isOpposing]).
+     *
+     * @param ticker тикер (регистр не важен)
+     * @param direction направление входа
+     * @return true — вход нужно отклонить по OBI
+     */
+    fun isObiOpposing(
+        ticker: String,
+        direction: PositionDirection,
+    ): Boolean {
+        val threshold = tradingConfig.obiEntryThreshold
+        if (threshold <= 0.0) return false
+        val scaled = lastObi[ticker.uppercase()]?.get() ?: return false
+        val obi = BigDecimal(scaled).divide(BigDecimal("10000"), 4, RoundingMode.HALF_UP)
+        val side = if (direction == PositionDirection.LONG) "buy" else "sell"
+        return ObiCalculator.isOpposing(obi, side, BigDecimal(threshold.toString()))
     }
 
     /**

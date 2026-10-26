@@ -122,6 +122,25 @@ class NetEvGateTest {
     }
 
     @Test
+    fun `futures execution cost uses pointValue not lotSize`() {
+        // Si: lotSize = 1, но 1.0 пункт цены = 1000 ₽ (pointValue).
+        // Старый код умножал на lotSize → стоимость пересечения спреда была
+        // занижена в 1000 раз, и гейт фактически не работал (скан-1 P1).
+        val snapshot =
+            MarketSnapshot(
+                ticker = "Si",
+                currentPrice = BigDecimal("90000"),
+                bid = BigDecimal("89999"),
+                ask = BigDecimal("90001"),
+            )
+        // halfSpread = 1.0 × 1000 × 2 × 1.5 = 3000 ₽ на контракт
+        val result = gate().check("Si", BigDecimal("100"), snapshot)
+        val blocked = result as NetEvGate.GateResult.Blocked
+        assertEquals(0, BigDecimal("3000").compareTo(blocked.executionCost!!))
+        assertTrue(blocked.netEV!! < BigDecimal.ZERO)
+    }
+
+    @Test
     fun `wide spread can push positive expected net below threshold`() {
         // expectedNet = 12 RUB — just barely above threshold of 10
         // Wide spread: 1% of 250 = 2.5 per side

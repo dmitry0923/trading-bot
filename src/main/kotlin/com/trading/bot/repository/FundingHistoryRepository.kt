@@ -74,10 +74,12 @@ class FundingHistoryRepository(
     }
 
     /**
-     * Массовая идемпотентная запись одним multi-row INSERT
-     * (ON CONFLICT DO NOTHING по (ticker, clearing_date)).
+     * Массовая идемпотентная запись одним multi-row INSERT с upsert по
+     * (ticker, clearing_date): повторная запись **обновляет** значения
+     * (нужно после исправления конвертации, например множителя lotSize —
+     * `DO NOTHING` молча оставлял старые, искажённые значения).
      *
-     * @return количество реально вставленных строк (конфликты не считаются)
+     * @return количество записанных строк (вставки + обновления)
      */
     suspend fun saveAll(records: List<FundingHistoryRecord>): Int {
         if (records.isEmpty()) return 0
@@ -98,7 +100,10 @@ class FundingHistoryRepository(
                 """
                 INSERT INTO funding_history (ticker, clearing_date, raw_value, value_rub_per_contract, source)
                 VALUES $values
-                ON CONFLICT (ticker, clearing_date) DO NOTHING
+                ON CONFLICT (ticker, clearing_date) DO UPDATE SET
+                    raw_value = EXCLUDED.raw_value,
+                    value_rub_per_contract = EXCLUDED.value_rub_per_contract,
+                    source = EXCLUDED.source
                 """.trimIndent()
             var spec = databaseClient.sql(sql)
             bindings.forEach { (name, value) -> spec = spec.bind(name, value) }

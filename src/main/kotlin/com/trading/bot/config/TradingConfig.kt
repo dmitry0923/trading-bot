@@ -26,7 +26,8 @@ import org.springframework.stereotype.Component
  *   ArbitrageStrategy всегда HOLD
  * @property obiEntryThreshold порог |OBI| для блокировки входа (0.0..1.0):
  *   BUY блокируется при obi < -threshold, SELL — при obi > threshold.
- *   0.0 = проверка отключена (по умолчанию 0.5 = умеренная фильтрация)
+ *   0.0 = проверка отключена (дефолт: гейт off — OBI-признак не подтверждён
+ *   research-прогонами; включается осознанно через `trading.obi-entry-threshold`)
  */
 @Component
 @ConfigurationProperties(prefix = "trading")
@@ -53,7 +54,7 @@ class TradingConfig {
     var marketDataMaxAgeMs: Long = 15_000
     var candleStaleBufferMs: Long = 120_000
     var pairs: Map<String, String> = emptyMap()
-    var obiEntryThreshold: Double = 0.5
+    var obiEntryThreshold: Double = 0.0
 
     // ===== Signal freshness / LLM advisory budget (P1-аудит) =====
 

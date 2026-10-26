@@ -78,15 +78,18 @@ class AsyncTraceStorage(
     ): String? {
         if (!config.enabled) return null
         val objectKey = key ?: traceObjectKey(trace)
+        // Счётчик увеличивается ДО trySend: консюмер может уменьшить его сразу после
+        // приёма элемента, и gauge `trace.buffer.size` уходил в минус (скан-1 P2).
+        queued.incrementAndGet()
         val result: ChannelResult<Unit> = buffer.trySend(PendingWrite(trace, objectKey))
         return when {
             result.isSuccess -> {
-                queued.incrementAndGet()
                 meterRegistry.counter("trace.write.async", Tags.of("result", "queued")).increment()
                 objectKey
             }
 
             else -> {
+                queued.decrementAndGet()
                 logger.warn { "Async trace buffer full; writing synchronously" }
                 meterRegistry.counter("trace.write.async", Tags.of("result", "sync_fallback")).increment()
                 delegate.save(trace, objectKey)

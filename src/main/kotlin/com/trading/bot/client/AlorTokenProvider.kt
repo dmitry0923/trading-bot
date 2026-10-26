@@ -34,6 +34,14 @@ import java.util.Base64
  *
  * Fail-safe: при ошибке refresh возвращается ранее известный токен
  * (fail-soft — торговля не должна падать из-за непродления токена).
+ *
+ * Троттлинг сбоев: неудачный refresh не оставляет `tokenExpiresAt = EPOCH` как
+ * единственный маркер (тогда КАЖДЫЙ вызов [actualToken] брал мьютекс и делал
+ * 5-секундный HTTP — head-of-line blocking всех REST/WS-вызовов, наблюдалось
+ * как непрерывный цикл «Token refresh failed»). После сбоя повторный HTTP
+ * откладывается на экспоненциальный backoff ([REFRESH_BACKOFF_BASE_SECONDS] …
+ * [REFRESH_BACKOFF_MAX_SECONDS]); в окне backoff возвращается последний
+ * известный токен без мьютекса и без сети.
  */
 @Component
 class AlorTokenProvider(
@@ -51,11 +59,23 @@ class AlorTokenProvider(
     @Volatile
     private var tokenExpiresAt: Instant = Instant.EPOCH
 
+    /** Раньше этого момента повторный refresh не выполняется (backoff после сбоя). */
+    @Volatile
+    private var nextAttemptAt: Instant = Instant.EPOCH
+
+    /** Число подряд неудачных refresh — степень двойки для backoff (под мьютексом). */
+    private var consecutiveFailures: Int = 0
+
     suspend fun actualToken(): String {
         if (isFresh()) return accessToken
+        // Окно backoff: сеть и мьютекс не трогаем — отдаём последний известный токен,
+        // иначе каждый вызов заново блокирует остальные REST/WS-вызовы на 5 с.
+        if (isRefreshThrottled()) return lastKnownToken()
         return refreshMutex.withLock {
-            // Double-check: пока ждали мьютекс, другой вызов мог уже обновить токен.
+            // Double-check: пока ждали мьютекс, другой вызов мог уже обновить токен
+            // (или наоборот — словить сбой и открыть окно backoff).
             if (isFresh()) return@withLock accessToken
+            if (isRefreshThrottled()) return@withLock lastKnownToken()
             if (accessToken.isBlank()) accessToken = alorConfig.token
             if (alorConfig.refreshToken.isBlank()) return@withLock accessToken
             refreshLocked()
@@ -63,6 +83,15 @@ class AlorTokenProvider(
     }
 
     private fun isFresh(): Boolean = accessToken.isNotBlank() && Instant.now().isBefore(tokenExpiresAt.minusSeconds(60))
+
+    /** Абсолютный запрет refresh до [nextAttemptAt] (сбой уже случился). */
+    private fun isRefreshThrottled(): Boolean = Instant.now().isBefore(nextAttemptAt)
+
+    /**
+     * Последний известный токен без мутации состояния: пустой кэш -> значение
+     * из конфигурации (может быть протухшим — fail-soft, как и раньше).
+     */
+    private fun lastKnownToken(): String = accessToken.ifBlank { alorConfig.token }
 
     /** Refresh под захваченным [refreshMutex] — единственная точка HTTP-вызова. */
     private suspend fun refreshLocked(): String {
@@ -81,17 +110,36 @@ class AlorTokenProvider(
             val refreshed = j.path("AccessToken").asString("").ifBlank { j.path("accessToken").asString("") }
             if (refreshed.isBlank()) {
                 logger.warn { "Token refresh returned no AccessToken, using existing token" }
+                onRefreshFailure()
                 return accessToken
             }
             accessToken = refreshed
             tokenExpiresAt = expiryFromJwt(refreshed)
+            consecutiveFailures = 0
+            nextAttemptAt = Instant.EPOCH
             alorConfig.token = refreshed
             logger.info { "Alor access token refreshed (expires at $tokenExpiresAt)" }
             accessToken
         } catch (e: Exception) {
             logger.warn(e) { "Token refresh failed, using existing token" }
+            onRefreshFailure()
             accessToken
         }
+    }
+
+    /**
+     * Учитывает сбой refresh: экспоненциальный backoff 1, 2, 4, … 60 с.
+     * Вызывается только под [refreshMutex] — счётчик не нуждается в атомарности.
+     */
+    private fun onRefreshFailure() {
+        consecutiveFailures += 1
+        val backoffSeconds =
+            minOf(
+                REFRESH_BACKOFF_MAX_SECONDS,
+                REFRESH_BACKOFF_BASE_SECONDS shl (consecutiveFailures - 1).coerceAtMost(6),
+            )
+        nextAttemptAt = Instant.now().plusSeconds(backoffSeconds)
+        logger.warn { "Token refresh throttled for ${backoffSeconds}s (failures=$consecutiveFailures)" }
     }
 
     /**
@@ -115,5 +163,11 @@ class AlorTokenProvider(
     private companion object {
         /** Alor не отдаёт TTL в теле refresh-ответа; access-токен живёт 30 минут. */
         const val FALLBACK_TTL_SECONDS = 1_800L
+
+        /** Первая пауза после сбоя refresh (экспоненциально удваивается). */
+        const val REFRESH_BACKOFF_BASE_SECONDS = 1L
+
+        /** Потолок backoff: не чаще одного HTTP-refresh в минуту при затяжном сбое. */
+        const val REFRESH_BACKOFF_MAX_SECONDS = 60L
     }
 }

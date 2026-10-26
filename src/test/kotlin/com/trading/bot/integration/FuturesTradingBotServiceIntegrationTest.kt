@@ -4,6 +4,7 @@ import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.TradingBlockReason
 import com.trading.bot.application.TradingGate
 import com.trading.bot.application.TradingHoursGuard
+import com.trading.bot.application.decision.NetEvGate
 import com.trading.bot.application.risk.FuturesRiskEngine
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.OrderPurpose
@@ -96,6 +97,14 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @MockitoBean
     lateinit var marketDataGate: MarketDataGate
 
+    /**
+     * NET EV gate выключен в этом классе: тест проверяет поля риска (SL/TP/ликвид.),
+     * а фикстура с TP = 1 пункт (=1000 ₽) после исправления pointValue даёт
+     * отрицательный EV — гейт корректно блокирует вход (см. docs/28 §3.3, скан-1).
+     */
+    @MockitoBean
+    lateinit var netEvGate: NetEvGate
+
     @BeforeEach
     fun setup() {
         runBlocking { positionRepo.deleteAll() }
@@ -113,6 +122,14 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
         // Данные всегда «свежие»: эти тесты проверяют риск-движок, а не MarketDataGate.
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
+        Mockito
+            .`when`(
+                netEvGate.check(
+                    Mockito.anyString(),
+                    Mockito.nullable(BigDecimal::class.java),
+                    Mockito.nullable(com.trading.bot.model.dto.MarketSnapshot::class.java),
+                ),
+            ).thenReturn(NetEvGate.GateResult.Pass)
         // Очищаем кэш свечей в Redis: addCandles() — additive (ZADD), и свечи с
         // разными timestamp'ами (LocalDateTime.now()) накапливаются между @BeforeEach.
         // Это завышало ATR → stopLossPoints > 50 → ZERO_RISK_SIZE для Si.

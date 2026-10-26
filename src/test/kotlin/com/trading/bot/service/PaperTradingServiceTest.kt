@@ -19,6 +19,8 @@ import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -149,8 +151,8 @@ class PaperTradingServiceTest {
         service.onPositionClosed(closedEvent("cycle-1", BigDecimal("100")))
 
         awaitCondition { markedResults.size == 2 }
-        assertEquals(BigDecimal("100"), markedResults["cycle-1/CONTROL"])
-        assertEquals(BigDecimal("100"), markedResults["cycle-1/VARIANT"])
+        assertEquals(BigDecimal("100"), markedResults["cycle-1/CONTROL/SBER"])
+        assertEquals(BigDecimal("100"), markedResults["cycle-1/VARIANT/SBER"])
         awaitCondition { counter("experiment.outcome.marked", "arm", "VARIANT") >= 1.0 }
         assertEquals(100.0, counter("experiment.outcome.pnl_profit", "arm", "CONTROL"))
         assertEquals(100.0, counter("experiment.outcome.pnl_profit", "arm", "VARIANT"))
@@ -166,7 +168,7 @@ class PaperTradingServiceTest {
         service.onPositionClosed(closedEvent("cycle-1", BigDecimal("100")))
 
         awaitCondition { markedResults.size == 2 }
-        assertEquals(BigDecimal("-100"), markedResults["cycle-1/VARIANT"])
+        assertEquals(BigDecimal("-100"), markedResults["cycle-1/VARIANT/SBER"])
         awaitCondition { counter("experiment.outcome.pnl_loss", "arm", "VARIANT") >= 100.0 }
         assertEquals(100.0, counter("experiment.outcome.pnl_loss", "arm", "VARIANT"))
         assertEquals(0.0, counter("experiment.outcome.win", "arm", "VARIANT"))
@@ -181,7 +183,7 @@ class PaperTradingServiceTest {
         service.onPositionClosed(closedEvent("cycle-1", BigDecimal("250")))
 
         awaitCondition { markedResults.size == 2 }
-        assertEquals(BigDecimal.ZERO, markedResults["cycle-1/VARIANT"])
+        assertEquals(BigDecimal.ZERO, markedResults["cycle-1/VARIANT/SBER"])
         awaitCondition { counter("experiment.outcome.marked", "arm", "VARIANT") >= 1.0 }
         assertEquals(0.0, counter("experiment.outcome.win", "arm", "VARIANT"))
         assertEquals(1.0, counter("experiment.outcome.win", "arm", "CONTROL"))
@@ -195,19 +197,21 @@ class PaperTradingServiceTest {
         service.onPositionClosed(closedEvent("cycle-1", BigDecimal("100")))
 
         awaitCondition { markedResults.size == 2 }
-        assertEquals(BigDecimal("200.0000"), markedResults["cycle-1/VARIANT"])
+        assertEquals(BigDecimal("200.0000"), markedResults["cycle-1/VARIANT/SBER"])
     }
 
     @Test
     fun `missing control leaves experiment untouched`() {
-        runBlocking { whenever(repository.findByCycleIdAndArm("cycle-1", "CONTROL")).thenReturn(null) }
+        runBlocking {
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "SBER")).thenReturn(emptyList())
+        }
         stubMarkResult()
 
         service.onPositionClosed(closedEvent("cycle-1", BigDecimal("100")))
         Thread.sleep(200)
 
         assertTrue(markedResults.isEmpty(), "nothing may be marked without a control decision")
-        runBlocking { verify(repository, never()).markResult(any(), any(), any()) }
+        runBlocking { verify(repository, never()).markResult(any(), any(), any(), anyOrNull(), any()) }
     }
 
     @Test
@@ -218,8 +222,8 @@ class PaperTradingServiceTest {
         service.onPositionClosed(closedEvent("cycle-1", BigDecimal("-40")))
 
         awaitCondition { markedResults.size == 1 }
-        assertEquals(BigDecimal("-40"), markedResults["cycle-1/CONTROL"])
-        assertFalse(markedResults.containsKey("cycle-1/VARIANT"))
+        assertEquals(BigDecimal("-40"), markedResults["cycle-1/CONTROL/SBER"])
+        assertFalse(markedResults.containsKey("cycle-1/VARIANT/SBER"))
         awaitCondition { counter("experiment.outcome.pnl_loss", "arm", "CONTROL") >= 40.0 }
         assertEquals(40.0, counter("experiment.outcome.pnl_loss", "arm", "CONTROL"))
     }
@@ -229,14 +233,15 @@ class PaperTradingServiceTest {
         service.onPositionClosed(closedEvent(cycleId = null, pnl = BigDecimal("100")))
         Thread.sleep(100)
 
-        runBlocking { verify(repository, never()).findByCycleIdAndArm(any(), any()) }
+        runBlocking { verify(repository, never()).findByCycleIdArmAndTicker(any(), any(), any()) }
         assertTrue(markedResults.isEmpty())
     }
 
     @Test
     fun `repository failure inside outcome marking is swallowed`() {
         runBlocking {
-            whenever(repository.findByCycleIdAndArm("cycle-1", "CONTROL")).thenThrow(RuntimeException("db down"))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "SBER"))
+                .thenThrow(RuntimeException("db down"))
         }
         stubMarkResult()
 
@@ -245,6 +250,38 @@ class PaperTradingServiceTest {
         Thread.sleep(200)
 
         assertTrue(markedResults.isEmpty())
+    }
+
+    @Test
+    fun `multi ticker cycle marks each arm by its own ticker and timeframe`() {
+        val controlSber = decisionRecord("cycle-1").copy(ticker = "SBER", timeframe = "MINUTE_10", quantity = 2)
+        val controlGazp = decisionRecord("cycle-1").copy(ticker = "GAZP", timeframe = "MINUTE_10", quantity = 3)
+        val variantSber = controlSber.copy(arm = "VARIANT", isPaper = true, action = "SELL")
+        val variantGazp = controlGazp.copy(arm = "VARIANT", isPaper = true)
+        runBlocking {
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "SBER")).thenReturn(listOf(controlSber))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "VARIANT", "SBER")).thenReturn(listOf(variantSber))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "GAZP")).thenReturn(listOf(controlGazp))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "VARIANT", "GAZP")).thenReturn(listOf(variantGazp))
+        }
+        stubMarkResult()
+
+        // Раньше `findByCycleIdAndArm(...).one()` падал на двух тикерах в цикле:
+        // исключение глушилось WARN-логом, result_pnl/closed не писались вообще.
+        service.onPositionClosed(closedEvent("cycle-1", BigDecimal("100"), ticker = "SBER"))
+        awaitCondition { markedResults.size == 2 }
+        assertEquals(BigDecimal("100"), markedResults["cycle-1/CONTROL/SBER"])
+        assertEquals(BigDecimal("-100"), markedResults["cycle-1/VARIANT/SBER"])
+
+        service.onPositionClosed(closedEvent("cycle-1", BigDecimal("-50"), ticker = "GAZP"))
+        awaitCondition { markedResults.size == 4 }
+
+        // Каждая рука получает P&L своего тикера, чужие строки не затрагиваются.
+        assertEquals(BigDecimal("-50"), markedResults["cycle-1/CONTROL/GAZP"])
+        assertEquals(BigDecimal("-50"), markedResults["cycle-1/VARIANT/GAZP"])
+        assertEquals(BigDecimal("100"), markedResults["cycle-1/CONTROL/SBER"])
+        assertEquals(BigDecimal("-100"), markedResults["cycle-1/VARIANT/SBER"])
+        runBlocking { verify(repository, never()).markResult(eq("other-cycle"), any(), any(), anyOrNull(), any()) }
     }
 
     // ---------- helpers ----------
@@ -257,11 +294,12 @@ class PaperTradingServiceTest {
 
     private fun stubMarkResult() {
         runBlocking {
-            whenever(repository.markResult(any(), any(), any())).thenAnswer { invocation ->
+            whenever(repository.markResult(any(), any(), any(), anyOrNull(), any())).thenAnswer { invocation ->
                 val cycleId: String = invocation.getArgument(0)
                 val arm: String = invocation.getArgument(1)
-                val pnl: BigDecimal = invocation.getArgument(2)
-                markedResults["$cycleId/$arm"] = pnl
+                val ticker: String = invocation.getArgument(2)
+                val pnl: BigDecimal = invocation.getArgument(4)
+                markedResults["$cycleId/$arm/$ticker"] = pnl
                 null
             }
         }
@@ -269,8 +307,10 @@ class PaperTradingServiceTest {
 
     private fun stubOutcomeLookups(variant: ExperimentDecision?) {
         runBlocking {
-            whenever(repository.findByCycleIdAndArm("cycle-1", "CONTROL")).thenReturn(decisionRecord("cycle-1"))
-            whenever(repository.findByCycleIdAndArm("cycle-1", "VARIANT")).thenReturn(variant)
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "SBER"))
+                .thenReturn(listOf(decisionRecord("cycle-1")))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-1", "VARIANT", "SBER"))
+                .thenReturn(listOfNotNull(variant))
         }
     }
 
@@ -316,10 +356,11 @@ class PaperTradingServiceTest {
     private fun closedEvent(
         cycleId: String?,
         pnl: BigDecimal,
+        ticker: String = "SBER",
     ): PositionClosedEvent =
         PositionClosedEvent(
             positionId = 1L,
-            ticker = "SBER",
+            ticker = ticker,
             pnl = pnl,
             reason = "TAKE_PROFIT",
             cycleId = cycleId,

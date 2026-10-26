@@ -286,6 +286,17 @@ class ProtectionOrderManager(
                 return
             }
             if (isGoneStatus(ex)) {
+                // Терминальный статус ≠ «не исполнено»: CANCELED/EXPIRED/REJECTED
+                // могут нести частичный филл. Раньше он молча терялся → локально
+                // объём больше биржевого → QTY_MISMATCH и hard halt (скан-1 P1-3).
+                if (ex.filledQuantity > pos.cumulativeSlFillQty) {
+                    logger.warn {
+                        "Exchange SL $id for ${pos.ticker} is ${ex.status} but filled=${ex.filledQuantity} " +
+                            "(applied=${pos.cumulativeSlFillQty}) — applying the fill before re-placing"
+                    }
+                    applyExchangeProtectionClose(pos, ex, CloseReason.STOP_LOSS)
+                    return@let
+                }
                 pos.slOrderId = null
                 pos.slOrderPrice = null
                 pos.slPendingReplace = false
@@ -303,6 +314,15 @@ class ProtectionOrderManager(
                 return
             }
             if (isGoneStatus(ex)) {
+                // См. SL-ветку: терминальный статус может нести частичный филл.
+                if (ex.filledQuantity > pos.cumulativeTpFillQty) {
+                    logger.warn {
+                        "Exchange TP $id for ${pos.ticker} is ${ex.status} but filled=${ex.filledQuantity} " +
+                            "(applied=${pos.cumulativeTpFillQty}) — applying the fill before re-placing"
+                    }
+                    applyExchangeProtectionClose(pos, ex, CloseReason.TAKE_PROFIT)
+                    return@let
+                }
                 pos.tpOrderId = null
                 pos.tpOrderPrice = null
                 pos.tpPendingReplace = false

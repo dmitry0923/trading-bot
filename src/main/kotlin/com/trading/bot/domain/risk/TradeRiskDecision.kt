@@ -82,12 +82,20 @@ data class TradeRiskDecision(
         /**
          * Выход риск-пайплайна входа: сигнал + риск-вход + размер + параметры
          * заявки схлопываются в одно решение.
+         *
+         * @param size выход сайзера — размер ДО портфельного SCALE
+         * @param params параметры заявки; `params.quantity` = итог ПОСЛЕ SCALE (попадает в [quantity])
+         * @param requestedQuantity размер ДО портфельного SCALE; по умолчанию равен
+         *   `size.quantity`, поэтому вызовы без SCALE не меняются. Без него после
+         *   SCALE терялся исходный намеренный объём и аналитика
+         *   («adaptive qty=…, kelly=…») показывала одно и то же число дважды.
          */
         fun from(
             signal: Signal,
             request: EntryRequest,
             size: PositionSizeResult,
             params: OrderParams,
+            requestedQuantity: Int = size.quantity,
         ): TradeRiskDecision =
             TradeRiskDecision(
                 ticker = signal.ticker,
@@ -96,7 +104,7 @@ data class TradeRiskDecision(
                 action = signal.action,
                 direction = if (signal.action == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT,
                 quantity = params.quantity,
-                requestedQuantity = size.quantity,
+                requestedQuantity = requestedQuantity,
                 entryPrice = request.entryPrice,
                 targetPrice = signal.targetPrice,
                 stopLoss = params.stopLossPrice,

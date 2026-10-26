@@ -374,6 +374,11 @@ class AlorWebSocketClient(
     /**
      * Разбирает входящее WS-сообщение в ExecutionReport.
      * Возвращает null, если сообщение не относится к ордерам.
+     *
+     * [OrderStatus.FILLED] ставится только при известном `requestedQty` и
+     * `cumulativeFilledQty >= requestedQty`; событие без запрошенного объёма
+     * отдаётся как [OrderStatus.PARTIALLY_FILLED] (полноту решает реконсилятор),
+     * иначе `filled >= 0` делал бы частичный фил полным.
      */
     fun parseExecution(json: String): ExecutionReport? {
         return try {
@@ -419,9 +424,17 @@ class AlorWebSocketClient(
                     .let { if (it == 0) root.path("quantity").asInt(0) else it }
 
             val statusRaw = root.path("status").asString("").lowercase()
+            // FILLED выводится ТОЛЬКО из сравнения исполненного объёма с запрошенным.
+            // Если биржа не сообщила qtyBatch/qty/quantity (requestedQty = 0), сравнение
+            // вырождается в `filled >= 0` и ЛЮБОЕ частичное исполнение объявлялось
+            // ПОЛНЫМ: pendingEntry закрывался, а SL/TP прикрывали лишь часть реальной
+            // позиции (остаток не отслеживался). Такое событие отдаём как
+            // PARTIALLY_FILLED — полноту ордера решает
+            // ExecutionReconciler.resolveEntryViaOutbox по REST-состоянию.
             val status =
                 when {
                     statusRaw.contains("fill") &&
+                        requestedQty > 0 &&
                         cumulativeFilledQty > 0 &&
                         cumulativeFilledQty >= requestedQty -> OrderStatus.FILLED
 

@@ -102,12 +102,15 @@ class FuturesPositionMonitor(
             }
 
             // 3. Подтягивание trailing (только в прибыль, с учётом вариационной маржи)
-            ExitRules.updateFuturesTrailingStop(
-                pos,
-                price,
-                riskConfig.trailingStopPercent,
-                instrumentsConfig.pointValue(pos.ticker),
-            )
+            if (riskConfig.trailingStopEnabled) {
+                ExitRules.updateFuturesTrailingStop(
+                    pos,
+                    price,
+                    riskConfig.trailingStopPercent,
+                    instrumentsConfig.pointValue(pos.ticker),
+                    instrumentsConfig.find(pos.ticker)?.priceStep ?: BigDecimal("0.01"),
+                )
+            }
             positionRepo.save(pos)
             // Сдвиг SL-уровня (trailing) → биржевая защитная заявка перевыставляется
             // (отмена старой + новая на текущем уровне), пока не синхронизированы.

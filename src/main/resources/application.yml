@@ -388,7 +388,9 @@ trading:
   ws-quotes-enabled: ${WS_QUOTES_ENABLED:true}
   market-data-max-age-ms: ${MARKET_DATA_MAX_AGE_MS:15000}
   candle-stale-buffer-ms: ${CANDLE_STALE_BUFFER_MS:120000}
-  obi-entry-threshold: ${OBI_ENTRY_THRESHOLD:0.5}
+  # OBI entry gate: BUY блокируется при obi < -порога, SELL — при obi > порога.
+  # 0 = гейт выключен (дефолт: OBI-признак не подтверждён research-прогонами).
+  obi-entry-threshold: ${OBI_ENTRY_THRESHOLD:0.0}
   # P1-аудит: бюджет LLM-советника + свежесть executable-сигнала после advisor
   advisor-budget-ms: ${ADVISOR_BUDGET_MS:1000}
   signal-max-age-ms: ${SIGNAL_MAX_AGE_MS:15000}

@@ -16,9 +16,12 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /**
@@ -121,6 +124,26 @@ class PartitionMaintenanceIntegrationTest : AbstractTestContainerTest() {
 
             val secondRun = partitionMaintenance.ensureMonths(future, 1)
             assertTrue(secondRun.isEmpty())
+        }
+    }
+
+    @Test
+    fun `business month partition is created at utc month boundary`() {
+        // 2031-10-31T21:30Z = 2031-11-01 00:30 MSK: в UTC ещё октябрь, в бизнес-зоне
+        // уже ноябрь. Прежний `YearMonth.now()` создавал партицию октября, строки
+        // 1-го числа 00:00–03:00 МСК падали в positions_default, а последующий
+        // CREATE TABLE ... PARTITION OF падал на ATTACH.
+        val instant = Instant.parse("2031-10-31T21:30:00Z")
+        val moscow = ZoneId.of("Europe/Moscow")
+        val service = PartitionMaintenanceService(databaseClient, Clock.fixed(instant, moscow))
+
+        runBlocking {
+            assertEquals(YearMonth.of(2031, 11), service.currentMonth())
+
+            val created = service.ensureMonths(service.currentMonth(), 1)
+
+            assertTrue(created.contains("positions_203111"), "созданные партиции: $created")
+            assertTrue(partitionExists("positions_203111"))
         }
     }
 }

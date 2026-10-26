@@ -635,21 +635,34 @@ class PositionRepository(
         val sql =
             """
             UPDATE positions SET
-                ticker = :ticker, direction = :direction, quantity = :quantity, entry_price = :entryPrice,
+                ticker = :ticker, direction = :direction,
+                -- Терминальное состояние побеждает: закрытую позицию нельзя «воскресить»
+                -- устаревшим save() из монитора/менеджера защиты (скан-1 P1-4).
+                quantity = CASE WHEN positions.status = 'CLOSED' THEN positions.quantity ELSE :quantity END,
+                entry_price = CASE WHEN positions.status = 'CLOSED' THEN positions.entry_price ELSE :entryPrice END,
                 current_price = :currentPrice, close_price = :closePrice, stop_loss = :stopLoss,
                 take_profit = :takeProfit, instrument_type = :instrumentType, leverage = :leverage,
                 go_per_contract = :goPerContract, margin_used = :marginUsed, liquidation_price = :liquidationPrice,
                 variation_margin = :variationMargin, stop_loss_points = :stopLossPoints,
-                trailing_stop_price = :trailingStopPrice, pnl = :pnl, status = :status,
-                alor_order_id = :alorOrderId, close_order_id = :closeOrderId,
+                trailing_stop_price = :trailingStopPrice, pnl = :pnl,
+                status = CASE WHEN positions.status = 'CLOSED' THEN positions.status ELSE :status END,
+                alor_order_id = :alorOrderId,
+                close_order_id = CASE WHEN positions.status = 'CLOSED' THEN positions.close_order_id ELSE :closeOrderId END,
                 sl_order_id = :slOrderId, tp_order_id = :tpOrderId,
                 sl_order_price = :slOrderPrice, tp_order_price = :tpOrderPrice,
                 sl_pending_replace = :slPendingReplace, tp_pending_replace = :tpPendingReplace,
                 sl_cancel_pending = :slCancelPending, tp_cancel_pending = :tpCancelPending,
                 close_cancel_pending = :closeCancelPending,
-                pending_close = :pendingClose, pending_entry = :pendingEntry, realized_pnl = :realizedPnl,
-                close_reason = :closeReason, cumulative_close_fill_qty = :cumulativeCloseFillQty,
-                opened_at = :openedAt, closed_at = :closedAt, cycle_id = :cycleId,
+                pending_close = CASE WHEN positions.status = 'CLOSED' THEN FALSE ELSE :pendingClose END,
+                pending_entry = CASE WHEN positions.status = 'CLOSED' THEN FALSE ELSE :pendingEntry END,
+                realized_pnl = :realizedPnl,
+                close_reason = CASE WHEN positions.status = 'CLOSED' THEN positions.close_reason ELSE :closeReason END,
+                cumulative_close_fill_qty =
+                    CASE WHEN positions.status = 'CLOSED' THEN positions.cumulative_close_fill_qty
+                         ELSE :cumulativeCloseFillQty END,
+                opened_at = :openedAt,
+                closed_at = CASE WHEN positions.status = 'CLOSED' THEN positions.closed_at ELSE :closedAt END,
+                cycle_id = :cycleId,
                 account_id = :accountId, funding_unknown = :fundingUnknown
             WHERE id = :id
             """.trimIndent()

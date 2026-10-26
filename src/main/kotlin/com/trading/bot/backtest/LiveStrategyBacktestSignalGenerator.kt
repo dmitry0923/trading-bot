@@ -568,6 +568,9 @@ class EntryFilters(
         if (!emaCrossEnabled) return null
         val unknown = if (emaCrossBlockOnUnknown) StrategyAction.HOLD else null
         if (window.size < 2 || emaCrossFastPeriod < 1 || emaCrossSlowPeriod < 1) return unknown
+        // EMA сеется первым значением, поэтому до slow+1 бара пересечение — артефакт
+        // прогрева, а не сигнал (скан-1 P2).
+        if (window.size < maxOf(emaCrossFastPeriod, emaCrossSlowPeriod) + 1) return unknown
         val closes = window.map { it.closePrice }
         val fast = IndicatorCalculator.ema(closes, emaCrossFastPeriod)
         val slow = IndicatorCalculator.ema(closes, emaCrossSlowPeriod)
@@ -1316,8 +1319,15 @@ class LiveStrategyBacktestSignalGenerator(
             val needed = (bars * barsPerBucket).coerceAtMost(MAX_HIGHER_TF_LOOKBACK_BARS.toLong())
             var from = (index + 1 - needed).coerceAtLeast(0L).toInt()
             if (from > 0) {
-                val bucket = CandleResampler.bucketStart(candles[from].time, duration)
-                while (from > 0 && candles[from].time != bucket) from--
+                // Расширяем окно назад до начала бакета: первый ресемплированный бар
+                // должен быть полным. Сравниваем БАКЕТЫ, а не точное время начала:
+                // у DAY_1 баров с временем 00:00 не существует, и прежнее сравнение
+                // `candles[from].time != bucket` уводило from в 0 на каждом баре —
+                // полный ре-ресемпл истории O(n²) (скан-1 P1).
+                val firstBucket = CandleResampler.bucketStart(candles[from].time, duration)
+                while (from > 0 && CandleResampler.bucketStart(candles[from - 1].time, duration) == firstBucket) {
+                    from--
+                }
             }
             return candles.subList(from, index + 1)
         }

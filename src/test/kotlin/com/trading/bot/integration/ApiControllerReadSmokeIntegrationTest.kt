@@ -72,6 +72,13 @@ class ApiControllerReadSmokeIntegrationTest : AbstractTestContainerTest() {
         assertOkJson("/api/v1/analytics/adjustments?ticker=SBER")
         assertOkJson("/api/v1/analytics/health")
         assertOkJson("/api/v1/analytics/time-pattern/SBER?days=7")
+        // Окно аналитики зажимается в [1, 365]: без этого отрицательное значение
+        // уводило окно в будущее, огромное — на полный скан таблицы сделок.
+        assertOkJson("/api/v1/analytics/trade-stats?days=0")
+        assertOkJson("/api/v1/analytics/trade-stats?days=-5")
+        assertOkJson("/api/v1/analytics/trade-stats?days=100000")
+        assertOkJson("/api/v1/analytics/time-pattern/SBER?days=-5")
+        assertOkJson("/api/v1/analytics/time-pattern/SBER?days=100000")
         assertOkJson("/api/v1/analytics/adaptive-params/SBER")
         assertOkJson("/api/v1/positions/424242/events")
         assertOkJson("/api/v1/traces?limit=5")

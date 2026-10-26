@@ -1,5 +1,6 @@
 package com.trading.bot.integration
 
+import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
@@ -132,6 +133,29 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
             assertEquals(2, result.size)
             assertTrue(result.all { it.cycleId == "cycle-1" })
             assertEquals(listOf("A", "B"), result.map { it.ticker })
+        }
+    }
+
+    @Test
+    fun `stale save cannot reopen a closed position`() {
+        runBlocking {
+            val saved = repo.save(pos(ticker = "STALE"))
+            val stale = repo.findById(saved.id!!)!!
+
+            assertTrue(
+                repo.transitionToClosed(saved.id, PositionStatus.CLOSED, BigDecimal("101"), CloseReason.TAKE_PROFIT, BigDecimal("10"), 1),
+            )
+
+            // Монитор/менеджер защиты мог прочитать позицию ДО закрытия и сохранить
+            // её после: без terminal-guard строка «воскресала» (status=OPEN,
+            // closed_at=NULL, слот входа уже освобождён) — скан-1 P1-4.
+            stale.pendingClose = true
+            repo.save(stale)
+
+            val fresh = repo.findById(saved.id)!!
+            assertEquals(PositionStatus.CLOSED, fresh.status, "закрытая позиция не должна переоткрываться")
+            assertTrue(fresh.closedAt != null, "closed_at не должен обнуляться")
+            assertEquals(false, fresh.pendingClose, "pendingClose закрытой позиции не восстанавливается")
         }
     }
 }

@@ -7,10 +7,12 @@ import com.trading.bot.model.entity.InvestorAccount
 import com.trading.bot.model.entity.InvestorAllocation
 import com.trading.bot.model.entity.InvestorTransaction
 import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
@@ -82,6 +84,12 @@ class InvestorRepository(
             .awaitSingleOrNull()
     }
 
+    /**
+     * Создание счёта. Upsert намеренно **не** перезаписывает баланс: раньше
+     * `DO UPDATE SET balance = EXCLUDED.balance` затирал параллельные
+     * начисления/списания снимком, прочитанным до них (lost update).
+     * Для изменения баланса — атомарные [creditDeposit]/[debitBalanceIfSufficient].
+     */
     suspend fun saveAccount(account: InvestorAccount) {
         databaseClient
             .sql(
@@ -89,11 +97,7 @@ class InvestorRepository(
                 INSERT INTO investor_accounts
                     (id, investor_id, currency, balance, total_deposited, total_withdrawn, created_at, updated_at)
                 VALUES (:id, :investorId, :currency, :balance, :totalDeposited, :totalWithdrawn, :createdAt, :updatedAt)
-                ON CONFLICT (id) DO UPDATE SET
-                    balance = EXCLUDED.balance,
-                    total_deposited = EXCLUDED.total_deposited,
-                    total_withdrawn = EXCLUDED.total_withdrawn,
-                    updated_at = EXCLUDED.updated_at
+                ON CONFLICT (id) DO NOTHING
                 """.trimIndent(),
             ).bind("id", account.id)
             .bind("investorId", account.investorId)
@@ -104,6 +108,76 @@ class InvestorRepository(
             .bind("createdAt", account.createdAt)
             .bind("updatedAt", account.updatedAt)
             .then()
+            .awaitSingleOrNull()
+    }
+
+    /**
+     * Атомарное пополнение: баланс и сумма взносов инкрементируются в БД
+     * (`balance = balance + :amount`), а не перезаписываются снимком —
+     * параллельные ввод/вывод не теряют обновлений.
+     *
+     * @return новый баланс, либо null, если счёта нет
+     */
+    suspend fun creditDeposit(
+        accountId: UUID,
+        amount: BigDecimal,
+        now: LocalDateTime = LocalDateTime.now(),
+    ): BigDecimal? {
+        val sql =
+            """
+            UPDATE investor_accounts SET
+                balance = balance + :amount,
+                total_deposited = total_deposited + :amount,
+                updated_at = :now
+            WHERE id = :id
+            RETURNING balance
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("amount", amount)
+            .bind("now", now)
+            .bind("id", accountId)
+            .map { row, _ -> row.require("balance", BigDecimal::class.java) }
+            .one()
+            .awaitSingleOrNull()
+    }
+
+    /**
+     * Атомарное списание с проверкой достаточности средств **в том же UPDATE**:
+     * `WHERE id = :id AND balance + :bookedProfit >= :amount`. Проверка
+     * «прочитали → записали» пропускала два параллельных списания, а `max(0, …)`
+     * молча прощал нехватку (леджер фиксировал полный вывод, деньги не списывались).
+     *
+     * [bookedProfit] — уже заработанная (реализованная) прибыль, которая при выплате
+     * зачисляется на баланс: выплата клиринга состоит из капитала + атрибутированного
+     * P&L, поэтому без этого зачисления сумма выплаты всегда превышала бы баланс.
+     * Непокрытая часть (спекулятивный прогноз) — отказ, а не clamp в ноль.
+     *
+     * @return новый баланс, либо null — средств недостаточно (списание не выполнено)
+     */
+    suspend fun debitBalanceIfSufficient(
+        accountId: UUID,
+        amount: BigDecimal,
+        now: LocalDateTime = LocalDateTime.now(),
+        bookedProfit: BigDecimal = BigDecimal.ZERO,
+    ): BigDecimal? {
+        val sql =
+            """
+            UPDATE investor_accounts SET
+                balance = balance + :bookedProfit - :amount,
+                total_withdrawn = total_withdrawn + :amount,
+                updated_at = :now
+            WHERE id = :id AND balance + :bookedProfit >= :amount
+            RETURNING balance
+            """.trimIndent()
+        return databaseClient
+            .sql(sql)
+            .bind("bookedProfit", bookedProfit)
+            .bind("amount", amount)
+            .bind("now", now)
+            .bind("id", accountId)
+            .map { row, _ -> row.require("balance", BigDecimal::class.java) }
+            .one()
             .awaitSingleOrNull()
     }
 
@@ -125,6 +199,55 @@ class InvestorRepository(
             .bindOrNull("equityAtTime", transaction.equityAtTime)
             .bindOrNull("description", transaction.description)
             .bind("createdAt", transaction.createdAt)
+            .then()
+            .awaitSingleOrNull()
+    }
+
+    /**
+     * Запись клиринговой транзакции с идемпотентностью на уровне БД:
+     * уникальный индекс `(investor_id, type, business_date) WHERE type = 'CLEARING'`
+     * (миграция 042) + `ON CONFLICT DO NOTHING`. Раньше проверка была
+     * read-then-write (по описанию), и два параллельных `settle` оба её
+     * проходили, списывая средства дважды.
+     *
+     * @return true — транзакция записана (день ещё не клирился), false — день уже проведён
+     */
+    suspend fun saveClearingTransaction(
+        transaction: InvestorTransaction,
+        businessDate: LocalDate,
+    ): Boolean {
+        val inserted =
+            databaseClient
+                .sql(
+                    """
+                    INSERT INTO investor_transactions
+                        (id, investor_id, account_id, type, amount, currency, shares_at_time, equity_at_time, description, created_at, business_date)
+                    VALUES (:id, :investorId, :accountId, :type, :amount, :currency, :sharesAtTime, :equityAtTime, :description, :createdAt, :businessDate)
+                    ON CONFLICT (investor_id, type, business_date) WHERE type = 'CLEARING' DO NOTHING
+                    """.trimIndent(),
+                ).bind("id", transaction.id)
+                .bind("investorId", transaction.investorId)
+                .bind("accountId", transaction.accountId)
+                .bind("type", transaction.type)
+                .bind("amount", transaction.amount)
+                .bind("currency", transaction.currency)
+                .bindOrNull("sharesAtTime", transaction.sharesAtTime)
+                .bindOrNull("equityAtTime", transaction.equityAtTime)
+                .bindOrNull("description", transaction.description)
+                .bind("createdAt", transaction.createdAt)
+                .bind("businessDate", businessDate)
+                .fetch()
+                .rowsUpdated()
+                .awaitSingle()
+                .toInt()
+        return inserted > 0
+    }
+
+    /** Удаление транзакции (компенсация, если списание не удалось после claim'а дня). */
+    suspend fun deleteTransaction(id: UUID) {
+        databaseClient
+            .sql("DELETE FROM investor_transactions WHERE id = :id")
+            .bind("id", id)
             .then()
             .awaitSingleOrNull()
     }

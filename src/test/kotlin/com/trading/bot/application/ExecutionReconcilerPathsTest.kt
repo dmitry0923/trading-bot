@@ -230,6 +230,24 @@ class ExecutionReconcilerPathsTest {
         }
 
     @Test
+    fun `entry FILLED without quantity resolves pending entry as full fill`(): Unit =
+        runBlocking {
+            // SIM и часть ответов Alor: status=FILLED, filledQuantity=0. Раньше
+            // resolveEntryViaOutbox выходил на `filledQuantity <= 0`, и вход
+            // навсегда оставался pendingEntry без SL/TP (скан-1 P1-1).
+            val pos = entryPosition()
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "entry")).thenReturn(entryOutbox())
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("FILLED", 0, null))
+
+            reconciler.resolveEntryViaOutbox(pos)
+
+            assertFalse(pos.pendingEntry, "FILLED без qty обязан разрешать pendingEntry")
+            assertEquals(1, opened.get())
+            assertEquals(1, attachCalls.get())
+        }
+
+    @Test
     fun `partial entry fill is booked locally and remainder waits`(): Unit =
         runBlocking {
             val pos = entryPosition()
@@ -373,7 +391,7 @@ class ExecutionReconcilerPathsTest {
     // ─── закрытие ────────────────────────────────────────────────────
 
     @Test
-    fun `close cancel waits while old order is still filled`(): Unit =
+    fun `close cancel applies the fill when the close order turns out filled`(): Unit =
         runBlocking {
             val pos = closePosition().apply { closeCancelPending = true }
             whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
@@ -381,8 +399,8 @@ class ExecutionReconcilerPathsTest {
 
             reconciler.resolveCloseCancel(pos)
 
-            assertTrue(pos.pendingClose, "пока заявка жива, состояние close не сбрасывается")
-            assertEquals(0, confirmedClose.get())
+            // Cancel опоздал — применяем филл через дельта-модель, позиция закрывается.
+            assertEquals(1, confirmedClose.get())
         }
 
     @Test

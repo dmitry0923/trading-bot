@@ -201,6 +201,15 @@ class TradeAnalysisService(
         return spots
     }
 
+    /**
+     * Персист «слепой зоны» идемпотентен по (ticker, conditionPattern): значения
+     * берутся АБСОЛЮТНЫМИ из проанализированного окна, а не инкрементом.
+     *
+     * Раньше `occurrenceCount += spot.occurrenceCount` рос на каждом вызове, а
+     * `analyzeLastNDays` вызывается из SSE-цикла дашборда (≤ 2 с) и из feedback-
+     * агента каждый цикл — счётчики уходили в бесконечность, а read-only GET
+     * мутировал БД.
+     */
     private suspend fun persistBlindSpot(
         ticker: String,
         spot: BlindSpot,
@@ -209,20 +218,19 @@ class TradeAnalysisService(
             blindSpotRepo
                 .findByTickerAndIsActiveTrue(ticker)
                 .find { it.conditionPattern == spot.conditionPattern }
-        if (existing != null) {
-            existing.occurrenceCount += spot.occurrenceCount
-            blindSpotRepo.save(existing)
-        } else {
-            blindSpotRepo.save(
+        val entity =
+            if (existing != null) {
+                existing.copy(lossRate = spot.lossRate, occurrenceCount = spot.occurrenceCount)
+            } else {
                 BlindSpotEntity(
                     ticker = ticker,
                     conditionPattern = spot.conditionPattern,
                     lossRate = spot.lossRate,
                     occurrenceCount = spot.occurrenceCount,
                     recommendation = spot.recommendation,
-                ),
-            )
-        }
+                )
+            }
+        blindSpotRepo.save(entity)
     }
 
     /**

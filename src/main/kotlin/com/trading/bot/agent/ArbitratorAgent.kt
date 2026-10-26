@@ -93,11 +93,25 @@ class ArbitratorAgent(
         coroutineScope {
             val start = System.currentTimeMillis()
 
-            // ===== DETERMINISTIC OVERRIDES — выполняются ДО LLM, не подлежат обсуждению =====
             if (challenge.riskLevel == "CRITICAL") {
                 meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "CRITICAL_CHALLENGE")).increment()
                 return@coroutineScope logAndReturn(
                     hold(snapshot.currentPrice, "Blocked by Contrarian: ${challenge.critique}", "DETERMINISTIC: CRITICAL_CHALLENGE"),
+                    snapshot.ticker,
+                    cycleId,
+                    start,
+                    "{}",
+                )
+            }
+
+            // ===== DETERMINISTIC OVERRIDES — выполняются ДО LLM, не подлежат обсуждению =====
+            // Невалидный challenge (LLM вернул isValid=false) — fail-closed HOLD:
+            // иначе «контраргумент отклонён» игнорировался, если riskLevel не CRITICAL
+            // (скан-1 P2).
+            if (!challenge.isValid) {
+                meterRegistry.counter("arbitrator.deterministic.override", Tags.of("reason", "INVALID_CHALLENGE")).increment()
+                return@coroutineScope logAndReturn(
+                    hold(snapshot.currentPrice, "Contrarian challenge invalid: ${challenge.critique}", "DETERMINISTIC: INVALID_CHALLENGE"),
                     snapshot.ticker,
                     cycleId,
                     start,

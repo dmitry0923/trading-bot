@@ -8,8 +8,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Собирает агрегированный дашборд для React Dashboard.
@@ -36,6 +38,12 @@ class DashboardService(
     private val tradeAnalysisService: TradeAnalysisService,
     private val adaptiveRiskService: AdaptiveRiskService,
     private val riskManagementService: RiskManagementService,
+    /**
+     * Торговый день считается по МСК (как в [com.trading.bot.service.DrawdownProtectionService]
+     * и `TradingAccountController`): `closed_at` пишется в московском времени, поэтому
+     * `LocalDate.now()` в зоне JVM между 00:00 и 03:00 МСК относил вчерашний вечер к «сегодня».
+     */
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     /**
      * Строит снимок дашборда: открытые позиции с live P&L, дневная статистика,
@@ -45,7 +53,7 @@ class DashboardService(
      * @return сериализуемая карта данных дашборда
      */
     suspend fun build(accountId: Long? = null): Map<String, Any?> {
-        val todayStart = LocalDate.now().atStartOfDay()
+        val todayStart = LocalDate.now(clock).atStartOfDay()
         val (openPositions, closedToday, dailyPnl) =
             if (accountId == null) {
                 Triple(
@@ -65,10 +73,7 @@ class DashboardService(
             }
         val openPnl = openPositions.sumOf { it.pnl?.toDouble() ?: 0.0 }
         val realizedPnlToday = closedToday.sumOf { it.pnl?.toDouble() ?: 0.0 }
-        val strategiesToday =
-            strategyRepository
-                .findTop50ByOrderByCreatedAtDesc()
-                .count { it.createdAt.isAfter(todayStart) }
+        val strategiesToday = strategyRepository.countCreatedSince(todayStart)
         val stats = tradeAnalysisService.analyzeLastNDays(7)
         val pausedTickers = stats.filter { it.value.maxConsecutiveLosses >= 4 }.keys
         val adaptivePaused = tradingConfig.tickers.filter { adaptiveRiskService.shouldPauseTrading(it) }

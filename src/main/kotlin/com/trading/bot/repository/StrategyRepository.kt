@@ -43,6 +43,15 @@ class StrategyRepository(
             .collectList()
             .awaitSingle()
 
+    /** Число стратегий, созданных начиная с [since] (COUNT, а не LIMIT 50 — объём ~4000/день). */
+    suspend fun countCreatedSince(since: LocalDateTime): Long =
+        databaseClient
+            .sql("SELECT COUNT(*) AS total FROM strategies WHERE created_at >= :since")
+            .bind("since", since)
+            .map { row, _ -> row.get("total", Long::class.javaObjectType) ?: 0L }
+            .one()
+            .awaitSingle()
+
     suspend fun findTopByTickerOrderByCreatedAtDesc(ticker: String): Strategy? {
         val sql = "SELECT * FROM strategies WHERE ticker = :ticker ORDER BY created_at DESC LIMIT 1"
         return databaseClient
@@ -103,11 +112,17 @@ class StrategyRepository(
      * стратегии после фактического исполнения входа (этап OrderBuilder).
      * До этого стратегия хранится как чистое направление (Signal).
      *
+     * Матчинг включает `timeframe`: при `trading.timeframes=[MINUTE_10,HOUR_1]`
+     * один цикл содержит по строке на каждый таймфрейм с одинаковыми
+     * cycle_id+ticker, и без `timeframe` фактические qty/SL/TP одного
+     * таймфрейма перезаписывали строку другого.
+     *
      * @return количество обновлённых строк
      */
     suspend fun updateOrderParams(
         cycleId: String,
         ticker: String,
+        timeframe: String,
         quantity: Int,
         stopLoss: BigDecimal?,
         takeProfit: BigDecimal?,
@@ -117,7 +132,7 @@ class StrategyRepository(
             """
             UPDATE strategies
             SET quantity = :quantity, stop_loss = :stopLoss, take_profit = :takeProfit, trailing_stop = :trailingStop
-            WHERE cycle_id = :cycleId AND ticker = :ticker
+            WHERE cycle_id = :cycleId AND ticker = :ticker AND timeframe = :timeframe
             """.trimIndent()
         return databaseClient
             .sql(sql)
@@ -127,6 +142,7 @@ class StrategyRepository(
             .bind("trailingStop", trailingStop)
             .bind("cycleId", cycleId)
             .bind("ticker", ticker)
+            .bind("timeframe", timeframe)
             .fetch()
             .rowsUpdated()
             .awaitSingle()

@@ -20,6 +20,7 @@ import com.trading.bot.repository.TradeEventRepository
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -118,6 +119,7 @@ class TradingRepositoriesIntegrationTest : AbstractTestContainerTest() {
                 strategyRepository.updateOrderParams(
                     cycleId = "cycle-1",
                     ticker = "AAA",
+                    timeframe = "MINUTE_10",
                     quantity = 3,
                     stopLoss = BigDecimal("95.5"),
                     takeProfit = BigDecimal("110.0"),
@@ -132,13 +134,52 @@ class TradingRepositoriesIntegrationTest : AbstractTestContainerTest() {
 
             assertEquals(
                 1,
-                strategyRepository.updateOrderParams("cycle-1", "AAA", 1, null, null, false),
+                strategyRepository.updateOrderParams("cycle-1", "AAA", "MINUTE_10", 1, null, null, false),
             )
             val cleared = strategyRepository.findByCycleId("cycle-1").first { it.ticker == "AAA" }
             assertNull(cleared.stopLoss)
             assertNull(cleared.takeProfit)
 
-            assertEquals(0, strategyRepository.updateOrderParams("unknown-cycle", "AAA", 1, null, null, false))
+            assertEquals(0, strategyRepository.updateOrderParams("unknown-cycle", "AAA", "MINUTE_10", 1, null, null, false))
+        }
+    }
+
+    @Test
+    fun `order params of two timeframes in one cycle stay independent`() {
+        runBlocking {
+            val minute =
+                strategyRepository.save(
+                    strategy("AAA").copy(timeframe = "MINUTE_10", createdAt = LocalDateTime.of(2026, 8, 7, 10, 0)),
+                )
+            strategyRepository.save(
+                strategy("AAA").copy(timeframe = "HOUR_1", createdAt = LocalDateTime.of(2026, 8, 7, 10, 1)),
+            )
+            assertNotNull(minute.id)
+
+            // Раньше UPDATE матчил только cycle_id+ticker и фактические qty/SL/TP
+            // одного таймфрейма перезаписывали строку другого.
+            assertEquals(
+                1,
+                strategyRepository.updateOrderParams(
+                    cycleId = "cycle-1",
+                    ticker = "AAA",
+                    timeframe = "MINUTE_10",
+                    quantity = 3,
+                    stopLoss = BigDecimal("95.5"),
+                    takeProfit = BigDecimal("110.0"),
+                    trailingStop = true,
+                ),
+            )
+            val rows = strategyRepository.findByCycleId("cycle-1")
+            val minuteRow = rows.first { it.timeframe == "MINUTE_10" }
+            val hourRow = rows.first { it.timeframe == "HOUR_1" }
+            assertEquals(3, minuteRow.quantity)
+            assertEquals(0, BigDecimal("95.5").compareTo(minuteRow.stopLoss))
+            assertTrue(minuteRow.trailingStop)
+            assertEquals(10, hourRow.quantity)
+            assertNull(hourRow.stopLoss)
+            assertNull(hourRow.takeProfit)
+            assertFalse(hourRow.trailingStop)
         }
     }
 
@@ -204,19 +245,75 @@ class TradingRepositoriesIntegrationTest : AbstractTestContainerTest() {
                 ),
             )
 
-            val control = experimentRepository.findByCycleIdAndArm("cycle-1", "CONTROL")
+            val control = experimentRepository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "AAA").singleOrNull()
             assertEquals(0.65, control?.signalStrength)
             assertEquals(5, control?.quantity)
-            assertNull(experimentRepository.findByCycleIdAndArm("cycle-1", "MISSING"))
+            assertTrue(experimentRepository.findByCycleIdArmAndTicker("cycle-1", "MISSING", "AAA").isEmpty())
 
             val recent = experimentRepository.findRecent(10)
             assertEquals(listOf("VARIANT", "CONTROL"), recent.map { it.arm })
             assertEquals(1, experimentRepository.findRecent(0).size)
 
-            experimentRepository.markResult("cycle-1", "CONTROL", BigDecimal("12.5"))
-            val marked = experimentRepository.findByCycleIdAndArm("cycle-1", "CONTROL")
-            assertTrue(marked?.closed ?: false)
-            assertEquals(0, BigDecimal("12.5").compareTo(marked?.resultPnl))
+            experimentRepository.markResult("cycle-1", "CONTROL", "AAA", null, BigDecimal("12.5"))
+            val marked = experimentRepository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "AAA").single()
+            assertTrue(marked.closed)
+            assertEquals(0, BigDecimal("12.5").compareTo(marked.resultPnl))
+        }
+    }
+
+    @Test
+    fun `experiment results are marked per ticker and timeframe`() {
+        runBlocking {
+            val base = LocalDateTime.of(2026, 8, 7, 10, 0)
+            // Один цикл, два тикера: старая выборка `.one()` падала бы здесь
+            // (IncorrectResultSize) и результат не записывался ни одной руке.
+            for ((index, ticker) in listOf("AAA", "BBB").withIndex()) {
+                experimentRepository.save(
+                    ExperimentDecision(
+                        cycleId = "cycle-1",
+                        experimentId = "exp",
+                        arm = "CONTROL",
+                        ticker = ticker,
+                        timeframe = "MINUTE_10",
+                        action = "BUY",
+                        quantity = 5,
+                        isPaper = false,
+                        decidedAt = base.plusMinutes(index.toLong()),
+                    ),
+                )
+                experimentRepository.save(
+                    ExperimentDecision(
+                        cycleId = "cycle-1",
+                        experimentId = "exp",
+                        arm = "VARIANT",
+                        ticker = ticker,
+                        timeframe = "MINUTE_10",
+                        action = "BUY",
+                        quantity = 5,
+                        isPaper = true,
+                        decidedAt = base.plusMinutes(index.toLong() + 10),
+                    ),
+                )
+            }
+
+            assertEquals(1, experimentRepository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "AAA").size)
+
+            experimentRepository.markResult("cycle-1", "CONTROL", "AAA", "MINUTE_10", BigDecimal("100"))
+            experimentRepository.markResult("cycle-1", "VARIANT", "AAA", "MINUTE_10", BigDecimal("-100"))
+
+            val aaaControl = experimentRepository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "AAA").single()
+            val aaaVariant = experimentRepository.findByCycleIdArmAndTicker("cycle-1", "VARIANT", "AAA").single()
+            val bbbControl = experimentRepository.findByCycleIdArmAndTicker("cycle-1", "CONTROL", "BBB").single()
+            val bbbVariant = experimentRepository.findByCycleIdArmAndTicker("cycle-1", "VARIANT", "BBB").single()
+
+            assertEquals(0, BigDecimal("100").compareTo(aaaControl.resultPnl))
+            assertEquals(0, BigDecimal("-100").compareTo(aaaVariant.resultPnl))
+            assertTrue(aaaControl.closed && aaaVariant.closed)
+            // Чужая рука/тикер не тронуты.
+            assertFalse(bbbControl.closed)
+            assertFalse(bbbVariant.closed)
+            assertNull(bbbControl.resultPnl)
+            assertNull(bbbVariant.resultPnl)
         }
     }
 
@@ -288,7 +385,11 @@ class TradingRepositoriesIntegrationTest : AbstractTestContainerTest() {
                     ),
                 )
             assertEquals(3, fundingRepository.saveAll(records))
-            assertEquals(0, fundingRepository.saveAll(records), "repeated save must not duplicate rows")
+            // Повторная запись тех же дат больше НЕ «пустая»: upsert обновляет
+            // raw_value/value (иначе исправленная спека lotSize не доезжала до БД и
+            // ошибка множителя оставалась навсегда) — скан-1 P2.
+            assertEquals(3, fundingRepository.saveAll(records), "repeated save updates rows, never duplicates")
+            assertEquals(2, fundingRepository.findValuesBetween("AAA", LocalDate.of(2026, 8, 5), LocalDate.of(2026, 9, 1)).size)
             assertEquals(0, fundingRepository.saveAll(emptyList()))
 
             assertTrue(fundingRepository.hasData("AAA"))

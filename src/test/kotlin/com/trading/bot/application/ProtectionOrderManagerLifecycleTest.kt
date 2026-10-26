@@ -15,6 +15,7 @@ import com.trading.bot.service.OrderOutboxService
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -424,6 +425,24 @@ class ProtectionOrderManagerLifecycleTest {
 
             assertEquals("SL-1", pos.slOrderId)
             assertEquals(0, BigDecimal("91500").compareTo(pos.slOrderPrice!!))
+        }
+
+    @Test
+    fun `cancelled SL with partial fill applies the fill instead of dropping it`(): Unit =
+        runBlocking {
+            // CANCELED/EXPIRED могут нести частичный филл. Раньше он терялся:
+            // локально объём больше биржевого → QTY_MISMATCH и hard halt (скан-1 P1-3).
+            val pos = openPosition(slOrderId = "sl-partial", slOrderPrice = "91500", quantity = 4)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("CANCELED", 1, BigDecimal("91500")))
+
+            manager.reconcileProtectionOrders(pos)
+
+            val applied = appliedClose.get()
+            assertNotNull(applied, "частичный филл отменённого SL обязан применяться")
+            assertEquals(1, applied!!.first)
+            assertEquals(CloseReason.STOP_LOSS, applied.third)
+            assertEquals(3, pos.quantity, "позиция уменьшается на исполненный объём")
         }
 
     @Test

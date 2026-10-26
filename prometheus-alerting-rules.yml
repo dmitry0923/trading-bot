@@ -108,7 +108,7 @@ groups:
 
       # OBI Opposition Block: входы блокируются по OBI
       - alert: OpiBlockingEntries
-        expr: rate(bot_entry_rejected_total{reason="OBI_OPPosing"}[10m]) > 0.05
+        expr: rate(entry_rejected_total{reason="OBI_OPPOSING"}[10m]) > 0.05
         for: 15m
         labels:
           severity: warning

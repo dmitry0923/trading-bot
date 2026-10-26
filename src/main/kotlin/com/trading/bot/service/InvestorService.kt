@@ -13,7 +13,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.Clock
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.UUID
 
 /**
@@ -30,6 +32,8 @@ import java.util.UUID
 class InvestorService(
     private val investorRepo: InvestorRepository,
     private val positionRepo: PositionRepository,
+    /** Бизнес-время (МСК): метки операций и дата делового дня. */
+    private val clock: Clock = Clock.system(BUSINESS_ZONE),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -79,17 +83,12 @@ class InvestorService(
         require(amount > BigDecimal.ZERO) { "Withdrawal amount must be positive" }
         val investor = requireInvestor(investorId)
         val account = requireAccount(investorId)
-        require(account.balance >= amount) {
-            "Insufficient balance: ${account.balance} < $amount"
-        }
 
-        val updated =
-            account.copy(
-                balance = account.balance.subtract(amount),
-                totalWithdrawn = account.totalWithdrawn.add(amount),
-                updatedAt = LocalDateTime.now(),
-            )
-        investorRepo.saveAccount(updated)
+        // Атомарное условное списание: проверка достаточности и списание — один
+        // UPDATE. Read-then-write (`saveAccount` снимком) терял параллельные
+        // операции, а `max(0, …)` прощал нехватку.
+        investorRepo.debitBalanceIfSufficient(account.id, amount, LocalDateTime.now(clock))
+            ?: throw IllegalArgumentException("Insufficient balance: ${account.balance} < $amount")
         recordTransaction(
             investorId = investorId,
             accountId = account.id,
@@ -98,7 +97,7 @@ class InvestorService(
             description = description ?: "Ручной вывод",
         )
         logger.info { "Withdrawal for $investorId: $amount ₽" }
-        return viewOf(investor, updated)
+        return viewOf(investor, requireAccount(investorId))
     }
 
     suspend fun listInvestors(): List<InvestorView> {
@@ -144,13 +143,9 @@ class InvestorService(
         account: InvestorAccount,
         amount: BigDecimal,
     ) {
-        val updated =
-            account.copy(
-                balance = account.balance.add(amount),
-                totalDeposited = account.totalDeposited.add(amount),
-                updatedAt = LocalDateTime.now(),
-            )
-        investorRepo.saveAccount(updated)
+        // Атомарный инкремент: снимок `saveAccount` затирал параллельные операции.
+        investorRepo.creditDeposit(account.id, amount, LocalDateTime.now(clock))
+            ?: throw IllegalStateException("Account not found: ${account.id}")
         recordTransaction(
             investorId = investor.id,
             accountId = account.id,
@@ -230,4 +225,8 @@ class InvestorService(
     private suspend fun requireAccount(investorId: UUID): InvestorAccount =
         investorRepo.findAccountByInvestor(investorId)
             ?: throw IllegalArgumentException("Account not found for investor: $investorId")
+
+    private companion object {
+        private val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
+    }
 }

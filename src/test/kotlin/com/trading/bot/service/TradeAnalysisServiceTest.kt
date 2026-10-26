@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.entity.BlindSpotEntity
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.BlindSpotRepository
 import com.trading.bot.repository.PositionRepository
@@ -87,6 +88,42 @@ class TradeAnalysisServiceTest {
             Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(emptyList())
 
             assertTrue(service.analyzeLastNDays(7).isEmpty())
+        }
+
+    // ─── Idempotent blind-spot persistence (read-only GET must not grow counters) ──
+
+    @Test
+    fun `repeated analysis of the same window does not grow occurrence count`(): Unit =
+        runBlocking {
+            val stored = linkedMapOf<String, BlindSpotEntity>()
+            var nextId = 1L
+            Mockito.`when`(blindSpotRepo.findByTickerAndIsActiveTrue("SBER")).thenAnswer {
+                stored.values.toList()
+            }
+            Mockito.`when`(blindSpotRepo.save(any())).thenAnswer { invocation ->
+                val entity = invocation.getArgument<BlindSpotEntity>(0)
+                val persisted = if (entity.id == null) entity.copy(id = nextId++) else entity
+                stored[persisted.conditionPattern] = persisted
+                persisted
+            }
+            Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(
+                listOf(
+                    closed(BigDecimal("-10"), CloseReason.STOP_LOSS),
+                    closed(BigDecimal("-20"), CloseReason.STOP_LOSS),
+                    closed(BigDecimal("-30"), CloseReason.STOP_LOSS),
+                ),
+            )
+
+            service.analyzeLastNDays(7)
+            val firstCounts = stored.mapValues { (_, entity) -> entity.occurrenceCount }
+            service.analyzeLastNDays(7)
+
+            assertEquals(firstCounts, stored.mapValues { (_, entity) -> entity.occurrenceCount })
+            assertTrue(firstCounts.isNotEmpty())
+            assertTrue(
+                firstCounts.values.all { it == 3 },
+                "occurrence_count — абсолютное число из окна, а не накопленный инкремент: $firstCounts",
+            )
         }
 
     // ─── Account isolation (a8024ad review priority 3) ──────────────────────────

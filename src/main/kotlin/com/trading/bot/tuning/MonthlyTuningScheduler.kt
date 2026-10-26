@@ -1,14 +1,17 @@
 package com.trading.bot.tuning
 
+import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.YearMonth
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Cron-планировщик Monthly Tuning Engine (docs/24, Фаза 3.5).
@@ -39,8 +42,7 @@ class MonthlyTuningScheduler(
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 
     /** Защита от наложения: ручной запуск во время планового не стартует второй цикл. */
-    @Volatile
-    private var running: Boolean = false
+    private val running = AtomicBoolean(false)
 
     /**
      * Период последнего выполненного цикла (YYYY-MM).
@@ -75,11 +77,17 @@ class MonthlyTuningScheduler(
         runCycle(force = true)
     }
 
+    @PreDestroy
+    fun close() {
+        scope.cancel()
+    }
+
     internal fun currentPeriod(): String = YearMonth.now(moscowZone).toString()
 
     private fun runCycle(force: Boolean) {
         val period = currentPeriod()
-        if (running) {
+        // CAS: поток cron и ручной runNow() не должны запустить два цикла (скан-8 P2).
+        if (!running.compareAndSet(false, true)) {
             logger.warn("MonthlyTuningScheduler: цикл уже выполняется - запуск за период $period пропущен")
             return
         }
@@ -87,7 +95,6 @@ class MonthlyTuningScheduler(
             logger.info("MonthlyTuningScheduler: тюнинг за $period уже выполнен - пропуск")
             return
         }
-        running = true
         scope.launch {
             try {
                 val (metrics, parameters) = tuningMetricsProvider.collectCurrentMonthlyData()
@@ -101,7 +108,7 @@ class MonthlyTuningScheduler(
             } catch (e: Exception) {
                 logger.error("MonthlyTuningScheduler: ошибка в цикле тюнинга: ${e.message}", e)
             } finally {
-                running = false
+                running.set(false)
             }
         }
     }

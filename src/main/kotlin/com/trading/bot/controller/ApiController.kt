@@ -1009,13 +1009,19 @@ class ApiController(
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)
         }
-        val from = LocalDateTime.now().minusDays(effectiveDays.toLong())
+        val from = LocalDateTime.now(businessClock).minusDays(effectiveDays.toLong())
         // Ресемплинг поддерживается только из MINUTE_10 (единый timeframe в БД).
         // Для HOUR_1/DAY_1 читаем MINUTE_10 свечи, а ресемпл выполняется в
         // BacktestValidator.validate() через WfaConfig.timeframe.
         val isResampleTarget = effectiveTimeframe != backtestConfig.timeframe && isResampleTimeframe(effectiveTimeframe)
         val sourceTimeframe = if (isResampleTarget) backtestConfig.timeframe else effectiveTimeframe
-        val candles = candleRepository.findByTickerAndTimeframeAndTimeBetween(ticker, sourceTimeframe, from, LocalDateTime.now())
+        val candles =
+            candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                ticker,
+                sourceTimeframe,
+                from,
+                LocalDateTime.now(businessClock),
+            )
         val mlOverrides =
             MlDirectionOverrides(
                 enabled = mlDirectionEnabled,
@@ -1165,7 +1171,7 @@ class ApiController(
             "oosMeanTradeCI95Low" to result.aggregateOutOfSample.meanTradeCI95Low,
             "oosMeanTradeCI95High" to result.aggregateOutOfSample.meanTradeCI95High,
             "oosFoldTrades" to oosFoldTrades,
-            "timestamp" to LocalDateTime.now().toString(),
+            "timestamp" to LocalDateTime.now(businessClock).toString(),
         )
     }
 
@@ -1440,7 +1446,7 @@ class ApiController(
                     "mcRobust" to report.monteCarlo.isRobust(),
                 ),
             "stress" to report.stress.map { stressToMap(it) },
-            "timestamp" to LocalDateTime.now().toString(),
+            "timestamp" to LocalDateTime.now(businessClock).toString(),
         )
     }
 
@@ -1707,7 +1713,7 @@ class ApiController(
                 ),
             "wfaConsistency" to result.walkForward.consistency,
             "wfaOosTrades" to result.walkForward.aggregateOutOfSample.totalTrades,
-            "timestamp" to LocalDateTime.now().toString(),
+            "timestamp" to LocalDateTime.now(businessClock).toString(),
         )
     }
 
@@ -2024,7 +2030,7 @@ class ApiController(
                         "detail" to c.detail,
                     )
                 },
-            "timestamp" to LocalDateTime.now().toString(),
+            "timestamp" to LocalDateTime.now(businessClock).toString(),
         )
     }
 
@@ -2070,7 +2076,7 @@ class ApiController(
         timeframe: String,
         days: Int,
     ): List<Candle> {
-        val from = LocalDateTime.now().minusDays(days.toLong())
+        val from = LocalDateTime.now(businessClock).minusDays(days.toLong())
         val baseTimeframe = backtestConfig.timeframe
         val needsResample = timeframe != baseTimeframe && isResampleTimeframe(timeframe)
         val sourceTimeframe = if (needsResample) baseTimeframe else timeframe
@@ -2079,7 +2085,7 @@ class ApiController(
                 ticker,
                 sourceTimeframe,
                 from,
-                LocalDateTime.now(),
+                LocalDateTime.now(businessClock),
             )
         return if (needsResample) CandleResampler.resample(loaded, timeframe) else loaded
     }

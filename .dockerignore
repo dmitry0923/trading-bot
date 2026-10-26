@@ -1,0 +1,28 @@
+# Контекст сборки не должен везти данные, артефакты и node_modules:
+# без этого файла docker build отправлял на демон data/, build/, artifacts/ (гигабайты).
+.git
+.github
+.gradle
+build
+out
+data
+artifacts
+logs
+*.log
+.env
+.env.*
+admin_token.txt
+*.token
+*.jks
+*.p12
+node_modules
+frontend/node_modules
+frontend/dist
+src/test
+docs
+scripts
+*.md
+!README.md
+.m2
+.idea
+.vscode

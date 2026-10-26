@@ -164,7 +164,10 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml"
+          # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
+          # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana"
+          # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
       - name: Deploy via SSH
@@ -180,7 +183,10 @@ jobs:
 
             # runtime-секреты пишем в .env (compose подхватит автоматически).
             # TRADING_MODE жёстко = DEPLOY_MODE (SIMULATION), НЕ из секрета.
-            cat > .env <<'EOF'
+            # Пишем ТОЛЬКО ключи деплоя в отдельный файл: перезапись .env теряла
+            # DB_PASS/JWT_SECRET/METRICS_SCRAPE_TOKEN/GRAFANA_ADMIN_PASSWORD, и compose
+            # падал на `${VAR:?}` — на VM оставался старый контейнер (скан-8 P1).
+            cat > .env.deploy <<'EOF'
             REGISTRY=${{ env.REGISTRY }}
             TAG=${{ env.TAG }}
             ALOR_TOKEN=${{ secrets.ALOR_TOKEN }}
@@ -195,10 +201,12 @@ jobs:
             EOF
 
             echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
+            $COMPOSE pull
+            # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.
+            $COMPOSE up -d --wait --wait-timeout 240
             docker image prune -f
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+            $COMPOSE ps
 
   # LIVE-деплой (P0, LIVE-guard): ТОЛЬКО вручную (workflow_dispatch) и ТОЛЬКО
   # через GitHub Environment "live" с required reviewers. Форсирует:
@@ -249,7 +257,10 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml"
+          # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
+          # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana"
+          # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
       - name: Verify LIVE images exist
@@ -274,7 +285,10 @@ jobs:
             set -e
             cd /opt/trading-bot
 
-            cat > .env <<'EOF'
+            # Пишем ТОЛЬКО ключи деплоя в отдельный файл: перезапись .env теряла
+            # DB_PASS/JWT_SECRET/METRICS_SCRAPE_TOKEN/GRAFANA_ADMIN_PASSWORD, и compose
+            # падал на `${VAR:?}` — на VM оставался старый контейнер (скан-8 P1).
+            cat > .env.deploy <<'EOF'
             REGISTRY=${{ env.REGISTRY }}
             TAG=${{ env.TAG }}
             ALOR_TOKEN=${{ secrets.ALOR_TOKEN }}
@@ -291,7 +305,9 @@ jobs:
             EOF
 
             echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+            COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
+            $COMPOSE pull
+            # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.
+            $COMPOSE up -d --wait --wait-timeout 240
             docker image prune -f
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+            $COMPOSE ps

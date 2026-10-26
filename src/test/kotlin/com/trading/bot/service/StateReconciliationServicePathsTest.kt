@@ -58,6 +58,7 @@ class StateReconciliationServicePathsTest {
             whenever(tradingAccountService.findEnabled()).thenReturn(emptyList())
             whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
         }
+        runBlocking { stubTransition() }
         return StateReconciliationService(
             webSocketManager,
             alorClient,
@@ -95,6 +96,45 @@ class StateReconciliationServicePathsTest {
             pendingClose = pendingClose,
             pendingEntry = pendingEntry,
         )
+
+    /** `transitionToClosed` — атомарный claim: по умолчанию «мы выиграли гонку». */
+    private suspend fun stubTransition(updated: Boolean = true) {
+        whenever(
+            positionRepo.transitionToClosed(
+                anyLongArg(),
+                anyStatus(),
+                anyBigDecimal(),
+                anyReason(),
+                anyBigDecimal(),
+                anyIntArg(),
+            ),
+        ).thenReturn(updated)
+    }
+
+    private fun anyLongArg(): Long {
+        org.mockito.Mockito.anyLong()
+        return 1L
+    }
+
+    private fun anyIntArg(): Int {
+        org.mockito.Mockito.anyInt()
+        return 0
+    }
+
+    private fun anyStatus(): PositionStatus {
+        org.mockito.Mockito.any(PositionStatus::class.java)
+        return PositionStatus.CLOSED
+    }
+
+    private fun anyBigDecimal(): BigDecimal {
+        org.mockito.Mockito.any(BigDecimal::class.java)
+        return BigDecimal.ZERO
+    }
+
+    private fun anyReason(): CloseReason {
+        org.mockito.Mockito.any(CloseReason::class.java)
+        return CloseReason.RECONCILE_PHANTOM
+    }
 
     private suspend fun stubLocal(vararg positions: Position) {
         whenever(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(positions.toList())
@@ -279,9 +319,15 @@ class StateReconciliationServicePathsTest {
             service.reconcile()
 
             val captor = argumentCaptor<Position>()
-            verify(positionRepo).save(captor.capture())
-            val closed = captor.firstValue
-            assertEquals(PositionStatus.CLOSED, closed.status)
+            val pnlCaptor = argumentCaptor<java.math.BigDecimal>()
+            verify(positionRepo).transitionToClosed(
+                org.mockito.kotlin.eq(1L),
+                org.mockito.kotlin.eq(PositionStatus.CLOSED),
+                org.mockito.kotlin.any(),
+                org.mockito.kotlin.eq(CloseReason.RECONCILE_PHANTOM),
+                pnlCaptor.capture(),
+                org.mockito.kotlin.any(),
+            )
             // P&L считается по спеке инструмента (lotSize/комиссия как в TradingBotService):
             // LONG 10 @100 закрыт по 94 → (94−100)·10·lotSize минус round-trip комиссия.
             val spec = InstrumentsConfig().find("SBER")!!
@@ -291,13 +337,16 @@ class StateReconciliationServicePathsTest {
                     .multiply(BigDecimal(10))
                     .multiply(BigDecimal(spec.lotSize))
                     .subtract((spec.totalCommissionPerLotSide() ?: BigDecimal.ZERO).multiply(BigDecimal(10)).multiply(BigDecimal(2)))
-            assertEquals(0, expected.compareTo(closed.pnl!!), "реализованный P&L записан: ${closed.pnl} (ожидалось $expected)")
+            assertEquals(
+                0,
+                expected.compareTo(pnlCaptor.firstValue),
+                "реализованный P&L записан: ${pnlCaptor.firstValue} (ожидалось $expected)",
+            )
             verify(tradeEventService).recordPositionClosed(anyPosition(), Mockito.anyString())
             // Дневной лимит/просадка копят P&L из событий — публикация обязательна.
             verify(eventPublisher).publishPositionClosed(anyPosition())
             verify(positionRepo).releaseEntry("SBER", null)
         }
-
     // ─── multi-account ──────────────────────────────────────────────
 
     @Test

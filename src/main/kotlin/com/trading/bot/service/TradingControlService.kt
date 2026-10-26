@@ -15,8 +15,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Управление торговлей вручную.
@@ -48,9 +51,10 @@ class TradingControlService(
 
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 
-    /** Последняя дата исполненного планового закрытия: не даём пропустить окно
-     *  из-за дрейфа fixedDelay и не закрываем дважды в один день (скан-2 P2). */
-    private var lastForceCloseDate: java.time.LocalDate? = null
+    private val lastForceCloseDate = AtomicReference<LocalDate?>(null)
+
+    /** Защита от наложения: два тика/ручной запуск не должны закрывать дважды. */
+    private val forceCloseInFlight = AtomicBoolean(false)
 
     fun isTradingEnabled(): Boolean = tradingGate.isTradingEnabled()
 
@@ -103,17 +107,31 @@ class TradingControlService(
         val target = runCatching { LocalTime.parse(settings.forceCloseTime) }.getOrNull() ?: return
         // Условие «>=» + защита от повтора: fixedDelay отсчитывается от завершения
         // предыдущего запуска, поэтому точная минута могла пропускаться.
-        val today = java.time.LocalDate.now(moscowZone)
-        if (!now.isBefore(target) && lastForceCloseDate != today) {
-            logger.info { "Scheduled force close triggered at ${settings.forceCloseTime}" }
-            scope.launch {
+        val today = LocalDate.now(moscowZone)
+        if (now.isBefore(target)) return
+        // Атомарный claim дня + in-flight: два тика 60-секундного fixedDelay (или тик и
+        // ручной force-close) не должны закрывать позиции дважды (скан-8 P2).
+        if (!forceCloseInFlight.compareAndSet(false, true)) return
+        if (lastForceCloseDate.get() == today) {
+            forceCloseInFlight.set(false)
+            return
+        }
+        logger.info { "Scheduled force close triggered at ${settings.forceCloseTime}" }
+        scope.launch {
+            try {
                 distributedLockService.runExclusive(
                     name = "scheduler:force-close",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
-                    lastForceCloseDate = today
+                    lastForceCloseDate.set(today)
                     forceCloseNow(CloseReason.FORCE_CLOSE_SCHEDULED)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Shutdown не должен оставлять «полузакрытые» позиции молча: пишем след.
+                logger.warn { "Scheduled force close cancelled during shutdown" }
+                throw e
+            } finally {
+                forceCloseInFlight.set(false)
             }
         }
     }

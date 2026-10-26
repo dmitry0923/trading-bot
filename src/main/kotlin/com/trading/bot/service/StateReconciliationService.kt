@@ -397,25 +397,45 @@ class StateReconciliationService(
         reason: CloseReason,
         recoveredPrice: BigDecimal? = null,
     ) {
+        val positionId =
+            pos.id ?: run {
+                logger.error { "Phantom finalize without id: ${pos.ticker} - manual intervention required" }
+                return
+            }
+        val closePrice = recoveredPrice
+        if (closePrice == null) {
+            // P&L неизвестен: переводим в RECONCILIATION_REQUIRED (ниже по коду), без события.
+            pos.status = PositionStatus.CLOSED
+            pos.closedAt = LocalDateTime.now(clock)
+            pos.closeReason = reason
+            pos.pendingClose = false
+            pos.pendingEntry = false
+            positionRepo.save(pos)
+            return
+        }
+        // Реализованный P&L считаем здесь: путь фантома не проходит через CloseFillProcessor
+        // (скан-5 P1). Фьючерсы — по pointValue, акции — по lotSize.
+        val remainder = pnlCalculator.pnl(pos, pos.entryPrice, closePrice, BigDecimal(pos.quantity))
+        val realized = pos.realizedPnl.add(remainder)
+        // Единственный владелец закрытия: атомарный OPEN→CLOSED. Если close-fill/монитор
+        // успели раньше, событие не публикуем — иначе двойной учёт в дневном лимите (скан-8 P1).
+        if (!positionRepo.transitionToClosed(positionId, PositionStatus.CLOSED, closePrice, reason, realized, pos.cumulativeCloseFillQty)) {
+            logger.info { "Phantom close for ${pos.ticker} already finalized concurrently - skipping duplicate event" }
+            return
+        }
         pos.status = PositionStatus.CLOSED
         pos.closedAt = LocalDateTime.now(clock)
         pos.closeReason = reason
         pos.pendingClose = false
         pos.pendingEntry = false
-        if (recoveredPrice != null) {
-            pos.closePrice = recoveredPrice
-            // Фантомный путь не проходит через CloseFillProcessor, поэтому реализованный
-            // P&L считаем здесь: без него убыток не попадал ни в дневной лимит, ни в
-            // просадку, ни в серию убытков (скан-5 P1).
-            val remainder = pnlCalculator.pnl(pos, pos.entryPrice, recoveredPrice, BigDecimal(pos.quantity))
-            pos.pnl = pos.realizedPnl.add(remainder)
-        }
+        pos.closePrice = closePrice
+        pos.pnl = realized
+        // Догоняем non-terminal поля (pending_entry/флаги): terminal-guard не даст откатить статус.
         positionRepo.save(pos)
         tradeEventService.recordPositionClosed(pos, reason.code)
-        // Событие обязательно: `DailyLossCircuitBreaker` копит дневной P&L из событий,
-        // поэтому без публикации убыток не попадал в дневной лимит/просадку (скан-6).
+        // Событие обязательно: `DailyLossCircuitBreaker` копит дневной P&L из событий (скан-6).
         eventPublisher.publishPositionClosed(pos)
-        pos.ticker.let { positionRepo.releaseEntry(it, pos.accountId) }
+        positionRepo.releaseEntry(pos.ticker, pos.accountId)
         meterRegistry.counter("alor.reconcile.discrepancy", Tags.of("kind", "PHANTOM", "ticker", pos.ticker.uppercase())).increment()
     }
 

@@ -74,9 +74,36 @@ class StateReconciliationServiceTest {
         return TradingHaltedEvent("test")
     }
 
+    private fun anyStatus(): PositionStatus {
+        Mockito.any(PositionStatus::class.java)
+        return PositionStatus.CLOSED
+    }
+
+    private fun anyBigDecimal(): BigDecimal {
+        Mockito.any(BigDecimal::class.java)
+        return BigDecimal.ZERO
+    }
+
+    private fun anyReason(): CloseReason {
+        Mockito.any(CloseReason::class.java)
+        return CloseReason.RECONCILE_PHANTOM
+    }
+
     private fun stubOpenPositions(vararg positions: Position) {
         runBlocking {
             Mockito.`when`(positionRepo.findOpenByAccount(null)).thenReturn(positions.toList())
+            // Атомарный claim закрытия: по умолчанию «мы выиграли гонку».
+            Mockito
+                .`when`(
+                    positionRepo.transitionToClosed(
+                        Mockito.anyLong(),
+                        anyStatus(),
+                        anyBigDecimal(),
+                        anyReason(),
+                        anyBigDecimal(),
+                        Mockito.anyInt(),
+                    ),
+                ).thenReturn(true)
             Mockito
                 .`when`(positionRepo.save(anyPosition()))
                 .thenAnswer { inv -> inv.getArgument<Position>(0) }

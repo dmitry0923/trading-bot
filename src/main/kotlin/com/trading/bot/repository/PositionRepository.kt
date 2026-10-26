@@ -673,8 +673,11 @@ class PositionRepository(
                 -- возвращает старый размер и закрытие закроет больше, чем открыто (скан-5).
                 quantity =
                     CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.quantity
-                         WHEN positions.pending_entry THEN GREATEST(positions.quantity, :quantity)
-                         ELSE LEAST(positions.quantity, :quantity) END,
+                         -- Уменьшение применяем всегда (частичный фил/закрытие).
+                         WHEN :quantity < positions.quantity THEN :quantity
+                         -- Увеличение — только пока вход не подтверждён (догон до cumulative).
+                         WHEN positions.pending_entry THEN :quantity
+                         ELSE positions.quantity END,
                 entry_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.entry_price ELSE :entryPrice END,
                 current_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.current_price ELSE :currentPrice END,
                 close_price = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.close_price ELSE :closePrice END,

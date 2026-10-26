@@ -42,6 +42,18 @@ class LlmBudgetService(
 ) {
     private val logger = KotlinLogging.logger {}
 
+    init {
+        // Дефолты max-tokens=4096 и max-tokens-per-minute=4000 несовместимы: резерв одного
+        // вызова превышает потолок минуты, и LLM-путь деградирует в fallback (скан-7/8 P1).
+        if (llmConfig.budgetEnabled && llmConfig.maxTokens >= llmConfig.maxTokensPerMinute) {
+            logger.warn {
+                "LLM budget: llm.max-tokens=${llmConfig.maxTokens} >= llm.max-tokens-per-minute=" +
+                    "${llmConfig.maxTokensPerMinute} - резерв клампится, реальный throughput = 1 вызов/мин; " +
+                    "уменьшите llm.max-tokens"
+            }
+        }
+    }
+
     /** Результат резервирования бюджета: [allowed] и причина отказа ([reason] при запрете). */
     data class BudgetDecision(
         val allowed: Boolean,

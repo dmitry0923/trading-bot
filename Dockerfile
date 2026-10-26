@@ -10,8 +10,10 @@ RUN ./gradlew bootJar --no-daemon
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
+ENV TZ=Europe/Moscow
 WORKDIR /app
-COPY --from=builder /app/build/libs/*.jar app.jar
+# Имя конкретное: `*.jar` копирует и plain-jar, и bootJar → сборка образа падала.
+COPY --from=builder /app/build/libs/trading-bot-*.jar app.jar
 EXPOSE 8080
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["java", \

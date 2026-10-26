@@ -152,7 +152,9 @@ class ExecutionReconciler(
                         pos.entryPrice = execution.avgPrice ?: pos.entryPrice
                         positionRepo.save(pos)
                     }
-                    val elapsedMs = Duration.between(outbox.createdAt, LocalDateTime.now()).toMillis()
+                    // createdAt пишется бизнес-временем (МСК): сравнение с JVM-зоной давало
+                    // отрицательный elapsed на UTC-хосте и отмена остатка не срабатывала (скан-8 P1).
+                    val elapsedMs = Duration.between(outbox.createdAt, LocalDateTime.now(clock)).toMillis()
                     if (elapsedMs < alorConfig.entryPartialFillCancelAfterMs) {
                         logger.info {
                             "Pending entry ${pos.ticker}: partial fill ${pos.quantity}/$requestedQty, " +

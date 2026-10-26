@@ -212,6 +212,21 @@ class SemanticCacheUnitTest {
     }
 
     @Test
+    fun `put caches fenced json after stripping the code fence`() {
+        // Opus оборачивает JSON в ```json-фенс: агенты фенс снимают, значит и кэш должен.
+        val redisTemplate: StringRedisTemplate = mock()
+        val valueOps: ValueOperations<String, String> = mock()
+        Mockito.`when`(redisTemplate.opsForValue()).thenReturn(valueOps)
+        val cache = cache(enabled = true, redisTemplate = redisTemplate, registry = SimpleMeterRegistry())
+
+        cache.put("technical", "SBER", "fp", LlmResponse(content = "```json\n{\"trend\":\"UP\"}\n```"))
+
+        Mockito
+            .verify(valueOps)
+            .set(ArgumentMatchers.anyString(), ArgumentMatchers.anyString(), ArgumentMatchers.any<Duration>())
+    }
+
+    @Test
     fun `put writes with ttl and hashed key`() {
         val redisTemplate: StringRedisTemplate = mock()
         val valueOps: ValueOperations<String, String> = mock()

@@ -166,8 +166,17 @@ class DashboardSseService(
                 Thread.sleep(delayMs + 50)
                 val now = System.currentTimeMillis()
                 val last = lastBroadcastAt.get()
-                if (now - last >= minIntervalMs && lastBroadcastAt.compareAndSet(last, now)) {
-                    enqueueBroadcast(pendingReason.getAndSet(null) ?: "TRAILING")
+                val elapsed = now - last
+                if (elapsed >= minIntervalMs) {
+                    if (lastBroadcastAt.compareAndSet(last, now)) {
+                        enqueueBroadcast(pendingReason.getAndSet(null) ?: "TRAILING")
+                    }
+                } else if (pendingReason.get() != null) {
+                    // Окно сдвинулось (событие прошло вперёд): НЕ теряем pending, а
+                    // переносим трейлинг на остаток окна (скан-8 P2). Флаг снимаем
+                    // ДО перепланирования, иначе CAS ниже отвергнет новый трейлинг.
+                    trailingScheduled.set(false)
+                    scheduleTrailing((minIntervalMs - elapsed).coerceAtLeast(1L))
                 }
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()

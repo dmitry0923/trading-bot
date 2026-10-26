@@ -9,6 +9,13 @@ services:
   postgres:
     image: timescale/timescaledb:2.17.2-pg15
     container_name: trading-bot-db
+    restart: unless-stopped
+    # Логи не должны заполнять диск VM (docker json-file растёт без лимита).
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
     environment:
       POSTGRES_DB: ${DB_NAME:-trading_bot}
       POSTGRES_USER: ${DB_USER:-trader}
@@ -26,6 +33,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: trading-bot-redis
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -76,6 +84,12 @@ services:
   app:
     build: .
     container_name: trading-bot-app
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,6 +126,14 @@ services:
       QWEN_BASE_URL: ${QWEN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       QWEN_MODEL: ${QWEN_MODEL:-qwen-plus}
       TRADING_MODE: ${TRADING_MODE:-SIMULATION}
+      # LIVE-guard должен приходить из деплоя, а не из yml-дефолтов: без этих переменных
+      # контейнер брал watchlist из application.yml и allowlist не управлялся (скан-8 P1).
+      TRADING_TICKERS: ${TRADING_TICKERS:-CNYRUBF}
+      LIVE_TICKERS_ALLOWLIST: ${LIVE_TICKERS_ALLOWLIST:-CNYRUBF}
+      # WS-ордера — primary транспорт; без флага LIVE остаётся на REST (скан-8 P2).
+      ALOR_WS_ORDERS_ENABLED: ${ALOR_WS_ORDERS_ENABLED:-false}
+      # Бизнес-зона контейнера: без TZ JVM живёт в UTC и окна дат/таймстемпы уезжают.
+      TZ: ${TZ:-Europe/Moscow}
       TRADING_FUNDING_VETO_ENABLED: ${TRADING_FUNDING_VETO_ENABLED:-false}
       TRADING_FUNDING_VETO_LONG_THRESHOLD_RUB: ${TRADING_FUNDING_VETO_LONG_THRESHOLD_RUB:-2.0}
       TRADING_FUNDING_VETO_SHORT_THRESHOLD_RUB: ${TRADING_FUNDING_VETO_SHORT_THRESHOLD_RUB:-2.0}
@@ -123,7 +145,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (min 32 bytes)}
       JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-15}
       JWT_REFRESH_TTL_DAYS: ${JWT_REFRESH_TTL_DAYS:-30}
-      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-false}
+      # Дефолт как в application.yml: http-деплой должен включать флаг осознанно.
+      JWT_COOKIE_SECURE: ${JWT_COOKIE_SECURE:-true}
       METRICS_SCRAPE_TOKEN: ${METRICS_SCRAPE_TOKEN:-}
       LOCKBOX_ENABLED: ${LOCKBOX_ENABLED:-false}
       LOCKBOX_SECRET_ID: ${LOCKBOX_SECRET_ID:-}

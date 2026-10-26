@@ -175,6 +175,21 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `pending entry quantity can shrink to the actual partial fill`() {
+        runBlocking {
+            // Заявка на 3, исполнилась на 1: пока строка pending_entry, объём обязан
+            // УМЕНЬШАТЬСЯ, иначе БД покажет 3 против 1 на бирже → QTY_MISMATCH + halt.
+            val saved = repo.save(pos(ticker = "SHRINK", quantity = 3, pendingEntry = true))
+            val filled = repo.findById(saved.id!!)!!
+            filled.quantity = 1
+            filled.pendingEntry = true
+            repo.save(filled)
+
+            assertEquals(1, repo.findById(saved.id)!!.quantity, "частичный вход уменьшает объём")
+        }
+    }
+
+    @Test
     fun `stale save cannot inflate the quantity of an open position`() {
         runBlocking {
             // Монитор цены держит detached-копию и сохраняет её после того, как

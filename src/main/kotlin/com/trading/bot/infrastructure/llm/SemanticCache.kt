@@ -200,7 +200,13 @@ class SemanticCache(
      * испорчен и кэшировать его нельзя.
      */
     private fun isJsonContent(content: String): Boolean {
-        val trimmed = content.trim()
+        // Агенты принимают JSON и в ```json-фенсе (модель Opus), поэтому обёртку снимаем
+        // здесь так же, как перед валидацией в агентах.
+        var trimmed = content.trim()
+        if (trimmed.startsWith("```")) {
+            trimmed = trimmed.removePrefix("```json").removePrefix("```JSON").removePrefix("```")
+            trimmed = trimmed.trim().removeSuffix("```").trim()
+        }
         if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false
         return runCatching { objectMapper.readTree(trimmed) }.isSuccess
     }

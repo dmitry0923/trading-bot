@@ -3,6 +3,7 @@ package com.trading.bot.repository
 import com.trading.bot.infrastructure.UuidV7
 import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
+import com.trading.bot.model.BusinessTime
 import com.trading.bot.model.entity.OrderOutbox
 import com.trading.bot.model.entity.OutboxStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -173,7 +174,9 @@ class OrderOutboxRepository(
             """.trimIndent()
         return databaseClient
             .sql(sql)
-            .bind("cutoff", LocalDateTime.now().minusSeconds((olderThanSeconds + jitterSeconds).toLong()))
+            // createdAt пишется бизнес-временем (МСК): cutoff тоже в МСК, иначе на UTC-хосте
+            // PENDING-строки не захватываются ~3 часа после рестарта (скан-8 P1).
+            .bind("cutoff", BusinessTime.now().minusSeconds((olderThanSeconds + jitterSeconds).toLong()))
             .bind("maxRetries", maxRetries)
             .bind("backoffBase", backoffBaseSeconds)
             .bind("backoffMax", backoffMaxSeconds.toDouble())

@@ -47,8 +47,13 @@ object TraceContext {
      * у backtest-позиции). Иначе MDC.put(key, null) удаляет запись, а `mapOf` с null
      * ломает тип.
      */
-    fun mdcContextNullable(extra: Map<String, String?>): MDCContext =
-        MDCContext(currentMdc() + extra.mapNotNull { (k, v) -> v?.let { k to it } }.toMap())
+    fun mdcContextNullable(extra: Map<String, String?>): MDCContext {
+        // null = «ключа быть не должно»: иначе позиция без cycleId (backtest) наследует
+        // чужой trace_id из текущего MDC (скан-10 P2).
+        val base = currentMdc().toMutableMap()
+        extra.forEach { (k, v) -> if (v == null) base.remove(k) else base[k] = v }
+        return MDCContext(base)
+    }
 
     /**
      * Выполняет [block] в корутине, где MDC = текущий MDC + [extra].

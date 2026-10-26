@@ -3,6 +3,7 @@ package com.trading.bot.infrastructure.tracing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -110,6 +111,22 @@ class TraceContextTest {
 
         assertEquals("parent", TraceContext.traceId())
     }
+
+    @Test
+    fun `mdcContextNullable removes keys for null values`() =
+        runBlocking {
+            // Позиция без cycleId не должна наследовать чужой trace_id из текущего MDC
+            // (скан-10 P2).
+            TraceContext.put(TraceContext.TRACE_ID, "foreign-trace")
+            try {
+                withContext(TraceContext.mdcContextNullable(mapOf(TraceContext.TRACE_ID to null))) {
+                    assertNull(TraceContext.traceId(), "null-пара обязана удалить ключ")
+                }
+                assertEquals("foreign-trace", TraceContext.traceId(), "вне блока прежний MDC восстанавливается")
+            } finally {
+                TraceContext.put(TraceContext.TRACE_ID, null)
+            }
+        }
 
     @Test
     fun `mdc keys are the expected constants`() {

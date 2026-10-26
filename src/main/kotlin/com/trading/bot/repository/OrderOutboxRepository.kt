@@ -157,7 +157,10 @@ class OrderOutboxRepository(
             UPDATE order_outbox
             SET status = 'PROCESSING',
                 processed_at = now(),
-                retry_count = retry_count + CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END
+                -- PENDING тоже считаем попыткой: после краха между сетевым вызовом и markSent
+                -- строка остаётся PENDING, и повтор без reconcile отправил бы второй ордер
+                -- (скан-10 P1). Счётчик > 0 включает сверку перед переотправкой.
+                retry_count = retry_count + CASE WHEN status IN ('PROCESSING', 'PENDING') THEN 1 ELSE 0 END
             WHERE id IN (
                 SELECT id FROM order_outbox
                 WHERE

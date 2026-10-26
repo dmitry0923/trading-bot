@@ -113,6 +113,12 @@ class TradingControlService(
         // Атомарный claim дня + in-flight: два тика 60-секундного fixedDelay (или тик и
         // ручной force-close) не должны закрывать позиции дважды (скан-8 P2).
         if (!forceCloseInFlight.compareAndSet(false, true)) return
+        // Один раз в день: иначе после forceCloseTime закрытие повторялось бы каждую минуту
+        // (метрика росла, а позиция, открытая после закрытия, гасилась бы сразу) — скан-10 P2.
+        if (lastForceCloseDate.get() == today) {
+            forceCloseInFlight.set(false)
+            return
+        }
         if (!scope.isActive) return
         logger.info { "Scheduled force close triggered at ${settings.forceCloseTime}" }
         scope.launch {

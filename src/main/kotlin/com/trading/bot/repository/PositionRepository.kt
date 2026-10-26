@@ -649,7 +649,8 @@ class PositionRepository(
     ) {
         val column = if (side == ProtectionSide.SL) "cumulative_sl_fill_qty" else "cumulative_tp_fill_qty"
         databaseClient
-            .sql("UPDATE positions SET $column = 0 WHERE id = :id")
+            // Только OPEN: у закрытой позиции счётчик — исторический аудит, обнулять нельзя.
+            .sql("UPDATE positions SET $column = 0 WHERE id = :id AND status = 'OPEN'")
             .bind("id", id)
             .then()
             .awaitSingleOrNull()
@@ -658,7 +659,7 @@ class PositionRepository(
     /** Сброс счётчика закрывающих филов (новый close-attempt). */
     suspend fun resetCloseFillQty(id: Long) {
         databaseClient
-            .sql("UPDATE positions SET cumulative_close_fill_qty = 0 WHERE id = :id")
+            .sql("UPDATE positions SET cumulative_close_fill_qty = 0 WHERE id = :id AND status = 'OPEN'")
             .bind("id", id)
             .then()
             .awaitSingleOrNull()

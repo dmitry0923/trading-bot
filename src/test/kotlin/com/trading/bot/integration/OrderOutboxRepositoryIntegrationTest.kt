@@ -273,7 +273,7 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
-    fun `claimRetryable does not touch retry_count for PENDING and FAILED rows`() {
+    fun `claimRetryable counts a PENDING claim as an attempt so resend reconciles first`() {
         runBlocking {
             // Инкремент retry_count только у зависших PROCESSING: FAILED уже считает попытку
             // в markFailed, а инкремент при захвате съедал бы бюджет ретраев вдвое быстрее.
@@ -294,7 +294,9 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
 
             val claimed = repo.claimRetryable(5, olderThanSeconds = 30, backoffBaseSeconds = 10, jitterSeconds = 0)
 
-            assertEquals(0, claimed.first { it.id == pending.id }.retryCount)
+            // PENDING тоже инкрементит счётчик: после краха между сетевым вызовом и markSent
+            // переотправка обязана сначала сверить заявку по idempotency key (скан-10 P1).
+            assertEquals(1, claimed.first { it.id == pending.id }.retryCount)
             assertEquals(1, claimed.first { it.id == failedRow.id }.retryCount)
         }
     }

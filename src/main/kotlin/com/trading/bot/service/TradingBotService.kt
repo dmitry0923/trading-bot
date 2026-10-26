@@ -257,10 +257,13 @@ class TradingBotService(
                         lastWs == null || Duration.between(lastWs, now).toMillis() >= tradingConfig.monitorIntervalMs
                     }.forEach { ticker ->
                         try {
-                            TraceContext.put(TraceContext.TICKER, ticker)
-                            val price = alorClient.getLastPrice(ticker) ?: return@forEach
-                            marketDataGate.recordRestPollSuccess(ticker)
-                            eventPublisher.publishPriceChanged(ticker, price)
+                            // Контекст корутины, а не MDC.put: put остаётся на потоке пула
+                            // и протекает в чужие задачи (скан-10 P2).
+                            withContext(TraceContext.mdcContext(mapOf(TraceContext.TICKER to ticker))) {
+                                val price = alorClient.getLastPrice(ticker) ?: return@withContext
+                                marketDataGate.recordRestPollSuccess(ticker)
+                                eventPublisher.publishPriceChanged(ticker, price)
+                            }
                         } catch (e: Exception) {
                             logger.error(e) { "Price poll error $ticker" }
                             meterRegistry.counter("bot.price.poll.error", Tags.of("ticker", ticker)).increment()

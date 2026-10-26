@@ -454,10 +454,16 @@ class DrawdownProtectionService(
                 logger.warn(e) { "Daily risk snapshot load failed for account=$accountId" }
                 null
             }
-        accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
-        accountLossReached[accountId] = snapshot?.limitReached ?: false
-        accountPeakEquity[accountId] = snapshot?.peakEquity ?: BigDecimal.ZERO
-        accountLoadedDate[accountId] = day
+        synchronized(this) {
+            // Не перетираем свежий инкремент события закрытия (dirty): иначе убыток,
+            // пришедший пока читали снапшот, теряется и лимит занижается (скан-10 P1).
+            if (accountDirty[accountId] != true) {
+                accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
+                accountLossReached[accountId] = snapshot?.limitReached ?: false
+                accountPeakEquity[accountId] = snapshot?.peakEquity ?: BigDecimal.ZERO
+            }
+            accountLoadedDate[accountId] = day
+        }
     }
 
     /**
@@ -775,9 +781,11 @@ class DrawdownProtectionService(
                 null
             }
         synchronized(this) {
-            accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
-            accountLossReached[accountId] = snapshot?.limitReached ?: false
-            accountPeakEquity[accountId] = snapshot?.peakEquity ?: BigDecimal.ZERO
+            if (accountDirty[accountId] != true) {
+                accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
+                accountLossReached[accountId] = snapshot?.limitReached ?: false
+                accountPeakEquity[accountId] = snapshot?.peakEquity ?: BigDecimal.ZERO
+            }
             accountLoadedDate[accountId] = day
         }
     }

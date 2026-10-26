@@ -1115,12 +1115,6 @@ class BacktestEngine(
     }
 
     /**
-     * Знак ставки funding в P&L (research P4, docs/27): направленная модель — LONG платит
-     * положительную ставку (+1), SHORT её получает (−1). При
-     * `bt.funding-direction-aware=false` — историческая direction-agnostic модель (+1,
-     * ставка списывается обеим сторонам; воспроизводимость прежних артефактов).
-     */
-    /**
      * Сумма funding за перечисленные клиринги.
      *
      * Известные даты берутся из исторического ряда (`funding_history`), пропуски —
@@ -1149,6 +1143,12 @@ class BacktestEngine(
         return sum to missing
     }
 
+    /**
+     * Знак ставки funding в P&L (research P4, docs/27): направленная модель — LONG платит
+     * положительную ставку (+1), SHORT её получает (−1). При
+     * `bt.funding-direction-aware=false` — историческая direction-agnostic модель (+1,
+     * ставка списывается обеим сторонам; воспроизводимость прежних артефактов).
+     */
     private fun fundingChargeSign(direction: PositionDirection): BigDecimal =
         if (backtestConfig.fundingDirectionAware && direction == PositionDirection.SHORT) {
             BigDecimal.ONE.negate()

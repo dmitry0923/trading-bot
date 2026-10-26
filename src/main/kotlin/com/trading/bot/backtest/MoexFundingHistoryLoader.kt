@@ -70,6 +70,7 @@ class MoexFundingHistoryLoader(
         val records = ArrayList<FundingHistoryRecord>()
         var start = 0
         val pageSize = 100
+        var partial = false
         while (true) {
             val page =
                 fetchPage(
@@ -85,6 +86,10 @@ class MoexFundingHistoryLoader(
             // поэтому страница 2022 года даёт 100 сырых строк и 0 валидных.
             // Прежний `page.isEmpty()` обрывал обход на такой странице, и
             // донакачка CNYRUBF/USDRUBF/EURRUBF возвращала loaded=0.
+            if (page.failed) {
+                partial = true
+                break
+            }
             if (page.rawRows == 0) break
             records.addAll(page.records)
             start += page.rawRows
@@ -92,9 +97,18 @@ class MoexFundingHistoryLoader(
         }
         val distinct = records.distinctBy { it.clearingDate }
         val saved = fundingHistoryRepository.saveAll(distinct)
+        if (partial) {
+            // Не выдаём обрыв за успех: ряд записан частично, дырки в funding
+            // искажают P&L (docs/28 §2 №14).
+            logger.warn {
+                "MoexFundingHistoryLoader $ticker: PARTIAL backfill (${distinct.size} rows) — " +
+                    "MOEX history failed mid-way, re-run to complete"
+            }
+            meterRegistry.counter("funding.history.partial", "ticker", ticker).increment()
+        }
         meterRegistry.counter("funding.history.loaded", Tags.of("ticker", ticker)).increment(distinct.size.toDouble())
-        logger.info { "MoexFundingHistoryLoader $ticker: loaded=${distinct.size}, saved=$saved (days=$days)" }
-        return LoadResult(ticker = ticker, loaded = distinct.size, saved = saved)
+        logger.info { "MoexFundingHistoryLoader $ticker: loaded=${distinct.size}, saved=$saved (days=$days, partial=$partial)" }
+        return LoadResult(ticker = ticker, loaded = distinct.size, saved = saved, partial = partial)
     }
 
     /**
@@ -104,6 +118,8 @@ class MoexFundingHistoryLoader(
     internal data class Page(
         val records: List<FundingHistoryRecord>,
         val rawRows: Int,
+        /** HTTP/parse-ошибка страницы: обход прерывается, результат помечается partial. */
+        val failed: Boolean = false,
     )
 
     private suspend fun fetchPage(
@@ -132,7 +148,7 @@ class MoexFundingHistoryLoader(
             Page(parseHistory(raw, originalTicker), countRawRows(raw))
         } catch (e: Exception) {
             logger.warn(e) { "MoexFundingHistoryLoader: MOEX history failed for $originalTicker at start=$start" }
-            Page(emptyList(), 0)
+            Page(emptyList(), 0, failed = true)
         }
     }
 

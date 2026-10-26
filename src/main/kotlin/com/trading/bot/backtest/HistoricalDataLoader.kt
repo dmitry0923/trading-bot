@@ -23,6 +23,11 @@ data class LoadResult(
     val ticker: String,
     val loaded: Int,
     val saved: Int,
+    /**
+     * true, если загрузка прервалась на ошибке/таймауте середины ряда: данные
+     * записаны, но неполны. Раньше такой обрыв выглядел как «успех» (docs/28 §2 №14).
+     */
+    val partial: Boolean = false,
 )
 
 /**

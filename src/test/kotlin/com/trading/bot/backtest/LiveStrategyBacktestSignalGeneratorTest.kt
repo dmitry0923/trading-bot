@@ -932,6 +932,37 @@ class LiveStrategyBacktestSignalGeneratorTest {
         assertEquals(baseline, collectSignalsWith(genBaseline, candles), "baseline-генератор без veto не должен меняться")
     }
 
+    @Test
+    fun `higher timeframe lookback covers DAY_1 filters and starts on a bucket boundary`() {
+        // DAY_1-фильтру (macroTrend) нужно 60 дневных баров = 8 640 MINUTE_10.
+        // Старый потолок 600 базовых баров делал такой фильтр вечно `unknown`
+        // (docs/28 §2 №15). Окно обязано начинаться с начала суток, иначе первый
+        // дневной бакет неполный.
+        val barsPerDay = 144
+        val days = 70
+        val candles =
+            (0 until barsPerDay * days).map { i ->
+                val p = 100.0 + (i % 50) * 0.1
+                makeCandle(
+                    time = BASE_TIME.plusMinutes(10L * i),
+                    open = p,
+                    high = p + 0.2,
+                    low = p - 0.2,
+                    close = p,
+                )
+            }
+
+        val window = LiveStrategyBacktestSignalGenerator.higherTimeframeLookback(candles, candles.lastIndex, "DAY_1", bars = 60)
+
+        assertTrue(window.size > 8_000, "DAY_1-окно должно покрывать 60 баров, got ${window.size}")
+        assertEquals(
+            0,
+            window.first().time.hour * 60 + window.first().time.minute,
+            "окно должно начинаться с начала суток, got ${window.first().time}",
+        )
+        assertTrue(window.size <= candles.size, "окно не может быть больше истории")
+    }
+
     private companion object {
         val BASE_TIME: LocalDateTime = LocalDateTime.of(2026, 1, 1, 0, 0)
     }

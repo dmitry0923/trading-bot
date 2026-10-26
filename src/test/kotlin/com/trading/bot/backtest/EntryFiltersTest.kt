@@ -450,23 +450,23 @@ class EntryFiltersTest {
     @Test
     fun `vwapMr disabled never blocks`() {
         val f = filter()
-        assertNull(f.vwapMrDirection(emptyList(), emptyList()))
+        assertNull(f.vwapMrDirection(calmHigherTf(), calmHigherTf()))
     }
 
     @Test
     fun `vwapMr blocks when session too short and fail-closed`() {
         val f = filter(vwapMrEnabled = true, vwapMrMinSessionBars = 6, vwapMrBlockOnUnknown = true)
         val short = (0 until 3).map { i -> vwapCandle(i, 100.0) }
-        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(short, emptyList()))
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(short, calmHigherTf()))
         val open = filter(vwapMrEnabled = true, vwapMrMinSessionBars = 6, vwapMrBlockOnUnknown = false)
-        assertNull(open.vwapMrDirection(short, emptyList()))
+        assertNull(open.vwapMrDirection(short, calmHigherTf()))
     }
 
     @Test
     fun `vwapMr blocks flat session with zero sigma when fail-closed`() {
         val f = filter(vwapMrEnabled = true, vwapMrBlockOnUnknown = true)
         val flat = (0 until 10).map { i -> vwapCandle(i, 100.0) }
-        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(flat, emptyList()))
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(flat, calmHigherTf()))
     }
 
     @Test
@@ -480,7 +480,7 @@ class EntryFiltersTest {
                 vwapCandle(2, 100.0),
                 vwapCandle(3, 100.0),
             )
-        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(session, emptyList()))
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(session, calmHigherTf()))
     }
 
     @Test
@@ -495,10 +495,10 @@ class EntryFiltersTest {
             )
         // Сильное просадение: close 90 при VWAP ~100 → ожидаем отскок вверх (BUY).
         val down = base + vwapCandle(3, 90.0)
-        assertEquals(StrategyAction.BUY, f.vwapMrDirection(down, emptyList()))
+        assertEquals(StrategyAction.BUY, f.vwapMrDirection(down, calmHigherTf()))
         // Сильный рост: close 110 → ожидаем возврат вниз (SELL).
         val up = base + vwapCandle(3, 110.0)
-        assertEquals(StrategyAction.SELL, f.vwapMrDirection(up, emptyList()))
+        assertEquals(StrategyAction.SELL, f.vwapMrDirection(up, calmHigherTf()))
     }
 
     @Test
@@ -525,6 +525,52 @@ class EntryFiltersTest {
                 vwapCandle(1, 120.0),
             )
         assertEquals(StrategyAction.HOLD, f.vwapMrDirection(session, trend))
+    }
+
+    @Test
+    fun `vwapMr treats insufficient higher timeframe history as unknown`() {
+        // ADX(14) требует 2·period = 28 завершённых баров старшего ТФ. Меньше —
+        // индикатор не определён, и гейт «сильный тренд» не должен молча
+        // пропускать вход (docs/28 §2 №16).
+        val session =
+            listOf(
+                vwapCandle(0, 100.0),
+                vwapCandle(1, 120.0),
+            )
+        val shortTrend =
+            (0 until 10).map { i ->
+                val p = 100.0 + i
+                Candle(
+                    ticker = "TEST",
+                    timeframe = "HOUR_1",
+                    openPrice = BigDecimal.valueOf(p),
+                    highPrice = BigDecimal.valueOf(p + 1.0),
+                    lowPrice = BigDecimal.valueOf(p - 1.0),
+                    closePrice = BigDecimal.valueOf(p),
+                    volume = 100,
+                    time = dayBase.atTime(0, 0).plusHours(i.toLong()),
+                )
+            }
+
+        val failClosed =
+            filter(
+                vwapMrEnabled = true,
+                vwapMrDeviationSigma = 0.1,
+                vwapMrMinSessionBars = 2,
+                vwapMrBlockOnUnknown = true,
+            )
+        assertEquals(StrategyAction.HOLD, failClosed.vwapMrDirection(session, shortTrend))
+
+        // blockOnUnknown=false — та же неопределённость, но вход не блокируется
+        // (возвращается null = «фильтр не определён», caller пропускает сигнал).
+        val failOpen =
+            filter(
+                vwapMrEnabled = true,
+                vwapMrDeviationSigma = 0.1,
+                vwapMrMinSessionBars = 2,
+                vwapMrBlockOnUnknown = false,
+            )
+        assertNull(failOpen.vwapMrDirection(session, shortTrend))
     }
 
     @Test
@@ -789,9 +835,9 @@ class EntryFiltersTest {
             )
         val flat = (0 until 20).map { volCandle(it, 100.0, range = 1.0) }
         val above = flat.dropLast(1) + volCandle(19, 130.0, range = 1.0)
-        assertEquals(StrategyAction.SELL, f.vwapMrDirection(above, emptyList()))
+        assertEquals(StrategyAction.SELL, f.vwapMrDirection(above, calmHigherTf()))
         val below = flat.dropLast(1) + volCandle(19, 70.0, range = 1.0)
-        assertEquals(StrategyAction.BUY, f.vwapMrDirection(below, emptyList()))
+        assertEquals(StrategyAction.BUY, f.vwapMrDirection(below, calmHigherTf()))
     }
 
     @Test
@@ -805,7 +851,7 @@ class EntryFiltersTest {
                 vwapMrMinSessionBars = 6,
             )
         val bars = (0 until 20).map { volCandle(it, 100.0, range = 1.0) }
-        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(bars, emptyList()))
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(bars, calmHigherTf()))
     }
 
     @Test
@@ -820,14 +866,33 @@ class EntryFiltersTest {
             )
         val flat = (0 until 20).map { volCandle(it, 100.0, range = 1.0) }
         val above = flat.dropLast(1) + volCandle(19, 130.0, range = 1.0)
-        assertEquals(StrategyAction.SELL, f.vwapMrDirection(above, emptyList()))
+        assertEquals(StrategyAction.SELL, f.vwapMrDirection(above, calmHigherTf()))
         // Волатильная сессия: 1.0 отклонения внутри 2σ, поэтому вход заблокирован.
         val wiggly = (0 until 20).map { volCandle(it, if (it % 2 == 0) 98.0 else 102.0, range = 2.0) }
         val near = wiggly.dropLast(1) + volCandle(19, 101.0, range = 2.0)
-        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(near, emptyList()))
+        assertEquals(StrategyAction.HOLD, f.vwapMrDirection(near, calmHigherTf()))
     }
 
-    /** Бычья свеча (close > open) — требуется panic-фильтру с bullish-подтверждением. */
+    /**
+     * «Спокойный» старший ТФ: 30 плоских HOUR_1-баров → ADX = 0. Нужен там, где
+     * тест проверяет отклонение от VWAP, а не трендовый гейт: с пустым списком ADX
+     * не определён и фильтр fail-closed (docs/28 §2 №16).
+     */
+    private fun calmHigherTf(): List<Candle> =
+        (0 until 30).map { i ->
+            Candle(
+                ticker = "TEST",
+                timeframe = "HOUR_1",
+                openPrice = BigDecimal.valueOf(100.0),
+                highPrice = BigDecimal.valueOf(100.5),
+                lowPrice = BigDecimal.valueOf(99.5),
+                closePrice = BigDecimal.valueOf(100.0),
+                volume = 100,
+                time = dayBase.atTime(0, 0).plusHours(i.toLong()),
+            )
+        }
+
+    /** Бычий бар (close > open) - требуется panic-фильтром к bullish-свече. */
     private fun bullCandle(
         idx: Int,
         open: Double,

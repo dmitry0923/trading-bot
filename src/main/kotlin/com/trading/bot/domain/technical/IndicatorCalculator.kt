@@ -548,13 +548,20 @@ object IndicatorCalculator {
             atrAcc += trueRange(candles, i)
         }
         atrAcc /= atrPeriod
+        // Доводим ATR до первого оцениваемого бара (minBars-1) ровно столькими
+        // шагами Уайлдера, сколько баров между seed-индексом (atrPeriod) и ним.
+        // Раньше при rangePeriod > atrPeriod + 1 делался только ОДИН шаг, и ряд
+        // расходился с per-bar [isRangeSqueeze] (docs/28 §2 №16).
+        for (i in (atrPeriod + 1) until minBars) {
+            atrAcc += alpha * (trueRange(candles, i) - atrAcc)
+        }
         // Скользящая сумма (High-Low) ровно по последним rangePeriod баром.
         var rangeSum = 0.0
         for (i in minBars - rangePeriod until minBars) {
             rangeSum += candleRange(candles, i)
         }
         for (i in minBars - 1 until n) {
-            if (i > atrPeriod) {
+            if (i > minBars - 1) {
                 atrAcc += alpha * (trueRange(candles, i) - atrAcc)
             }
             if (i > minBars - 1) {

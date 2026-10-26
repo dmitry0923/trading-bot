@@ -222,8 +222,13 @@ class EntryFilters(
     val rangeSqueezeBlockOnUnknown: Boolean,
 ) {
     companion object {
-        /** Минут в сутках — [EntryFilters.orbWindowEndMinutes] ≥ этого значения
-         *  означает «окно не сужено» (вход разрешён сразу после закрытия диапазона). */
+        /** Минимум завершённых баров для ADX(14) в VWAP-MR: adx() требует 2·period. */
+        private const val VWAP_MR_ADX_MIN_BARS = 28
+
+        /**
+         * Границ в сутках - [EntryFilters.orbWindowEndMinutes] и этого значения
+         * должны быть < конца дня: вход разрешён только после закрытия окна ORB.
+         */
         private const val MINUTES_PER_DAY = 1440
 
         fun from(
@@ -510,6 +515,10 @@ class EntryFilters(
             // Сессия не набрала нужную длину — сигнал ещё не определён.
             return unknown
         }
+        // ADX не определён при нехватке истории (adx() возвращает 0.0), и гейт
+        // «сильный тренд → HOLD» молча пропускал бы вход. Нехватка = unknown
+        // (при vwapMrBlockOnUnknown → HOLD), docs/28 §2 №16.
+        if (higherTimeframeCandles.size < VWAP_MR_ADX_MIN_BARS) return unknown
         val adx = IndicatorCalculator.adx(higherTimeframeCandles)
         if (adx > vwapMrMaxAdx) return StrategyAction.HOLD
         val close = window.last().closePrice.toDouble()
@@ -1273,23 +1282,26 @@ class LiveStrategyBacktestSignalGenerator(
         return if (verdict.allow) mlAdjusted else StrategyAction.HOLD
     }
 
-    private companion object {
+    internal companion object {
         /** Базовый таймфрейм ресемплинга (MINUTE_10) — бар на 10 минут. */
         private const val BASE_BAR_MINUTES = 10L
 
-        /** Жёсткий потолок lookback для ADX старшего ТФ: ресемплинг всего
-         *  префикса истории даёт O(n²) на длинных прогонах (46k свечей), а ADX
-         *  нуждается лишь в десятках завершённых баров старшего ТФ. */
-        private const val MAX_ADX_LOOKBACK_BARS = 600
+        /** Жёсткий потолок lookback для индикаторов старшего ТФ: ресемплинг
+         *  префикса истории стоит O(базовых баров в окне) на каждый бар, поэтому
+         *  окно ограничено. 20 000 базовых баров покрывают DAY_1-фильтры
+         *  (60 DAY_1 ≈ 8 640 MINUTE_10, с запасом 1.5× ≈ 12 960); прежние 600
+         *  делали любой DAY_1-фильтр вечно `unknown` (docs/28 §2 №15). */
+        private const val MAX_HIGHER_TF_LOOKBACK_BARS = 20_000
 
         /** Минимум баров старшего ТФ для расчёта ADX: 2·period + запас. */
         private const val ADX_HIGHER_TF_BARS = 32
 
         /**
          * Срез свечей для расчёта индикатора старшего ТФ: столько базовых баров,
-         * сколько нужно для [bars] завершённых баров старшего ТФ, но не больше
-         * [MAX_ADX_LOOKBACK_BARS]. Неизвестный таймфрейм → пустой список
-         * (индикатор не определён, вызывающий код решает fail-closed/пропуск).
+         * сколько нужно для [bars] завершённых баров старшего ТФ (с потолком
+         * [MAX_HIGHER_TF_LOOKBACK_BARS]). Окно выравнивается по началу бакета,
+         * иначе первый бакет неполный и сеет EMA/ADX/RSI неверным значением.
+         * Неизвестный таймфрейм → пустой список.
          */
         fun higherTimeframeLookback(
             candles: List<Candle>,
@@ -1301,9 +1313,13 @@ class LiveStrategyBacktestSignalGenerator(
                 runCatching { CandleResampler.durationMinutes(timeframe) }.getOrNull()
                     ?: return emptyList()
             val barsPerBucket = (duration / BASE_BAR_MINUTES).coerceAtLeast(1L)
-            val needed = (bars * barsPerBucket).coerceAtMost(MAX_ADX_LOOKBACK_BARS.toLong())
-            val from = (index + 1 - needed).coerceAtLeast(0L)
-            return candles.subList(from.toInt(), index + 1)
+            val needed = (bars * barsPerBucket).coerceAtMost(MAX_HIGHER_TF_LOOKBACK_BARS.toLong())
+            var from = (index + 1 - needed).coerceAtLeast(0L).toInt()
+            if (from > 0) {
+                val bucket = CandleResampler.bucketStart(candles[from].time, duration)
+                while (from > 0 && candles[from].time != bucket) from--
+            }
+            return candles.subList(from, index + 1)
         }
 
         /** Запас 1.5× к требуемому числу баров старшего ТФ (warmup индикатора). */

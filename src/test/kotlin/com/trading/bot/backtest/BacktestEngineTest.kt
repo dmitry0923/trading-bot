@@ -104,6 +104,26 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `funding sum falls back to configured rate for missing dates`() {
+        // Пропуск даты в funding_history раньше давал 0 (fail-open) и занижал
+        // издержки; теперь — конфиг-ставка инструмента + счётчик пропусков
+        // (docs/28 §2 №14).
+        val engine = BacktestEngine(CandleRepository(Mockito.mock(DatabaseClient::class.java)))
+        val d1 = LocalDate.of(2026, 1, 5)
+        val d2 = LocalDate.of(2026, 1, 6)
+
+        val (sum, missing) =
+            engine.fundingSumForDates(
+                dates = listOf(d1, d2),
+                fundingHistory = mapOf(d1 to BigDecimal("1.00")),
+                fallbackPerClearing = BigDecimal("5.00"),
+            )
+
+        assertEquals(0, BigDecimal("6.00").compareTo(sum), "1.00 из ряда + 5.00 fallback")
+        assertEquals(1, missing)
+    }
+
+    @Test
     fun `empty candle slice does not query funding history and returns empty result`() {
         // Регресс на баг, найденный на WFA 730д: фолд без свечей ронял sorted.first()
         // (NoSuchElementException), исключение ловилось блоком funding и логировалось

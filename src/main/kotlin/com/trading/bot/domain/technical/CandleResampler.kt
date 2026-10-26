@@ -75,7 +75,11 @@ object CandleResampler {
         return resampled
     }
 
-    private fun bucketStart(
+    /**
+     * Начало бакета таймфрейма для [time] (floor по календарю): используется и
+     * ресемплером, и фильтрами, которым нужен полный первый бакет окна.
+     */
+    fun bucketStart(
         time: LocalDateTime,
         durationMinutes: Long,
     ): LocalDateTime =

@@ -1120,6 +1120,35 @@ class BacktestEngine(
      * `bt.funding-direction-aware=false` — историческая direction-agnostic модель (+1,
      * ставка списывается обеим сторонам; воспроизводимость прежних артефактов).
      */
+    /**
+     * Сумма funding за перечисленные клиринги.
+     *
+     * Известные даты берутся из исторического ряда (`funding_history`), пропуски —
+     * по конфигурационной ставке инструмента. Раньше пропуск давал 0 (fail-open) и
+     * молча занижал издержки; количество пропусков возвращается вторым элементом,
+     * чтобы вызывающий код писал метрику (docs/28 §2 №14).
+     *
+     * `internal` — намеренно, для регресс-теста.
+     */
+    internal fun fundingSumForDates(
+        dates: List<LocalDate>,
+        fundingHistory: Map<LocalDate, BigDecimal>,
+        fallbackPerClearing: BigDecimal,
+    ): Pair<BigDecimal, Int> {
+        var missing = 0
+        val sum =
+            dates.fold(BigDecimal.ZERO) { acc, date ->
+                val rate = fundingHistory[date]
+                if (rate == null) {
+                    missing++
+                    acc.add(fallbackPerClearing)
+                } else {
+                    acc.add(rate)
+                }
+            }
+        return sum to missing
+    }
+
     private fun fundingChargeSign(direction: PositionDirection): BigDecimal =
         if (backtestConfig.fundingDirectionAware && direction == PositionDirection.SHORT) {
             BigDecimal.ONE.negate()
@@ -1461,7 +1490,14 @@ class BacktestEngine(
                 if (dates.isEmpty()) {
                     BigDecimal.ZERO
                 } else if (fundingHistory.isNotEmpty()) {
-                    val fundingSum = dates.fold(BigDecimal.ZERO) { acc, date -> acc.add(fundingHistory[date] ?: BigDecimal.ZERO) }
+                    // Дырка в ряду — НЕ ноль: 0 занижал бы издержки (fail-open).
+                    // Fallback — конфигурационная ставка инструмента, факт дырки виден
+                    // в метрике `bt_funding_missing_total` (docs/28 §2 №14).
+                    val (fundingSum, missing) =
+                        fundingSumForDates(dates, fundingHistory, instrument.fundingPerClearing())
+                    if (missing > 0) {
+                        meterRegistry?.counter("bt_funding_missing_total", "ticker", ticker)?.increment(missing.toDouble())
+                    }
                     fundingSign.multiply(fundingSum).multiply(BigDecimal(pos.quantity))
                 } else if (instrument.fundingPerClearing() > BigDecimal.ZERO) {
                     fundingSign.multiply(instrument.fundingPerClearing()).multiply(

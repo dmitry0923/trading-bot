@@ -218,6 +218,52 @@ class MoexFundingHistoryLoaderTest {
         }
 
     @Test
+    fun `mid-way http failure marks backfill partial instead of silent success`(): Unit =
+        runBlocking {
+            // Первая страница полная (100 строк) → нужна вторая; вторая отвечает 500.
+            // Раньше обход молча прекращался и результат выглядел успешным,
+            // хотя ряд записан частично (docs/28 §2 №14).
+            val requests = AtomicInteger(0)
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/") { exchange ->
+                val n = requests.incrementAndGet()
+                if (n == 1) {
+                    respond(
+                        exchange,
+                        """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [${rows(0, 100)}]}}""",
+                        200,
+                    )
+                } else {
+                    respond(exchange, "boom", 500)
+                }
+            }
+            server.start()
+            try {
+                val fundingConfig = FundingConfig()
+                fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
+                val repo = Mockito.mock(FundingHistoryRepository::class.java)
+                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(100)
+                val registry = SimpleMeterRegistry()
+                val loader =
+                    MoexFundingHistoryLoader(
+                        fundingConfig,
+                        instrumentsConfig,
+                        repo,
+                        ObjectMapper(),
+                        registry,
+                    )
+
+                val result = loader.loadAndSave("CNYRUBF", 365)
+
+                assertEquals(100, result.loaded)
+                assertTrue(result.partial, "обрыв на второй странице обязан помечаться partial")
+                assertEquals(1.0, registry.counter("funding.history.partial", "ticker", "CNYRUBF").count())
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
     fun `pages past a full page of blank swaprate rows`(): Unit =
         runBlocking {
             // Регресс: у валютных перпетуалов SWAPRATE пуст до 2023-01-03, поэтому

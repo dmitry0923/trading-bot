@@ -174,11 +174,26 @@ tasks.register("checkUnused") {
 // НАСТРОЙКА KOVER (покрытие тестами)
 // Отчёт: build/reports/kover/ (html/xml/verify)
 // Проверка порога: ./gradlew koverVerify (подключена к check)
+//
+// Порог LINE поднят до 90 (цель проекта), BRANCH — 70. Именно эти два числа и есть
+// «покрытие 90 %»: `koverVerify` падает при их нарушении, поэтому цифра закреплена
+// сборкой, а не только отчётом. `report.xml`/`report.html` показывают те же LINE/BRANCH,
+// но по пакетам и классам: отдельные адаптеры (контроллеры, HTTP-клиенты) ниже 90 —
+// это нормально, агрегат обязан быть ≥ 90.
 kover {
     reports {
         verify {
-            rule {
-                minBound(70)
+            rule("aggregate line coverage") {
+                bound {
+                    minValue = 90
+                    coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE
+                }
+            }
+            rule("aggregate branch coverage") {
+                bound {
+                    minValue = 70
+                    coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.BRANCH
+                }
             }
         }
     }

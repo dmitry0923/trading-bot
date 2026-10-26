@@ -3,6 +3,7 @@ package com.trading.bot.repository
 import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.entity.DailyRiskSnapshot
 import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
@@ -137,5 +138,74 @@ class DailyRiskSnapshotRepository(
         finalSpec
             .then()
             .block()
+    }
+
+    /**
+     * Suspend-версия [upsert]: горячий путь (событие закрытия) не должен держать монитор
+     * сервиса на блокирующем `.block()` (скан-8 P1).
+     */
+    suspend fun upsertAwait(
+        tradeDate: LocalDate,
+        dailyPnl: BigDecimal,
+        limitReached: Boolean,
+        maxDrawdownToday: BigDecimal,
+        accountId: Long? = null,
+        peakEquity: BigDecimal? = null,
+    ) {
+        val sql =
+            if (accountId == null) {
+                """
+                INSERT INTO daily_risk_snapshot (trade_date, daily_pnl, limit_reached, max_drawdown_today, peak_equity, updated_at)
+                VALUES (:tradeDate, :dailyPnl, :limitReached, :maxDrawdownToday, :peakEquity, NOW())
+                ON CONFLICT (trade_date) WHERE account_id IS NULL DO UPDATE SET
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    limit_reached = EXCLUDED.limit_reached,
+                    max_drawdown_today = EXCLUDED.max_drawdown_today,
+                    peak_equity = EXCLUDED.peak_equity,
+                    updated_at = NOW()
+                """.trimIndent()
+            } else {
+                """
+                INSERT INTO daily_risk_snapshot (trade_date, account_id, daily_pnl, limit_reached, max_drawdown_today, peak_equity, updated_at)
+                VALUES (:tradeDate, :accountId, :dailyPnl, :limitReached, :maxDrawdownToday, :peakEquity, NOW())
+                ON CONFLICT (trade_date, account_id) DO UPDATE SET
+                    daily_pnl = EXCLUDED.daily_pnl,
+                    limit_reached = EXCLUDED.limit_reached,
+                    max_drawdown_today = EXCLUDED.max_drawdown_today,
+                    peak_equity = EXCLUDED.peak_equity,
+                    updated_at = NOW()
+                """.trimIndent()
+            }
+        val spec =
+            databaseClient
+                .sql(sql)
+                .bind("tradeDate", tradeDate)
+                .bind("dailyPnl", dailyPnl)
+                .bind("limitReached", limitReached)
+                .bind("maxDrawdownToday", maxDrawdownToday)
+        val withPeak = if (peakEquity != null) spec.bind("peakEquity", peakEquity) else spec.bindNull("peakEquity", BigDecimal::class.java)
+        val finalSpec = if (accountId != null) withPeak.bind("accountId", accountId) else withPeak
+        finalSpec
+            .then()
+            .awaitSingleOrNull()
+    }
+
+    /** Suspend-версия [findByDate]: чтение в корутине без `.block()` (скан-8 P1). */
+    suspend fun findByDateAwait(
+        tradeDate: LocalDate,
+        accountId: Long? = null,
+    ): DailyRiskSnapshot? {
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date = :tradeDate AND account_id IS NULL"
+            } else {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date = :tradeDate AND account_id = :accountId"
+            }
+        val spec = databaseClient.sql(sql).bind("tradeDate", tradeDate)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
+            .map { row, _ -> toDailyRiskSnapshot(row) }
+            .one()
+            .awaitSingleOrNull()
     }
 }

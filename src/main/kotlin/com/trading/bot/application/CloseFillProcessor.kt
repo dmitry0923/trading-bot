@@ -408,6 +408,7 @@ class CloseFillProcessor(
         pos.closeReason = null
         pos.closeCancelPending = false
         pos.cumulativeCloseFillQty = 0
+        pos.id?.let { positionRepo.resetCloseFillQty(it) }
         positionRepo.save(pos)
         logger.info { "Close state reset for ${pos.ticker} (${pos.id}) — position back to clean OPEN" }
     }

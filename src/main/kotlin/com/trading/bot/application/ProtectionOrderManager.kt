@@ -88,7 +88,7 @@ class ProtectionOrderManager(
                 pos.slOrderId = placed.alorOrderId
                 pos.slOrderPrice = effSl
                 // New protection order — fill counter starts from zero
-                pos.cumulativeSlFillQty = 0
+                resetSlFillCounter(pos)
                 dirty = true
                 logger.info { "Exchange SL placed ${pos.ticker} @ $effSl qty=${pos.quantity} -> ${placed.alorOrderId}" }
             } else {
@@ -115,7 +115,7 @@ class ProtectionOrderManager(
                 pos.tpOrderId = placed.alorOrderId
                 pos.tpOrderPrice = tp
                 // New protection order — fill counter starts from zero
-                pos.cumulativeTpFillQty = 0
+                resetTpFillCounter(pos)
                 dirty = true
                 logger.info { "Exchange TP placed ${pos.ticker} @ $tp qty=${pos.quantity} -> ${placed.alorOrderId}" }
             } else {
@@ -319,7 +319,7 @@ class ProtectionOrderManager(
                 pos.slPendingReplace = false
                 pos.slCancelPending = false
                 // Old order replaced — reset its fill counter
-                pos.cumulativeSlFillQty = 0
+                resetSlFillCounter(pos)
                 logger.warn { "Exchange SL order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
             }
         }
@@ -346,7 +346,7 @@ class ProtectionOrderManager(
                 pos.tpPendingReplace = false
                 pos.tpCancelPending = false
                 // Old order replaced — reset its fill counter
-                pos.cumulativeTpFillQty = 0
+                resetTpFillCounter(pos)
                 logger.warn { "Exchange TP order $id for ${pos.ticker} gone (${ex.status}); will re-place" }
             }
         }
@@ -500,7 +500,7 @@ class ProtectionOrderManager(
                 pos.slPendingReplace = false
                 pos.slCancelPending = false
                 // Old SL replaced — reset its fill counter for the new order
-                pos.cumulativeSlFillQty = 0
+                resetSlFillCounter(pos)
                 dirty = true
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "SL replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
@@ -551,7 +551,7 @@ class ProtectionOrderManager(
                 pos.tpPendingReplace = false
                 pos.tpCancelPending = false
                 // Old TP replaced — reset its fill counter for the new order
-                pos.cumulativeTpFillQty = 0
+                resetTpFillCounter(pos)
                 dirty = true
                 if (result == AlorClient.CancelResult.CONFIRMED) {
                     logger.info { "TP replacement confirmed for ${pos.ticker} (old order $oldId cancelled)" }
@@ -594,6 +594,20 @@ class ProtectionOrderManager(
 
             else -> false
         }
+
+    /**
+     * Обнуляет счётчик филов SL и в памяти, и в БД: `save()` пишет его через `GREATEST`
+     * (защита от stale-копии), поэтому явный reset обязателен (скан-9 P2).
+     */
+    private suspend fun resetSlFillCounter(pos: Position) {
+        pos.cumulativeSlFillQty = 0
+        pos.id?.let { positionRepo.resetProtectionFillQty(it, PositionRepository.ProtectionSide.SL) }
+    }
+
+    private suspend fun resetTpFillCounter(pos: Position) {
+        pos.cumulativeTpFillQty = 0
+        pos.id?.let { positionRepo.resetProtectionFillQty(it, PositionRepository.ProtectionSide.TP) }
+    }
 }
 
 /** Статусы «исполнен полностью»: при них отсутствие количества = весь остаток. */

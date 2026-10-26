@@ -210,22 +210,27 @@ class DrawdownProtectionService(
         // concurrent-закрытие, не прочитанное recompute'ом (запрос прошёл до его
         // коммита), потеряло бы свой инкремент в аккумуляторе и персисте.
         val dailyLimit =
-            synchronized(this) {
+            run {
                 if (accountId != null) {
-                    loadAccountDailyState(accountId, now.toLocalDate())
-                    if (accountDirty[accountId] != true) {
-                        accountPnl[accountId] = dailyPnl
-                        accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
+                    // I/O — ДО критической секции: suspend-чтение не держит монитор (скан-8 P1).
+                    loadAccountDailyStateAwait(accountId, now.toLocalDate())
+                    synchronized(this) {
+                        if (accountDirty[accountId] != true) {
+                            accountPnl[accountId] = dailyPnl
+                            accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
+                        }
+                        persistDailyState(accountId)
+                        effectiveDailyLossLimitRubFor(accountId, aum)
                     }
-                    persistDailyState(accountId)
-                    effectiveDailyLossLimitRubFor(accountId, aum)
                 } else {
-                    if (!accumulatorDirty) {
-                        todayPnl = dailyPnl
-                        todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+                    synchronized(this) {
+                        if (!accumulatorDirty) {
+                            todayPnl = dailyPnl
+                            todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+                        }
+                        persistDailyState()
+                        effectiveDailyLossLimitRub(aum)
                     }
-                    persistDailyState()
-                    effectiveDailyLossLimitRub(aum)
                 }
             }
 
@@ -363,26 +368,35 @@ class DrawdownProtectionService(
      *
      * Метод сериализован ([Synchronized]): конкурирующие вызовы из разных корутин
      * не должны терять обновления (`todayPnl = todayPnl + pnl` — read-modify-write).
+     *
+     * I/O загрузки состояния выполняется ДО критической секции: `.block()` не должен
+     * держать монитор сервиса и останавливать обработку событий (скан-8 P1).
      */
-    @Synchronized
     override fun updateDailyPnl(
         pnl: BigDecimal,
         accountId: Long?,
     ) {
-        resetDailyStateIfNewDay()
         if (accountId != null) {
-            updateAccountDailyPnl(accountId, pnl)
+            val day = LocalDate.now(clock)
+            loadAccountDailyState(accountId, day)
+            synchronized(this) {
+                resetDailyStateIfNewDay()
+                updateAccountDailyPnl(accountId, pnl)
+            }
             return
         }
-        todayPnl = todayPnl.add(pnl)
-        accumulatorDirty = true
-        val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
-        val dailyLimit = effectiveDailyLossLimitRub(aum)
-        if (todayPnl <= dailyLimit.negate()) {
-            todayDailyLossReached = true
-            logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$todayPnl <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
+        synchronized(this) {
+            resetDailyStateIfNewDay()
+            todayPnl = todayPnl.add(pnl)
+            accumulatorDirty = true
+            val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
+            val dailyLimit = effectiveDailyLossLimitRub(aum)
+            if (todayPnl <= dailyLimit.negate()) {
+                todayDailyLossReached = true
+                logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$todayPnl <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
+            }
+            persistDailyState()
         }
-        persistDailyState()
         MutableGauges.set(meterRegistry, "risk.daily.pnl", todayPnl.toDouble())
         MutableGauges.set(meterRegistry, "risk.daily.limit.reached", if (todayDailyLossReached) 1.0 else 0.0)
         // Синхронное обновление кэша — входы блокируются немедленно, без ожидания цикла.
@@ -402,8 +416,7 @@ class DrawdownProtectionService(
         accountId: Long,
         pnl: BigDecimal,
     ) {
-        val day = LocalDate.now(clock)
-        loadAccountDailyState(accountId, day)
+        // Состояние дня уже загружено вызывающим ДО критической секции (без I/O под монитором).
         val newPnl = (accountPnl[accountId] ?: BigDecimal.ZERO).add(pnl)
         accountPnl[accountId] = newPnl
         accountDirty[accountId] = true
@@ -745,11 +758,35 @@ class DrawdownProtectionService(
         logger.info { "Daily risk state for $today: dailyPnL=$todayPnl limitReached=$todayDailyLossReached peakEquity=$todayPeakEquity" }
     }
 
+    /**
+     * Suspend-вариант загрузки состояния: в [computeStatus] I/O нельзя держать под монитором
+     * сервиса (скан-8 P1).
+     */
+    private suspend fun loadAccountDailyStateAwait(
+        accountId: Long,
+        day: LocalDate,
+    ) {
+        if (accountLoadedDate[accountId] == day) return
+        val snapshot =
+            try {
+                dailyRiskSnapshotRepo.findByDateAwait(day, accountId)
+            } catch (e: Exception) {
+                logger.warn(e) { "Daily risk snapshot load failed for account=$accountId" }
+                null
+            }
+        synchronized(this) {
+            accountPnl[accountId] = snapshot?.dailyPnl ?: BigDecimal.ZERO
+            accountLossReached[accountId] = snapshot?.limitReached ?: false
+            accountPeakEquity[accountId] = snapshot?.peakEquity ?: BigDecimal.ZERO
+            accountLoadedDate[accountId] = day
+        }
+    }
+
+    /**
+     * Персист снимка. Один короткий upsert остаётся синхронным (durability счётчика 0     * важнее неблокирующего вызова), но все ЧТЕНИЯ вынесены из-под монитора в 0     * [computeStatus]/[updateDailyPnl] (скан-8 P1).
+     */
     private fun persistDailyState() {
         try {
-            // P2-аудит: единый источник дня — LocalDate.now(clock), как в per-account
-            // persistDailyState(accountId). lastTradingDate === now(clock) после
-            // resetDailyStateIfNewDay(), но неявная зависимость от поля — хрупкая.
             dailyRiskSnapshotRepo.upsert(
                 LocalDate.now(clock),
                 todayPnl,

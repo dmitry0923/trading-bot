@@ -34,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -247,15 +248,22 @@ class FuturesTradingBotService(
                         val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
                         for (pos in open) {
                             try {
-                                TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-                                TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
-                                // per-clearing funding: пополняем серию снапшотов по дате клиринга,
-                                // пока позиция открыта (на даты, пережитые позицией, LIVE нужен
-                                // авторитетный MOEX-снапшот).
-                                if (instrumentsConfig.find(pos.ticker)?.fundingPerClearing()?.let { it > BigDecimal.ZERO } == true) {
-                                    fundingSnapshotService.refresh(pos.ticker)
+                                // Контекст корутины вместо MDC.put (утечка на поток пула) — скан-8 P2.
+                                withContext(
+                                    TraceContext.mdcContextNullable(
+                                        mapOf(
+                                            TraceContext.TRACE_ID to pos.cycleId,
+                                            TraceContext.CYCLE_ID to pos.cycleId,
+                                        ),
+                                    ),
+                                ) {
+                                    // per-clearing funding: обновляем ряд ставок на дату
+                                    // клиринга, чтобы P&L учёл фактическое значение (в LIVE — MOEX).
+                                    if (instrumentsConfig.find(pos.ticker)?.fundingPerClearing()?.let { it > BigDecimal.ZERO } == true) {
+                                        fundingSnapshotService.refresh(pos.ticker)
+                                    }
+                                    engine.reconcilePosition(pos)
                                 }
-                                engine.reconcilePosition(pos)
                             } catch (e: Exception) {
                                 logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
                                 hadErrors = true

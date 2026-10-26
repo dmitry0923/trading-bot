@@ -166,7 +166,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
           # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
-          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana"
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
           # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
@@ -206,6 +206,10 @@ jobs:
             grep -E "^METRICS_SCRAPE_TOKEN=" .env | cut -d= -f2- > prometheus-token
 
             echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
+            # Бэкап ДО авто-миграций: Liquibase применяется при старте app, rollback нет.
+            chmod +x scripts/db_backup.sh 2>/dev/null || chmod +x db_backup.sh
+            (bash scripts/db_backup.sh || bash db_backup.sh)
+
             COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
             $COMPOSE pull
             # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.
@@ -264,7 +268,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
           # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
-          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana"
+          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
           # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
@@ -315,6 +319,10 @@ jobs:
             grep -E "^METRICS_SCRAPE_TOKEN=" .env | cut -d= -f2- > prometheus-token
 
             echo "${{ secrets.YC_SA_JSON }}" | docker login --username json_key --password-stdin "$REGISTRY"
+            # Бэкап ДО авто-миграций: Liquibase применяется при старте app, rollback нет.
+            chmod +x scripts/db_backup.sh 2>/dev/null || chmod +x db_backup.sh
+            (bash scripts/db_backup.sh || bash db_backup.sh)
+
             COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
             $COMPOSE pull
             # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.

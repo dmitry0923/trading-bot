@@ -638,12 +638,41 @@ class PositionRepository(
     }
 
     /**
+     * Сброс счётчика филов ЗАЩИТНОЙ заявки (SL/TP) при переармировании.
+     *
+     * `save()` пишет счётчики через `GREATEST` (защита от stale-копии), поэтому
+     * легитимное обнуление делается отдельным узким UPDATE (скан-9 P2).
+     */
+    suspend fun resetProtectionFillQty(
+        id: Long,
+        side: ProtectionSide,
+    ) {
+        val column = if (side == ProtectionSide.SL) "cumulative_sl_fill_qty" else "cumulative_tp_fill_qty"
+        databaseClient
+            .sql("UPDATE positions SET $column = 0 WHERE id = :id")
+            .bind("id", id)
+            .then()
+            .awaitSingleOrNull()
+    }
+
+    /** Сброс счётчика закрывающих филов (новый close-attempt). */
+    suspend fun resetCloseFillQty(id: Long) {
+        databaseClient
+            .sql("UPDATE positions SET cumulative_close_fill_qty = 0 WHERE id = :id")
+            .bind("id", id)
+            .then()
+            .awaitSingleOrNull()
+    }
+
+    /** Какая защитная заявка переармируется (см. [resetProtectionFillQty]). */
+    enum class ProtectionSide { SL, TP }
+
+    /**
      * Узкое mark-to-market обновление: только `current_price`/`pnl` у OPEN-позиции.
      *
      * Монитор акций держит detached-сущность (репозиторий возвращает новый объект
      * на каждый тик), full-row `save()` без изменения SL/TP не вызывался — unrealized
-     * P&L не попадал в БД, и дневной лимит/просадка не видели просадку по открытой
-     * акции (скан-4 P1).
+     * P&L не попадал в БД, и дневной лимит/просадка не видели просадку по акции.
      */
     suspend fun updateMarkToMarket(
         id: Long,
@@ -703,15 +732,18 @@ class PositionRepository(
                 pending_entry = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN FALSE ELSE :pendingEntry END,
                 realized_pnl = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.realized_pnl ELSE :realizedPnl END,
                 close_reason = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.close_reason ELSE :closeReason END,
+                -- Счётчики филов монотонны в рамках одной заявки: GREATEST не даёт stale-копии
+                -- откатить их (иначе дельта применится повторно — пере-закрытие, скан-9 P2).
+                -- Легитимный сброс при переармировании — явные reset*-методы ниже.
                 cumulative_close_fill_qty =
                     CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.cumulative_close_fill_qty
-                         ELSE :cumulativeCloseFillQty END,
+                         ELSE GREATEST(positions.cumulative_close_fill_qty, :cumulativeCloseFillQty) END,
                 cumulative_sl_fill_qty =
                     CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.cumulative_sl_fill_qty
-                         ELSE :cumulativeSlFillQty END,
+                         ELSE GREATEST(positions.cumulative_sl_fill_qty, :cumulativeSlFillQty) END,
                 cumulative_tp_fill_qty =
                     CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.cumulative_tp_fill_qty
-                         ELSE :cumulativeTpFillQty END,
+                         ELSE GREATEST(positions.cumulative_tp_fill_qty, :cumulativeTpFillQty) END,
                 opened_at = :openedAt,
                 closed_at = CASE WHEN positions.status IN ('CLOSED', 'RECONCILIATION_REQUIRED') THEN positions.closed_at ELSE :closedAt END,
                 cycle_id = :cycleId,

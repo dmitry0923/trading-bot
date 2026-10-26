@@ -33,6 +33,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 class MonthlyTuningScheduler(
     private val monthlyTuningService: MonthlyTuningService,
     private val tuningMetricsProvider: TuningMetricsProvider,
+    /**
+     * Журнал версий: единственный персистентный признак «тюнинг за период уже был».
+     * Без него после рестарта cron (дни 2–7) повторял цикл в том же месяце — снова
+     * дёргая ALERT-остановку торговли и падая на unique-индексе (скан-9 P2).
+     */
+    private val strategyVersionRepository: StrategyVersionRepository? = null,
 ) {
     private val logger = LoggerFactory.getLogger(MonthlyTuningScheduler::class.java)
 
@@ -84,6 +90,10 @@ class MonthlyTuningScheduler(
 
     internal fun currentPeriod(): String = YearMonth.now(moscowZone).toString()
 
+    /** Тюнинг за [period] уже зафиксирован в журнале версий (best-effort: БД может быть недоступна). */
+    private suspend fun alreadyTuned(period: String): Boolean =
+        runCatching { strategyVersionRepository?.findByVersion(period) != null }.getOrDefault(false)
+
     private fun runCycle(force: Boolean) {
         val period = currentPeriod()
         // Период-гард ДО захвата флага: иначе повторный cron-запуск в том же месяце
@@ -98,6 +108,12 @@ class MonthlyTuningScheduler(
         }
         scope.launch {
             try {
+                // Персистентный гард: после рестарта период восстанавливается из БД.
+                if (!force && lastRunPeriod != period && alreadyTuned(period)) {
+                    lastRunPeriod = period
+                    logger.info("MonthlyTuningScheduler: тюнинг за $period уже в журнале версий - пропуск")
+                    return@launch
+                }
                 val (metrics, parameters) = tuningMetricsProvider.collectCurrentMonthlyData()
                 val result = monthlyTuningService.runTuningCycle(metrics, parameters)
                 lastRunPeriod = result.period.ifBlank { period }

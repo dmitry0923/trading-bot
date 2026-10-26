@@ -144,7 +144,7 @@ class StrategyService(
             return
         }
         val cycleJob =
-            scope.launch(TraceContext.mdcContext()) {
+            scope.launch {
                 distributedLockService.runExclusive(
                     name = "scheduler:strategy-cycle",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
@@ -154,17 +154,20 @@ class StrategyService(
                             .uuidString()
                     logger.info { "=== STRATEGY CYCLE $cycleId ===" }
                     meterRegistry.counter("strategy.cycle").increment()
-                    // trace_id = cycleId: единый идентификатор для всего цикла (JSON-логи,
-                    // agent_logs, позиции, события). MDC-контекст копируется в coroutine,
-                    // поэтому дочерние корутины (включая LLM-вызовы) наследуют trace_id.
-                    TraceContext.put(TraceContext.TRACE_ID, cycleId)
-                    TraceContext.put(TraceContext.CYCLE_ID, cycleId)
-                    executeCycle(cycleId)
+                    // trace_id/cycle_id задаём КОНТЕКСТОМ корутины, а не MDC.put:
+                    // MDCContext фиксирует карту на входе, поэтому put внутри терялся после
+                    // первой суспензии (LLM-бюджет получал cycleId=null) — скан-8 P2.
+                    TraceContext.withMdc(
+                        mapOf(
+                            TraceContext.TRACE_ID to cycleId,
+                            TraceContext.CYCLE_ID to cycleId,
+                        ),
+                    ) {
+                        executeCycle(cycleId)
+                    }
                 }
             }
         cycleJob.invokeOnCompletion { cycleInFlight.set(false) }
-        TraceContext.put(TraceContext.TRACE_ID, null)
-        TraceContext.put(TraceContext.CYCLE_ID, null)
     }
 
     /**

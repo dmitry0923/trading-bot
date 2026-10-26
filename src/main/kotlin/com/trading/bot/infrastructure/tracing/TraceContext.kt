@@ -43,6 +43,14 @@ object TraceContext {
     fun mdcContext(extra: Map<String, String> = emptyMap()): MDCContext = MDCContext(currentMdc() + extra)
 
     /**
+     * То же, но с nullable-значениями: null-пары отбрасываются (например, `cycleId`
+     * у backtest-позиции). Иначе MDC.put(key, null) удаляет запись, а `mapOf` с null
+     * ломает тип.
+     */
+    fun mdcContextNullable(extra: Map<String, String?>): MDCContext =
+        MDCContext(currentMdc() + extra.mapNotNull { (k, v) -> v?.let { k to it } }.toMap())
+
+    /**
      * Выполняет [block] в корутине, где MDC = текущий MDC + [extra].
      * После завершения [withContext] восстанавливает предыдущее окружение.
      */

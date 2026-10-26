@@ -17,6 +17,7 @@ import com.trading.bot.service.TradeEventService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -76,8 +77,25 @@ class StockPositionMonitor(
         price: BigDecimal,
         strategy: Strategy?,
     ) {
-        TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-        TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
+        // Контекст корутины, а не MDC.put: put остаётся на потоке и протекает в чужие
+        // задачи (скан-8 P2).
+        withContext(
+            TraceContext.mdcContextNullable(
+                mapOf(
+                    TraceContext.TRACE_ID to pos.cycleId,
+                    TraceContext.CYCLE_ID to pos.cycleId,
+                ),
+            ),
+        ) {
+            monitorPositionBody(pos, price, strategy)
+        }
+    }
+
+    private suspend fun monitorPositionBody(
+        pos: Position,
+        price: BigDecimal,
+        strategy: Strategy?,
+    ) {
         if (pos.pendingEntry || pos.pendingClose) return
         pos.currentPrice = price
         val pnl = calculatePnl(pos, price)

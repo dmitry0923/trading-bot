@@ -19,6 +19,7 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -572,10 +573,27 @@ class OrderExecutionEngine(
                 ?: positionRepo.findBySlOrderId(orderId) ?: positionRepo.findByTpOrderId(orderId) ?: return false
         if (pos.status != PositionStatus.OPEN || pos.closedAt != null) return false
         if (!instrumentFilter(pos)) return false
-        TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-        TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
         val fillPrice = report.avgPrice ?: return false
 
+        // Контекст корутины вместо MDC.put (иначе утечка на поток пула) — скан-8 P2.
+        return withContext(
+            TraceContext.mdcContextNullable(
+                mapOf(
+                    TraceContext.TRACE_ID to pos.cycleId,
+                    TraceContext.CYCLE_ID to pos.cycleId,
+                ),
+            ),
+        ) {
+            applyFillToPos(pos, report, orderId, fillPrice)
+        }
+    }
+
+    private suspend fun applyFillToPos(
+        pos: Position,
+        report: ExecutionReport,
+        orderId: String,
+        fillPrice: BigDecimal,
+    ): Boolean {
         // SL/TP execution
         if (orderId == pos.slOrderId || orderId == pos.tpOrderId) {
             handleProtectionFill(pos, report, orderId, fillPrice)

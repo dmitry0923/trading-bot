@@ -8,10 +8,12 @@ import com.trading.bot.infrastructure.tracing.TraceContext
 import com.trading.bot.model.CloseReason
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionStatus
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 
 /**
@@ -44,77 +46,89 @@ class FuturesPositionMonitor(
         val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.ticker == ticker }
         for (pos in open) {
             if (pos.instrumentType != InstrumentType.FUTURES) continue
-            TraceContext.put(TraceContext.TRACE_ID, pos.cycleId)
-            TraceContext.put(TraceContext.CYCLE_ID, pos.cycleId)
-
-            // Позиция ожидает подтверждения входа — SL/TP/закрытие не трогаем,
-            // ждём State Reconciliation.
-            if (pos.pendingEntry) {
-                engine.resolveEntryViaOutbox(pos)
-                continue
+            // Контекст корутины, а не MDC.put (иначе утечка на поток пула) — скан-8 P2.
+            withContext(
+                TraceContext.mdcContextNullable(
+                    mapOf(
+                        TraceContext.TRACE_ID to pos.cycleId,
+                        TraceContext.CYCLE_ID to pos.cycleId,
+                    ),
+                ),
+            ) {
+                monitorPosition(pos, price)
             }
-
-            // Закрытие уже в полёте — новый ордер НЕ создаём (защита от double execution).
-            if (pos.pendingClose) {
-                engine.reconcilePosition(pos)
-                continue
-            }
-
-            pos.currentPrice = price
-
-            // 1. Guardrail ликвидации — самый приоритетный
-            when (futuresRiskEngine.checkLiquidationDistance(pos, price)) {
-                FuturesRiskEngine.LiquidationStatus.CRITICAL -> {
-                    logger.error { "LIQUIDATION_CRITICAL ${pos.ticker} @ $price — immediate market close" }
-                    engine.closePosition(pos, price, CloseReason.LIQUIDATION_CRITICAL)
-                    continue
-                }
-
-                FuturesRiskEngine.LiquidationStatus.WARNING -> {
-                    logger.warn {
-                        "LIQUIDATION_WARNING ${pos.ticker} @ $price — " +
-                            "distance < ${riskConfig.minLiquidationDistancePercent}%"
-                    }
-                    meterRegistry
-                        .counter(
-                            "futures.liquidation.warning",
-                            Tags.of("ticker", pos.ticker),
-                        ).increment()
-                }
-
-                FuturesRiskEngine.LiquidationStatus.SAFE -> {}
-            }
-
-            // 2. SL / TP / trailing
-            // Живая биржевая заявка покрывает уровень — закрывает сама биржа,
-            // иначе локальный мониторинг продублирует закрытие (двойной ордер).
-            if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
-                engine.closePosition(pos, price, CloseReason.STOP_LOSS)
-                continue
-            }
-            if (!ExitRules.exchangeTpCovers(pos) && ExitRules.shouldCloseByTP(pos, price)) {
-                engine.closePosition(pos, price, CloseReason.TAKE_PROFIT)
-                continue
-            }
-            if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseByTrailing(pos, price)) {
-                engine.closePosition(pos, price, CloseReason.TRAILING_STOP)
-                continue
-            }
-
-            // 3. Подтягивание trailing (только в прибыль, с учётом вариационной маржи)
-            if (riskConfig.trailingStopEnabled) {
-                ExitRules.updateFuturesTrailingStop(
-                    pos,
-                    price,
-                    riskConfig.trailingStopPercent,
-                    instrumentsConfig.pointValue(pos.ticker),
-                    instrumentsConfig.find(pos.ticker)?.priceStep ?: BigDecimal("0.01"),
-                )
-            }
-            positionRepo.save(pos)
-            // Сдвиг SL-уровня (trailing) → биржевая защитная заявка перевыставляется
-            // (отмена старой + новая на текущем уровне), пока не синхронизированы.
-            engine.onProtectionLevelsChanged(pos)
         }
+    }
+
+    private suspend fun monitorPosition(
+        pos: Position,
+        price: BigDecimal,
+    ) {
+        if (pos.pendingEntry) {
+            engine.resolveEntryViaOutbox(pos)
+            return
+        }
+
+        // Позиция уже в работе — ждём сверку (защита от double execution).
+        if (pos.pendingClose) {
+            engine.reconcilePosition(pos)
+            return
+        }
+
+        pos.currentPrice = price
+
+        // 1. Guardrail ликвидации — самый приоритетный.
+        when (futuresRiskEngine.checkLiquidationDistance(pos, price)) {
+            FuturesRiskEngine.LiquidationStatus.CRITICAL -> {
+                logger.error { "LIQUIDATION_CRITICAL ${pos.ticker} @ $price - immediate market close" }
+                engine.closePosition(pos, price, CloseReason.LIQUIDATION_CRITICAL)
+                return
+            }
+
+            FuturesRiskEngine.LiquidationStatus.WARNING -> {
+                logger.warn {
+                    "LIQUIDATION_WARNING ${pos.ticker} @ $price - " +
+                        "distance < ${riskConfig.minLiquidationDistancePercent}%"
+                }
+                meterRegistry
+                    .counter(
+                        "futures.liquidation.warning",
+                        Tags.of("ticker", pos.ticker),
+                    ).increment()
+            }
+
+            FuturesRiskEngine.LiquidationStatus.SAFE -> {}
+        }
+
+        // 2. SL / TP / trailing
+        // Уровни биржевых заявок проверяем первыми — локально считаем только то,
+        // что инструмент гарантированно пробьёт (иначе двойное закрытие).
+        if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
+            engine.closePosition(pos, price, CloseReason.STOP_LOSS)
+            return
+        }
+        if (!ExitRules.exchangeTpCovers(pos) && ExitRules.shouldCloseByTP(pos, price)) {
+            engine.closePosition(pos, price, CloseReason.TAKE_PROFIT)
+            return
+        }
+        if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseByTrailing(pos, price)) {
+            engine.closePosition(pos, price, CloseReason.TRAILING_STOP)
+            return
+        }
+
+        // 3. Подтягиваем trailing (только в плюс, в самом триггере условия).
+        if (riskConfig.trailingStopEnabled) {
+            ExitRules.updateFuturesTrailingStop(
+                pos,
+                price,
+                riskConfig.trailingStopPercent,
+                instrumentsConfig.pointValue(pos.ticker),
+                instrumentsConfig.find(pos.ticker)?.priceStep ?: BigDecimal("0.01"),
+            )
+        }
+        positionRepo.save(pos)
+        // Сдвиг SL-порога (trailing) → биржевая заявка перевыставляется
+        // (отмена старой + новая по текущему уровню), если он синхронизирован.
+        engine.onProtectionLevelsChanged(pos)
     }
 }

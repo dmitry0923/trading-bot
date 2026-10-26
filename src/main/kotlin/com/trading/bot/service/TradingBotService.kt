@@ -39,6 +39,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
@@ -196,23 +197,29 @@ class TradingBotService(
         if (tradingConfig.wsQuotesEnabled) {
             scope.launch {
                 alorWsClient.subscribeToQuotes(tradingConfig.tickers).collect { tick ->
+                    // Тикер — контекстом корутины, а не MDC.put: put остаётся на потоке
+                    // пула и протекает в чужие задачи (скан-8 P2).
                     try {
-                        TraceContext.put(TraceContext.TICKER, tick.ticker)
-                        lastWsTickAt[tick.ticker] = Instant.now()
-                        meterRegistry
-                            .timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
-                            .record(Duration.between(tick.receivedAt, Instant.now()).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
-                        eventPublisher.publishPriceChanged(tick.ticker, tick.price)
-                        if (tick.bidSize != null && tick.askSize != null) {
-                            val obi =
-                                com.trading.bot.domain.microstructure.ObiCalculator
-                                    .calculate(tick.bidSize, tick.askSize)
-                            if (obi != null) marketDataGate.updateObi(tick.ticker, obi)
+                        withContext(TraceContext.mdcContext(mapOf(TraceContext.TICKER to tick.ticker))) {
+                            lastWsTickAt[tick.ticker] = Instant.now()
+                            meterRegistry
+                                .timer("alor.ws.message.lag", Tags.of("ticker", tick.ticker))
+                                .record(
+                                    Duration.between(tick.receivedAt, Instant.now()).toMillis(),
+                                    java.util.concurrent.TimeUnit.MILLISECONDS,
+                                )
+                            eventPublisher.publishPriceChanged(tick.ticker, tick.price)
+                            if (tick.bidSize != null && tick.askSize != null) {
+                                val obi =
+                                    com.trading.bot.domain.microstructure.ObiCalculator
+                                        .calculate(tick.bidSize, tick.askSize)
+                                if (obi != null) marketDataGate.updateObi(tick.ticker, obi)
+                            }
+                            if (tick.bid != null && tick.ask != null) {
+                                marketDataGate.recordSpread(tick.ticker, tick.bid, tick.ask)
+                            }
+                            microstructureRecorder.record(tick)
                         }
-                        if (tick.bid != null && tick.ask != null) {
-                            marketDataGate.recordSpread(tick.ticker, tick.bid, tick.ask)
-                        }
-                        microstructureRecorder.record(tick)
                     } catch (e: Exception) {
                         logger.error(e) { "WS quote processing error for ${tick.ticker}" }
                     }

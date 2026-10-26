@@ -78,11 +78,13 @@ class SecurityConfig(
                     .hasRole("ADMIN")
                     .requestMatchers(HttpMethod.DELETE, "/api/v1/**")
                     .hasRole("ADMIN")
+                    // GET-бэктест пишет данные (свечи при loadHistory=true и строку в
+                    // backtest_results всегда), поэтому read-only роль ANALYTICS не должна
+                    // его вызывать: это мутирующий GET (скан-4 P2).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/backtest/**")
+                    .hasRole("ADMIN")
                     .requestMatchers(
                         HttpMethod.GET,
-                        "/api/v1/backtest/*/deployment-gate",
-                        "/api/v1/backtest/*/validate",
-                        "/api/v1/backtest/*/funding-history",
                         "/api/v1/macro/rates-history",
                     ).hasRole("ADMIN")
                     .requestMatchers("/api/v1/**", "/actuator/**")

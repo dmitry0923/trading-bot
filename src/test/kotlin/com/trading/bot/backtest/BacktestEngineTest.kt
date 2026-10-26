@@ -416,7 +416,9 @@ class BacktestEngineTest {
 
         val metrics = result.metrics()
 
-        assertEquals(21, metrics.size)
+        // 21 метрик + engineVersion (версия обязательна в каждом артефакте).
+        assertEquals(22, metrics.size)
+        assertEquals(BACKTEST_ENGINE_VERSION, metrics["engineVersion"])
         assertEquals(1.5, metrics["sharpeRatio"])
         assertEquals(250, metrics["totalTrades"])
         assertEquals(true, metrics["passable"])

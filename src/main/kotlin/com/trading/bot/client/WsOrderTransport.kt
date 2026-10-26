@@ -132,7 +132,12 @@ class WsOrderTransport(
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
-        pending[idempotencyKey] = PendingRequest(guid, isCancel = false, orderId = null, deferred)
+        val request = PendingRequest(guid, isCancel = false, orderId = null, deferred)
+        // Один ключ — одна команда: параллельный вызов с тем же idempotency key не
+        // должен перетирать ожидающий запрос (скан-2 P2).
+        if (pending.putIfAbsent(idempotencyKey, request) != null) {
+            throw OrderDeliveryUncertainException("duplicate in-flight WS command for key $idempotencyKey")
+        }
         return try {
             val command =
                 WsOrderMessages.placeLimit(
@@ -155,7 +160,7 @@ class WsOrderTransport(
             meterRegistry.counter("alor.ws.orders.uncertain", Tags.of("type", "limit", "reason", "SEND_FAILED")).increment()
             throw OrderDeliveryUncertainException("WS order send failed: ${e.message}", e)
         } finally {
-            pending.remove(idempotencyKey)
+            pending.remove(idempotencyKey, request)
         }
     }
 
@@ -173,7 +178,12 @@ class WsOrderTransport(
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
-        pending[idempotencyKey] = PendingRequest(guid, isCancel = false, orderId = null, deferred)
+        val request = PendingRequest(guid, isCancel = false, orderId = null, deferred)
+        // Один ключ — одна команда: параллельный вызов с тем же idempotency key не
+        // должен перетирать ожидающий запрос (скан-2 P2).
+        if (pending.putIfAbsent(idempotencyKey, request) != null) {
+            throw OrderDeliveryUncertainException("duplicate in-flight WS command for key $idempotencyKey")
+        }
         return try {
             val command =
                 WsOrderMessages.placeConditional(
@@ -197,7 +207,7 @@ class WsOrderTransport(
             meterRegistry.counter("alor.ws.orders.uncertain", Tags.of("type", type, "reason", "SEND_FAILED")).increment()
             throw OrderDeliveryUncertainException("WS conditional order send failed: ${e.message}", e)
         } finally {
-            pending.remove(idempotencyKey)
+            pending.remove(idempotencyKey, request)
         }
     }
 
@@ -209,7 +219,10 @@ class WsOrderTransport(
         requireWsAvailable(portfolio)
         val guid = UuidV7.uuidString()
         val deferred = CompletableDeferred<WsOrderMessages.MatchResult>()
-        pending[idempotencyKey] = PendingRequest(guid, isCancel = true, orderId = orderId, deferred)
+        val request = PendingRequest(guid, isCancel = true, orderId = orderId, deferred)
+        if (pending.putIfAbsent(idempotencyKey, request) != null) {
+            throw OrderDeliveryUncertainException("duplicate in-flight WS cancel for key $idempotencyKey")
+        }
         return try {
             val command =
                 WsOrderMessages.cancel(
@@ -229,7 +242,7 @@ class WsOrderTransport(
             meterRegistry.counter("alor.ws.orders.uncertain", Tags.of("type", "cancel", "reason", "SEND_FAILED")).increment()
             throw OrderDeliveryUncertainException("WS cancel send failed: ${e.message}", e)
         } finally {
-            pending.remove(idempotencyKey)
+            pending.remove(idempotencyKey, request)
         }
     }
 

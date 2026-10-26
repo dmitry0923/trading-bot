@@ -123,6 +123,9 @@ class ContrarianAgent(
                     tech.trend,
                     "contrarian",
                     macdHistogram = tech.macd,
+                    // Сторона и заключения входят в ключ: иначе BUY и SELL на одном баре
+                    // делят запись кэша и получают чужой вердикт (скан-4 P2).
+                    extra = "action=${draft.action.name};tech=${tech.conclusion};fund=${fund.conclusion}",
                 )
             }
 

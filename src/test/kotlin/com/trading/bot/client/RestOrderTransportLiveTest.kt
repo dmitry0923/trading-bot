@@ -123,6 +123,36 @@ class RestOrderTransportLiveTest {
         }
 
     @Test
+    fun `placeLimit maps 401 and 403 to uncertain delivery not rejection`() =
+        runBlocking {
+            // Протухший/невалидный токен — не решение биржи по заявке: терминальный
+            // REJECTED в outbox потерял бы ENTRY навсегда (скан-4 P1).
+            for (code in listOf(401, 403)) {
+                FakeAlorServer().use { server ->
+                    server.statusCode = code
+                    val transport = transport(server)
+
+                    assertFailsWith<OrderDeliveryUncertainException> {
+                        transport.placeLimit("CNYRUBF", "buy", 1, BigDecimal("12.3"), "idem-$code", "P1", OrderPurpose.ENTRY)
+                    }
+                }
+            }
+        }
+
+    @Test
+    fun `placeLimit maps 409 to definitive rejection`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                server.statusCode = 409
+                val transport = transport(server)
+
+                assertFailsWith<OrderRejectedException> {
+                    transport.placeLimit("CNYRUBF", "buy", 1, BigDecimal("12.3"), "idem-409", "P1", OrderPurpose.ENTRY)
+                }
+            }
+        }
+
+    @Test
     fun `placeConditional sends stop payload and returns orderNumber`() =
         runBlocking {
             FakeAlorServer().use { server ->

@@ -127,6 +127,13 @@ class ClearingService(
         requestedDate: LocalDateTime = LocalDateTime.now(clock),
     ): ClearingQuote {
         val businessDate = requestedDate.toLocalDate()
+        // Клиринг проводится только за сегодняшний бизнес-день (МСК): иначе бэкдейт
+        // или будущая дата создают второй ключ идемпотентности и второе списание
+        // (скан-2 P2). Дата из query не должна обходить уникальный индекс.
+        val today = LocalDate.now(clock)
+        require(businessDate == today) {
+            "Clearing settle is allowed only for the current business day ($today), got $businessDate"
+        }
         val quote = calculateWithdrawal(investorId, requestedDate)
         val account =
             investorRepo.findAccountByInvestor(investorId)

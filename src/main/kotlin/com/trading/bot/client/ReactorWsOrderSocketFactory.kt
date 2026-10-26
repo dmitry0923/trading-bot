@@ -39,25 +39,36 @@ class ReactorWsOrderSocketFactory(
         val channel = Channel<String>(capacity = 1000, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         val sessionReady = CompletableDeferred<WebSocketSession>()
 
-        wsClient
-            .execute(url) { session ->
-                sessionReady.complete(session)
-                session
-                    .receive()
-                    .mapNotNull { msg -> msg.payloadAsText.takeIf { it.isNotBlank() } }
-                    .doOnNext { text -> channel.trySend(text) }
-                    .then()
-            }.subscribe(
-                { channel.close() },
-                { err ->
-                    sessionReady.completeExceptionally(err)
-                    channel.close()
-                },
-            )
+        val subscription =
+            wsClient
+                .execute(url) { session ->
+                    // Если сессия уже никому не нужна (таймаут/ошибка подключения), сокет
+                    // обязан быть закрыт сразу: иначе соединение живёт до закрытия сервером,
+                    // и каждая попытка реконнекта добавляет ещё одно (скан-4 P3).
+                    if (!sessionReady.complete(session)) {
+                        session.close().onErrorResume { Mono.empty() }.subscribe()
+                        return@execute Mono.empty()
+                    }
+                    session
+                        .receive()
+                        .mapNotNull { msg -> msg.payloadAsText.takeIf { it.isNotBlank() } }
+                        .doOnNext { text -> channel.trySend(text) }
+                        .then()
+                }.subscribe(
+                    { channel.close() },
+                    { err ->
+                        sessionReady.completeExceptionally(err)
+                        channel.close()
+                    },
+                )
 
         val session =
             withTimeoutOrNull(connectTimeoutMs) { sessionReady.await() }
                 ?: run {
+                    // Отписываемся и отменяем ожидание: поздний handshake увидит
+                    // `complete() == false` и закроет свою сессию.
+                    subscription.dispose()
+                    sessionReady.cancel()
                     channel.close()
                     throw OrderTransportUnavailableException("WS order socket connect timeout ($connectTimeoutMs ms)")
                 }

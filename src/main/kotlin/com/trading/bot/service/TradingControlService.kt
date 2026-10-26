@@ -48,6 +48,10 @@ class TradingControlService(
 
     private val moscowZone: ZoneId = ZoneId.of("Europe/Moscow")
 
+    /** Последняя дата исполненного планового закрытия: не даём пропустить окно
+     *  из-за дрейфа fixedDelay и не закрываем дважды в один день (скан-2 P2). */
+    private var lastForceCloseDate: java.time.LocalDate? = null
+
     fun isTradingEnabled(): Boolean = tradingGate.isTradingEnabled()
 
     /**
@@ -97,13 +101,17 @@ class TradingControlService(
         if (!settings.forceCloseEnabled || settings.forceCloseTime.isBlank()) return
         val now = LocalTime.now(moscowZone)
         val target = runCatching { LocalTime.parse(settings.forceCloseTime) }.getOrNull() ?: return
-        if (now.hour == target.hour && now.minute == target.minute) {
+        // Условие «>=» + защита от повтора: fixedDelay отсчитывается от завершения
+        // предыдущего запуска, поэтому точная минута могла пропускаться.
+        val today = java.time.LocalDate.now(moscowZone)
+        if (!now.isBefore(target) && lastForceCloseDate != today) {
             logger.info { "Scheduled force close triggered at ${settings.forceCloseTime}" }
             scope.launch {
                 distributedLockService.runExclusive(
                     name = "scheduler:force-close",
                     ttlSeconds = distributedLockConfig.schedulerTtlSeconds,
                 ) {
+                    lastForceCloseDate = today
                     forceCloseNow(CloseReason.FORCE_CLOSE_SCHEDULED)
                 }
             }

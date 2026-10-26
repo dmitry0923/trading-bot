@@ -109,6 +109,7 @@ class AlorWebSocketClient(
     fun subscribeToOrders(portfolio: String = alorConfig.portfolio): Flow<ExecutionReport> =
         callbackFlow {
             var cancelled = false
+            var activeSession: WebSocketSession? = null
 
             lateinit var scheduleReconnect: (Int) -> Unit
             lateinit var connect: suspend (Int) -> Unit
@@ -136,6 +137,7 @@ class AlorWebSocketClient(
                         wsClient
                             .execute(url) { session ->
                                 val heartbeat = startHeartbeat(session, "alor.ws", WsStream.ORDERS)
+                                activeSession = session
                                 val subscribeMsg =
                                     session.textMessage(
                                         objectMapper.writeValueAsString(
@@ -189,7 +191,12 @@ class AlorWebSocketClient(
             }
 
             launch { connect(0) }
-            awaitClose { cancelled = true }
+            awaitClose {
+                cancelled = true
+                // Отмена коллектора обязана закрыть сокет: иначе соединение и heartbeat
+                // живут после отмены (дубли publishExecutionReport, скан-2 P2).
+                activeSession?.close()?.subscribe()
+            }
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /**
@@ -209,6 +216,7 @@ class AlorWebSocketClient(
                 return@callbackFlow
             }
             var cancelled = false
+            var activeSession: WebSocketSession? = null
 
             lateinit var scheduleReconnect: (Int) -> Unit
             lateinit var connect: suspend (Int) -> Unit
@@ -236,6 +244,7 @@ class AlorWebSocketClient(
                         wsClient
                             .execute(url) { session ->
                                 val heartbeat = startHeartbeat(session, "alor.ws.quotes", WsStream.QUOTES)
+                                activeSession = session
                                 val subscribeMsg =
                                     session.textMessage(
                                         objectMapper.writeValueAsString(
@@ -319,7 +328,12 @@ class AlorWebSocketClient(
             }
 
             launch { connect(0) }
-            awaitClose { cancelled = true }
+            awaitClose {
+                cancelled = true
+                // Отмена коллектора обязана закрыть сокет: иначе соединение и heartbeat
+                // живут после отмены (дубли publishExecutionReport, скан-2 P2).
+                activeSession?.close()?.subscribe()
+            }
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     private fun wsUrl(token: String): String {

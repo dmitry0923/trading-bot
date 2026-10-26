@@ -106,6 +106,9 @@ class StrategyAgent(
                 tech.trend,
                 "technical",
                 macdHistogram = tech.macd,
+                // Заключения и силы входят в ключ: иначе BEARISH-слабый отчёт
+                // переиспользует BULLISH-черновик (скан-4 P2).
+                extra = "tech=${tech.conclusion}/${tech.signalStrength};fund=${fund.conclusion}/${fund.signalStrength}",
             )
 
         val variables =

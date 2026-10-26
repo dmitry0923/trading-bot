@@ -83,6 +83,9 @@ class StockPositionMonitor(
         val pnl = calculatePnl(pos, price)
         pos.pnl = pnl
         updatePositionPnlGauge(pos.ticker, pnl.toDouble())
+        // Mark-to-market обязан попадать в БД: иначе unrealized P&L акции не видят
+        // дневной лимит и просадка (риск-инвариант, скан-4 P1).
+        pos.id?.let { positionId -> positionRepo.updateMarkToMarket(positionId, price, pnl) }
 
         if (!ExitRules.exchangeSlCovers(pos) && ExitRules.shouldCloseBySL(pos, price)) {
             engine.closePosition(pos, price, CloseReason.STOP_LOSS)

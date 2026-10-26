@@ -428,6 +428,23 @@ class ProtectionOrderManagerLifecycleTest {
         }
 
     @Test
+    fun `partially filled SL keeps its order id until the remainder is cancelled`(): Unit =
+        runBlocking {
+            // Остаток старой заявки ещё жив на бирже: если очистить id сразу,
+            // cancelProtectionOrders её не увидит, а локальный стоп «покрыт» не будет
+            // → рыночный close при живом SL = двойное закрытие (скан-4 P1).
+            val pos = openPosition(slOrderId = "sl-partial-live", slOrderPrice = "91500", quantity = 4)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("PARTIALLY_FILLED", 1, BigDecimal("91500")))
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals(1, appliedClose.get()!!.first)
+            assertEquals("sl-partial-live", pos.slOrderId, "id держится до подтверждённой отмены остатка")
+            assertTrue(pos.slCancelPending, "остаток защитной заявки обязан уходить в отмену")
+        }
+
+    @Test
     fun `cancelled SL with partial fill applies the fill instead of dropping it`(): Unit =
         runBlocking {
             // CANCELED/EXPIRED могут нести частичный филл. Раньше он терялся:
@@ -784,7 +801,7 @@ class ProtectionOrderManagerLifecycleTest {
     // ─── исполнение защитных заявок ─────────────────────────────────
 
     @Test
-    fun `partial take profit fill re-arms protection for the remainder`(): Unit =
+    fun `partial take profit fill keeps the order until the remainder is cancelled`(): Unit =
         runBlocking {
             stubPlaceOrder("TP-2")
             val pos =
@@ -804,9 +821,12 @@ class ProtectionOrderManagerLifecycleTest {
             assertEquals(4, appliedClose.get()?.first)
             assertEquals(6, pos.quantity)
             assertFalse(pos.tpPendingReplace)
-            // защита переставлена на остаток; новый ордер — счётчик дельты сброшен
-            assertEquals("TP-2", pos.tpOrderId)
-            assertEquals(0, pos.cumulativeTpFillQty)
+            assertFalse(pos.tpPendingReplace)
+            // Остаток старой TP ещё жив на бирже: id держим до подтверждённой
+            // отмены, иначе двойное закрытие (скан-4 P1).
+            assertTrue(pos.tpCancelPending, "остаток уходит в отмену через outbox")
+            assertEquals("TP-1", pos.tpOrderId)
+            assertEquals(4, pos.cumulativeTpFillQty)
         }
 
     @Test

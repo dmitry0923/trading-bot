@@ -11,6 +11,7 @@ import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -251,7 +252,7 @@ class LlmVetoTest {
     fun `arbitrator refusal is treated as LLM failure, not as a veto`() {
         // overrideReason != null ⇒ это отказ (LLM_UNAVAILABLE/SCHEMA_REJECTED/PARSE_ERROR),
         // а не вердикт HOLD: при blockOnUnknown=false кандидат проходит.
-        val refused = holdFinal.copy(overrideReason = "SCHEMA_REJECTED")
+        val refused = holdFinal.copy(overrideReason = "FALLBACK: SCHEMA_REJECTED")
         runBlocking {
             stubChallenge(challenge)
             stubFinal(refused)
@@ -281,7 +282,7 @@ class LlmVetoTest {
         // `action` из guardrails вместе с `overrideReason`, то есть BUY + overrideReason
         // — это отказ, а не разрешение. Прежний порядок проверок («сначала action»)
         // трактовал такой ответ как ALLOW, хотя контур объявлен fail-closed.
-        val refused = buyFinal.copy(overrideReason = "LLM_UNAVAILABLE")
+        val refused = buyFinal.copy(overrideReason = "FALLBACK: LLM_UNAVAILABLE")
         runBlocking {
             stubChallenge(challenge)
             stubFinal(refused)
@@ -295,10 +296,27 @@ class LlmVetoTest {
     }
 
     @Test
+    fun `guardrail corrected verdict is not treated as an LLM refusal`(): Unit =
+        runBlocking {
+            // ArbitratorAgent при отклонении targetPrice оставляет BUY/SELL и ставит
+            // overrideReason = "GUARDRAIL: PRICE_DEVIATION": это валидный вердикт, а не
+            // отказ. Раньше такой вход fail-closed блокировался и завышал block-rate
+            // (скан-4 P3).
+            val corrected = buyFinal.copy(overrideReason = "GUARDRAIL: PRICE_DEVIATION")
+            stubChallenge(challenge)
+            stubFinal(corrected)
+
+            val verdict = run()
+
+            assertTrue(verdict.allow, "guardrail-коррекция не должна превращаться в fail-closed блок")
+            assertFalse(verdict.reason == LlmVeto.Reason.ARB_FAILURE)
+        }
+
+    @Test
     fun `arbitrator refusal in score mode does not pass the entry through the score threshold`() {
         // minScore не должен превращать отказ арбитра в разрешение: score 0.95 выше
         // порога, но вердикта от арбитра нет — вопрос решает blockOnUnknown.
-        val refused = buyFinal.copy(signalStrength = 0.95, overrideReason = "PARSE_ERROR")
+        val refused = buyFinal.copy(signalStrength = 0.95, overrideReason = "FALLBACK: PARSE_ERROR")
         runBlocking {
             stubChallenge(challenge)
             stubFinal(refused)

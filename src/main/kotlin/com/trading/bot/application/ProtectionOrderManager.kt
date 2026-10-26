@@ -401,19 +401,31 @@ class ProtectionOrderManager(
             else -> {}
         }
 
+        // Частичный филл: остаток старой заявки ещё жив на бирже. Обнулять id сразу
+        // нельзя — cancelProtectionOrders ниже уже не увидит ордер, локальный стоп
+        // «покрыт» не будет → рыночный close при живом SL = двойное закрытие (скан-4 P1).
+        val partialFill = filled < pos.quantity
         when (reason) {
             CloseReason.STOP_LOSS -> {
-                pos.slOrderId = null
-                pos.slOrderPrice = null
-                pos.slPendingReplace = false
-                pos.slCancelPending = false
+                if (partialFill) {
+                    pos.slCancelPending = true
+                } else {
+                    pos.slOrderId = null
+                    pos.slOrderPrice = null
+                    pos.slPendingReplace = false
+                    pos.slCancelPending = false
+                }
             }
 
             CloseReason.TAKE_PROFIT -> {
-                pos.tpOrderId = null
-                pos.tpOrderPrice = null
-                pos.tpPendingReplace = false
-                pos.tpCancelPending = false
+                if (partialFill) {
+                    pos.tpCancelPending = true
+                } else {
+                    pos.tpOrderId = null
+                    pos.tpOrderPrice = null
+                    pos.tpPendingReplace = false
+                    pos.tpCancelPending = false
+                }
             }
 
             else -> {}

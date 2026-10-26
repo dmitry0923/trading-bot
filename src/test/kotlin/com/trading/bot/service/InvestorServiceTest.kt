@@ -82,6 +82,64 @@ class InvestorServiceTest {
             Mockito.verify(investorRepo).saveTransaction(anyTransaction())
         }
 
+    @Test
+    fun `withdrawal restores the balance when the ledger write fails`(): Unit =
+        runBlocking {
+            // Баланс уже списан: сбой записи в леджер не должен «съедать» деньги
+            // инвестора без проводки (скан-4 P2).
+            val investor = Investor(name = "Тест")
+            val account = InvestorAccount(investorId = investor.id, balance = BigDecimal("1000"))
+            Mockito.`when`(investorRepo.findInvestorById(investor.id)).thenReturn(investor)
+            Mockito.`when`(investorRepo.findAccountByInvestor(investor.id)).thenReturn(account)
+            Mockito
+                .`when`(
+                    investorRepo.debitBalanceIfSufficient(
+                        anyAccountId(),
+                        anyAmount(),
+                        anyLocalDateTime(),
+                        anyAmount(),
+                    ),
+                ).thenReturn(BigDecimal("500"))
+            Mockito
+                .`when`(investorRepo.saveTransaction(anyTransaction()))
+                .thenThrow(IllegalStateException("ledger down"))
+
+            assertThrows<IllegalStateException> {
+                runBlocking { service.withdraw(investor.id, BigDecimal("500")) }
+            }
+
+            Mockito.verify(investorRepo).creditDeposit(anyAccountId(), anyAmount(), anyLocalDateTime())
+        }
+
+    @Test
+    fun `deposit reverses the credit when the ledger write fails`(): Unit =
+        runBlocking {
+            val investor = Investor(name = "Тест")
+            val account = InvestorAccount(investorId = investor.id, balance = BigDecimal("100"))
+            Mockito.`when`(investorRepo.findInvestorById(investor.id)).thenReturn(investor)
+            Mockito.`when`(investorRepo.findAccountByInvestor(investor.id)).thenReturn(account)
+            Mockito
+                .`when`(
+                    investorRepo.creditDeposit(
+                        anyAccountId(),
+                        anyAmount(),
+                        anyLocalDateTime(),
+                    ),
+                ).thenReturn(BigDecimal("150"))
+            Mockito
+                .`when`(investorRepo.saveTransaction(anyTransaction()))
+                .thenThrow(IllegalStateException("ledger down"))
+
+            assertThrows<IllegalStateException> {
+                runBlocking { service.deposit(investor.id, BigDecimal("50")) }
+            }
+
+            // Компенсация: зачисление откатывается обратным списанием.
+            Mockito
+                .verify(investorRepo)
+                .debitBalanceIfSufficient(anyAccountId(), anyAmount(), anyLocalDateTime(), anyAmount())
+        }
+
     private fun anyAccountId(): UUID {
         Mockito.any(UUID::class.java)
         return UUID.fromString("00000000-0000-0000-0000-000000000001")

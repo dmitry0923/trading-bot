@@ -178,6 +178,20 @@ class StockPositionMonitorTest {
         }
 
     @Test
+    fun `mark to market is persisted so daily limit sees unrealized stock pnl`(): Unit =
+        runBlocking {
+            // Репозиторий отдаёт detached-сущность на каждый тик: без явной записи
+            // `current_price`/`pnl` дневной лимит и просадка видели нулевой unrealized
+            // P&L по открытой акции (скан-4 P1).
+            val position = openPosition(stopLoss = "95")
+            stubPositions(position)
+
+            monitor.monitor(price("97"))
+
+            verify(positionRepo).updateMarkToMarket(eq(1L), eq(BigDecimal("97")), anyBigDecimal())
+        }
+
+    @Test
     fun `short position pnl is inverted`(): Unit =
         runBlocking {
             val position = openPosition(direction = PositionDirection.SHORT, stopLoss = "105")

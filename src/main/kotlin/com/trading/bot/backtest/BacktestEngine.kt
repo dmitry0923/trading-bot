@@ -212,6 +212,13 @@ class BacktestEngine(
                 "minBarsForSignal" to minBarsForSignal,
                 "slPercent" to slPercent,
                 "tpPercent" to tpPercent,
+                // Артефакт обязан нести версию движка и research-флаги: иначе прогоны
+                // с разными конфигами неотличимы (скан-2 P2).
+                "engineVersion" to BACKTEST_ENGINE_VERSION,
+                "fundingVetoEnabled" to backtestConfig.fundingVetoEnabled,
+                "fundingDirectionAware" to backtestConfig.fundingDirectionAware,
+                "maxHoldBars" to backtestConfig.maxHoldBars,
+                "capitalSlice" to backtestConfig.capitalSlice,
             )
         try {
             backtestResultRepository?.save(

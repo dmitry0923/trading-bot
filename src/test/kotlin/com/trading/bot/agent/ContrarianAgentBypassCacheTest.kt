@@ -119,15 +119,25 @@ class ContrarianAgentBypassCacheTest {
 
         assertEquals(true, report.isValid, "валидный ответ должен распарситься")
         assertNull(llm.lastFingerprint, "bypassCache=true ⇒ fingerprint в LLM не передаётся")
-        // Реальные значения вместо any(): у fingerprint 8 параметров (4 c default'ами),
-        // и matcher-стабы рассинхронизируются с числом аргументов.
-        verify(semanticCache, never()).fingerprint(BigDecimal("92.5"), 48.5, "FLAT", "contrarian", 0.0)
+        verify(semanticCache, never())
+            .fingerprint(anyPrice(), anyDoubleArg(), anyStr(), anyStr(), anyDoubleArg(), anyIntArg(), anyStr(), anyStr())
     }
 
     @Test
     fun `без bypassCache отпечаток кэша считается и передаётся в LLM`() {
         stubPrompt()
-        whenever(semanticCache.fingerprint(BigDecimal("92.5"), 48.5, "FLAT", "contrarian", 0.0)).thenReturn("fp-1")
+        whenever(
+            semanticCache.fingerprint(
+                anyPrice(),
+                anyDoubleArg(),
+                anyStr(),
+                anyStr(),
+                anyDoubleArg(),
+                anyIntArg(),
+                anyStr(),
+                anyStr(),
+            ),
+        ).thenReturn("fp-1")
         val llm = RecordingLlmClient(LlmResponse(content = ok))
 
         val report =
@@ -144,5 +154,26 @@ class ContrarianAgentBypassCacheTest {
 
         assertEquals(true, report.isValid)
         assertEquals("fp-1", llm.lastFingerprint, "без bypassCache кэш остаётся источником fingerprint")
+    }
+
+    // Matcher-хелперы для non-null параметров (Mockito.any возвращает null → NPE).
+    private fun anyPrice(): BigDecimal {
+        org.mockito.Mockito.any(BigDecimal::class.java)
+        return BigDecimal.ZERO
+    }
+
+    private fun anyDoubleArg(): Double {
+        org.mockito.Mockito.anyDouble()
+        return 0.0
+    }
+
+    private fun anyIntArg(): Int {
+        org.mockito.Mockito.anyInt()
+        return 0
+    }
+
+    private fun anyStr(): String {
+        org.mockito.Mockito.anyString()
+        return ""
     }
 }

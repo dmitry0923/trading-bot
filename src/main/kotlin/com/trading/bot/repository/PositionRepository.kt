@@ -637,6 +637,29 @@ class PositionRepository(
         return position.copy(id = id)
     }
 
+    /**
+     * Узкое mark-to-market обновление: только `current_price`/`pnl` у OPEN-позиции.
+     *
+     * Монитор акций держит detached-сущность (репозиторий возвращает новый объект
+     * на каждый тик), full-row `save()` без изменения SL/TP не вызывался — unrealized
+     * P&L не попадал в БД, и дневной лимит/просадка не видели просадку по открытой
+     * акции (скан-4 P1).
+     */
+    suspend fun updateMarkToMarket(
+        id: Long,
+        currentPrice: BigDecimal,
+        pnl: BigDecimal?,
+    ) {
+        databaseClient
+            .sql("UPDATE positions SET current_price = :currentPrice, pnl = :pnl WHERE id = :id AND status = 'OPEN'")
+            .bind("currentPrice", currentPrice)
+            .bindOrNull("pnl", pnl)
+            .bind("id", id)
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle()
+    }
+
     private suspend fun update(position: Position) {
         val sql =
             """

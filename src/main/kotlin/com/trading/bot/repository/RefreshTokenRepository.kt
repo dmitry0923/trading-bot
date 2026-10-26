@@ -4,6 +4,7 @@ import com.trading.bot.infrastructure.db.bindOrNull
 import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.entity.RefreshToken
 import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
@@ -53,17 +54,29 @@ class RefreshTokenRepository(
             .one()
             .awaitSingleOrNull()
 
+    /**
+     * Атомарный claim ротации: `revoked = FALSE AND replaced_by IS NULL` гарантирует,
+     * что победитель ровно один. Возвращает `true`, только если строка была захвачена.
+     *
+     * Без атомарного claim два параллельных `POST /auth/refresh` с одним токеном оба
+     * проходили проверки и выпускали по валидному refresh-токену (reuse-detection не
+     * срабатывал никогда) — скан-4 P2.
+     */
     suspend fun markRotated(
         id: UUID,
         replacedBy: UUID,
-    ) {
-        databaseClient
-            .sql(
-                "UPDATE refresh_tokens SET revoked = TRUE, replaced_by = :replacedBy WHERE id = :id",
-            ).bind("replacedBy", replacedBy)
-            .bind("id", id)
-            .then()
-            .awaitSingleOrNull()
+    ): Boolean {
+        val rows =
+            databaseClient
+                .sql(
+                    "UPDATE refresh_tokens SET revoked = TRUE, replaced_by = :replacedBy " +
+                        "WHERE id = :id AND revoked = FALSE AND replaced_by IS NULL",
+                ).bind("replacedBy", replacedBy)
+                .bind("id", id)
+                .fetch()
+                .rowsUpdated()
+                .awaitSingle()
+        return rows == 1L
     }
 
     suspend fun revoke(id: UUID) {

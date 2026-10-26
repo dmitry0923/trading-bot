@@ -46,6 +46,17 @@ class ClearingServiceTest {
     }
 
     @Test
+    fun `settle is rejected for a non-current business day`() =
+        runBlocking {
+            // Бэкдейт/будущая дата = другой ключ идемпотентности и второе списание (скан-2 P2).
+            for (offset in listOf(-1L, 1L)) {
+                assertThrows<IllegalArgumentException> {
+                    service.settleWithdrawal(investor.id, LocalDateTime.now(clock).plusDays(offset))
+                }
+            }
+        }
+
+    @Test
     fun `already settled business day does not debit the account again`(): Unit =
         runBlocking {
             stubInvestor()
@@ -86,7 +97,7 @@ class ClearingServiceTest {
                 .thenReturn(forecast(expectedReturnPercent = 10.0))
 
             assertThrows<IllegalArgumentException> {
-                runBlocking { service.settleWithdrawal(investor.id, LocalDateTime.now(clock).plusDays(5)) }
+                runBlocking { service.settleWithdrawal(investor.id, LocalDateTime.now(clock)) }
             }
             // Claim компенсирован: транзакция не остаётся в леджере без списания.
             Mockito.verify(investorRepo).deleteTransaction(anyAccountId())

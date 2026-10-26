@@ -328,10 +328,17 @@ class RestOrderTransport(
         return call()
     }
 
+    /**
+     * Терминальный отказ биржи — только коды, означающие «заявка отклонена по существу».
+     *
+     * 401/403 — протухший/невалидный токен, 408 — таймаут, 429 — rate limit: это НЕ решение
+     * биржи по заявке. Раньше любой 4xx (кроме 429) считался терминальным, и при неудачном
+     * refresh токена заявка навсегда помечалась `REJECTED` в outbox: ENTRY молча терялся,
+     * CLOSE оставался неисполненным до случайной сверки (скан-4 P1).
+     */
     private fun isDefinitiveRejection(t: Throwable): Boolean =
         t is WebClientResponseException &&
-            t.statusCode.value() in 400..499 &&
-            t.statusCode.value() != 429
+            t.statusCode.value() in DEFINITIVE_REJECTION_CODES
 
     private fun recordLatency(
         operation: String,
@@ -344,5 +351,14 @@ class RestOrderTransport(
             System.currentTimeMillis() - startMs,
             TimeUnit.MILLISECONDS,
         )
+    }
+
+    companion object {
+        /**
+         * Коды, означающие решение биржи по заявке: 400 (невалидный запрос),
+         * 404 (нет инструмента), 409 (конфликт состояния), 422 (нарушение правил).
+         * Всё остальное (401/403/408/429/5xx) — неопределённость доставки.
+         */
+        private val DEFINITIVE_REJECTION_CODES = setOf(400, 404, 409, 422)
     }
 }

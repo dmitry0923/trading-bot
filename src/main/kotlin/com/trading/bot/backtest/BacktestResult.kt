@@ -149,6 +149,9 @@ data class BacktestResult(
      */
     fun metrics(): Map<String, Any> =
         mapOf(
+            // Версия движка в каждом артефакте: без неё вердикт гейта неатрибутируем
+            // (docs/29 §3, скан-2 P2).
+            "engineVersion" to engineVersion,
             "totalReturn" to totalReturn,
             "sharpeRatio" to sharpeRatio,
             "sortinoRatio" to sortinoRatio,

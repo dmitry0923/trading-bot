@@ -93,6 +93,32 @@ class SemanticCacheTest {
     }
 
     @Test
+    fun `fingerprint distinguishes the trade side via extra context`() {
+        // BUY и SELL на одном баре не должны делить запись кэша: иначе закэшированный
+        // challenge от противоположной стороны возвращается как свой (скан-4 P2).
+        val buy =
+            cache.fingerprint(
+                BigDecimal("280.50"),
+                62.0,
+                "UP",
+                "LOW_VOLATILITY",
+                session = "MORNING",
+                extra = "action=BUY",
+            )
+        val sell =
+            cache.fingerprint(
+                BigDecimal("280.50"),
+                62.0,
+                "UP",
+                "LOW_VOLATILITY",
+                session = "MORNING",
+                extra = "action=SELL",
+            )
+        assertFalse(buy == sell)
+        assertTrue(buy.contains("|action=BUY"))
+    }
+
+    @Test
     fun `generic fingerprint joins components`() {
         val fp = cache.genericFingerprint("16.0", "75.0", "90.0")
         assertEquals("16.0:75.0:90.0", fp)

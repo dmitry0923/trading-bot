@@ -226,19 +226,19 @@ class OrderOutboxRepository(
             if (purpose == null) {
                 """
                 SELECT * FROM order_outbox
-                WHERE payload->>'positionId' = :positionId
+                WHERE position_id = :positionId
                 ORDER BY created_at DESC
                 LIMIT 1
                 """.trimIndent()
             } else {
                 """
                 SELECT * FROM order_outbox
-                WHERE payload->>'positionId' = :positionId AND payload->>'purpose' = :purpose
+                WHERE position_id = :positionId AND payload->>'purpose' = :purpose
                 ORDER BY created_at DESC
                 LIMIT 1
                 """.trimIndent()
             }
-        val spec = databaseClient.sql(sql).bind("positionId", positionId.toString())
+        val spec = databaseClient.sql(sql).bind("positionId", positionId)
         return spec
             .let { if (purpose != null) it.bind("purpose", purpose) else it }
             .map { row, _ -> toOrderOutbox(row) }
@@ -258,7 +258,7 @@ class OrderOutboxRepository(
         val sql =
             """
             SELECT * FROM order_outbox
-            WHERE payload->>'positionId' = :positionId
+            WHERE position_id = :positionId
               AND payload->>'purpose' = 'cancel'
               AND payload->>'orderId' = :orderId
               AND status = 'SENT'
@@ -267,7 +267,7 @@ class OrderOutboxRepository(
             """.trimIndent()
         return databaseClient
             .sql(sql)
-            .bind("positionId", positionId.toString())
+            .bind("positionId", positionId)
             .bind("orderId", alorOrderId)
             .map { row, _ -> toOrderOutbox(row) }
             .one()

@@ -74,8 +74,13 @@ class RefreshTokenService(
                 revoked = false,
                 replacedBy = null,
             )
+        // Сначала атомарный claim старого токена: победитель ровно один. Проигравший
+        // (тот же токен пришёл дважды) отзывает всю сессию — это признак reuse.
+        if (!repository.markRotated(existing.id, newToken.id)) {
+            repository.revokeAllForUser(existing.username)
+            return null
+        }
         repository.save(newToken)
-        repository.markRotated(existing.id, newToken.id)
         return RotatedRefresh(newRaw, existing.username, existing.roles.split(","))
     }
 

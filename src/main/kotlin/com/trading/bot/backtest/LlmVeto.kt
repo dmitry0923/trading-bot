@@ -351,8 +351,14 @@ class LlmVeto(
         // (ArbitratorAgent: `dec.copy(action = guarded.signal.action, …)`), и прежний
         // порядок «сначала action, потом overrideReason» трактовал такой отказ как
         // «вход разрешён» — fail-open в контуре, который везде объявлен fail-closed.
-        if (final.overrideReason != null) {
-            return unknown(Reason.ARB_FAILURE, ticker, detail = "arbitrator: ${final.overrideReason}")
+        // Отказ LLM — fallback-причины. GUARDRAIL-правки (например PRICE_DEVIATION:
+        // target подтянут к рынку, но вердикт валиден) НЕ являются отказом — иначе
+        // валидный «allow» блокировал вход и метрика block-rate считала чужие отказы
+        // (скан-4 P3).
+        val reason = final.overrideReason
+        val isFallback = reason != null && reason.startsWith("FALLBACK:")
+        if (isFallback) {
+            return unknown(Reason.ARB_FAILURE, ticker, detail = "arbitrator: $reason")
         }
         if (final.action != StrategyAction.HOLD) return scoreVerdict(final.signalStrength, ticker)
         return Verdict(allow = false, reason = Reason.ARB_HOLD)

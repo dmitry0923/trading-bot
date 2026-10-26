@@ -89,13 +89,20 @@ class InvestorService(
         // операции, а `max(0, …)` прощал нехватку.
         investorRepo.debitBalanceIfSufficient(account.id, amount, LocalDateTime.now(clock))
             ?: throw IllegalArgumentException("Insufficient balance: ${account.balance} < $amount")
-        recordTransaction(
-            investorId = investorId,
-            accountId = account.id,
-            type = InvestorTransactionType.WITHDRAWAL,
-            amount = amount,
-            description = description ?: "Ручной вывод",
-        )
+        // Баланс уже списан: сбой записи в леджер компенсируем возвратом,
+        // иначе деньги ушли со счёта без проводки (скан-4 P2).
+        try {
+            recordTransaction(
+                investorId = investorId,
+                accountId = account.id,
+                type = InvestorTransactionType.WITHDRAWAL,
+                amount = amount,
+                description = description ?: "Ручной вывод",
+            )
+        } catch (e: Exception) {
+            investorRepo.creditDeposit(account.id, amount, LocalDateTime.now(clock))
+            throw e
+        }
         logger.info { "Withdrawal for $investorId: $amount ₽" }
         return viewOf(investor, requireAccount(investorId))
     }
@@ -146,21 +153,28 @@ class InvestorService(
         // Атомарный инкремент: снимок `saveAccount` затирал параллельные операции.
         investorRepo.creditDeposit(account.id, amount, LocalDateTime.now(clock))
             ?: throw IllegalStateException("Account not found: ${account.id}")
-        recordTransaction(
-            investorId = investor.id,
-            accountId = account.id,
-            type = InvestorTransactionType.DEPOSIT,
-            amount = amount,
-            description = "Взнос ${investor.name}",
-        )
-        investorRepo.saveAllocation(
-            InvestorAllocation(
-                id = UuidV7.uuid(),
+        // Баланс/аллокация пишутся после зачисления: сбой леджера компенсируем
+        // обратным списанием, иначе баланс и журнал расходятся (скан-4 P2).
+        try {
+            recordTransaction(
                 investorId = investor.id,
                 accountId = account.id,
+                type = InvestorTransactionType.DEPOSIT,
                 amount = amount,
-            ),
-        )
+                description = "Взнос ${investor.name}",
+            )
+            investorRepo.saveAllocation(
+                InvestorAllocation(
+                    id = UuidV7.uuid(),
+                    investorId = investor.id,
+                    accountId = account.id,
+                    amount = amount,
+                ),
+            )
+        } catch (e: Exception) {
+            investorRepo.debitBalanceIfSufficient(account.id, amount, LocalDateTime.now(clock))
+            throw e
+        }
     }
 
     private suspend fun recordTransaction(

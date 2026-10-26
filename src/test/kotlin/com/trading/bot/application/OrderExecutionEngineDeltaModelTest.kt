@@ -1301,10 +1301,16 @@ class OrderExecutionEngineDeltaModelTest {
     }
 
     /**
-     * Impossible delta with no closeOrderId → immediate reset (no cancel needed).
+     * Unknown close order (closeOrderId = null) → WS report НЕ доверяется.
+     *
+     * Доставка close была UNCERTAIN: какой ордер реально ушёл на биржу — неизвестно,
+     * поэтому отчёт (в т.ч. с «невозможной» дельтой) может относиться к ENTRY-ордеру.
+     * Принять его значило бы закрыть позицию локально по чужому ордеру / сбросить
+     * close-claim при живой заявке на бирже. Состояние разрешает ТОЛЬКО
+     * `resolveCloseViaOutbox` (по outbox-строке close-ордера).
      */
     @Test
-    fun `impossible delta with no closeOrderId resets immediately`() {
+    fun `report with unknown close order is ignored even on impossible delta`() {
         val pos =
             openPos(
                 quantity = 60,
@@ -1327,9 +1333,11 @@ class OrderExecutionEngineDeltaModelTest {
 
         val handled = runBlocking { engine.handleExecutionReport(report) }
 
-        assertTrue(handled) { "report matched by pendingClose=true path" }
-        assertFalse(pos.pendingClose) { "pendingClose=false — immediate reset" }
-        assertNull(pos.closeOrderId) { "closeOrderId null — no order to cancel" }
+        assertTrue(handled) { "отчёт относится к pending-close позиции, но не к её close-ордеру" }
+        assertTrue(pos.pendingClose) { "pendingClose=true — состояние ждёт resolveCloseViaOutbox" }
+        assertNull(pos.closeOrderId) { "closeOrderId остаётся null — ордер на бирже неизвестен" }
+        assertEquals(60, pos.quantity) { "позиция НЕ меняется по чужому отчёту" }
+        assertEquals(0, pos.cumulativeCloseFillQty) { "cumulative NOT mutated" }
     }
 
     // ─── Partial close state machine regression (pendingClose=TRUE invariant) ──

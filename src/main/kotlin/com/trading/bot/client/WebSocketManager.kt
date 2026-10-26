@@ -71,8 +71,9 @@ data class WsConnectionEvent(
  * - Stale-guard котировок [isQuoteStale]: сообщения, задержанные в очереди
  *   дольше [AlorConfig.wsStaleMessageAgeMs], и сообщения, пришедшие в
  *   неправильном порядке (старее последнего принятого по тикеру), отбрасываются.
- *   Водяные знаки порядка сбрасываются при каждом переподключении — свежий
- *   снапшот нового соединения всегда принимается.
+ *   Водяные знаки порядка сбрасываются при переподключении потока КОТИРОВОК —
+ *   свежий снапшот нового соединения всегда принимается (реконнект ORDERS их
+ *   не сбрасывает, иначе устаревшие котировки прошли бы как валидные).
  *
  * Метрики:
  * - alor.ws.connected / alor.ws.disconnected (Counters, tag stream)
@@ -128,8 +129,10 @@ class WebSocketManager(
 
     /**
      * Сообщает менеджеру об установленном соединении (после успешной подписки).
-     * Сбрасывает водяные знаки порядка — снапшот нового соединения не
-     * отбрасывается как «устаревший».
+     * Сбрасывает водяные знаки порядка ТОЛЬКО для потока котировок: снапшот нового
+     * QUOTES-соединения не отбрасывается как «устаревший». Реконнект ORDERS не
+     * легализует устаревшие/неупорядоченные котировки — поток котировок при этом
+     * не переподключался, и его водяные знаки должны остаться в силе.
      */
     fun onConnected(
         stream: WsStream,
@@ -138,9 +141,11 @@ class WebSocketManager(
     ) {
         val was = stateOf(stream).getAndSet(WsConnectionStatus.CONNECTED)
         activityOf(stream).set(Instant.now().toEpochMilli())
-        lastQuoteTimeByTicker.clear()
-        lastQuoteSeqByTicker.clear()
-        lastQuoteReceivedAtByTicker.clear()
+        if (stream == WsStream.QUOTES) {
+            lastQuoteTimeByTicker.clear()
+            lastQuoteSeqByTicker.clear()
+            lastQuoteReceivedAtByTicker.clear()
+        }
         meterRegistry.counter("alor.ws.connected", Tags.of("stream", stream.name)).increment()
         if (was != WsConnectionStatus.CONNECTED) {
             logger.info { "WS ${stream.name}: connected (attempt=$reconnectAttempt, reason=$reason)" }

@@ -70,6 +70,26 @@ class AlorWebSocketClientTest {
     }
 
     @Test
+    fun `parseExecution prefers exchange orderNumber over client id`() {
+        // Регресс: `id` — клиентский idempotency key, `orderNumber` — номер на бирже.
+        // Позиции хранят orderNumber, поэтому ExecutionReport.orderId обязан быть им,
+        // иначе WS-подтверждения входа/закрытия/SL/TP молча не сопоставляются.
+        val report =
+            client.parseExecution(
+                """{"opcode":"OrdersGetAndSubscribeV2","data":{"id":"client-idem-1","orderNumber":"exch-42","status":"filled","filledQtyBatch":1,"qtyBatch":1,"avgFillPrice":"12.34","ticker":"CNYRUBF"}}""",
+            )
+
+        assertEquals("exch-42", report?.orderId)
+        assertEquals(OrderStatus.FILLED, report?.status)
+
+        val legacyOrderNo =
+            client.parseExecution(
+                """{"id":"client-idem-2","orderNo":"exch-7","status":"working"}""",
+            )
+        assertEquals("exch-7", legacyOrderNo?.orderId)
+    }
+
+    @Test
     fun `parseExecution PARTIALLY_FILLED when legacy root format`() {
         val report =
             client.parseExecution(
@@ -159,6 +179,23 @@ class AlorWebSocketClientTest {
 
         assertEquals("SBER", tick?.ticker)
         assertEquals(0, BigDecimal("280.5").compareTo(tick?.price))
+        assertEquals(1700000000L, tick?.exchangeTime?.epochSecond)
+    }
+
+    @Test
+    fun `parseQuote parses bid ask and sizes when Last comes first`() {
+        // Регресс: ранний break на Last оставлял Offer/bidSize/askSize пустыми —
+        // штатный порядок Bid, Last, Offer ломал спред/размеры тика.
+        val tick =
+            client.parseQuote(
+                """{"guid":"q-SBER","quotes":[{"o":"Bid","price":280.0,"volume":10,"time":1700000000},{"o":"Last","price":280.5,"volume":0,"time":1700000000},{"o":"Offer","price":281.0,"volume":25,"time":1700000000}]}""",
+            )
+
+        assertEquals(0, BigDecimal("280.5").compareTo(tick?.price))
+        assertEquals(0, BigDecimal("280.0").compareTo(tick?.bid))
+        assertEquals(0, BigDecimal("281.0").compareTo(tick?.ask))
+        assertEquals(10L, tick?.bidSize)
+        assertEquals(25L, tick?.askSize)
         assertEquals(1700000000L, tick?.exchangeTime?.epochSecond)
     }
 

@@ -55,6 +55,30 @@ class DailyRiskSnapshotRepositoryIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `findRecent window includes exactly the requested number of days`() {
+        // KDoc обещает «последние days дней включая сегодня»: окно 30 дней —
+        // today-29..today. Раньше `today - days` с `>=` давало days+1 (31) день.
+        val today = LocalDate.now()
+        repo.upsert(today.minusDays(29), BigDecimal("10"), false, BigDecimal.ZERO)
+        repo.upsert(today.minusDays(30), BigDecimal("-100"), false, BigDecimal.ZERO)
+
+        val recent = repo.findRecent(30)
+
+        assertEquals(listOf(today.minusDays(29)), recent.map { it.tradeDate })
+    }
+
+    @Test
+    fun `findRecent with one day returns only today`() {
+        val today = LocalDate.now()
+        repo.upsert(today.minusDays(1), BigDecimal("-100"), false, BigDecimal.ZERO)
+        repo.upsert(today, BigDecimal("50"), false, BigDecimal.ZERO)
+
+        val recent = repo.findRecent(1)
+
+        assertEquals(listOf(today), recent.map { it.tradeDate })
+    }
+
+    @Test
     fun `upsert on the same date updates the row instead of inserting a duplicate`() {
         val today = LocalDate.now()
         repo.upsert(today, BigDecimal("100"), false, BigDecimal.ZERO)

@@ -10,6 +10,7 @@ import io.minio.MinioClient
 import io.minio.PutObjectArgs
 import io.minio.SetBucketLifecycleArgs
 import io.minio.messages.Expiration
+import io.minio.messages.Item
 import io.minio.messages.LifecycleConfiguration
 import io.minio.messages.LifecycleRule
 import io.minio.messages.RuleFilter
@@ -19,6 +20,7 @@ import kotlinx.coroutines.withContext
 import org.springframework.stereotype.Component
 import tools.jackson.databind.ObjectMapper
 import java.io.ByteArrayInputStream
+import java.util.PriorityQueue
 
 /**
  * Сохранение LLM-трейсов в объектное хранилище MinIO/S3.
@@ -112,24 +114,43 @@ class S3TraceStorage(
         }
     }
 
+    /**
+     * Ключи объектов, новые первыми, не более [limit].
+     *
+     * Листинг S3 не сортирует по lastModified, поэтому «последние N» — это top-K по
+     * времени изменения. Раньше все объекты бакета материализовались в память
+     * (`item.get()` на каждый) и сортировались целиком: на большом бакете это
+     * O(bucket) памяти на каждый вызов листинга. Здесь поток обрабатывается лениво,
+     * в памяти держится не более [limit] объектов.
+     */
     private fun listKeys(
         prefix: String?,
         limit: Int,
     ): List<String> {
         val argsBuilder = ListObjectsArgs.builder().bucket(config.bucket)
         if (prefix != null) argsBuilder.prefix(prefix)
-        return client
-            .listObjects(argsBuilder.build())
-            .mapNotNull { item ->
+        val cap = limit.coerceIn(1, 10_000)
+        // Min-heap по lastModified: голова — самый старый из отобранных.
+        val newest = PriorityQueue<Item>(compareBy { it.lastModified() })
+        for (result in client.listObjects(argsBuilder.build())) {
+            val item =
                 try {
-                    item.get()
+                    result.get()
                 } catch (e: Exception) {
                     logger.warn { "Skipping trace object listing error: ${e.message}" }
-                    null
+                    continue
                 }
-            }.sortedByDescending { it.lastModified() }
-            .take(limit.coerceIn(1, 10_000))
-            .map { it.objectName() }
+            if (newest.size < cap) {
+                newest.add(item)
+            } else {
+                val oldest = newest.peek() ?: continue
+                if (item.lastModified() > oldest.lastModified()) {
+                    newest.poll()
+                    newest.add(item)
+                }
+            }
+        }
+        return newest.sortedByDescending { it.lastModified() }.map { it.objectName() }
     }
 
     override suspend fun read(key: String): LlmTrace? {

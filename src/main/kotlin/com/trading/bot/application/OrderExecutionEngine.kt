@@ -22,7 +22,11 @@ import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.UUID
+
+/** Бизнес-зона бота (Moscow Exchange): наивные `LocalDateTime` в БД трактуются как МСК. */
+private val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
 
 /**
  * Расчёт P&L закрытой сделки. Различие инструментов:
@@ -108,7 +112,10 @@ fun interface PnlCalculator {
                 val clearings =
                     FundingCosts.clearingDates(
                         pos.openedAt,
-                        pos.closedAt ?: LocalDateTime.now(),
+                        // Фолбэк на бизнес-время (МСК): `LocalDateTime.now()` дал бы зону JVM
+                        // (в Docker — UTC) и сдвинул бы окно клирингов на 3 ч — закрытия
+                        // 00:00–03:00 МСК попали бы в чужой клиринг.
+                        pos.closedAt ?: LocalDateTime.now(BUSINESS_ZONE),
                         isTradingDay,
                     )
                 val fundingTotal = fundingPerClearing(pos.ticker, clearings)

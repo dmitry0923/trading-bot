@@ -138,22 +138,9 @@ class ResilientLlmClient(
             val system = prompt.renderSystem(variables)
             val user = prompt.renderUser(variables)
 
-            // ---- Бюджет: резервируем расход ДО вызова (fail-closed по лимитам) ----
-            // Оценка = длина промпта + максимальный размер ответа (maxTokens, review/P1):
-            // одного промпта мало — бюджет должен покрывать и выход модели.
-            val budget =
-                llmBudgetService?.let { budget ->
-                    val cacheKey = cacheKeyOf(agent, ticker, fingerprint, cacheNamespace, seed)
-                    budget.reserve(agent, cacheKey, budget.estimateTokens(system, user) + llmConfig.maxTokens)
-                }
-            if (budget != null && !budget.allowed) {
-                val reason = budget.reason ?: "TOKEN_BUDGET_EXCEEDED"
-                logger.warn { "LLM budget blocked agent=$agent ticker=$ticker: $reason" }
-                meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", reason)).increment()
-                return@withMdc LlmResponse.fallback(reason)
-            }
-
             // ---- Single-flight: при одинаковом семантическом ключе к LLM ходит один поток ----
+            // Бюджет резервируется НЕ здесь, а в executeLlmCall — только тот, кто реально
+            // вызывает провайдера. Иначе ожидающие single-flight платили бы за чужой вызов.
             val cacheKey = cacheKeyOf(agent, ticker, fingerprint, cacheNamespace, seed)
             val sf =
                 if (fingerprint != null) {
@@ -163,14 +150,17 @@ class ResilientLlmClient(
                 }
 
             // Single-flight выключен или у вызова нет fingerprint — прямой вызов владельцем.
+            val call: suspend () -> LlmResponse = {
+                executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed, cacheKey)
+            }
             if (sf == null) {
-                return@withMdc executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed)
+                return@withMdc call()
             }
 
             when (val acquired = sf.acquire(cacheKey, seed)) {
                 is LlmSingleFlight.AcquireResult.Owner -> {
                     try {
-                        executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed)
+                        call()
                     } finally {
                         sf.release(cacheKey, seed, acquired.token)
                     }
@@ -194,13 +184,13 @@ class ResilientLlmClient(
                 }
 
                 null -> {
-                    executeLlmCall(agent, ticker, fingerprint, system, user, temperature, endpoint, cacheNamespace, seed)
+                    call()
                 }
             }
         }
     }
 
-    /** Выполняет LLM-вызов (очередь + resilience), трассирует и пишет semantic cache. */
+    /** Выполняет LLM-вызов (бюджет + очередь + resilience), трассирует и пишет semantic cache. */
     private suspend fun executeLlmCall(
         agent: String,
         ticker: String,
@@ -211,7 +201,23 @@ class ResilientLlmClient(
         endpoint: ResolvedEndpoint,
         cacheNamespace: String?,
         seed: String?,
+        cacheKey: String,
     ): LlmResponse {
+        // ---- Бюджет: резервируем расход ровно один раз — тот, кто реально идёт в
+        // провайдер (fail-closed по лимитам). Ожидающие single-flight не оплачивают
+        // чужой вызов: раньше резерв брался ДО single-flight и ждущие платили впустую.
+        // Оценка = длина промпта + максимальный размер ответа (maxTokens, review/P1).
+        val budget = llmBudgetService
+        if (budget != null) {
+            val decision = budget.reserve(agent, cacheKey, budget.estimateTokens(system, user) + llmConfig.maxTokens)
+            if (!decision.allowed) {
+                val reason = decision.reason ?: "TOKEN_BUDGET_EXCEEDED"
+                logger.warn { "LLM budget blocked agent=$agent ticker=$ticker: $reason" }
+                meterRegistry.counter("llm.fallback.activated", Tags.of("agent", agent, "reason", reason)).increment()
+                return LlmResponse.fallback(reason)
+            }
+        }
+
         val response =
             try {
                 llmQueue.submit { decoratedCall { callLlm(endpoint, system, user, temperature, agent) } }

@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test
 import java.io.File
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * Тесты парсера на реальных фрагментах бесплатного образца MOEX за 2024-10-01
@@ -235,6 +237,33 @@ class MoexOrderLogParserTest {
         val second = parse().buckets.map { it.time to it.quoteCount }
 
         assertEquals(first, second)
+    }
+
+    @Test
+    fun `two entry zip is parsed fully instead of failing on the second entry`() {
+        // Регрессия: `.zip`-ветка закрывала общий ZipInputStream через `lines(stream).use`,
+        // поэтому после первого файла `nextEntry` падал с "Stream closed".
+        val zip = File.createTempFile("orderlog", ".zip")
+        try {
+            val entries = listOf("20241001_CNYRUBF_fut_tick.csv", "20241001_CNYRUBF_fut_deal.csv")
+            ZipOutputStream(zip.outputStream()).use { out ->
+                entries.forEach { name ->
+                    out.putNextEntry(ZipEntry(name))
+                    out.write(File(fixturesDir, name).readBytes())
+                    out.closeEntry()
+                }
+            }
+
+            val fromZip = parse(dir = zip)
+            val fromDir = parse()
+
+            assertEquals(5000L, requireNotNull(fromZip.stats).tickRows)
+            assertEquals(2000L, requireNotNull(fromZip.stats).dealRows)
+            assertEquals(fromDir.buckets.size, fromZip.buckets.size)
+            assertEquals(fromDir.ticks.size, fromZip.ticks.size)
+        } finally {
+            zip.delete()
+        }
     }
 
     @Test

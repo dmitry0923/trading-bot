@@ -6,6 +6,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Позиция бота.
@@ -78,7 +79,10 @@ data class Position(
     var cumulativeCloseFillQty: Int = 0,
     var cumulativeSlFillQty: Int = 0,
     var cumulativeTpFillQty: Int = 0,
-    var openedAt: LocalDateTime = LocalDateTime.now(),
+    // Бизнес-время (МСК): `opened_at` — наивный TIMESTAMP в БД, который сравнивается с
+    // временем МСК (дневные лимиты/авто-стоп, окна клирингов funding, час входа в аналитике).
+    // `LocalDateTime.now()` брал зону JVM (в Docker — UTC) → сдвиг на 3 ч.
+    var openedAt: LocalDateTime = LocalDateTime.now(ZoneId.of("Europe/Moscow")),
     var closedAt: LocalDateTime? = null,
     var cycleId: String? = null,
     var accountId: Long? = null,

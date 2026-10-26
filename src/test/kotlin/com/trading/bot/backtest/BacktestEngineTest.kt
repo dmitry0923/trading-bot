@@ -1871,7 +1871,12 @@ class BacktestEngineTest {
     fun `funding veto does not see same-day clearing`() {
         // Ставка клиринга 18:45 дня D на утро D ещё не известна: veto обязан
         // использовать предыдущий клиринг (point-in-time, docs/28 §2 №13).
-        val candles = trendingCandles()
+        // Детерминированное окно: ровно один торговый день (60 баров × 10 мин),
+        // иначе тест зависел от времени суток запуска (переход через полночь
+        // добавлял день, для которого предыдущая ставка уже известна).
+        val base = LocalDateTime.of(2026, 1, 5, 10, 0)
+        val candles =
+            trendingCandles().take(60).mapIndexed { i, c -> c.copy(time = base.plusMinutes(10L * i)) }
         val day = candles.first().time.toLocalDate()
         val repo = fundingRepoReturning(day to BigDecimal("0.5"))
         val vetoEngine =

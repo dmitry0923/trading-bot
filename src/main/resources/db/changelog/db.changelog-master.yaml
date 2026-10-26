@@ -79,3 +79,5 @@ databaseChangeLog:
       file: db/changelog/changes/039-strategy-versions.sql
   - include:
       file: db/changelog/changes/040-cbr-rates-history.sql
+  - include:
+      file: db/changelog/changes/041-trade-events-sequence-unique.sql

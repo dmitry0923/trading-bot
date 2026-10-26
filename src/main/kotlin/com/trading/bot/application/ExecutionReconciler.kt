@@ -13,8 +13,10 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
 import tools.jackson.databind.ObjectMapper
+import java.time.Clock
 import java.time.Duration
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * State Reconciliation: pending entry / close / protection resolution via outbox and REST verification.
@@ -45,6 +47,12 @@ class ExecutionReconciler(
     private val confirmCloseFill: suspend (Position, java.math.BigDecimal, CloseReason) -> Unit,
     private val reconcileProtectionOrders: suspend (Position) -> Unit,
     private val onAbandonCleanup: (Long?) -> Unit,
+    /**
+     * Бизнес-время (МСК) для записи `closed_at` при abandonment входа: `LocalDateTime.now()`
+     * берёт зону JVM (в Docker — UTC), а дневные лимиты/авто-стоп сравнивают `closed_at`
+     * со временем МСК ([com.trading.bot.service.DrawdownProtectionService]).
+     */
+    private val clock: Clock = Clock.system(BUSINESS_ZONE),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -337,7 +345,7 @@ class ExecutionReconciler(
         pos.pendingEntry = false
         pos.status = PositionStatus.CLOSED
         pos.closeReason = reason
-        pos.closedAt = LocalDateTime.now()
+        pos.closedAt = LocalDateTime.now(clock)
         positionRepo.save(pos)
         positionRepo.releaseEntry(pos.ticker, pos.accountId)
         onAbandonCleanup(pos.id)
@@ -347,5 +355,8 @@ class ExecutionReconciler(
     private companion object {
         /** `purpose` entry-ордера в outbox (фильтр от SL/TP/close строк позиции). */
         const val PURPOSE_ENTRY = "entry"
+
+        /** Бизнес-зона бота (Moscow Exchange / авто-стоп/дневные лимиты). */
+        val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
     }
 }

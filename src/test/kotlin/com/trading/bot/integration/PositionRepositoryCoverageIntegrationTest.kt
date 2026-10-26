@@ -21,7 +21,11 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Дополнительное покрытие веток [PositionRepository], не затронутых
@@ -233,6 +237,64 @@ class PositionRepositoryCoverageIntegrationTest : AbstractTestContainerTest() {
             assertTrue(repo.findByAlorOrderId("ord-entry")!!.fundingUnknown)
             repo.setFundingUnknown(saved.id!!, false)
             assertFalse(repo.findByAlorOrderId("ord-entry")!!.fundingUnknown)
+        }
+    }
+
+    @Test
+    fun `cleanupStaleEntryReservations compares against DB time so fresh reservations survive`() {
+        runBlocking {
+            assertNotNull(repo.reserveEntry("FRESH", PositionDirection.LONG, null))
+
+            // created_at резервации — дефолт БД NOW(), поэтому и порог возраста обязан считаться
+            // временем БД. Порог из JVM при зоне приложения впереди зоны БД (МСК против UTC)
+            // удалял СВЕЖИЕ резервации → слот освобождался → возможен повторный вход.
+            assertEquals(0, repo.cleanupStaleEntryReservations(maxAgeMs = 30L * 60 * 1000))
+            assertNull(
+                repo.reserveEntry("FRESH", PositionDirection.LONG, null),
+                "свежая резервация должна остаться занятой",
+            )
+        }
+    }
+
+    @Test
+    fun `new position persists opened_at in Moscow business time`() {
+        runBlocking {
+            val saved =
+                repo.save(
+                    Position(
+                        ticker = "MSK-OPEN",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        instrumentType = InstrumentType.STOCK,
+                    ),
+                )
+
+            val stored = repo.findById(saved.id!!).openedAt
+            val skew = Duration.between(stored, LocalDateTime.now(ZoneId.of("Europe/Moscow"))).abs()
+            assertTrue(skew.seconds < 60, "opened_at должен быть временем МСК (расхождение ${skew.seconds}s)")
+        }
+    }
+
+    @Test
+    fun `transitionToClosed writes closed_at in Moscow business time`() {
+        runBlocking {
+            val saved = repo.save(position("MSK-CLOSE"))
+            val moscowClock = Clock.fixed(Instant.parse("2026-10-26T09:15:00Z"), ZoneId.of("Europe/Moscow"))
+            val repositoryWithFixedClock = PositionRepository(databaseClient, moscowClock)
+
+            assertTrue(
+                repositoryWithFixedClock.transitionToClosed(
+                    saved.id!!,
+                    PositionStatus.CLOSED,
+                    BigDecimal("110"),
+                    CloseReason.STOP_LOSS,
+                    BigDecimal("10"),
+                ),
+            )
+
+            // 09:15 UTC = 12:15 МСК: закрытие обязано попасть в московское окно авто-стопа.
+            assertEquals(LocalDateTime.of(2026, 10, 26, 12, 15), repo.findById(saved.id!!).closedAt)
         }
     }
 }

@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.domain.risk.PortfolioDataQuality
 import com.trading.bot.domain.risk.ResolvedCorrelationMatrix
+import com.trading.bot.model.entity.Candle
 import org.springframework.stereotype.Service
 import kotlin.math.sqrt
 
@@ -27,11 +28,19 @@ class CorrelationMatrixProvider(
      * Коэффициент корреляции Пирсона между ценами закрытия двух тикеров
      * за последние [period] свечей из Redis-кэша.
      *
+     * Ряды выравниваются по [com.trading.bot.model.entity.Candle.time] (inner join):
+     * при пропущенных барах сравнивать «i-ю с i-й» нельзя — это корреляция разных
+     * моментов, а не совместного движения (вход риск-гейтов был бы искажён).
+     *
      * @param a первый тикер
      * @param b второй тикер
      * @param timeframe таймфрейм свечей
      * @param period глубина расчёта
-     * @return корреляция в [-1, 1] или null, если данных недостаточно
+     * @return корреляция в [-1, 1] или null, если общих наблюдений меньше
+     *   [correlationMinSamples]
+     * @throws IllegalArgumentException если [period] меньше [correlationMinSamples]:
+     *   без такого периода корреляция заведомо null, и молчаливая нулевая матрица
+     *   выдавалась бы за «нет корреляции»
      */
     fun correlationOf(
         a: String,
@@ -39,21 +48,39 @@ class CorrelationMatrixProvider(
         timeframe: String = "MINUTE_10",
         period: Int = 50,
     ): Double? {
+        requirePeriod(period)
         if (a == b) return 1.0
-        val x = candleCache.getRecentCandles(a, timeframe, period).map { it.closePrice.toDouble() }
-        val y = candleCache.getRecentCandles(b, timeframe, period).map { it.closePrice.toDouble() }
-        if (x.size < correlationMinSamples || y.size < correlationMinSamples) return null
-        val n = minOf(x.size, y.size)
-        val xs = x.takeLast(n)
-        val ys = y.takeLast(n)
-        val mx = xs.average()
-        val my = ys.average()
+        val candlesA = candleCache.getRecentCandles(a, timeframe, period)
+        val candlesB = candleCache.getRecentCandles(b, timeframe, period)
+        return pearson(alignedCloses(candlesA, candlesB))
+    }
+
+    /**
+     * Пары `(closeA, closeB)` на общих метках времени (inner join по [Candle.time]).
+     * Порядок — как в [a]; на корреляцию Пирсона он не влияет.
+     */
+    internal fun alignedCloses(
+        a: List<Candle>,
+        b: List<Candle>,
+    ): List<Pair<Double, Double>> {
+        if (a.isEmpty() || b.isEmpty()) return emptyList()
+        val bByTime = b.associate { it.time to it.closePrice.toDouble() }
+        return a.mapNotNull { candle ->
+            bByTime[candle.time]?.let { closeB -> candle.closePrice.toDouble() to closeB }
+        }
+    }
+
+    private fun pearson(pairs: List<Pair<Double, Double>>): Double? {
+        if (pairs.size < correlationMinSamples) return null
+        val n = pairs.size
+        val mx = pairs.sumOf { it.first } / n
+        val my = pairs.sumOf { it.second } / n
         var num = 0.0
         var dx2 = 0.0
         var dy2 = 0.0
-        for (i in 0 until n) {
-            val dx = xs[i] - mx
-            val dy = ys[i] - my
+        for ((x, y) in pairs) {
+            val dx = x - mx
+            val dy = y - my
             num += dx * dy
             dx2 += dx * dx
             dy2 += dy * dy
@@ -62,16 +89,25 @@ class CorrelationMatrixProvider(
         return num / sqrt(dx2 * dy2)
     }
 
+    private fun requirePeriod(period: Int) {
+        require(period >= correlationMinSamples) {
+            "correlation period=$period is below correlationMinSamples=$correlationMinSamples"
+        }
+    }
+
     /**
      * Матрица попарных корреляций для списка тикеров (верхний треугольник).
      *
      * @return Map[ticker -> Map[ticker -> корреляция | null]]
+     * @throws IllegalArgumentException если [period] меньше [correlationMinSamples]
+     *   (иначе матрица была бы целиком из null, а HTTP-ответ — 200)
      */
     fun correlations(
         tickers: List<String>,
         timeframe: String = "MINUTE_10",
         period: Int = 50,
     ): Map<String, Map<String, Double?>> {
+        requirePeriod(period)
         val distinct = tickers.distinct()
         return distinct.associateWith { a ->
             distinct.associateWith { b ->

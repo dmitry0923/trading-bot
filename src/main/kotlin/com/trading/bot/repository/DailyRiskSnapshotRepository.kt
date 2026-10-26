@@ -62,7 +62,9 @@ class DailyRiskSnapshotRepository(
         days: Int,
         accountId: Long?,
     ): List<DailyRiskSnapshot> {
-        val sinceDate = LocalDate.now().minusDays(days.toLong())
+        // Окно — ровно [days] дней ВКЛЮЧАЯ сегодня (KDoc), поэтому нижняя граница
+        // `today - (days - 1)`: с `today - days` и `>=` окно было days+1 день.
+        val sinceDate = LocalDate.now().minusDays((days - 1).coerceAtLeast(0).toLong())
         val sql =
             if (accountId == null) {
                 "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate AND account_id IS NULL ORDER BY trade_date ASC"

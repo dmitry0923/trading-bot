@@ -12,14 +12,22 @@ import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * R2DBC-репозиторий позиций. Все методы suspend: вызываются из корутин.
+ *
+ * Время: наивные `TIMESTAMP` в БД — бизнес-время МСК (как `DrawdownProtectionService`).
+ * [transitionToClosed] пишет `closed_at` по [clock] (по умолчанию `Clock.system(Europe/Moscow)`),
+ * иначе `LocalDateTime.now()` брал бы зону JVM (в Docker — UTC) и «свежие» закрытия выпадали
+ * бы из окна авто-стопа и из «сегодня» дневных лимитов.
  */
 @Repository
 class PositionRepository(
     private val databaseClient: DatabaseClient,
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private fun toPosition(row: Row): Position =
         Position(
@@ -297,7 +305,7 @@ class PositionRepository(
             .sql(sql)
             .bind("id", id)
             .bind("status", status.name)
-            .bind("closedAt", LocalDateTime.now())
+            .bind("closedAt", LocalDateTime.now(clock))
             .bind("closePrice", closePrice)
             .bind("closeReason", closeReason.code)
             .bind("pnl", pnl)
@@ -722,12 +730,18 @@ class PositionRepository(
     /**
      * Уборка «осиротевших» резерваций (краш бота между резервацией и созданием позиции):
      * снимает резервации старше [maxAgeMs], для которых нет открытой позиции.
+     *
+     * ВАЖНО (время): `entry_reservations.created_at` заполняется дефолтом БД `NOW()`,
+     * поэтому порог возраста тоже считается временем БД (`now() - make_interval(...)`).
+     * Прежний `:threshold` из JVM (`LocalDateTime.now()`) при другой зоне приложения и БД
+     * (например, МСК в образе против UTC в Postgres) давал порог на 3 ч впереди: уборка
+     * удаляла СВЕЖИЕ резервации → возможен повторный вход в позицию (двойной вход).
      */
     suspend fun cleanupStaleEntryReservations(maxAgeMs: Long = 30 * 60 * 1000): Int {
         val sql =
             """
             DELETE FROM entry_reservations er
-            WHERE er.created_at < :threshold
+            WHERE er.created_at < now() - make_interval(secs => :maxAgeSeconds)
               AND NOT EXISTS (
                   SELECT 1 FROM positions p
                   WHERE p.status = 'OPEN' AND p.ticker = er.ticker
@@ -736,7 +750,7 @@ class PositionRepository(
             """.trimIndent()
         return databaseClient
             .sql(sql)
-            .bind("threshold", LocalDateTime.now().minusNanos(maxAgeMs * 1_000_000))
+            .bind("maxAgeSeconds", maxAgeMs / 1000.0)
             .fetch()
             .rowsUpdated()
             .awaitSingle()

@@ -172,21 +172,105 @@ class AumProviderTest {
         assertTrue(result is AumProvider.AumResult.Unavailable)
     }
 
+    @Test
+    fun `failed fetch is negative-cached so consecutive calls hit the provider once`(): Unit =
+        runBlocking {
+            // Регрессия retry storm: без штампа времени неудачной попытки каждый
+            // последующий вызов (дашборд, входной конвейер) снова шёл бы в Alor.
+            var calls = 0
+            Mockito
+                .`when`(alor.getPortfolioMoney(Mockito.anyString()))
+                .thenAnswer { _ ->
+                    calls++
+                    throw RuntimeException("api down")
+                }
+            stubOverride(null)
+
+            val first = aumProvider.currentAumChecked(7L)
+            val second = aumProvider.currentAumChecked(7L)
+            val third = aumProvider.currentAum(7L)
+
+            assertTrue(first is AumProvider.AumResult.Unavailable)
+            assertTrue(second is AumProvider.AumResult.Unavailable, "negative cache must stay fail-closed")
+            assertEquals(0, riskConfig.maxPositionRub.compareTo(third))
+            assertEquals(1, calls, "provider must be called exactly once inside the negative-TTL window")
+        }
+
+    @Test
+    fun `null balance is negative-cached on the fail-open path too`(): Unit =
+        runBlocking {
+            var calls = 0
+            Mockito
+                .`when`(alor.getPortfolioMoney(Mockito.anyString()))
+                .thenAnswer { _ ->
+                    calls++
+                    null as BigDecimal?
+                }
+            stubOverride(null)
+
+            val first = aumProvider.currentAum(7L)
+            val second = aumProvider.currentAum(7L)
+
+            assertEquals(0, riskConfig.maxPositionRub.compareTo(first))
+            assertEquals(0, riskConfig.maxPositionRub.compareTo(second))
+            assertEquals(1, calls, "null balance must not cause a provider call on every render")
+        }
+
+    @Test
+    fun `negative cache expires and the provider is retried`(): Unit =
+        runBlocking {
+            var calls = 0
+            Mockito
+                .`when`(alor.getPortfolioMoney(Mockito.anyString()))
+                .thenAnswer { _ ->
+                    calls++
+                    throw RuntimeException("api down")
+                }
+            stubOverride(null)
+
+            aumProvider.currentAumChecked(7L)
+            backdateAttempt(7L, ageMs = 11_000L)
+            aumProvider.currentAumChecked(7L)
+
+            assertEquals(2, calls, "after the negative TTL the provider must be retried")
+        }
+
+    /** Отодвигает время последней попытки обращения к провайдеру. */
+    private fun backdateAttempt(
+        accountId: Long?,
+        ageMs: Long,
+    ) {
+        val cache = cacheMap()
+        val entry = cache[accountId ?: -1L] ?: return
+        setEntryField(entry, "lastAttemptAt", System.currentTimeMillis() - ageMs)
+    }
+
+    private fun cacheMap(): ConcurrentHashMap<Long, Any> {
+        @Suppress("UNCHECKED_CAST")
+        return AumProvider::class.java
+            .getDeclaredField("cache")
+            .apply { isAccessible = true }
+            .get(aumProvider) as ConcurrentHashMap<Long, Any>
+    }
+
+    private fun setEntryField(
+        entry: Any,
+        name: String,
+        value: Long,
+    ) {
+        entry.javaClass.getDeclaredField(name).apply {
+            isAccessible = true
+            set(entry, value)
+        }
+    }
+
     /** Устаревает кэш-запись на [ageMs] миллисекунд (симуляция зависшего API). */
     private fun backdateCache(
         accountId: Long?,
         ageMs: Long,
     ) {
-        @Suppress("UNCHECKED_CAST")
-        val cache =
-            AumProvider::class.java
-                .getDeclaredField("cache")
-                .apply { isAccessible = true }
-                .get(aumProvider) as ConcurrentHashMap<Long, Any>
-        val key = if (accountId == null) -1L else accountId
-        val entry = cache[key] ?: return
-        val updatedAt = entry.javaClass.getDeclaredField("updatedAt")
-        updatedAt.isAccessible = true
-        updatedAt.set(entry, System.currentTimeMillis() - ageMs)
+        val entry = cacheMap()[accountId ?: -1L] ?: return
+        setEntryField(entry, "updatedAt", System.currentTimeMillis() - ageMs)
+        setEntryField(entry, "lastAttemptAt", System.currentTimeMillis() - ageMs)
     }
 }

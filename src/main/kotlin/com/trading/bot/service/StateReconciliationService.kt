@@ -27,8 +27,10 @@ import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -79,6 +81,12 @@ class StateReconciliationService(
     private val meterRegistry: MeterRegistry,
     private val tradingAccountService: TradingAccountService,
     private val entryLeaseRecoveryGate: EntryLeaseRecoveryGate,
+    /**
+     * Бизнес-время (МСК), как в [com.trading.bot.service.DrawdownProtectionService]:
+     * `closed_at` пишется тем же клоком, которым считаются окна дневного/часового
+     * лимита. Иначе на UTC-хосте свежие закрытия выпадают из окна (docs/28 §3 №23).
+     */
+    private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
     private val logger = KotlinLogging.logger {}
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -368,7 +376,7 @@ class StateReconciliationService(
         recoveredPrice: BigDecimal? = null,
     ) {
         pos.status = PositionStatus.CLOSED
-        pos.closedAt = LocalDateTime.now()
+        pos.closedAt = LocalDateTime.now(clock)
         pos.closeReason = reason
         pos.pendingClose = false
         pos.pendingEntry = false

@@ -88,6 +88,7 @@ class WsOrderTransportTest {
                 fakeFactory,
                 scope,
                 resolver(frozenFor("SBER", "live-v2")),
+                tokenProvider(),
             )
     }
 
@@ -108,6 +109,8 @@ class WsOrderTransportTest {
         }
         return r
     }
+
+    private fun tokenProvider(): AlorTokenProvider = AlorTokenProvider(alorConfig, tools.jackson.databind.ObjectMapper())
 
     private fun frozenFor(
         ticker: String,
@@ -273,6 +276,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     resolver(null),
+                    tokenProvider(),
                 )
             assertFailsWith<OrderInterlockDeniedException> {
                 blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
@@ -291,6 +295,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     resolver(null),
+                    tokenProvider(),
                 )
             assertFailsWith<OrderInterlockDeniedException> {
                 blocked.placeConditional("stop", "SBER", "buy", 1, BigDecimal("250"), "idem-2", "P1")
@@ -309,6 +314,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     resolver(null),
+                    tokenProvider(),
                 )
             assertFailsWith<OrderInterlockDeniedException> {
                 blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-1", "P1")
@@ -328,6 +334,7 @@ class WsOrderTransportTest {
                     FakeSocketFactory(isolatedConnection),
                     scope,
                     resolver(null),
+                    tokenProvider(),
                 )
             awaitFakeSubscribe(isolatedConnection)
             val result = async { transport2.cancel("ord-1", "idem-c", "P1") }
@@ -350,6 +357,7 @@ class WsOrderTransportTest {
                     FakeSocketFactory(isolatedConnection),
                     scope,
                     resolver(frozen = null, reducingAllowed = true),
+                    tokenProvider(),
                 )
             awaitFakeSubscribe(isolatedConnection)
             val result =
@@ -372,6 +380,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     resolver(frozen = null, reducingAllowed = false),
+                    tokenProvider(),
                 )
             assertFailsWith<OrderInterlockDeniedException> {
                 blocked.placeLimit("SBER", "sell", 1, BigDecimal("250"), "idem-c2", "P1", OrderPurpose.CLOSE)
@@ -391,6 +400,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     resolver(frozen = null, reducingAllowed = true),
+                    tokenProvider(),
                 )
             assertFailsWith<OrderInterlockDeniedException> {
                 blocked.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-e1", "P1", OrderPurpose.ENTRY)
@@ -409,6 +419,7 @@ class WsOrderTransportTest {
                     fakeFactory,
                     scope,
                     resolver(frozen = null, reducingAllowed = false),
+                    tokenProvider(),
                 )
             assertFailsWith<OrderInterlockDeniedException> {
                 blocked.placeConditional("take-profit", "SBER", "sell", 1, BigDecimal("280"), "idem-tp1", "P1", OrderPurpose.TP)

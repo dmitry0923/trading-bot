@@ -21,7 +21,9 @@ import java.util.Locale
  * Защита от «спирали токенов»: пока LLM участвует в выборе сигнала, параллельные
  * циклы могут генерировать неограниченное количество запросов. Бюджет резервирует
  * расход под каждый вызов ДО обращения к провайдеру — атомарно в Redis (Lua INCRBY
- * по лимитам за минуту / за цикл / за день + дневная стоимость).
+ * по лимитам за минуту / за цикл / за день + дневная стоимость). Резерв берётся
+ * ровно один раз — тем участником, который реально вызывает провайдера (после
+ * single-flight); ожидающие чужой ответ не оплачивают вызов.
  *
  * Превышение любого лимита (или недоступность Redis) → fail-closed: вызов отклонён,
  * резерв откатан, вызывающий код получает NEUTRAL fallback с причиной.
@@ -90,6 +92,7 @@ class LlmBudgetService(
                 "%.6f".format(Locale.ROOT, costEstimate),
                 "120",
                 "600", // TTL ключа цикла: не раньше завершения самого длинного цикла
+                "172800", // TTL дневных ключей (день + стоимость): 2 суток
             )
         return try {
             @Suppress("UNCHECKED_CAST")
@@ -118,7 +121,12 @@ class LlmBudgetService(
          * Атомарное резервирование по всем лимитам сразу с полным откатом при
          * превышении. KEYS: 1=минута, 2=цикл, 3=день, 4=стоимость дня.
          * ARGV: estimate, maxMinute, maxCycle, maxDay, maxCost, costEstimate,
-         * minuteTtl, cycleTtl.
+         * minuteTtl, cycleTtl, dayTtl.
+         *
+         * TTL ставится простым `EXPIRE` на ВСЕ ключи: `EXPIRE ... NX` поддерживается
+         * только с Redis 7, а на Redis 6 скрипт падал → `BUDGET_UNAVAILABLE` →
+         * fail-closed отказ КАЖДОГО LLM-вызова. Без TTL на дневных ключах они бы
+         * копились вечно (утечка).
          */
         private val RESERVE_SCRIPT: RedisScript<List<*>> =
             DefaultRedisScript(
@@ -151,8 +159,10 @@ class LlmBudgetService(
                     redis.call('INCRBYFLOAT', KEYS[4], '-' .. ARGV[6])
                     return {'0', 'TOKEN_BUDGET_EXCEEDED:COST'}
                 end
-                redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]), 'NX')
-                redis.call('EXPIRE', KEYS[2], tonumber(ARGV[8]), 'NX')
+                redis.call('EXPIRE', KEYS[1], tonumber(ARGV[7]))
+                redis.call('EXPIRE', KEYS[2], tonumber(ARGV[8]))
+                redis.call('EXPIRE', KEYS[3], tonumber(ARGV[9]))
+                redis.call('EXPIRE', KEYS[4], tonumber(ARGV[9]))
                 return {'1', ''}
                 """.trimIndent(),
                 List::class.java,

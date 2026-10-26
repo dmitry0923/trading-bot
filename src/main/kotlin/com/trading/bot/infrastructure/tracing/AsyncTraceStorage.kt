@@ -7,11 +7,14 @@ import io.micrometer.core.instrument.Tags
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.context.annotation.Primary
 import org.springframework.stereotype.Component
 
@@ -50,8 +53,8 @@ class AsyncTraceStorage(
         java.util.concurrent.atomic
             .AtomicInteger(0)
 
-    init {
-        meterRegistry.gauge("trace.buffer.size", this) { it.queued.get().toDouble() }
+    /** Фоновый консюмер очереди: [close] дожидается его, чтобы не потерять трейсы. */
+    private val consumer: Job =
         scope.launch {
             for (pending in buffer) {
                 queued.decrementAndGet()
@@ -64,6 +67,9 @@ class AsyncTraceStorage(
                 }
             }
         }
+
+    init {
+        meterRegistry.gauge("trace.buffer.size", this) { it.queued.get().toDouble() }
     }
 
     override suspend fun save(
@@ -99,6 +105,18 @@ class AsyncTraceStorage(
 
     @PreDestroy
     fun close() {
+        // Раньше scope просто отменялся: всё, что стояло в буфере (трейсы LLM-вызовов
+        // последних секунд), терялось. Закрываем канал (новых записей нет), даём
+        // консюмеру дописать очередь — с ограничением по времени, чтобы shutdown
+        // не завис на недоступном S3 — и только потом отменяем scope.
+        buffer.close()
+        try {
+            runBlocking {
+                withTimeoutOrNull(config.asyncShutdownTimeoutMs) { consumer.join() }
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "Async trace drain interrupted" }
+        }
         scope.cancel()
     }
 }

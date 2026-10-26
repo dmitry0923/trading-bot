@@ -285,6 +285,10 @@ class OrderOutboxService(
 
         // STATE RECONCILIATION перед любым ПОВТОРНЫМ запросом.
         // (Отмена — отдельный тип: сверка по idempotencyKey ордера к ней не применима.)
+        // retryCount > 0 покрывает и переотправку после краха: claimRetryable инкрементирует
+        // retry_count при повторном захвате зависшей PROCESSING-строки, поэтому доставка,
+        // оборванная на середине (строку не успели пометить SENT), НЕ уйдёт повторно
+        // без сверки — иначе возможен дубль ордера на бирже.
         if (outbox.retryCount > 0 && !isCancel) {
             when (val reconciled = alorClient.reconcileOrderByIdempotencyKey(idempotencyKey, ticker, side, portfolio)) {
                 is AlorClient.OrderReconciliation.Found -> {

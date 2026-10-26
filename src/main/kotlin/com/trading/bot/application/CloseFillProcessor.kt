@@ -15,6 +15,9 @@ import io.micrometer.core.instrument.Tags
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -47,6 +50,13 @@ class CloseFillProcessor(
     private val cancelProtectionOrders: suspend (Position) -> Unit,
     private val attachProtectionOrders: suspend (Position) -> Unit,
     private val closeReconcileMaxAttempts: Int = 10,
+    /**
+     * Бизнес-время (МСК) для записи `closed_at`. `LocalDateTime.now()` использует зону
+     * JVM, а образ в Docker идёт в UTC → закрытия писались бы на 3 ч раньше, выпадая
+     * из окна авто-стопа/«сегодня» [com.trading.bot.service.DrawdownProtectionService]
+     * (он читает время по `Clock.system(Europe/Moscow)`).
+     */
+    private val clock: Clock = Clock.system(BUSINESS_ZONE),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -199,6 +209,14 @@ class CloseFillProcessor(
     /**
      * WS ExecutionReport for pendingClose — delta model.
      *
+     * Требуется ТОЧНОЕ совпадение [Position.closeOrderId] с `report.orderId`.
+     * При `closeOrderId == null` доставка close была UNCERTAIN (какой именно ордер
+     * ушёл на биржу — неизвестно), а WS-отчёт в этом состоянии может относиться к
+     * ENTRY-ордеру той же позиции. Приём такого отчёта закрыл бы позицию локально
+     * по цене входа (снять защиту, освободить слот), тогда как биржа оставила бы
+     * позицию открытой. Такой pendingClose разрешает ТОЛЬКО
+     * [ExecutionReconciler.resolveCloseViaOutbox] (по outbox-строке close-ордера).
+     *
      * @return true if the report was handled (pendingClose=true);
      *   false if the report doesn't match pending state.
      */
@@ -212,9 +230,9 @@ class CloseFillProcessor(
             mutex.withLock {
                 val fresh = positionRepo.findById(positionId)
                 if (fresh.status != PositionStatus.OPEN) return true
-                if (fresh.closeOrderId != null && fresh.closeOrderId != report.orderId) {
+                if (fresh.closeOrderId == null || fresh.closeOrderId != report.orderId) {
                     logger.warn {
-                        "Ignoring stale pending-close fill: " +
+                        "Ignoring pending-close fill: report does not match a known close order — " +
                             "position=${fresh.id}, ticker=${fresh.ticker}, " +
                             "currentOrder=${fresh.closeOrderId}, reportOrder=${report.orderId}"
                     }
@@ -461,7 +479,7 @@ class CloseFillProcessor(
             }
         }
         pos.status = targetStatus
-        pos.closedAt = java.time.LocalDateTime.now()
+        pos.closedAt = LocalDateTime.now(clock)
         pos.closePrice = closePrice
         pos.closeReason = reason
         pos.pnl = totalPnl
@@ -520,4 +538,9 @@ class CloseFillProcessor(
 
             else -> false
         }
+
+    private companion object {
+        /** Бизнес-зона бота (Moscow Exchange / авто-стоп/дневные лимиты). */
+        val BUSINESS_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
+    }
 }

@@ -1,5 +1,6 @@
 package com.trading.bot.infrastructure.alor
 
+import com.trading.bot.client.AlorTokenProvider
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
@@ -24,7 +25,15 @@ class AlorFuturesClientTest {
     private fun client(mode: String = "SIMULATION"): AlorFuturesClient {
         val tradingConfig = TradingConfig().apply { this.mode = mode }
         val alorConfig = AlorConfig()
-        return AlorFuturesClient(alorConfig, tradingConfig, ObjectMapper(), instrumentsConfig, meterRegistry, RiskConfig())
+        return AlorFuturesClient(
+            alorConfig,
+            tradingConfig,
+            ObjectMapper(),
+            instrumentsConfig,
+            meterRegistry,
+            RiskConfig(),
+            AlorTokenProvider(alorConfig, ObjectMapper()),
+        )
     }
 
     @Test

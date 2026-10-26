@@ -147,7 +147,12 @@ class AlorClientTest {
                 assertTrue((c.getOpenOrders() as AlorClient.ReconcileResult.Ok).items.isEmpty())
                 assertTrue((c.getPositions() as AlorClient.ReconcileResult.Ok).items.isEmpty())
                 assertTrue((c.getRecentTrades() as AlorClient.ReconcileResult.Ok).items.isEmpty())
-                assertNull(c.verifyOrder("ord-1"))
+                // SIM: вход не должен «зависать» в pendingEntry — verifyOrder отдаёт
+                // эквивалент полного филла по цене заявки (docs/28 §3 №32).
+                val simExecution = c.verifyOrder("ord-1")
+                assertEquals("FILLED", simExecution?.status)
+                assertEquals(0, simExecution?.filledQuantity)
+                assertNull(simExecution?.avgPrice, "цена остаётся ценой заявки")
                 assertEquals("sim-SBER-idem-1", c.placeMarketOrder("SBER", "buy", 1, "idem-1"))
                 assertTrue(server.requests.isEmpty())
             }
@@ -168,6 +173,49 @@ class AlorClientTest {
                 assertEquals(250_000L, snapshot?.volume)
                 assertTrue(server.requests.any { it.second == "Bearer test-token" }, "Authorization header must be set")
                 assertEquals(1.0, registry.counter("alor.quotes.ok", "ticker", "SBER").count())
+            }
+        }
+
+    @Test
+    fun `getMarketSnapshot falls back to bid ask when lastPrice absent`(): Unit =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                val c = client(server)
+
+                // lastPrice нет вообще — цена берётся как mid между bid/ask.
+                server.quotesResponse = """{"bid":"123.0","ask":"123.9","volume":1000}"""
+                val midSnapshot = c.getMarketSnapshot("SBER")
+                assertEquals(0, BigDecimal("123.45").compareTo(midSnapshot?.currentPrice))
+                assertEquals(0, BigDecimal("123.0").compareTo(midSnapshot?.bid))
+                assertEquals(0, BigDecimal("123.9").compareTo(midSnapshot?.ask))
+
+                // только bid — цена = bid (не синтетический 0).
+                server.quotesResponse = """{"bid":"123.0","volume":1000}"""
+                assertEquals(0, BigDecimal("123.0").compareTo(c.getMarketSnapshot("SBER")?.currentPrice))
+
+                // lastPrice = 0 трактуется как отсутствие данных, а не как «валидный» ноль.
+                server.quotesResponse = """{"lastPrice":"0","ask":"124.0","volume":1000}"""
+                assertEquals(0, BigDecimal("124.0").compareTo(c.getMarketSnapshot("SBER")?.currentPrice))
+            }
+        }
+
+    @Test
+    fun `getMarketSnapshot returns null without any usable price`(): Unit =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                val (c, registry) = clientWithMetrics(server)
+
+                server.quotesResponse = """{"lastPrice":"0","bid":"0","ask":"0","volume":100}"""
+                assertNull(c.getMarketSnapshot("SBER"))
+                assertEquals(
+                    1.0,
+                    registry.counter("alor.quotes.error", "ticker", "SBER", "reason", "NO_PRICE").count(),
+                )
+                assertEquals(0.0, registry.counter("alor.quotes.ok", "ticker", "SBER").count())
+
+                // Поля цены отсутствуют полностью — тоже null (раньше был «валидный» 0).
+                server.quotesResponse = """{"volume":100}"""
+                assertNull(c.getMarketSnapshot("SBER"))
             }
         }
 
@@ -342,6 +390,29 @@ class AlorClientTest {
                 assertEquals("t-2", items[1].id)
                 assertEquals("GAZP", items[1].ticker)
                 assertEquals(3, items[1].quantity)
+            }
+        }
+
+    @Test
+    fun `getRecentTrades skips trades without ticker like getPositions`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                val c = client(server)
+                server.tradesResponse =
+                    """
+                    [
+                      {"id":"t-1","ticker":"SBER","quantity":5,"price":"250.5"},
+                      {"id":"t-2","ticker":"","quantity":1,"price":"10.0"},
+                      {"id":"t-3","quantity":1,"price":"11.0"}
+                    ]
+                    """.trimIndent()
+
+                val result = c.getRecentTrades()
+
+                assertTrue(result is AlorClient.ReconcileResult.Ok)
+                val items = (result as AlorClient.ReconcileResult.Ok).items
+                assertEquals(1, items.size, "trades without a ticker must not be attributed to a position")
+                assertEquals("SBER", items.single().ticker)
             }
         }
 

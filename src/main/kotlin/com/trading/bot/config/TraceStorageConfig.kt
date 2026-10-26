@@ -30,6 +30,13 @@ class TraceStorageConfig {
     /** Ёмкость буфера асинхронной записи трейсов; при переполнении — синхронный fallback. */
     var asyncBufferSize: Int = 1024
 
+    /**
+     * Сколько ждать дозаписи очереди при остановке приложения, мс. Без ожидания
+     * `close()` терял все ещё не записанные трейсы; бесконечное ожидание повесило
+     * бы shutdown при недоступном S3/MinIO.
+     */
+    var asyncShutdownTimeoutMs: Long = 5_000
+
     /** Срок жизни трейсов в днях (S3 lifecycle expiration); 0 — не настраивать retention. */
     var retentionDays: Int = 0
 }

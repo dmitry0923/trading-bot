@@ -62,6 +62,7 @@ class WsOrderTransportConnectionTest {
                 factory,
                 scope,
                 resolver(),
+                tokenProvider(),
             )
     }
 
@@ -83,6 +84,7 @@ class WsOrderTransportConnectionTest {
                     factory,
                     scope,
                     resolver(),
+                    tokenProvider(),
                 )
             val deadline = System.currentTimeMillis() + 5_000
             while (factory.openCount.get() < 2 && System.currentTimeMillis() < deadline) {
@@ -90,10 +92,18 @@ class WsOrderTransportConnectionTest {
             }
 
             assertTrue(factory.openCount.get() >= 2, "expected reconnect, opens=${factory.openCount.get()}")
-            val subscribes =
-                connection.sent.filter {
-                    jacksonObjectMapper().readTree(it).path("opcode").asString() == "OrdersGetAndSubscribeV2"
-                }
+            // Подписка отправляется уже после открытия соединения — ждём её, а не
+            // проверяем сразу (иначе гонка: openCount уже 2, subscribe ещё 1).
+            val subscribeDeadline = System.currentTimeMillis() + 5_000
+            var subscribes = emptyList<String>()
+            while (System.currentTimeMillis() < subscribeDeadline) {
+                subscribes =
+                    connection.sent.filter {
+                        jacksonObjectMapper().readTree(it).path("opcode").asString() == "OrdersGetAndSubscribeV2"
+                    }
+                if (subscribes.size >= 2) break
+                delay(20)
+            }
             assertTrue(subscribes.size >= 2, "every open must send a subscribe command, got=${connection.sent}")
             val first = jacksonObjectMapper().readTree(subscribes.first())
             assertEquals("P1", first.path("portfolio").asString())
@@ -125,11 +135,48 @@ class WsOrderTransportConnectionTest {
             assertEquals("ord-1", result)
         }
 
+    @Test
+    fun `ws commands and subscribe take token from token provider (not stale config)`(): Unit =
+        runBlocking {
+            // Регресс: транспорт читал alorConfig.token напрямую → после refresh
+            // подписка/команды уходили с протухшим токеном (401, fail-closed).
+            val provider = org.mockito.Mockito.mock(AlorTokenProvider::class.java) { _ -> "refreshed-token" }
+            val tokenConnection = FakeConnection()
+            val freshTransport =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    FakeSocketFactory(tokenConnection),
+                    scope,
+                    resolver(),
+                    provider,
+                )
+
+            val deadline = System.currentTimeMillis() + 5_000
+            while (tokenConnection.sent.none { it.contains("OrdersGetAndSubscribeV2") } && System.currentTimeMillis() < deadline) {
+                delay(20)
+            }
+            val subscribe =
+                jacksonObjectMapper().readTree(tokenConnection.sent.first { it.contains("OrdersGetAndSubscribeV2") })
+            assertEquals("refreshed-token", subscribe.path("token").asString())
+
+            val result =
+                freshTransport.placeLimit("SBER", "buy", 1, BigDecimal("300"), "idem-token", "P1", OrderPurpose.ENTRY)
+
+            assertEquals("ord-1", result)
+            val command = jacksonObjectMapper().readTree(tokenConnection.sent.last())
+            assertEquals("AlorOrders", command.path("opcode").asString())
+            assertEquals("refreshed-token", command.path("token").asString())
+        }
+
     private fun resolver(): LiveFrozenStrategyResolver {
         val resolver = mock<LiveFrozenStrategyResolver>()
         runBlocking { whenever(resolver.isOrderAllowed(any(), any())).thenReturn(true) }
         return resolver
     }
+
+    private fun tokenProvider(): AlorTokenProvider = AlorTokenProvider(alorConfig, tools.jackson.databind.ObjectMapper())
 
     private class FakeConnection : WsOrderSocketConnection {
         val inbound = Channel<String>(capacity = 100)

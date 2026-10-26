@@ -1,5 +1,6 @@
 package com.trading.bot.infrastructure.alor
 
+import com.trading.bot.client.AlorTokenProvider
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
@@ -44,6 +45,7 @@ class AlorFuturesClient(
     private val instrumentsConfig: InstrumentsConfig,
     private val meterRegistry: MeterRegistry,
     private val riskConfig: RiskConfig,
+    private val tokenProvider: AlorTokenProvider,
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -144,7 +146,7 @@ class AlorFuturesClient(
                 webClient
                     .get()
                     .uri("${alorConfig.apiUrl}/md/v2/Securities/${alorConfig.exchange}/$ticker/risk")
-                    .header("Authorization", "Bearer ${alorConfig.token}")
+                    .header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                     .retrieve()
                     .bodyToMono(String::class.java)
                     .timeout(Duration.ofSeconds(10))
@@ -227,7 +229,7 @@ class AlorFuturesClient(
                 webClient
                     .get()
                     .uri("${alorConfig.apiUrl}/md/v2/Clients/$portfolio/summaries")
-                    .header("Authorization", "Bearer ${alorConfig.token}")
+                    .header("Authorization", "Bearer ${tokenProvider.actualToken()}")
                     .retrieve()
                     .bodyToMono(String::class.java)
                     .timeout(Duration.ofSeconds(10))

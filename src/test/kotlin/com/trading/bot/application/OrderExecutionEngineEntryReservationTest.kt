@@ -274,6 +274,30 @@ class OrderExecutionEngineEntryReservationTest {
     }
 
     @Test
+    fun `sim filled without quantity opens position at requested price`() {
+        // SIM-путь AlorClient.verifyOrder отдаёт FILLED с filledQuantity=0 (реального
+        // статуса у биржи нет). Движок обязан трактовать это как полный филл по цене
+        // заявки — иначе SIM никогда не открывает позиции (docs/28 §3 №32).
+        stubReserve(1L)
+        stubEntryPlaceOrder(successResult("e1"))
+        stubEntryFill(AlorClient.OrderExecution(status = "FILLED", filledQuantity = 0, avgPrice = null))
+        stubSaveReturnsArg()
+
+        val result =
+            runBlocking {
+                engine.placeEntryOrder("Si", PositionDirection.LONG, 3, BigDecimal("92000"), buildPosition = { o, p, pr, q ->
+                    buildPos(o, p, pr, q)
+                })
+            }
+
+        assertTrue(result != null, "SIM-вход обязан открываться")
+        assertEquals(0, BigDecimal("92000").compareTo(result!!.entryPrice), "цена = цена заявки")
+        assertEquals(3, result.quantity)
+        assertEquals(false, result.pendingEntry)
+        assertEquals(1, openedCount.get())
+    }
+
+    @Test
     fun `unfilled working entry stays pending instead of becoming phantom position`() {
         stubReserve(1L)
         stubEntryPlaceOrder(successResult("e1"))

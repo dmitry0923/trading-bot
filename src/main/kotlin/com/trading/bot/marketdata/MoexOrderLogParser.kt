@@ -302,8 +302,8 @@ object MoexOrderLogParser {
                 val files = path.listFiles()?.sortedBy { it.name }.orEmpty()
                 val tickFiles = files.filter { it.name.contains(TICK_FILE_MARKER) }
                 val dealFiles = files.filter { it.name.contains(DEAL_FILE_MARKER) }
-                tickFiles.forEach { consume(it.name, it.inputStream()) }
-                dealFiles.forEach { consume(it.name, it.inputStream()) }
+                tickFiles.forEach { file -> file.inputStream().use { consume(file.name, it) } }
+                dealFiles.forEach { file -> file.inputStream().use { consume(file.name, it) } }
             }
 
             path.name.endsWith(".7z", ignoreCase = true) -> {
@@ -357,42 +357,44 @@ object MoexOrderLogParser {
         stats: ParseStats,
         accumulator: BboAccumulator,
     ) {
-        lines(stream).use { reader ->
-            while (true) {
-                val line = reader.readLine() ?: break
-                stats.tickLines++
-                if (isSkippable(line)) continue
-                if (!startsWithTicker(line, ticker)) {
-                    stats.tickRowsForeignTicker++
-                    continue
-                }
-                val columns = line.split(',')
-                if (columns.size < TICK_COLUMNS) {
-                    stats.malformedTick++
-                    continue
-                }
-                val time = parseMoment(columns[3])
-                if (time == null) {
-                    stats.malformedTick++
-                    continue
-                }
-                val price = columns[5].toBigDecimalOrNull()
-                if (price == null) {
-                    stats.malformedTick++
-                    continue
-                }
-                val volume = columns[6].trim().toLongOrNull()
-                if (volume == null) {
-                    stats.malformedTick++
-                    continue
-                }
-                when (columns[2].trim().firstOrNull()) {
-                    TYPE_BID -> accumulator.onBid(time, price, volume)
-                    TYPE_ASK -> accumulator.onAsk(time, price, volume)
-                    else -> stats.tickRowsUnknownType++
-                }
-                stats.tickRows++
+        // Читатель НЕ закрывается: для .zip это поток самого архива, и его закрытие
+        // ломало переход к следующему entry ("Stream closed"). Закрывает поток тот,
+        // кто его открыл ([open]: каталог/7z).
+        val reader = lines(stream)
+        while (true) {
+            val line = reader.readLine() ?: break
+            stats.tickLines++
+            if (isSkippable(line)) continue
+            if (!startsWithTicker(line, ticker)) {
+                stats.tickRowsForeignTicker++
+                continue
             }
+            val columns = line.split(',')
+            if (columns.size < TICK_COLUMNS) {
+                stats.malformedTick++
+                continue
+            }
+            val time = parseMoment(columns[3])
+            if (time == null) {
+                stats.malformedTick++
+                continue
+            }
+            val price = columns[5].toBigDecimalOrNull()
+            if (price == null) {
+                stats.malformedTick++
+                continue
+            }
+            val volume = columns[6].trim().toLongOrNull()
+            if (volume == null) {
+                stats.malformedTick++
+                continue
+            }
+            when (columns[2].trim().firstOrNull()) {
+                TYPE_BID -> accumulator.onBid(time, price, volume)
+                TYPE_ASK -> accumulator.onAsk(time, price, volume)
+                else -> stats.tickRowsUnknownType++
+            }
+            stats.tickRows++
         }
     }
 
@@ -402,28 +404,28 @@ object MoexOrderLogParser {
         stats: ParseStats,
         tickSink: (TradeTick) -> Unit,
     ) {
-        lines(stream).use { reader ->
-            while (true) {
-                val line = reader.readLine() ?: break
-                stats.dealLines++
-                if (isSkippable(line)) continue
-                if (!startsWithTicker(line, ticker)) {
-                    stats.dealRowsForeignTicker++
-                    continue
-                }
-                val columns = line.split(',')
-                if (columns.size < DEAL_COLUMNS) {
-                    stats.malformedDeal++
-                    continue
-                }
-                val tick = parseTradeTick(columns, ticker)
-                if (tick == null) {
-                    stats.malformedDeal++
-                    continue
-                }
-                stats.dealRows++
-                tickSink(tick)
+        // См. [readTicks]: закрывать поток вызывающего нельзя (общий ZipInputStream).
+        val reader = lines(stream)
+        while (true) {
+            val line = reader.readLine() ?: break
+            stats.dealLines++
+            if (isSkippable(line)) continue
+            if (!startsWithTicker(line, ticker)) {
+                stats.dealRowsForeignTicker++
+                continue
             }
+            val columns = line.split(',')
+            if (columns.size < DEAL_COLUMNS) {
+                stats.malformedDeal++
+                continue
+            }
+            val tick = parseTradeTick(columns, ticker)
+            if (tick == null) {
+                stats.malformedDeal++
+                continue
+            }
+            stats.dealRows++
+            tickSink(tick)
         }
     }
 

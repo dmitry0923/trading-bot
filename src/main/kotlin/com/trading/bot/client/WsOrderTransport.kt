@@ -51,9 +51,10 @@ class WsOrderTransport(
     private val alorConfig: AlorConfig,
     private val tradingConfig: TradingConfig,
     private val meterRegistry: MeterRegistry,
-    private val socketFactory: WsOrderSocketFactory = ReactorWsOrderSocketFactory(alorConfig),
+    private val socketFactory: WsOrderSocketFactory,
     private val scope: CoroutineScope? = null,
     private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
+    private val tokenProvider: AlorTokenProvider,
 ) : OrderTransport {
     private val logger = KotlinLogging.logger {}
 
@@ -118,7 +119,7 @@ class WsOrderTransport(
         return try {
             val command =
                 WsOrderMessages.placeLimit(
-                    alorConfig.token,
+                    tokenProvider.actualToken(),
                     portfolio,
                     ticker,
                     alorConfig.exchange,
@@ -159,7 +160,7 @@ class WsOrderTransport(
         return try {
             val command =
                 WsOrderMessages.placeConditional(
-                    alorConfig.token,
+                    tokenProvider.actualToken(),
                     portfolio,
                     ticker,
                     alorConfig.exchange,
@@ -195,7 +196,7 @@ class WsOrderTransport(
         return try {
             val command =
                 WsOrderMessages.cancel(
-                    alorConfig.token,
+                    tokenProvider.actualToken(),
                     portfolio,
                     alorConfig.exchange,
                     orderId,
@@ -313,7 +314,7 @@ class WsOrderTransport(
                 logger.info { "WS order channel connected" }
                 conn.send(
                     WsOrderMessages.subscribe(
-                        alorConfig.token,
+                        tokenProvider.actualToken(),
                         alorConfig.portfolio,
                         alorConfig.exchange,
                         UuidV7.uuidString(),

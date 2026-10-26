@@ -85,6 +85,27 @@ class WebSocketManagerTest {
     }
 
     @Test
+    fun `onConnected of orders stream does not reset quote watermarks`() {
+        val now = Instant.now()
+        assertFalse(manager.isQuoteStale("SBER", Instant.now(), 1, now))
+        assertFalse(manager.isQuoteStale("GAZP", Instant.now(), 1))
+        assertNotNull(manager.lastQuoteReceivedAt("SBER"))
+
+        // Реконнект потока заявок НЕ должен легализовать устаревшие/неупорядоченные котировки.
+        manager.onConnected(WsStream.ORDERS, 1)
+
+        assertTrue(manager.isQuoteStale("SBER", Instant.now(), 2, now.minusSeconds(1)))
+        assertTrue(manager.isQuoteStale("GAZP", Instant.now(), 1))
+        assertNotNull(manager.lastQuoteReceivedAt("SBER"))
+
+        // Реконнект именно потока котировок — водяные знаки сбрасываются.
+        manager.onConnected(WsStream.QUOTES, 1)
+
+        assertFalse(manager.isQuoteStale("SBER", Instant.now(), 3, now.minusSeconds(1)))
+        assertFalse(manager.isQuoteStale("GAZP", Instant.now(), 1))
+    }
+
+    @Test
     fun `watchdog marks idle connected stream as disconnected`() {
         manager.onConnected(WsStream.ORDERS, 0)
         assertTrue(manager.isConnected(WsStream.ORDERS))

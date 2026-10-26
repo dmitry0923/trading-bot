@@ -2,6 +2,7 @@ package com.trading.bot.infrastructure.alor
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import com.trading.bot.client.AlorTokenProvider
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
@@ -17,6 +18,7 @@ import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -193,24 +195,49 @@ class AlorFuturesClientFreshnessTest {
         }
     }
 
+    @Test
+    fun `live GO takes token from token provider instead of stale config`(): Unit =
+        runBlocking {
+            // Регресс: futures-клиент читал alorConfig.token напрямую → после refresh
+            // запросы ГО/баланса уходили с протухшим токеном (401 → fail-closed вход).
+            val provider = org.mockito.Mockito.mock(AlorTokenProvider::class.java) { _ -> "refreshed-token" }
+            val ctx =
+                liveServer(
+                    goBody = """{"long": {"initialMargin": "850"}}""",
+                    summariesBody = """{"moneyAmount": "50000"}""",
+                    maxGoAgeMs = 5000,
+                    tokenProvider = provider,
+                )
+            try {
+                assertEquals(0, BigDecimal("850").compareTo(ctx.client.getFuturesGO("CNYRUBF")!!))
+                assertEquals(listOf<String?>("Bearer refreshed-token"), ctx.authHeaders)
+            } finally {
+                ctx.server.stop(0)
+            }
+        }
+
     private data class Ctx(
         val server: HttpServer,
         val goHits: AtomicInteger,
         val fail: AtomicBoolean,
         val meterRegistry: SimpleMeterRegistry,
         val client: AlorFuturesClient,
+        val authHeaders: MutableList<String?> = CopyOnWriteArrayList(),
     )
 
     private fun liveServer(
         goBody: String,
         summariesBody: String,
         maxGoAgeMs: Long,
+        tokenProvider: AlorTokenProvider? = null,
     ): Ctx {
         val fail = AtomicBoolean(false)
         val goHits = AtomicInteger(0)
+        val authHeaders: MutableList<String?> = CopyOnWriteArrayList()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/md/v2/Securities/MOEX/CNYRUBF/risk") { exchange ->
             goHits.incrementAndGet()
+            authHeaders += exchange.requestHeaders.getFirst("Authorization")
             if (fail.get()) {
                 respond(exchange, "server down", 500)
             } else {
@@ -235,8 +262,16 @@ class AlorFuturesClientFreshnessTest {
         val riskConfig = RiskConfig().apply { this.maxGoAgeMs = maxGoAgeMs }
         val meterRegistry = SimpleMeterRegistry()
         val client =
-            AlorFuturesClient(alorConfig, tradingConfig, ObjectMapper(), instrumentsConfig, meterRegistry, riskConfig)
-        return Ctx(server, goHits, fail, meterRegistry, client)
+            AlorFuturesClient(
+                alorConfig,
+                tradingConfig,
+                ObjectMapper(),
+                instrumentsConfig,
+                meterRegistry,
+                riskConfig,
+                tokenProvider ?: AlorTokenProvider(alorConfig, ObjectMapper()),
+            )
+        return Ctx(server, goHits, fail, meterRegistry, client, authHeaders)
     }
 
     private fun respond(

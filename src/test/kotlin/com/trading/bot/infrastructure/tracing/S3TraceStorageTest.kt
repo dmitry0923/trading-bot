@@ -155,6 +155,26 @@ class S3TraceStorageTest {
         }
 
     @Test
+    fun `list keeps only the newest keys across pages`() =
+        runBlocking {
+            FakeS3Server().use { server ->
+                server.pageSize = 2
+                server.objects =
+                    (1..5).map { index ->
+                        "cycle-$index/strategy/o.json" to "2026-08-07T1$index:00:00.000Z"
+                    }
+                val storage = S3TraceStorage(config(server), mapper)
+
+                val top = storage.list(2)
+
+                // Самые новые — 5 и 4; они лежат в разных страницах листинга.
+                assertEquals(listOf("cycle-5/strategy/o.json", "cycle-4/strategy/o.json"), top)
+                val pages = server.requests.count { it.method == "GET" && it.query?.contains("list-type=2") == true }
+                assertTrue(pages >= 3, "listing must page through the bucket, got $pages requests")
+            }
+        }
+
+    @Test
     fun `list returns empty when S3 listing fails`() =
         runBlocking {
             FakeS3Server().use { server ->
@@ -219,6 +239,16 @@ class S3TraceStorageTest {
         var failList: Boolean = false
         var failLifecycle: Boolean = false
         var downloadBody: String = "{}"
+
+        /** Объекты бакета (ключ → LastModified); новые первыми не обязаны идти. */
+        var objects: List<Pair<String, String>> =
+            listOf(
+                "cycle-1/strategy/old.json" to "2026-08-07T10:00:00.000Z",
+                "cycle-2/strategy/new.json" to "2026-08-07T12:00:00.000Z",
+            )
+
+        /** Размер страницы листинга; 0 — отдать всё одним ответом (как раньше). */
+        var pageSize: Int = 0
 
         val baseUrl: String
             get() = "http://127.0.0.1:${server.address.port}"
@@ -293,22 +323,37 @@ class S3TraceStorageTest {
             }
             val rawPrefix = query?.substringAfter("prefix=", "")?.substringBefore("&") ?: ""
             val prefix = java.net.URLDecoder.decode(rawPrefix, java.nio.charset.StandardCharsets.UTF_8)
-            val objects =
-                listOf(
-                    "cycle-1/strategy/old.json" to "2026-08-07T10:00:00.000Z",
-                    "cycle-2/strategy/new.json" to "2026-08-07T12:00:00.000Z",
-                ).filter { it.first.startsWith(prefix) }
+            val filtered = objects.filter { it.first.startsWith(prefix) }
+            val rawToken = query?.substringAfter("continuation-token=", "")?.substringBefore("&") ?: ""
+            val token =
+                java.net.URLDecoder
+                    .decode(rawToken, java.nio.charset.StandardCharsets.UTF_8)
+                    .toIntOrNull() ?: 0
+            val page =
+                if (pageSize <= 0) {
+                    filtered.drop(token)
+                } else {
+                    filtered.drop(token).take(pageSize)
+                }
+            val nextToken = token + pageSize
+            val truncated = pageSize > 0 && filtered.size > nextToken
             val contents =
-                objects.joinToString("") { (key, modified) ->
+                page.joinToString("") { (key, modified) ->
                     "<Contents><Key>$key</Key><LastModified>$modified</LastModified>" +
                         "<ETag>\"etag\"</ETag><Size>10</Size><StorageClass>STANDARD</StorageClass></Contents>"
+                }
+            val next =
+                if (truncated) {
+                    "<NextContinuationToken>$nextToken</NextContinuationToken>"
+                } else {
+                    ""
                 }
             val xml =
                 """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-                <Name>llm-traces</Name><Prefix>$prefix</Prefix><KeyCount>${objects.size}</KeyCount>
-                <MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>$contents</ListBucketResult>
+                <Name>llm-traces</Name><Prefix>$prefix</Prefix><KeyCount>${page.size}</KeyCount>
+                <MaxKeys>1000</MaxKeys><IsTruncated>$truncated</IsTruncated>$next$contents</ListBucketResult>
                 """.trimIndent()
             respond(exchange, 200, xml, xml = true)
         }

@@ -10,8 +10,10 @@ import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.security.MessageDigest
+import java.time.Clock
 import java.time.Duration
 import java.time.LocalTime
+import java.time.ZoneId
 
 /**
  * Semantic Cache поверх Redis.
@@ -37,7 +39,19 @@ class SemanticCache(
     private val objectMapper: ObjectMapper,
     private val meterRegistry: MeterRegistry,
     private val llmConfig: LlmConfig,
+    clock: Clock = BUSINESS_CLOCK,
 ) {
+    /**
+     * Бизнес-часы проекта (Europe/Moscow). Сессия дня входит в ключ кэша, поэтому она
+     * обязана считаться по московскому времени, а не по зоне JVM: на хосте с UTC
+     * `LocalTime.now()` давал бы другую сессию (и другой ключ) для того же бара.
+     *
+     * Поле nullable намеренно: Mockito-мок не вызывает конструктор, и обращение к
+     * неинициализированному `Clock` дало бы NPE при первом `fingerprint()`. В проде
+     * (Spring) часы всегда заданы, fallback — те же московские [BUSINESS_CLOCK].
+     */
+    private val businessClock: Clock? = clock
+
     private val logger = KotlinLogging.logger {}
     private val prefix = "llm:semantic:"
 
@@ -64,7 +78,7 @@ class SemanticCache(
         volatilityRegime: String,
         macdHistogram: Double = Double.NaN,
         atrPercentile: Int = -1,
-        session: String = sessionOf(LocalTime.now()),
+        session: String = currentSession(),
         extra: String = "",
     ): String {
         val pricePart = price.setScale(1, RoundingMode.HALF_UP).toPlainString()
@@ -165,6 +179,9 @@ class SemanticCache(
         }
     }
 
+    /** Сессия дня по бизнес-часам проекта (не по зоне JVM). */
+    private fun currentSession(): String = sessionOf(LocalTime.now(businessClock ?: BUSINESS_CLOCK))
+
     /** Сессия дня для ключа кэша: MORNING (<13ч), DAY (13-16ч), EVENING (>16ч). */
     private fun sessionOf(time: LocalTime): String =
         when {
@@ -172,4 +189,9 @@ class SemanticCache(
             time.hour < 16 -> "DAY"
             else -> "EVENING"
         }
+
+    private companion object {
+        /** Московские бизнес-часы по умолчанию (как в остальном проекте). */
+        val BUSINESS_CLOCK: Clock = Clock.system(ZoneId.of("Europe/Moscow"))
+    }
 }

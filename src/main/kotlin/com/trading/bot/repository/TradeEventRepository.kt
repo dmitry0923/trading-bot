@@ -5,6 +5,7 @@ import com.trading.bot.model.entity.TradeEvent
 import io.r2dbc.spi.Row
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.time.LocalDateTime
@@ -14,7 +15,11 @@ import java.util.UUID
  * Append-only репозиторий торговых событий (R2DBC).
  *
  * Только INSERT и SELECT — никаких UPDATE/DELETE. sequence_number
- * вычисляется в БД как MAX+1 внутри агрегата (гарантия монотонности).
+ * вычисляется в БД как MAX+1 внутри агрегата (гарантия монотонности), а
+ * уникальность `(aggregate_id, sequence_number)` держит уникальный индекс
+ * (Liquibase 041). Конкурентный append, проигравший гонку, получает unique
+ * violation и повторяет вставку с пересчитанным MAX+1 — иначе два события
+ * одного агрегата делили бы номер и порядок lineage становился случайным.
  */
 @Repository
 class TradeEventRepository(
@@ -31,6 +36,21 @@ class TradeEventRepository(
         )
 
     suspend fun append(event: TradeEvent) {
+        var attempt = 0
+        while (true) {
+            attempt++
+            try {
+                insertWithNextSequence(event)
+                return
+            } catch (e: DataIntegrityViolationException) {
+                // Гонка MAX+1: номер уже занят другим append этого агрегата.
+                // Пересчитываем MAX+1 и пробуем снова (номер пересчитывается в БД).
+                if (attempt >= MAX_APPEND_ATTEMPTS) throw e
+            }
+        }
+    }
+
+    private suspend fun insertWithNextSequence(event: TradeEvent) {
         val sql =
             """
             INSERT INTO trade_events (aggregate_id, event_type, payload, occurred_at, sequence_number)
@@ -84,5 +104,10 @@ class TradeEventRepository(
             .all()
             .collectList()
             .awaitSingle()
+    }
+
+    private companion object {
+        /** Попытки вставки при гонке за sequence_number (unique violation). */
+        private const val MAX_APPEND_ATTEMPTS = 5
     }
 }

@@ -129,15 +129,24 @@ class AlorClient(
                         .awaitSingle()
                 }
             recordLatency("getQuotes", start)
-            meterRegistry.counter("alor.quotes.ok", Tags.of("ticker", ticker)).increment()
             val j = objectMapper.readTree(raw)
-            val bid = j.path("bid").asString().toBigDecimalOrNull()
-            val ask = j.path("ask").asString().toBigDecimalOrNull()
+            // Неположительная цена — не «валидный» ноль, а отсутствие данных:
+            // PriceChanged(0) иначе триггерит SL и отправляет маркет-ордера по 0.
+            val bid = positivePrice(j.path("bid").asString())
+            val ask = positivePrice(j.path("ask").asString())
             val bidSize = j.path("bidVolume").asLong(0).takeIf { it > 0 }
             val askSize = j.path("askVolume").asLong(0).takeIf { it > 0 }
+            val lastPrice = positivePrice(j.path("lastPrice").asString())
+            val currentPrice = lastPrice ?: midOrSide(bid, ask)
+            if (currentPrice == null) {
+                logger.warn { "getMarketSnapshot: no usable price for $ticker (lastPrice/bid/ask absent or <= 0)" }
+                meterRegistry.counter("alor.quotes.error", Tags.of("ticker", ticker, "reason", "NO_PRICE")).increment()
+                return null
+            }
+            meterRegistry.counter("alor.quotes.ok", Tags.of("ticker", ticker)).increment()
             MarketSnapshot(
                 ticker = ticker,
-                currentPrice = BigDecimal(j.path("lastPrice").asString("0")),
+                currentPrice = currentPrice,
                 bid = bid,
                 ask = ask,
                 volume = j.path("volume").asLong(0),
@@ -155,6 +164,25 @@ class AlorClient(
     }
 
     suspend fun getLastPrice(ticker: String): BigDecimal? = getMarketSnapshot(ticker)?.currentPrice
+
+    /**
+     * Положительная цена из строкового поля котировки; 0/пусто/нечисло — это НЕ
+     * валидная цена, а отсутствие данных (иначе 0 уходит в PriceChanged/SL).
+     */
+    private fun positivePrice(raw: String): BigDecimal? {
+        val value = raw.toBigDecimalOrNull() ?: return null
+        return if (value.signum() > 0) value else null
+    }
+
+    /** mid лучших Bid/Offer, иначе единственная доступная сторона; null — цен нет. */
+    private fun midOrSide(
+        bid: BigDecimal?,
+        ask: BigDecimal?,
+    ): BigDecimal? {
+        if (bid == null) return ask
+        if (ask == null) return bid
+        return bid.add(ask).divide(BigDecimal(2), 6, RoundingMode.HALF_UP)
+    }
 
     /**
      * Плейс лимитного ордера с обязательным idempotency key (делегирование в [OrderTransport]).
@@ -343,7 +371,14 @@ class AlorClient(
         expectedPrice: BigDecimal? = null,
         portfolio: String = alorConfig.portfolio,
     ): OrderExecution? {
-        if (!isLive) return null
+        if (!isLive) {
+            // SIM: транспорт отдаёт синтетический id (`sim-…`), реального статуса
+            // у биржи нет. Возвращаем эквивалент полного филла: `FILLED` без количества
+            // движок трактует как «исполнено по цене заявки». Возврат null оставлял
+            // КАЖДЫЙ SIM-вход в pendingEntry навсегда — позиции не открывались
+            // (docs/28 §3 №32).
+            return OrderExecution(status = "FILLED", filledQuantity = 0, avgPrice = null)
+        }
         val start = System.currentTimeMillis()
         return try {
             val raw: String =
@@ -561,6 +596,12 @@ class AlorClient(
                     val price =
                         t.path("price").asString().toBigDecimalOrNull()
                             ?: return@mapNotNull null
+                    // Сделка без тикера не привязывается к позиции — сверка по ней
+                    // невозможна (как в getPositions). Раньше такой тикер попадал в
+                    // результат пустой строкой и порождал ложные расхождения.
+                    val ticker =
+                        t.path("ticker").asString().ifBlank { t.path("symbol").asString() }
+                    if (ticker.isBlank()) return@mapNotNull null
                     ExchangeTrade(
                         id = id,
                         orderId =
@@ -569,7 +610,7 @@ class AlorClient(
                                 .asString()
                                 .ifBlank { t.path("orderNumber").asString() }
                                 .takeIf { it.isNotBlank() },
-                        ticker = t.path("ticker").asString().ifBlank { t.path("symbol").asString() },
+                        ticker = ticker,
                         side = t.path("side").asString().takeIf { it.isNotBlank() },
                         quantity =
                             t

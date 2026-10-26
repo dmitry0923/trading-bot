@@ -3,6 +3,8 @@ package com.trading.bot.client
 import com.trading.bot.config.AlorConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.reactive.function.client.WebClient
@@ -25,6 +27,11 @@ import java.util.Base64
  * Успешный refresh публикуется обратно в [AlorConfig.token], поэтому потребители,
  * читающие конфигурацию напрямую, не работают с протухшим токеном.
  *
+ * Потокобезопасность: поля токена `@Volatile`, а refresh сериализован мьютексом —
+ * параллельные вызовы [actualToken] (REST + WS-потоки + futures-клиент) выполняют
+ * РОВНО один HTTP-refresh, а не N (иначе токен ротируется N раз и часть вызовов
+ * уходит с уже отозванным токеном).
+ *
  * Fail-safe: при ошибке refresh возвращается ранее известный токен
  * (fail-soft — торговля не должна падать из-за непродления токена).
  */
@@ -36,16 +43,29 @@ class AlorTokenProvider(
     private val logger = KotlinLogging.logger {}
     private val webClient = WebClient.create()
 
+    private val refreshMutex = Mutex()
+
+    @Volatile
     private var accessToken: String = ""
+
+    @Volatile
     private var tokenExpiresAt: Instant = Instant.EPOCH
 
     suspend fun actualToken(): String {
-        if (Instant.now().isBefore(tokenExpiresAt.minusSeconds(60)) && accessToken.isNotBlank()) {
-            return accessToken
+        if (isFresh()) return accessToken
+        return refreshMutex.withLock {
+            // Double-check: пока ждали мьютекс, другой вызов мог уже обновить токен.
+            if (isFresh()) return@withLock accessToken
+            if (accessToken.isBlank()) accessToken = alorConfig.token
+            if (alorConfig.refreshToken.isBlank()) return@withLock accessToken
+            refreshLocked()
         }
-        if (accessToken.isBlank()) accessToken = alorConfig.token
-        if (alorConfig.refreshToken.isBlank()) return accessToken
+    }
 
+    private fun isFresh(): Boolean = accessToken.isNotBlank() && Instant.now().isBefore(tokenExpiresAt.minusSeconds(60))
+
+    /** Refresh под захваченным [refreshMutex] — единственная точка HTTP-вызова. */
+    private suspend fun refreshLocked(): String {
         return try {
             val raw: String =
                 webClient

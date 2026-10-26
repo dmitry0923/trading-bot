@@ -388,12 +388,17 @@ class AlorWebSocketClient(
             val data = j.path("data")
             val root = if (data.isMissingNode || data.isNull) j else data
 
+            // Приоритет — БИРЖЕВОЙ номер заявки: позиции/закрытия хранят orderNumber
+            // (результат placeLimit), а `id` — клиентский idempotency key
+            // (см. [WsOrderMessages]: `id` — ключ дедупликации, `orderNumber` — номер
+            // на бирже). Иначе WS-подтверждения входа/закрытия/SL/TP не сопоставляются
+            // с позицией и молча игнорируются.
             val orderId =
                 root
-                    .path("id")
+                    .path("orderNumber")
                     .asString()
-                    .ifBlank { root.path("orderNumber").asString() }
                     .ifBlank { root.path("orderNo").asString() }
+                    .ifBlank { root.path("id").asString() }
                     .ifBlank { return null }
 
             // filledQtyBatch = исполнено в лотах (Alor decimal → int для модели).
@@ -465,6 +470,8 @@ class AlorWebSocketClient(
      * {"guid":"q-SBER","quotes":[{"price":280.5,"volume":0,"o":"Last","time":167...,"oi":0}, ...]}
      * ```
      * Приоритет цены: `o == "Last"` (последняя сделка), иначе mid между Bid/Offer.
+     * Разбираются ВСЕ элементы массива: порядок `Bid, Last, Offer` штатный, поэтому
+     * Bid/Offer/объёмы должны быть прочитаны даже после найденного Last.
      * Биржевое время берётся из котировок (при наличии) для отбрасывания
      * устаревших сообщений. Возвращает null для служебных сообщений.
      */
@@ -506,7 +513,6 @@ class AlorWebSocketClient(
                     }
                 }
                 if (exchangeTime == null) exchangeTime = parseTime(q.path("time"))
-                if (last != null) break
             }
             if (exchangeTime == null) exchangeTime = parseTime(j.path("time"))
 

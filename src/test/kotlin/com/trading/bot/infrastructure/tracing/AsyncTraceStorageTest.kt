@@ -144,6 +144,57 @@ class AsyncTraceStorageTest {
         }
 
     @Test
+    fun `close drains queued traces before cancelling the scope`() =
+        runBlocking {
+            // Регрессия: close() отменял scope сразу, и трейсы, стоявшие в буфере,
+            // терялись при graceful shutdown.
+            val delegate =
+                object : InMemoryStorage() {
+                    override suspend fun save(
+                        trace: LlmTrace,
+                        key: String?,
+                    ): String? {
+                        delay(20)
+                        return super.save(trace, key)
+                    }
+                }
+            val storage = AsyncTraceStorage(config(bufferSize = 16), delegate, meterRegistry)
+            repeat(5) { index -> storage.save(trace(traceId = "drain-$index")) }
+
+            storage.close()
+
+            assertEquals(5, delegate.saved.size, "every queued trace must be persisted before shutdown")
+        }
+
+    @Test
+    fun `close is bounded when the delegate hangs`() =
+        runBlocking {
+            val gate = CompletableDeferred<Unit>()
+            val delegate =
+                object : InMemoryStorage() {
+                    override suspend fun save(
+                        trace: LlmTrace,
+                        key: String?,
+                    ): String? {
+                        gate.await()
+                        return super.save(trace, key)
+                    }
+                }
+            val cfg = config(bufferSize = 4)
+            cfg.asyncShutdownTimeoutMs = 50
+            val storage = AsyncTraceStorage(cfg, delegate, meterRegistry)
+            storage.save(trace())
+
+            val startedAt = System.currentTimeMillis()
+            storage.close()
+            val elapsed = System.currentTimeMillis() - startedAt
+
+            assertTrue(elapsed < 2_000, "close must not hang on a stuck delegate, took ${elapsed}ms")
+            assertTrue(delegate.saved.isEmpty())
+            gate.complete(Unit)
+        }
+
+    @Test
     fun `list read and listByTraceId delegate to storage`() =
         runBlocking {
             val delegate = InMemoryStorage()

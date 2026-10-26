@@ -133,10 +133,16 @@ class OrderOutboxRepository(
      * - FAILED с retry_count < maxRetries, ожидающие экспоненциальный backoff:
      *   интервал = LEAST(2^retry_count * base, max) секунд (+ jitter) с последней попытки;
      * - PROCESSING, зависшие дольше 60 сек (краш во время доставки) — повторный захват.
+     *   Захват зависшей строки ИНКРЕМЕНТИРУЕТ `retry_count`: [com.trading.bot.service.OrderOutboxService.dispatch]
+     *   выполняет State Reconciliation (поиск ордера на бирже по idempotency key) только
+     *   при `retryCount > 0`. Без инкремента переотправка после краха шла бы БЕЗ сверки —
+     *   риск дубля ордера (первая попытка могла дойти до биржи и не записаться как SENT).
      *
-     * Захваченная строка считается «в доставке» до markSent/markFailed; при падении
-     * процесса она станет доступна снова после 60 сек (страховка: повторная отправка
-     * идемпотентна — биржа дедуплицирует по idempotency key).
+     * Время: `processed_at` пишется временем БД (`now()`), и backoff/протухание PROCESSING
+     * сравниваются с `now()` — один источник на предикат. Прежняя запись `processed_at`
+     * из JVM при другой зоне приложения и БД (МСК против UTC) откладывала ретрай FAILED
+     * на часы. Единственное исключение — cutoff для PENDING: `created_at` пишется из JVM
+     * ([save]), поэтому и порог считается в JVM-времени (иначе предикат снова смешал бы зоны).
      */
     suspend fun claimRetryable(
         maxRetries: Int,
@@ -147,7 +153,10 @@ class OrderOutboxRepository(
     ): List<OrderOutbox> {
         val sql =
             """
-            UPDATE order_outbox SET status = 'PROCESSING', processed_at = :now
+            UPDATE order_outbox
+            SET status = 'PROCESSING',
+                processed_at = now(),
+                retry_count = retry_count + CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END
             WHERE id IN (
                 SELECT id FROM order_outbox
                 WHERE
@@ -164,7 +173,6 @@ class OrderOutboxRepository(
             """.trimIndent()
         return databaseClient
             .sql(sql)
-            .bind("now", LocalDateTime.now())
             .bind("cutoff", LocalDateTime.now().minusSeconds((olderThanSeconds + jitterSeconds).toLong()))
             .bind("maxRetries", maxRetries)
             .bind("backoffBase", backoffBaseSeconds)
@@ -266,15 +274,20 @@ class OrderOutboxRepository(
             .awaitSingleOrNull()
     }
 
+    /**
+     * Подтверждённая доставка. `processed_at` — время БД (`now()`): этот timestamp
+     * сравнивается с `now()` в backoff-предикате [claimRetryable], поэтому обе стороны
+     * предиката должны быть в одной системе времени (иначе при разных зонах приложения
+     * и БД FAILED-строки не переотправлялись бы часами).
+     */
     suspend fun markSent(
         id: UUID,
         alorOrderId: String?,
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'SENT', alor_order_id = :oid, processed_at = :now, error_message = NULL WHERE id = :id",
+                "UPDATE order_outbox SET status = 'SENT', alor_order_id = :oid, processed_at = now(), error_message = NULL WHERE id = :id",
             ).bindOrNull("oid", alorOrderId)
-            .bind("now", LocalDateTime.now())
             .bind("id", id)
             .then()
             .awaitSingleOrNull()
@@ -284,6 +297,8 @@ class OrderOutboxRepository(
      * Помечает доставку как неудачную и инкрементирует retry_count.
      * Одна и та же строка может переотправляться (с тем же idempotencyKey),
      * но не более maxRetries раз — см. [claimRetryable].
+     *
+     * `processed_at` — время БД (`now()`), как и в backoff-предикате [claimRetryable].
      */
     suspend fun markFailed(
         id: UUID,
@@ -291,9 +306,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'FAILED', processed_at = :now, error_message = :err, retry_count = retry_count + 1 WHERE id = :id",
-            ).bind("now", LocalDateTime.now())
-            .bind("err", error.take(2000))
+                "UPDATE order_outbox SET status = 'FAILED', processed_at = now(), error_message = :err, retry_count = retry_count + 1 WHERE id = :id",
+            ).bind("err", error.take(2000))
             .bind("id", id)
             .then()
             .awaitSingleOrNull()
@@ -310,9 +324,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'BLOCKED', processed_at = :now, error_message = :err WHERE id = :id",
-            ).bind("now", LocalDateTime.now())
-            .bind("err", error.take(2000))
+                "UPDATE order_outbox SET status = 'BLOCKED', processed_at = now(), error_message = :err WHERE id = :id",
+            ).bind("err", error.take(2000))
             .bind("id", id)
             .then()
             .awaitSingleOrNull()
@@ -330,9 +343,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'REJECTED', processed_at = :now, error_message = :err WHERE id = :id",
-            ).bind("now", LocalDateTime.now())
-            .bind("err", error.take(2000))
+                "UPDATE order_outbox SET status = 'REJECTED', processed_at = now(), error_message = :err WHERE id = :id",
+            ).bind("err", error.take(2000))
             .bind("id", id)
             .then()
             .awaitSingleOrNull()

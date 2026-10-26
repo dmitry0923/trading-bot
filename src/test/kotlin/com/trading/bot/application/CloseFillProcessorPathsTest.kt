@@ -24,6 +24,10 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -41,7 +45,10 @@ class CloseFillProcessorPathsTest {
     private val meterRegistry = SimpleMeterRegistry()
     private val closed = AtomicInteger(0)
 
-    private fun processor(maxAttempts: Int = 2): CloseFillProcessor =
+    private fun processor(
+        maxAttempts: Int = 2,
+        clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
+    ): CloseFillProcessor =
         CloseFillProcessor(
             positionRepo = positionRepo,
             alorClient = alorClient,
@@ -54,6 +61,7 @@ class CloseFillProcessorPathsTest {
             cancelProtectionOrders = { },
             attachProtectionOrders = { },
             closeReconcileMaxAttempts = maxAttempts,
+            clock = clock,
         )
 
     @BeforeEach
@@ -108,6 +116,24 @@ class CloseFillProcessorPathsTest {
         whenever(positionRepo.findById(1L)).thenReturn(pos)
     }
 
+    /**
+     * Стаб атомарного перехода в закрытое состояние. `succeed = true` обязателен в
+     * регресс-тестах «не закрывать по чужому ордеру»: иначе дефолтный `false` маскировал бы
+     * ошибочный вызов (финализация молча выходит по «уже закрыто другим путём»).
+     */
+    private suspend fun stubTransitionToClosed(succeed: Boolean) {
+        whenever(
+            positionRepo.transitionToClosed(
+                Mockito.anyLong(),
+                anyPositionStatus(),
+                anyBigDecimal(),
+                anyCloseReason(),
+                anyBigDecimal(),
+                Mockito.anyInt(),
+            ),
+        ).thenReturn(succeed)
+    }
+
     @Test
     fun `handleCloseFill ignores duplicate cumulative fill`(): Unit =
         runBlocking {
@@ -144,6 +170,60 @@ class CloseFillProcessorPathsTest {
 
             assertTrue(handled)
             assertEquals(4, pos.quantity)
+        }
+
+    @Test
+    fun `entry order report does not close position with unknown close order`(): Unit =
+        runBlocking {
+            // closeOrderId == null — доставка close была UNCERTAIN; отчёт пришёл по ENTRY-ордеру.
+            val pos = openPosition(closeOrderId = null)
+            stubFindById(pos)
+            stubTransitionToClosed(succeed = true)
+
+            val handled =
+                processor().handlePendingCloseReport(
+                    pos,
+                    report(orderId = "ENTRY-1", cumulativeFilledQty = 10),
+                )
+
+            assertTrue(handled, "отчёт относится к pending-close позиции, но не к её close-ордеру")
+            assertEquals(PositionStatus.OPEN, pos.status, "позиция НЕ должна закрываться по чужому ордеру")
+            assertEquals(10, pos.quantity)
+            assertNull(pos.closePrice)
+            assertEquals(0, closed.get())
+            assertEquals(1.0, meterRegistry.counter("test.close.close.stale_order", "ticker", "SBER").count())
+        }
+
+    @Test
+    fun `matching close order report finalises the position`(): Unit =
+        runBlocking {
+            val pos = openPosition(quantity = 10)
+            stubFindById(pos)
+            stubTransitionToClosed(succeed = true)
+
+            val handled =
+                processor().handlePendingCloseReport(
+                    pos,
+                    report(orderId = "CLOSE-1", cumulativeFilledQty = 10, avgPrice = BigDecimal("110")),
+                )
+
+            assertTrue(handled)
+            assertEquals(PositionStatus.CLOSED, pos.status)
+            assertEquals(0, BigDecimal("110").compareTo(pos.closePrice!!))
+            assertEquals(1, closed.get())
+        }
+
+    @Test
+    fun `finalize records closed_at in Moscow business time`(): Unit =
+        runBlocking {
+            val pos = openPosition()
+            stubTransitionToClosed(succeed = true)
+            // 09:15 UTC = 12:15 МСК: закрытие обязано попасть в московские окна авто-стопа.
+            val moscowClock = Clock.fixed(Instant.parse("2026-10-26T09:15:00Z"), ZoneId.of("Europe/Moscow"))
+
+            processor(clock = moscowClock).finalizeClosePosition(pos, BigDecimal("110"), CloseReason.STOP_LOSS)
+
+            assertEquals(LocalDateTime.of(2026, 10, 26, 12, 15), pos.closedAt)
         }
 
     @Test

@@ -3,12 +3,14 @@ package com.trading.bot.infrastructure.llm
 import com.trading.bot.config.LlmConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.data.redis.core.script.RedisScript
 import java.util.Locale
 
@@ -37,6 +39,7 @@ class LlmBudgetServiceTest {
                     Mockito.any(),
                     Mockito.any(),
                     Mockito.any(),
+                    Mockito.any(),
                 ),
             ).thenReturn(result)
         return redis
@@ -50,6 +53,7 @@ class LlmBudgetServiceTest {
                 redis.execute<List<Any?>>(
                     ArgumentMatchers.any<RedisScript<List<Any?>>>(),
                     ArgumentMatchers.anyList(),
+                    Mockito.any(),
                     Mockito.any(),
                     Mockito.any(),
                     Mockito.any(),
@@ -140,6 +144,7 @@ class LlmBudgetServiceTest {
                         Mockito.any(),
                         Mockito.any(),
                         Mockito.any(),
+                        Mockito.any(),
                     ),
                 ).thenReturn(listOf("1", ""))
 
@@ -158,6 +163,7 @@ class LlmBudgetServiceTest {
                     ArgumentMatchers.argThat<String> { it.contains('.') },
                     Mockito.any(),
                     Mockito.any(),
+                    Mockito.any(),
                 )
         } finally {
             Locale.setDefault(previous)
@@ -170,5 +176,61 @@ class LlmBudgetServiceTest {
 
         assertEquals(4, s.estimateTokens("0123456789ab", "0123"))
         assertEquals(0, s.estimateTokens("", ""))
+    }
+
+    @Test
+    fun `reserve script is redis 6 compatible and sets ttl on every budget key`() {
+        val captured = captureReserveCall()
+
+        // `EXPIRE key ttl NX` появился только в Redis 7: на Redis 6 скрипт падал
+        // и КАЖДЫЙ LLM-вызов уходил в fail-closed BUDGET_UNAVAILABLE.
+        assertFalse(captured.script.contains("'NX'"), "EXPIRE ... NX requires Redis 7: ${captured.script}")
+        val expiries = Regex("EXPIRE', KEYS\\[(\\d)]").findAll(captured.script).map { it.groupValues[1] }.toList()
+        assertEquals(
+            listOf("1", "2", "3", "4"),
+            expiries,
+            "TTL must be set on minute/cycle/day/cost keys (day keys would leak otherwise)",
+        )
+        // ARGV: 1 estimate, 2-5 limits, 6 cost, 7 minuteTtl, 8 cycleTtl, 9 dayTtl
+        assertEquals(9, captured.args.size)
+        assertEquals("120", captured.args[6])
+        assertEquals("600", captured.args[7])
+        assertEquals("172800", captured.args[8])
+    }
+
+    private data class Captured(
+        val script: String,
+        val args: List<String>,
+    )
+
+    /** Перехватывает реальный вызов скрипта: текст Lua и ARGV. */
+    private fun captureReserveCall(): Captured {
+        val redis: StringRedisTemplate = Mockito.mock(StringRedisTemplate::class.java)
+        val captured = arrayOfNulls<Captured>(1)
+        @Suppress("UNCHECKED_CAST")
+        Mockito
+            .`when`(
+                redis.execute<List<Any?>>(
+                    ArgumentMatchers.any<RedisScript<List<Any?>>>(),
+                    ArgumentMatchers.anyList(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                    Mockito.any(),
+                ),
+            ).thenAnswer { invocation ->
+                val script = invocation.getArgument<RedisScript<List<Any?>>>(0)
+                val source = (script as DefaultRedisScript<*>).scriptAsString
+                val args = (1..9).map { index -> invocation.getArgument<Any?>(index + 1)?.toString().orEmpty() }
+                captured[0] = Captured(script = source, args = args)
+                listOf("1", "")
+            }
+        service(redis, SimpleMeterRegistry(), LlmConfig(), true).reserve("technical", "cache-1", 400)
+        return requireNotNull(captured[0])
     }
 }

@@ -27,12 +27,15 @@ import java.time.Duration
 @Component
 class ReactorWsOrderSocketFactory(
     private val alorConfig: AlorConfig,
+    private val tokenProvider: AlorTokenProvider,
 ) : WsOrderSocketFactory {
     private val wsClient = ReactorNettyWebSocketClient()
     private val connectTimeoutMs = 10_000L
 
     override suspend fun open(): WsOrderSocketConnection {
-        val url = URI.create(wsUrl())
+        // Токен в URL соединения берётся из общего провайдера: чтение alorConfig.token
+        // напрямую не продлевало токен и WS-канал ордеров умирал на 401 после refresh.
+        val url = URI.create(wsUrl(tokenProvider.actualToken()))
         val channel = Channel<String>(capacity = 1000, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         val sessionReady = CompletableDeferred<WebSocketSession>()
 
@@ -73,8 +76,8 @@ class ReactorWsOrderSocketFactory(
         }
     }
 
-    private fun wsUrl(): String {
+    private fun wsUrl(token: String): String {
         val base = alorConfig.wsUrl.removeSuffix("/")
-        return if (base.contains("?")) "$base&token=${alorConfig.token}" else "$base?token=${alorConfig.token}"
+        return if (base.contains("?")) "$base&token=$token" else "$base?token=$token"
     }
 }

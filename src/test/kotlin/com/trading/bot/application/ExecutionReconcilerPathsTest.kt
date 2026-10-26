@@ -29,7 +29,10 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
@@ -53,7 +56,9 @@ class ExecutionReconcilerPathsTest {
     private val confirmedClose = AtomicInteger(0)
     private val attachCalls = AtomicInteger(0)
 
-    private val reconciler =
+    private val reconciler: ExecutionReconciler = buildReconciler()
+
+    private fun buildReconciler(clock: Clock = Clock.system(ZoneId.of("Europe/Moscow"))): ExecutionReconciler =
         ExecutionReconciler(
             alorClient = alorClient,
             orderOutboxRepo = orderOutboxRepo,
@@ -75,6 +80,7 @@ class ExecutionReconcilerPathsTest {
             confirmCloseFill = { _, _, _ -> confirmedClose.incrementAndGet() },
             reconcileProtectionOrders = { },
             onAbandonCleanup = { abandonedCleanup.set(it) },
+            clock = clock,
         )
 
     @BeforeEach
@@ -348,6 +354,20 @@ class ExecutionReconcilerPathsTest {
             reconciler.resolveEntryViaOutbox(pos)
 
             assertConfirmedAbandon(pos, CloseReason.ENTRY_NOT_CONFIRMED)
+        }
+
+    @Test
+    fun `abandoned entry records closed_at in Moscow business time`(): Unit =
+        runBlocking {
+            val pos = entryPosition()
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "entry"))
+                .thenReturn(entryOutbox(status = OutboxStatus.REJECTED, alorOrderId = null))
+            // 09:15 UTC = 12:15 МСК — закрытие входа обязано попасть в московские окна лимитов.
+            val moscowClock = Clock.fixed(Instant.parse("2026-10-26T09:15:00Z"), ZoneId.of("Europe/Moscow"))
+
+            buildReconciler(clock = moscowClock).resolveEntryViaOutbox(pos)
+
+            assertEquals(LocalDateTime.of(2026, 10, 26, 12, 15), pos.closedAt)
         }
 
     // ─── закрытие ────────────────────────────────────────────────────

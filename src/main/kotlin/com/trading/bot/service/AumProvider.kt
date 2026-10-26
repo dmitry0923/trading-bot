@@ -64,6 +64,13 @@ class AumProvider(
     private class CacheEntry(
         @Volatile var aum: BigDecimal,
         @Volatile var updatedAt: Long,
+        /**
+         * Время последнего обращения к провайдеру (в т.ч. неудачного) — негативный
+         * кэш: после ошибки API повторный запрос не отправляется раньше
+         * [NEGATIVE_CACHE_TTL_MS]. Отдельно от [updatedAt], который подтверждает
+         * РЕАЛЬНЫЙ AUM (fail-closed гейты продолжают его проверять).
+         */
+        @Volatile var lastAttemptAt: Long = 0,
     )
 
     /** Кэш legacy (accountId = null) и per-account кэши. ConcurrentHashMap не допускает
@@ -81,32 +88,55 @@ class AumProvider(
     suspend fun currentAum(accountId: Long? = null): BigDecimal {
         val k = key(accountId)
         val entry = cache.computeIfAbsent(k) { CacheEntry(riskConfig.maxPositionRub, 0) }
-        val cached = entry.aum
-        if (System.currentTimeMillis() - entry.updatedAt < CACHE_TTL_MS) {
-            return cached
+        val now = System.currentTimeMillis()
+        if (cacheFresh(entry, now)) {
+            return entry.aum
+        }
+        if (negativeCacheActive(entry, now)) {
+            // Окно негативного кэша: Alor не дёргаем, отдаём последний известный баланс.
+            return failOpenValue(entry)
+        }
+        val override = tradingAccountService.aumRubOverrideFor(accountId)
+        if (override != null) {
+            return storeConfirmed(k, accountId, override)
         }
         return try {
-            val override = tradingAccountService.aumRubOverrideFor(accountId)
-            val effective =
-                if (override != null) {
-                    override
-                } else {
-                    val money = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
-                    if (money != null && money > BigDecimal.ZERO) money else riskConfig.maxPositionRub
-                }
-            cache[k] = CacheEntry(effective, System.currentTimeMillis())
-            MutableGauges.set(
-                meterRegistry,
-                "portfolio.aum",
-                effective.toDouble(),
-                io.micrometer.core.instrument.Tags
-                    .of("account", accountId?.toString() ?: "default"),
-            )
-            effective
+            val money = alorFuturesClient.getPortfolioMoney(tradingAccountService.portfolioOf(accountId))
+            if (money != null && money > BigDecimal.ZERO) {
+                storeConfirmed(k, accountId, money)
+            } else {
+                // null/нулевой баланс — тоже недоступность источника: без штампа
+                // попытки каждый рендер снова ходил бы в Alor (retry storm).
+                entry.lastAttemptAt = System.currentTimeMillis()
+                logger.warn { "AUM unavailable for accountId=$accountId (got $money), using fallback ${failOpenValue(entry)}" }
+                failOpenValue(entry)
+            }
         } catch (e: Exception) {
-            logger.warn(e) { "AUM fetch failed for accountId=$accountId, using config fallback ${riskConfig.maxPositionRub}" }
-            riskConfig.maxPositionRub
+            // Негативный кэш: штампуем попытку, иначе каждый тик/рендер дашборда
+            // снова дёргает Alor (retry storm при недоступном API).
+            entry.lastAttemptAt = now
+            logger.warn(e) { "AUM fetch failed for accountId=$accountId, using fallback ${failOpenValue(entry)}" }
+            failOpenValue(entry)
         }
+    }
+
+    /**
+     * Сохраняет AUM, подтверждённый источником (баланс Alor / персональный override),
+     * и публикует метрику `portfolio.aum`.
+     */
+    private fun storeConfirmed(
+        key: Long,
+        accountId: Long?,
+        value: BigDecimal,
+    ): BigDecimal {
+        cache[key] = CacheEntry(value, System.currentTimeMillis())
+        MutableGauges.set(
+            meterRegistry,
+            "portfolio.aum",
+            value.toDouble(),
+            Tags.of("account", accountId?.toString() ?: "default"),
+        )
+        return value
     }
 
     /**
@@ -129,8 +159,13 @@ class AumProvider(
         val k = key(accountId)
         val entry = cache.computeIfAbsent(k) { CacheEntry(riskConfig.maxPositionRub, 0) }
         val now = System.currentTimeMillis()
-        if (now - entry.updatedAt < CACHE_TTL_MS) {
+        if (cacheFresh(entry, now)) {
             return AumResult.Available(entry.aum, now - entry.updatedAt)
+        }
+        if (negativeCacheActive(entry, now)) {
+            // Окно негативного кэша: сетевого вызова нет, но и конфиг-сид НЕ выдаётся
+            // за реальный AUM — в LIVE ответ остаётся fail-closed.
+            return liveOrConfigFallback()
         }
         val override = tradingAccountService.aumRubOverrideFor(accountId)
         if (override != null) {
@@ -150,6 +185,7 @@ class AumProvider(
                 AumResult.Available(money, 0)
             } else {
                 // null / нулевой баланс: в LIVE это сигнал недоступных данных — fail-closed.
+                entry.lastAttemptAt = now
                 logger.warn {
                     "AUM unavailable for accountId=$accountId (got $money) — " +
                         if (isLive) "DENY (fail-closed)" else "fallback ${riskConfig.maxPositionRub} (SIM)"
@@ -157,6 +193,9 @@ class AumProvider(
                 liveOrConfigFallback()
             }
         } catch (e: Exception) {
+            // Негативный кэш: штампуем попытку, иначе каждый запрос дашборда/входа
+            // повторяет обращение к Alor (retry storm).
+            entry.lastAttemptAt = now
             logger.warn(e) { "AUM fetch failed for accountId=$accountId" }
             liveOrConfigFallback()
         }
@@ -187,6 +226,27 @@ class AumProvider(
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 
+    /**
+     * Кэш подтверждён реальным источником и ещё не устарел. Неудачная попытка
+     * (lastAttemptAt > updatedAt) свежим кэшем не считается даже в пределах TTL.
+     */
+    private fun cacheFresh(
+        entry: CacheEntry,
+        now: Long,
+    ): Boolean = entry.lastAttemptAt <= entry.updatedAt && now - entry.updatedAt < CACHE_TTL_MS
+
+    /** Идёт окно негативного кэша после последней неудачи — провайдер не вызывается. */
+    private fun negativeCacheActive(
+        entry: CacheEntry,
+        now: Long,
+    ): Boolean = entry.lastAttemptAt > entry.updatedAt && now - entry.lastAttemptAt < NEGATIVE_CACHE_TTL_MS
+
+    /**
+     * Значение для fail-open методов (отчёты/дашборд): последний подтверждённый
+     * баланс, а до первого успеха — конфигурационный депозит.
+     */
+    private fun failOpenValue(entry: CacheEntry): BigDecimal = if (entry.updatedAt > 0) entry.aum else riskConfig.maxPositionRub
+
     private fun liveOrConfigFallback(): AumResult =
         if (isLive) {
             AumResult.Unavailable
@@ -200,6 +260,12 @@ class AumProvider(
 
         /** TTL кэша баланса Alor, мс. 60с = не дёргать API на каждый тик/проверку. */
         private const val CACHE_TTL_MS = 60_000L
+
+        /**
+         * Негативный кэш после неудачного обращения, мс. Короткий: ограничивает
+         * retry storm (дашборд + входной конвейер), но не «замораживает» AUM.
+         */
+        private const val NEGATIVE_CACHE_TTL_MS = 10_000L
 
         /** Максимальный возраст кэша для exposure-гейтов, мс. 5 мин = 5× refresh TTL. */
         private const val AUM_MAX_AGE_MS = 5 * 60_000L

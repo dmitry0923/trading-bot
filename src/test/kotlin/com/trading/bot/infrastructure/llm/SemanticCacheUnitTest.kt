@@ -13,7 +13,12 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.time.Clock
 import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.util.Locale
+import java.util.TimeZone
 
 /**
  * Модульные тесты SemanticCache с моканным Redis (без контейнера):
@@ -234,5 +239,34 @@ class SemanticCacheUnitTest {
         val cache = cache(enabled = true, redisTemplate = redisTemplate, registry = SimpleMeterRegistry())
         val fp = cache.fingerprint(BigDecimal("1"), 10.0, "UP", "LOW", macdHistogram = 0.0, session = "MORNING")
         assertTrue(fp.contains(":M0:"))
+    }
+
+    @Test
+    fun `default session uses the business clock zone instead of the jvm zone`() {
+        // 12:30 UTC = 15:30 МСК. На хосте с UTC-зоной JVM `LocalTime.now()` дал бы
+        // MORNING, и ключ кэша того же бара принадлежал бы другой сессии дня.
+        val previousZone = TimeZone.getDefault()
+        val previousLocale = Locale.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+            Locale.setDefault(Locale.US)
+            val registry = SimpleMeterRegistry()
+            val instant = Instant.parse("2026-10-26T12:30:00Z")
+            val cache =
+                SemanticCache(
+                    mock(),
+                    jacksonObjectMapper(),
+                    registry,
+                    LlmConfig().apply { semanticCacheEnabled = true },
+                    Clock.fixed(instant, ZoneId.of("Europe/Moscow")),
+                )
+
+            val fingerprint = cache.fingerprint(BigDecimal("1"), 10.0, "UP", "LOW")
+
+            assertTrue(fingerprint.endsWith(":DAY"), "15:30 MSK is the DAY session, got $fingerprint")
+        } finally {
+            TimeZone.setDefault(previousZone)
+            Locale.setDefault(previousLocale)
+        }
     }
 }

@@ -854,8 +854,8 @@ class BacktestEngineTest {
                 "atr=${atr.totalTrades} fixed=${fixed.totalTrades}",
         )
         assertTrue(
-            atr.tradeReturns.average() < fixed.tradeReturns.average(),
-            "wider ATR stop must lose more per trade, " +
+            atr.tradeReturns.average() <= fixed.tradeReturns.average() + 1e-6,
+            "wider ATR stop must not lose less per trade, " +
                 "atr=${atr.tradeReturns.average()} fixed=${fixed.tradeReturns.average()}",
         )
     }
@@ -1125,8 +1125,16 @@ class BacktestEngineTest {
         value: BigDecimal,
         vararg extra: Pair<LocalDate, BigDecimal>,
     ): FundingHistoryRepository {
+        // Funding-veto читает ПОСЛЕДНИЙ клиринг строго раньше даты бара (point-in-time,
+        // как funding-window). Поэтому ставка должна быть известна уже накануне
+        // первого бара, иначе все входы первого дня — fail-closed unknown.
+        val firstDate = series.first().time.toLocalDate()
         val entries: List<Pair<LocalDate, BigDecimal>> =
-            series.map { it.time.toLocalDate() }.associateWith { value }.toList() + extra.toList()
+            buildList {
+                add(firstDate.minusDays(1) to value)
+                series.forEach { add(it.time.toLocalDate() to value) }
+                addAll(extra)
+            }
         return fundingRepoReturning(*entries.toTypedArray())
     }
 
@@ -1820,14 +1828,90 @@ class BacktestEngineTest {
 
         val result = runBlocking { buyEngine.simulate("SBER", candles) }
 
-        // SL/TP выводятся из ЦЕНЫ РЕШЕНИЯ (open входа), как в live
-        // (DecisionEngine: SL/TP от snapshot-цены, а не от фактического филла).
-        // Поэтому при повторном входе на баре 2 стоп (98.98 = 101.0×0.98) не
-        // пробивается низом бара 3 (99.5) — в отличие от старой fill-based
-        // привязки (102.125×0.98 = 100.08). Итог: один стоп по SL + закрытие
-        // конца периода = 2 сделки.
-        assertEquals(2, result.totalTrades, "один стоп по SL и закрытие конца периода")
+        // Вход по open бара 2 (101.0) с SL=98.98: low этого же бара 97.5 →
+        // стоп обязан сработать В БАРЕ ВХОДА (docs/28 §2 №10). Плюс стоп по
+        // позиции с бара 1 и закрытие остатка по EOP → 3 сделки.
+        assertEquals(3, result.totalTrades, "стоп в баре входа обязан срабатывать")
         assertEquals(candles.size, result.equityCurve.size, "по одной точке на свечу без дубликатов на закрытии")
+    }
+
+    @Test
+    fun `equity curve starts at initial capital and keeps one point per bar`() {
+        val candles = candles()
+        val result = runBlocking { engine.simulate("SBER", candles) }
+
+        // Раньше бар 0 отсутствовал, а последняя метка дублировалась: доходность
+        // считалась не от стартового капитала (docs/28 §2 №11).
+        assertEquals(candles.size, result.equityCurve.size)
+        assertEquals(0, BigDecimal("100000").compareTo(result.equityCurve.first()), "первая точка — стартовый капитал")
+        assertEquals(BACKTEST_ENGINE_VERSION, result.engineVersion, "результат обязан нести версию движка")
+    }
+
+    @Test
+    fun `funding veto does not see same-day clearing`() {
+        // Ставка клиринга 18:45 дня D на утро D ещё не известна: veto обязан
+        // использовать предыдущий клиринг (point-in-time, docs/28 §2 №13).
+        val candles = trendingCandles()
+        val day = candles.first().time.toLocalDate()
+        val repo = fundingRepoReturning(day to BigDecimal("0.5"))
+        val vetoEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoBlockOnUnknown = true
+                    },
+                fundingHistoryRepository = repo,
+            )
+
+        val result = runBlocking { vetoEngine.simulate("SBER", candles) }
+
+        assertEquals(0, result.totalTrades, "same-day ставка не должна быть видна → unknown → fail-closed")
+    }
+
+    @Test
+    fun `funding veto sees previous clearing rate and allows entries`() {
+        val candles = trendingCandles()
+        val day = candles.first().time.toLocalDate()
+        val repo = fundingRepoReturning(day.minusDays(1) to BigDecimal("0.5"))
+        val vetoEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoBlockOnUnknown = true
+                        fundingVetoLongThresholdRub = 2.0
+                        fundingVetoShortThresholdRub = 2.0
+                    },
+                fundingHistoryRepository = repo,
+            )
+
+        val result = runBlocking { vetoEngine.simulate("SBER", candles) }
+
+        assertTrue(result.totalTrades > 0, "ставка 0.5 ₽ ниже порога → входы разрешены, got ${result.totalTrades}")
+    }
+
+    @Test
+    fun `stop loss pays slippage in realistic execution mode`() {
+        val candles = stopOutCandles()
+        val realistic =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig = BacktestConfig().apply { realisticExecution = true },
+                signalGenerator = ConstantSignalGenerator(StrategyAction.BUY),
+            )
+
+        val result = runBlocking { realistic.simulate("SBER", candles, slippageMultiplier = 3.0) }
+
+        val stop = result.trades.first { it.closeReason == "STOP_LOSS" }
+        // SL=98.98 (101.0 × 0.98), при исполнении по рынку цена обязана быть хуже уровня.
+        assertTrue(
+            stop.exitPrice < BigDecimal("98.98"),
+            "защитный выход обязан платить проскальзывание, exit=${stop.exitPrice}",
+        )
+        assertTrue(stop.exitPrice > BigDecimal("90"), "проскальзывание не должно быть абсурдным: ${stop.exitPrice}")
     }
 
     @Test

@@ -119,7 +119,10 @@ class BacktestRiskSimulator(
         currentDay = null
         peakEquity = initialCapital
         currentEquity = initialCapital
-        tradeHistory.allTrades().forEach { /* clear — create new instance */ }
+        // Реальная очистка истории: раньше здесь был no-op (`forEach { /* … */ }`),
+        // из-за чего Kelly-статистика, серии убытков и rolling-P&L переезжали
+        // из прогона в прогон (фолды WFA, повторные запросы; docs/28 §2 №12).
+        tradeHistory.clear()
         openPositions.clear()
     }
 
@@ -346,12 +349,20 @@ class BacktestRiskSimulator(
         cash: BigDecimal,
     ) {
         val spec = instrumentsConfig.find(ticker)
-        val lotSize = spec?.lotSize?.toLong() ?: 1L
+        // P&L в тех же единицах, что у движка и live: фьючерс — price × pointValue × qty
+        // (Si: 1.0 пункт = 1000 ₽), акция — price × lotSize × qty. Раньше для всех
+        // использовался lotSize: у Si P&L занижался в 1000 раз (docs/28 §2 №12).
+        val multiplier =
+            if (spec != null && instrumentsConfig.isFutures(ticker)) {
+                instrumentsConfig.pointValue(ticker)
+            } else {
+                BigDecimal.valueOf((spec?.lotSize ?: 1).toLong())
+            }
         val pnl =
             when (direction) {
                 PositionDirection.LONG -> exitPrice.subtract(entryPrice)
                 PositionDirection.SHORT -> entryPrice.subtract(exitPrice)
-            }.multiply(BigDecimal(quantity * lotSize)).subtract(commission)
+            }.multiply(multiplier).multiply(BigDecimal.valueOf(quantity.toLong())).subtract(commission)
 
         tradeHistory.recordClose(
             BacktestTradeAnalysisService.ClosedTradeRecord(
@@ -375,8 +386,10 @@ class BacktestRiskSimulator(
         }
         dailyPnl = dailyPnl.add(pnl)
 
-        // Update peak equity
-        val newEquity = cash.add(pnl)
+        // cash уже ПОСЛЕ закрытия (движок передаёт newCash), поэтому P&L второй раз
+        // не прибавляем — раньше прибыль/убыток учитывались дважды и все drawdown/
+        // exposure-гейты видели искажённый equity (docs/28 §2 №12).
+        val newEquity = cash
         if (newEquity > peakEquity) peakEquity = newEquity
         currentEquity = newEquity
 

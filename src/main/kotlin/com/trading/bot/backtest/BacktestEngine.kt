@@ -336,6 +336,13 @@ class BacktestEngine(
         val fundingWindowDates: NavigableMap<LocalDate, BigDecimal>? =
             if (backtestConfig.fundingWindowEnabled) TreeMap(fundingHistory) else null
 
+        // Funding-veto (research): ставка клиринга 18:45 известна только по его
+        // завершении, поэтому решение в день D обязано использовать ПОСЛЕДНИЙ клиринг
+        // строго раньше D — то же point-in-time правило, что у funding-window.
+        // Раньше брался same-day (`fundingHistory[дата бара]`) → lookahead на 1 день.
+        val fundingVetoDates: NavigableMap<LocalDate, BigDecimal>? =
+            if (fundingVetoEnabled ?: backtestConfig.fundingVetoEnabled) TreeMap(fundingHistory) else null
+
         fun recordEquity(
             price: BigDecimal,
             time: LocalDateTime,
@@ -344,19 +351,24 @@ class BacktestEngine(
             equityTimestamps.add(time)
         }
 
-        for (i in 1 until sorted.size) {
-            val current = sorted[i]
-
-            // Симуляция принудительной ликвидации фьючерса (паритет live-monitorу):
-            // приоритет №1 — если внутрисвечной диапазон преодолел уровень
-            // ликвидации, позиция закрывается по цене ликвидации до SL/TP.
+        // Защитные выходы (ликвидация → SL/TP) по внутрисвечному диапазону бара.
+        // Вызывается в начале бара для уже открытой позиции И сразу после входа:
+        // позиция, открытая по open бара i, обязана проверяться по high/low ЭТОГО ЖЕ
+        // бара. Раньше проверка начиналась только со следующего бара — стоп, пробитый
+        // в баре входа, «не срабатывал» (систематический оптимизм, docs/28 §2 №10).
+        // Проскальзывание защитных выходов теперь такое же, как у рыночных (раньше
+        // при realisticExecution=true его не было вовсе — docs/28 §2 №18).
+        fun handleProtectiveExits(
+            barIndex: Int,
+            bar: Candle,
+        ) {
             val liqPos = position
             if (backtestConfig.futuresLiquidationSimulation && liqPos != null && liqPos.liquidationPrice != null) {
                 val liq = liqPos.liquidationPrice!!
                 val liquidated =
                     when (liqPos.direction) {
-                        PositionDirection.LONG -> current.lowPrice.compareTo(liq) <= 0
-                        PositionDirection.SHORT -> current.highPrice.compareTo(liq) >= 0
+                        PositionDirection.LONG -> bar.lowPrice.compareTo(liq) <= 0
+                        PositionDirection.SHORT -> bar.highPrice.compareTo(liq) >= 0
                     }
                 if (liquidated) {
                     cash =
@@ -366,78 +378,84 @@ class BacktestEngine(
                             "LIQUIDATION",
                             liq,
                             cash,
-                            i,
+                            barIndex,
                             tradeReturns,
                             tradeHoldBars,
                             commissionAccumulator,
                             commissionMultiplier,
                             slippageMultiplier,
-                            current,
-                            applySlippage = !backtestConfig.realisticExecution,
+                            bar,
                             passiveEligible = false,
                             fundingHistory = fundingHistory,
                             tradeLog = tradeLog,
                         )
-                    recordRiskSimClose(ticker, liqPos, "LIQUIDATION", liq, i, sorted, cash)
+                    recordRiskSimClose(ticker, liqPos, "LIQUIDATION", liq, barIndex, sorted, cash)
                     position = null
                 }
             }
 
-            // Закрытие по SL/TP на внутрисвечном диапазоне текущей свечи
-            val pos0 = position
-            if (pos0 != null && pos0.stopLoss != null && pos0.takeProfit != null) {
-                when (SimulatedExecution.hitStopOrTarget(current, pos0.stopLoss, pos0.takeProfit, pos0.direction)) {
-                    SimulatedExecution.StopTpHit.STOP -> {
-                        cash =
-                            closePosition(
-                                ticker,
-                                pos0,
-                                "STOP_LOSS",
-                                pos0.stopLoss,
-                                cash,
-                                i,
-                                tradeReturns,
-                                tradeHoldBars,
-                                commissionAccumulator,
-                                commissionMultiplier,
-                                slippageMultiplier,
-                                current,
-                                applySlippage = !backtestConfig.realisticExecution,
-                                passiveEligible = false,
-                                fundingHistory = fundingHistory,
-                                tradeLog = tradeLog,
-                            )
-                        recordRiskSimClose(ticker, pos0, "STOP_LOSS", pos0.stopLoss, i, sorted, cash)
-                        position = null
-                    }
-
-                    SimulatedExecution.StopTpHit.TARGET -> {
-                        cash =
-                            closePosition(
-                                ticker,
-                                pos0,
-                                "TAKE_PROFIT",
-                                pos0.takeProfit,
-                                cash,
-                                i,
-                                tradeReturns,
-                                tradeHoldBars,
-                                commissionAccumulator,
-                                commissionMultiplier,
-                                slippageMultiplier,
-                                current,
-                                applySlippage = !backtestConfig.realisticExecution,
-                                passiveEligible = false,
-                                fundingHistory = fundingHistory,
-                                tradeLog = tradeLog,
-                            )
-                        recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", pos0.takeProfit, i, sorted, cash)
-                        position = null
-                    }
-
-                    null -> {}
+            val pos0 = position ?: return
+            val stop = pos0.stopLoss ?: return
+            val target = pos0.takeProfit ?: return
+            when (SimulatedExecution.hitStopOrTarget(bar, stop, target, pos0.direction)) {
+                SimulatedExecution.StopTpHit.STOP -> {
+                    cash =
+                        closePosition(
+                            ticker,
+                            pos0,
+                            "STOP_LOSS",
+                            stop,
+                            cash,
+                            barIndex,
+                            tradeReturns,
+                            tradeHoldBars,
+                            commissionAccumulator,
+                            commissionMultiplier,
+                            slippageMultiplier,
+                            bar,
+                            passiveEligible = false,
+                            fundingHistory = fundingHistory,
+                            tradeLog = tradeLog,
+                        )
+                    recordRiskSimClose(ticker, pos0, "STOP_LOSS", stop, barIndex, sorted, cash)
+                    position = null
                 }
+
+                SimulatedExecution.StopTpHit.TARGET -> {
+                    cash =
+                        closePosition(
+                            ticker,
+                            pos0,
+                            "TAKE_PROFIT",
+                            target,
+                            cash,
+                            barIndex,
+                            tradeReturns,
+                            tradeHoldBars,
+                            commissionAccumulator,
+                            commissionMultiplier,
+                            slippageMultiplier,
+                            bar,
+                            passiveEligible = false,
+                            fundingHistory = fundingHistory,
+                            tradeLog = tradeLog,
+                        )
+                    recordRiskSimClose(ticker, pos0, "TAKE_PROFIT", target, barIndex, sorted, cash)
+                    position = null
+                }
+
+                null -> {}
             }
+        }
+
+        // Кривая equity начинается со стартового капитала на баре 0, иначе доходность
+        // считается не от начального капитала и первая точка теряется (docs/28 §2 №11).
+        if (sorted.isNotEmpty()) recordEquity(sorted[0].closePrice, sorted[0].time)
+
+        for (i in 1 until sorted.size) {
+            val current = sorted[i]
+            // Позиция, удерживаемая с прошлых баров: сначала защитные выходы.
+            handleProtectiveExits(i, current)
 
             // Max-hold (research, 2026-09-21): принудительный выход по времени
             // удержания в барах. Позиция без SL/TP-срабатывания закрывается по цене
@@ -563,6 +581,8 @@ class BacktestEngine(
                                 cash = applyOpen(cash, windowEntry, ticker, commissionMultiplier)
                                 recordRiskSimOpen(ticker, windowEntry, sorted)
                                 meterRegistry?.counter("bt_funding_window_entry_total", "ticker", ticker)?.increment()
+                                // Вход по open этого бара → проверяем high/low этого же бара.
+                                handleProtectiveExits(i, current)
                             }
                         }
                     }
@@ -672,7 +692,8 @@ class BacktestEngine(
             val vetoBlockUnknown = fundingVetoBlockOnUnknown ?: backtestConfig.fundingVetoBlockOnUnknown
             if (entering && vetoEnabled) {
                 val direction = if (signal == StrategyAction.BUY) PositionDirection.LONG else PositionDirection.SHORT
-                val fundingRub = fundingHistory[current.time.toLocalDate()]
+                // Последний клиринг строго раньше даты бара (см. fundingVetoDates выше).
+                val fundingRub = fundingVetoDates?.lowerEntry(current.time.toLocalDate())?.value
                 val vetoBlocked =
                     when {
                         fundingRub == null && vetoBlockUnknown -> true
@@ -766,7 +787,7 @@ class BacktestEngine(
                             passiveFillEnabled = effectivePassiveFill,
                         )
                     recordRiskSimClose(ticker, curPos, "REVERSAL", current.openPrice, i, sorted, cash)
-                    position =
+                    val reversed =
                         openPosition(
                             ticker,
                             signal,
@@ -786,9 +807,12 @@ class BacktestEngine(
                             futuresMaxContractsPerPosition,
                             passiveFillEnabled = effectivePassiveFill,
                         )
-                    if (position != null) {
-                        cash = applyOpen(cash, position, ticker, commissionMultiplier)
-                        recordRiskSimOpen(ticker, position!!, sorted)
+                    position = reversed
+                    if (reversed != null) {
+                        cash = applyOpen(cash, reversed, ticker, commissionMultiplier)
+                        recordRiskSimOpen(ticker, reversed, sorted)
+                        // Вход по open этого бара → сразу проверяем high/low этого же бара.
+                        handleProtectiveExits(i, current)
                     }
                 }
                 recordEquity(current.closePrice, current.time)
@@ -796,7 +820,7 @@ class BacktestEngine(
             }
 
             // Открытие новой позиции на открытии текущей свечи
-            position =
+            val opened =
                 openPosition(
                     ticker,
                     signal,
@@ -816,9 +840,12 @@ class BacktestEngine(
                     futuresMaxContractsPerPosition,
                     passiveFillEnabled = effectivePassiveFill,
                 )
-            if (position != null) {
-                cash = applyOpen(cash, position, ticker, commissionMultiplier)
-                recordRiskSimOpen(ticker, position!!, sorted)
+            position = opened
+            if (opened != null) {
+                cash = applyOpen(cash, opened, ticker, commissionMultiplier)
+                recordRiskSimOpen(ticker, opened, sorted)
+                // Вход по open этого бара → сразу проверяем high/low этого же бара.
+                handleProtectiveExits(i, current)
             }
             recordEquity(current.closePrice, current.time)
         }
@@ -845,8 +872,16 @@ class BacktestEngine(
                 )
             recordRiskSimClose(ticker, pos, "END_OF_PERIOD", sorted.last().closePrice, sorted.lastIndex, sorted, cash)
         }
-        equityCurve.add(cash)
-        if (sorted.isNotEmpty()) equityTimestamps.add(sorted.last().time)
+        // Финальная точка — капитал после закрытия EOP-позиции. Перезаписываем
+        // последнюю точку (а не добавляем вторую с той же меткой): иначе длина
+        // кривой не совпадает с числом баров, а в доходности появляется лишний ноль
+        // (docs/28 §2 №11).
+        if (equityCurve.isNotEmpty()) {
+            equityCurve[equityCurve.lastIndex] = cash
+        } else {
+            equityCurve.add(cash)
+            if (sorted.isNotEmpty()) equityTimestamps.add(sorted.last().time)
+        }
 
         val metricsResult =
             BacktestMetrics.compute(

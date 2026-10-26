@@ -184,6 +184,103 @@ class BacktestRiskSimulatorTest {
     // ===== Tests =====
 
     @Nested
+    inner class ResearchResetFixes {
+        /**
+         * `raise` — фьючерсная спека: pointValue = priceStepCost / priceStep = 1000 ₽.
+         * P&L обязан считаться по pointValue, а не по lotSize (Si: разница ×1000).
+         */
+        private fun futuresSimulator(): BacktestRiskSimulator {
+            val cfg =
+                InstrumentsConfig().apply {
+                    instruments =
+                        listOf(
+                            InstrumentsConfig.InstrumentSpec(
+                                ticker = "Si",
+                                type = "FUTURES",
+                                lotSize = 1,
+                                priceStep = BigDecimal("0.01"),
+                                priceStepCost = BigDecimal("10.0"),
+                                go = BigDecimal("10000"),
+                                leverage = BigDecimal("1.0"),
+                                baseAsset = "USD",
+                            ),
+                        )
+                }
+            return initSimulator(riskConfig, cfg)
+        }
+
+        @Test
+        fun `recordClose uses pointValue for futures instead of lotSize`() {
+            val sim = futuresSimulator()
+
+            runBlocking {
+                sim.recordClose(
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    entryPrice = BigDecimal("92000"),
+                    exitPrice = BigDecimal("92010"),
+                    quantity = 1,
+                    entryTime = at(-1, 10),
+                    exitTime = at(0, 10),
+                    closeReason = "TAKE_PROFIT",
+                    commission = BigDecimal.ZERO,
+                    cash = BigDecimal("110000"),
+                )
+            }
+
+            // 10 пунктов × pointValue 1000 ₽ = 10 000 ₽ (по lotSize было бы 10 ₽).
+            assertEquals(0, BigDecimal("10000").compareTo(sim.currentDailyPnl()))
+        }
+
+        @Test
+        fun `recordClose does not double count pnl because cash already includes it`() {
+            // Акция: lotSize 10 → закрытие 100 → 99 при qty 1 даёт убыток 10 ₽.
+            // cash приходит уже после закрытия (99000), поэтому equity = 99000,
+            // а не 98000 (двойной учёт был в docs/28 §2 №12).
+            runBlocking {
+                simulator.recordClose(
+                    ticker = "TEST",
+                    direction = PositionDirection.LONG,
+                    entryPrice = BigDecimal("100"),
+                    exitPrice = BigDecimal("99"),
+                    quantity = 1,
+                    entryTime = at(-1, 10),
+                    exitTime = at(0, 10),
+                    closeReason = "STOP_LOSS",
+                    commission = BigDecimal.ZERO,
+                    cash = BigDecimal("99000"),
+                )
+            }
+
+            assertEquals(1.0, simulator.currentDrawdownPercent(), 1e-9, "100000 → 99000 = 1%")
+        }
+
+        @Test
+        fun `initialize clears trade history between runs`() {
+            runBlocking {
+                simulator.recordClose(
+                    ticker = "TEST",
+                    direction = PositionDirection.LONG,
+                    entryPrice = BigDecimal("100"),
+                    exitPrice = BigDecimal("101"),
+                    quantity = 1,
+                    entryTime = at(-1, 10),
+                    exitTime = at(0, 10),
+                    closeReason = "TAKE_PROFIT",
+                    commission = BigDecimal.ZERO,
+                    cash = BigDecimal("100010"),
+                )
+            }
+            assertEquals(1, simulator.closedTradeCount())
+
+            simulator.initialize(capital)
+
+            assertEquals(0, simulator.closedTradeCount(), "история сделок обязана очищаться между прогонами")
+            assertEquals(0, BigDecimal.ZERO.compareTo(simulator.currentDailyPnl()))
+        }
+    }
+
+    @Nested
     inner class Gate1GapGuard {
         @Test
         fun `gap exceeding maxVolatilityPercent blocks with DEGENERATE_GAP`() =

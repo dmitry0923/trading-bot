@@ -153,15 +153,19 @@ object PairsBacktestEngine {
 
         for (i in 0 until n) {
             val bar = bars[i]
+            // Исполнение по open бара i, но решение принято на закрытии i-1:
+            // betaArr[i]/z[i] посчитаны по close бара i → lookahead на 1 бар
+            // (docs/28 §2 №17). Берём предыдущий бар.
+            val decisionIdx = (i - 1).coerceAtLeast(0)
             if (pendingExitReason != null && open != null) {
-                val trade = closePosition(open, bar, i, z[i], pendingExitReason!!, specA, specB, fundingA, fundingB, isTradingDay)
+                val trade = closePosition(open, bar, i, z[decisionIdx], pendingExitReason!!, specA, specB, fundingA, fundingB, isTradingDay)
                 trades.add(trade)
                 cash += trade.netPnl
                 open = null
                 pendingExitReason = null
             } else if (pendingEnterSign != 0 && open == null) {
                 val dirA = if (pendingEnterSign > 0) 1 else -1
-                open = openPosition(dirA, bar, i, betaArr[i], z[i], targetNotional, specA, specB, params.betaMin)
+                open = openPosition(dirA, bar, i, betaArr[decisionIdx], z[decisionIdx], targetNotional, specA, specB, params.betaMin)
                 pendingEnterSign = 0
             }
 

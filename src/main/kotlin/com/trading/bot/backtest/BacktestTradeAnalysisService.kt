@@ -132,6 +132,11 @@ class BacktestTradeAnalysisService {
     /** Все закрытые сделки (для итерации в BacktestRiskSimulator). */
     fun allTrades(): List<ClosedTradeRecord> = closedTrades.toList()
 
+    /** Полная очистка истории сделок (между прогонами/фолдами WFA). */
+    fun clear() {
+        closedTrades.clear()
+    }
+
     private fun buildStats(
         ticker: String,
         trades: List<ClosedTradeRecord>,

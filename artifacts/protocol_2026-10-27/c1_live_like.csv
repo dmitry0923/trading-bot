@@ -1,0 +1,2 @@
+"Config","Verdict","OOS_PF","OOS_RetPct","OOS_Sharpe","OOS_MDD_Pct","OOS_Trades","OOS_Passable","Dev_Consistency","Dev_OOS_Trades","Dev_WFA_Passable","SL_Points","TP_Points","GateStatus","LiveAllowed","Secs"
+"baseline (все фильтры off)","REJECTED (OOS PF < 1.3)","0,958","-0,03","-0,1","0,46","22","False","0,25","56","False","50","100","",,"3068"

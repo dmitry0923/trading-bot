@@ -1,0 +1,20 @@
+{
+  "config": "combo730_frozen",
+  "query": "maxHoldBars=368&fundingVetoEnabled=true&fundingVetoLongThresholdRub=6&fundingVetoShortThresholdRub=6&timeDirectionEnabled=true&timeDirectionLongBlockUntilHour=9",
+  "verdict": "INCONCLUSIVE (OOS trades 12 < 30)",
+  "oosProfitFactor": 7.301230955650112,
+  "oosReturnPct": 159.68,
+  "oosSharpe": 2.46,
+  "oosMaxDrawdownPct": 29.41,
+  "oosTrades": 12,
+  "oosPassable": true,
+  "devConsistency": 0.25,
+  "devOosTrades": 26,
+  "devWfaPassable": false,
+  "slPoints": 300,
+  "tpPoints": 600,
+  "gateStatus": "",
+  "liveAllowed": null,
+  "elapsedSecs": 3123.0,
+  "url": "http://127.0.0.1:8081/api/v1/backtest/CNYRUBF/holdout?days=730&folds=8&holdoutFraction=0.3&riskPerTradePercent=30&futuresMaxContractsPerPosition=100&loadHistory=false&leverage=1&maxHoldBars=368&fundingVetoEnabled=true&fundingVetoLongThresholdRub=6&fundingVetoShortThresholdRub=6&timeDirectionEnabled=true&timeDirectionLongBlockUntilHour=9"
+}

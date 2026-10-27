@@ -1,0 +1,2 @@
+"Config","Verdict","OOS_PF","OOS_RetPct","OOS_Sharpe","OOS_MDD_Pct","OOS_Trades","OOS_Passable","Dev_Consistency","Dev_OOS_Trades","Dev_WFA_Passable","SL_Points","TP_Points","GateStatus","LiveAllowed","Secs"
+"combo730_frozen","INCONCLUSIVE (OOS trades 12 < 30)","7,301","159,68","2,46","29,41","12","True","0,25","26","False","300","600","",,"3123"

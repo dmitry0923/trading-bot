@@ -1,0 +1,20 @@
+{
+  "config": "baseline (все фильтры off)",
+  "query": "",
+  "verdict": "REJECTED (OOS PF < 1.3)",
+  "oosProfitFactor": 0.9579891878174421,
+  "oosReturnPct": -0.03,
+  "oosSharpe": -0.1,
+  "oosMaxDrawdownPct": 0.46,
+  "oosTrades": 22,
+  "oosPassable": false,
+  "devConsistency": 0.25,
+  "devOosTrades": 56,
+  "devWfaPassable": false,
+  "slPoints": 50,
+  "tpPoints": 100,
+  "gateStatus": "",
+  "liveAllowed": null,
+  "elapsedSecs": 3068.0,
+  "url": "http://127.0.0.1:8081/api/v1/backtest/CNYRUBF/holdout?days=730&folds=8&holdoutFraction=0.3&riskPerTradePercent=5&futuresMaxContractsPerPosition=1&loadHistory=false&leverage=1"
+}

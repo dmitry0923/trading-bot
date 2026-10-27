@@ -1,6 +1,7 @@
 package com.trading.bot.tuning
 
 import com.trading.bot.backtest.StrategyParameters
+import com.trading.bot.service.TradingControlService
 import com.trading.bot.tuning.PerformanceGateCheck.GateVerdict
 import org.slf4j.LoggerFactory
 import org.springframework.mail.SimpleMailMessage
@@ -36,6 +37,12 @@ class MonthlyTuningService(
     private val strategyVersionRepository: StrategyVersionRepository,
     private val mailSender: JavaMailSender?, // nullable — email опционален
     private val objectMapper: ObjectMapper,
+    /**
+     * Остановка торговли по ALERT. Раньше сервис только ставил флаг `tradingStopped`
+     * и отправлял письмо: бот продолжал открывать позиции, хотя лог и письмо сообщали
+     * обратное (скан-10 P1).
+     */
+    private val tradingControlService: TradingControlService? = null,
 ) {
     private val logger = LoggerFactory.getLogger(MonthlyTuningService::class.java)
 
@@ -88,6 +95,11 @@ class MonthlyTuningService(
                     "Причины: ${gateResult.reasons.joinToString("; ")}",
             )
             tradingStopped = true
+            try {
+                tradingControlService?.setTradingEnabled(false)
+            } catch (e: Exception) {
+                logger.error("MonthlyTuningService: failed to stop trading on ALERT", e)
+            }
             alertEmailStatus = sendAlertEmail(periodStr, gateResult)
             alertSent = alertEmailStatus == AlertEmailStatus.SENT
         }

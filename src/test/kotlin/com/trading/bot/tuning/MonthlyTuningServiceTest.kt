@@ -1,6 +1,7 @@
 package com.trading.bot.tuning
 
 import com.trading.bot.backtest.StrategyParameters
+import com.trading.bot.service.TradingControlService
 import com.trading.bot.tuning.PerformanceGateCheck.GateVerdict
 import com.trading.bot.tuning.PerformanceGateCheck.MonthlyMetrics
 import kotlinx.coroutines.runBlocking
@@ -96,6 +97,32 @@ class MonthlyTuningServiceTest {
     }
 
     @Test
+    fun `alert really stops trading through control service`() {
+        // Раньше ALERT лишь возвращал флаг tradingStopped и слал письмо:
+        // бот продолжал открывать позиции (скан-10 P1).
+        val control = Mockito.mock(TradingControlService::class.java)
+        val service = service(control)
+
+        val result =
+            runBlocking {
+                service.runTuningCycle(healthyMetrics().copy(profitFactor = 0.5), parameters, period)
+            }
+
+        assertEquals(GateVerdict.ALERT, result.gateVerdict)
+        runBlocking { Mockito.verify(control).setTradingEnabled(false) }
+    }
+
+    @Test
+    fun `healthy gate leaves trading enabled`() {
+        val control = Mockito.mock(TradingControlService::class.java)
+        val service = service(control)
+
+        runBlocking { service.runTuningCycle(healthyMetrics(), parameters, period) }
+
+        runBlocking { Mockito.verify(control, Mockito.never()).setTradingEnabled(false) }
+    }
+
+    @Test
     fun `warn verdict still tunes parameters`() {
         val service = service()
 
@@ -115,13 +142,14 @@ class MonthlyTuningServiceTest {
         assertTrue(saved.parameters.contains("\"tpPoints\":360"), "${saved.parameters}")
     }
 
-    private fun service(): MonthlyTuningService =
+    private fun service(control: TradingControlService? = null): MonthlyTuningService =
         MonthlyTuningService(
             performanceGateCheck = PerformanceGateCheck(),
             parameterOptimizer = ParameterOptimizer(),
             strategyVersionRepository = versionRepository,
             mailSender = null,
             objectMapper = objectMapper,
+            tradingControlService = control,
         )
 
     private fun captureSavedVersion(): StrategyVersion {

@@ -130,6 +130,14 @@ class StateReconciliationService(
     @EventListener(ApplicationReadyEvent::class)
     fun start() {
         scope.launch {
+            // Стартовый sweep: крах между закрытием позиции и отменой защитных заявок
+            // оставлял живой SL/TP, который позже открывал противоположную позицию
+            // вне учёта (скан-10 P1).
+            try {
+                cancelOrphanProtectionOrders()
+            } catch (e: Exception) {
+                logger.error(e) { "Orphan protection sweep failed" }
+            }
             webSocketManager.events.collect { event ->
                 try {
                     handleEvent(event)
@@ -150,6 +158,33 @@ class StateReconciliationService(
             WsConnectionStatus.DISCONNECTED -> {
                 meterRegistry.counter("alor.ws.disconnect_window", Tags.of("stream", event.stream.name)).increment()
             }
+        }
+    }
+
+    /** Отменяет биржевые SL/TP, оставшиеся у уже закрытых позиций. */
+    internal suspend fun cancelOrphanProtectionOrders() {
+        val orphans = positionRepo.findClosedWithProtectionOrders()
+        if (orphans.isEmpty()) return
+        logger.warn { "Orphan protection orders found: ${orphans.size} - cancelling" }
+        for (pos in orphans) {
+            val orderIds = listOfNotNull(pos.slOrderId, pos.tpOrderId)
+            for (orderId in orderIds) {
+                try {
+                    alorClient.cancelOrder(
+                        orderId,
+                        idempotencyKey = "orphan-cancel-${pos.id}-$orderId",
+                        // Портфель передаём явно: default-аргумент вычисляется на реальном
+                        // объекте и в тестах с моком падал бы на null-конфиге.
+                        portfolio = alorConfig.portfolio,
+                    )
+                } catch (e: Exception) {
+                    logger.warn(e) { "Orphan cancel failed for ${pos.ticker} order=$orderId" }
+                }
+            }
+            pos.id?.let { positionRepo.clearProtectionOrderIds(it) }
+            meterRegistry
+                .counter("alor.reconcile.orphan_protection_cancelled", Tags.of("ticker", pos.ticker.uppercase()))
+                .increment()
         }
     }
 

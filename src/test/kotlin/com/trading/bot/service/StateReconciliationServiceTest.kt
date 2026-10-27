@@ -2,6 +2,7 @@ package com.trading.bot.service
 
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorClient.ReconcileResult
+import com.trading.bot.client.CancelResult
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
@@ -281,6 +282,52 @@ class StateReconciliationServiceTest {
         runBlocking { service.reconcile() }
 
         verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
+    }
+
+    @Test
+    fun `startup sweep cancels protection orders of closed positions and clears ids`() {
+        val closed =
+            Position(
+                id = 7L,
+                ticker = "SBER",
+                direction = PositionDirection.LONG,
+                quantity = 0,
+                entryPrice = BigDecimal("100"),
+                instrumentType = InstrumentType.STOCK,
+                status = PositionStatus.CLOSED,
+                slOrderId = "sl-1",
+                tpOrderId = "tp-1",
+            )
+        runBlocking {
+            Mockito.`when`(positionRepo.findClosedWithProtectionOrders(Mockito.anyInt())).thenReturn(listOf(closed))
+        }
+        val cancelled = mutableListOf<String>()
+        // doAnswer, а не `when(mock.fn())`: suspend-функция с non-null возвратом на заглушке
+        // даёт NPE (AGENTS.md) — собираем аргументы прямо в ответе.
+        runBlocking {
+            Mockito
+                .doAnswer { inv ->
+                    cancelled += inv.getArgument<String>(0)
+                    CancelResult.CONFIRMED
+                }.`when`(alorClient)
+                .cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+        }
+
+        runBlocking { service.cancelOrphanProtectionOrders() }
+
+        assertEquals(listOf("sl-1", "tp-1"), cancelled)
+        runBlocking { Mockito.verify(positionRepo).clearProtectionOrderIds(7L) }
+    }
+
+    @Test
+    fun `startup sweep does not touch positions without protection orders`() {
+        runBlocking {
+            Mockito.`when`(positionRepo.findClosedWithProtectionOrders(Mockito.anyInt())).thenReturn(emptyList())
+        }
+
+        runBlocking { service.cancelOrphanProtectionOrders() }
+
+        runBlocking { Mockito.verify(positionRepo, never()).clearProtectionOrderIds(Mockito.anyLong()) }
     }
 
     @Test

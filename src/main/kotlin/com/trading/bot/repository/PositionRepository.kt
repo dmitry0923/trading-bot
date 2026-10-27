@@ -690,6 +690,36 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /**
+     * Закрытые позиции, у которых остались биржевые защитные заявки.
+     *
+     * Крах между `transitionToClosed` и `cancelProtectionOrders` оставлял живой SL/TP:
+     * сработав позже, он открывал противоположную позицию вне учёта (скан-10 P1).
+     */
+    suspend fun findClosedWithProtectionOrders(limit: Int = 200): List<Position> =
+        databaseClient
+            .sql(
+                "SELECT * FROM positions WHERE status IN ('CLOSED', 'RECONCILIATION_REQUIRED') " +
+                    "AND (sl_order_id IS NOT NULL OR tp_order_id IS NOT NULL) " +
+                    "ORDER BY closed_at DESC NULLS LAST LIMIT :limit",
+            ).bind("limit", limit)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /** Снимает локальные id защитных заявок у уже закрытой позиции (после подтверждённой отмены). */
+    suspend fun clearProtectionOrderIds(id: Long) {
+        databaseClient
+            .sql(
+                "UPDATE positions SET sl_order_id = NULL, tp_order_id = NULL, sl_order_price = NULL, " +
+                    "tp_order_price = NULL, sl_cancel_pending = FALSE, tp_cancel_pending = FALSE " +
+                    "WHERE id = :id AND status <> 'OPEN'",
+            ).bind("id", id)
+            .then()
+            .awaitSingleOrNull()
+    }
+
     private suspend fun update(position: Position) {
         val sql =
             """

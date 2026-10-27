@@ -84,8 +84,8 @@ function Get-Headers {
 }
 $headers = Get-Headers
 
-// confidence сюда НЕ передаётся: сервер сознательно берёт bt.adaptive-confidence-threshold,
-// иначе он подбирался бы на том же holdout (скан-6 P2).
+# confidence сюда НЕ передаётся: сервер сознательно берёт bt.adaptive-confidence-threshold,
+# иначе он подбирался бы на том же holdout (скан-6 P2).
 $gridQuery = "&leverage=$Leverage"
 if ($SlPoints -gt 0) { $gridQuery += "&wfaSlPoints=$SlPoints" }
 if ($TpPoints -gt 0) { $gridQuery += "&wfaTpPoints=$TpPoints" }

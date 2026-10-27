@@ -244,6 +244,7 @@ class FuturesTradingBotService(
                     // внешние исключения раньше проглатывались и входы снова
                     // разрешались без сверки (скан-2 P2 / скан-3 P1).
                     var hadErrors = false
+                    val reconciledScopes = mutableSetOf<String>()
                     try {
                         val open = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.instrumentType == InstrumentType.FUTURES }
                         for (pos in open) {
@@ -264,6 +265,10 @@ class FuturesTradingBotService(
                                     }
                                     engine.reconcilePosition(pos)
                                 }
+                                // Блокировку входа снимаем только по фактически сверенным
+                                // скоупам (скан-12 P1).
+                                reconciledScopes += "ticker:${pos.ticker}"
+                                pos.accountId?.let { reconciledScopes += "account:$it" }
                             } catch (e: Exception) {
                                 logger.error(e) { "Futures reconciler error for ${pos.id}/${pos.ticker}" }
                                 hadErrors = true
@@ -276,7 +281,7 @@ class FuturesTradingBotService(
                     if (hadErrors) {
                         logger.warn { "Reconcile pass had errors - DEGRADED stays until a clean pass" }
                     } else {
-                        entryLeaseRecoveryGate.recoverAll()
+                        entryLeaseRecoveryGate.recover(reconciledScopes)
                     }
                 }
             } finally {

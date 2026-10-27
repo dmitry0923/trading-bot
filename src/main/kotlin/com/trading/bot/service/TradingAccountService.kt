@@ -139,6 +139,27 @@ class TradingAccountService(
 
     // ===== CRUD (API/UI) =====
 
+    /**
+     * Один портфель Alor — только у одного аккаунта (скан-13 P2).
+     *
+     * Дубли читают один и тот же баланс, поэтому каждый считает лимиты от полного AUM,
+     * а суммарная квота позиций/экспозиции на реальном счёте умножается на число дублей.
+     */
+    private suspend fun requirePortfolioFree(
+        portfolio: String,
+        exceptId: Long?,
+    ) {
+        val normalized = portfolio.trim().uppercase()
+        require(normalized.isNotEmpty()) { "alorPortfolio must not be blank" }
+        val clash =
+            repository.findAll().firstOrNull {
+                it.alorPortfolio.trim().uppercase() == normalized && it.id != exceptId
+            }
+        require(clash == null) {
+            "alorPortfolio '$portfolio' is already used by account ${clash?.id}"
+        }
+    }
+
     suspend fun create(
         name: String,
         alorPortfolio: String,
@@ -149,6 +170,9 @@ class TradingAccountService(
         maxDailyLossRub: BigDecimal? = null,
         weight: Int = 1,
     ): TradingAccount {
+        // Один и тот же портфель Alor нельзя заводить дважды: оба «аккаунта» читали бы
+        // один баланс и считали свои лимиты от полного AUM (скан-13 P2).
+        requirePortfolioFree(alorPortfolio, exceptId = null)
         val account =
             TradingAccount(
                 name = name,
@@ -175,6 +199,7 @@ class TradingAccountService(
         weight: Int? = null,
     ): TradingAccount? {
         val existing = repository.findById(id) ?: return null
+        alorPortfolio?.let { requirePortfolioFree(it, exceptId = id) }
         val updated =
             existing.copy(
                 name = name ?: existing.name,

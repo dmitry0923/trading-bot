@@ -112,9 +112,15 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
             repo.markSent(linked.id!!, "ord-linked")
             repo.linkPosition(linked.id!!, 11L)
 
-            val pending = repo.save(row("idem-pending-order"))
-            repo.markSent(pending.id!!, "ord-pending")
-            repo.markFailed(pending.id!!, "network")
+            // FAILED-строка с ордером: не SENT → стартовый re-link её не трогает.
+            // (`markSent` → `markFailed` больше не проходит: терминальный SENT иммутабелен.)
+            val failed = repo.save(row("idem-failed-order"))
+            repo.markFailed(failed.id!!, "network")
+            databaseClient
+                .sql("UPDATE order_outbox SET alor_order_id = 'ord-failed' WHERE id = :id")
+                .bind("id", failed.id)
+                .then()
+                .awaitSingleOrNull()
 
             val noOrder = repo.save(row("idem-sent-no-order"))
             repo.markSent(noOrder.id!!, null)
@@ -123,6 +129,37 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
 
             assertEquals(listOf(orphan.id), orphans.map { it.id })
             assertEquals("ord-orphan", orphans.single().alorOrderId)
+        }
+    }
+
+    @Test
+    fun `late markFailed cannot downgrade a delivered row`() {
+        runBlocking {
+            // Запоздавший воркер (истёк TTL лока, строку уже доставил другой инстанс)
+            // раньше превращал SENT в FAILED → повторная отправка исполненного ордера
+            // (скан-14 P1).
+            val sent = repo.save(row("idem-late-fail"))
+            repo.markSent(sent.id!!, "ord-late")
+
+            repo.markFailed(sent.id!!, "stale worker error")
+
+            val reloaded = repo.findById(sent.id!!)
+            assertEquals(OutboxStatus.SENT, reloaded?.status, "терминальная доставка не перетирается")
+            assertEquals(0, reloaded?.retryCount, "счётчик попыток не растёт на терминальной строке")
+        }
+    }
+
+    @Test
+    fun `late markSent cannot overwrite a terminal blocked row`() {
+        runBlocking {
+            val blocked = repo.save(row("idem-late-sent"))
+            repo.markBlocked(blocked.id!!, "interlock deny")
+
+            repo.markSent(blocked.id!!, "ord-should-not-apply")
+
+            val reloaded = repo.findById(blocked.id!!)
+            assertEquals(OutboxStatus.BLOCKED, reloaded?.status, "BLOCKED терминален")
+            assertEquals(null, reloaded?.alorOrderId)
         }
     }
 

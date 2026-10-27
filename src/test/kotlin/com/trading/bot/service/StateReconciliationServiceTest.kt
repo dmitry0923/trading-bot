@@ -15,6 +15,7 @@ import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
+import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -328,6 +329,38 @@ class StateReconciliationServiceTest {
         runBlocking { service.cancelOrphanProtectionOrders() }
 
         runBlocking { Mockito.verify(positionRepo, never()).clearProtectionOrderIds(Mockito.anyLong()) }
+    }
+
+    @Test
+    fun `startup sweep does not clear ids when cancel is uncertain`() {
+        // Живая заявка, которую не удалось отменить (сеть/5xx), обязана остаться
+        // в выборке: очистка id делала её невидимой для повторной попытки (скан-14 P1).
+        val closed =
+            Position(
+                id = 9L,
+                ticker = "SBER",
+                direction = PositionDirection.LONG,
+                quantity = 0,
+                entryPrice = BigDecimal("100"),
+                instrumentType = InstrumentType.STOCK,
+                status = PositionStatus.CLOSED,
+                slOrderId = "sl-9",
+            )
+        runBlocking {
+            Mockito.`when`(positionRepo.findClosedWithProtectionOrders(Mockito.anyInt())).thenReturn(listOf(closed))
+            Mockito
+                .doAnswer { invocation -> CancelResult.UNCERTAIN }
+                .`when`(alorClient)
+                .cancelOrder(Mockito.anyString(), Mockito.anyString(), Mockito.anyString())
+
+            service.cancelOrphanProtectionOrders()
+
+            Mockito.verify(positionRepo, never()).clearProtectionOrderIds(Mockito.anyLong())
+        }
+        assertEquals(
+            1.0,
+            meterRegistry.counter("alor.reconcile.orphan_protection_unresolved", Tags.of("ticker", "SBER")).count(),
+        )
     }
 
     @Test

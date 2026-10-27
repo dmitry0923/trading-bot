@@ -252,14 +252,14 @@ class OrderOutboxRepository(
                 """
                 SELECT * FROM order_outbox
                 WHERE position_id = :positionId
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """.trimIndent()
             } else {
                 """
                 SELECT * FROM order_outbox
                 WHERE position_id = :positionId AND payload->>'purpose' = :purpose
-                ORDER BY created_at DESC
+                ORDER BY created_at DESC, id DESC
                 LIMIT 1
                 """.trimIndent()
             }
@@ -304,6 +304,9 @@ class OrderOutboxRepository(
      * сравнивается с `now()` в backoff-предикате [claimRetryable], поэтому обе стороны
      * предиката должны быть в одной системе времени (иначе при разных зонах приложения
      * и БД FAILED-строки не переотправлялись бы часами).
+     *
+     * Предикат статуса: запоздавший воркер (истёк TTL лока, строка уже пере-захвачена)
+     * не должен перетирать терминальные `BLOCKED`/`REJECTED` — скан-14 P1.
      */
     suspend fun markSent(
         id: UUID,
@@ -311,7 +314,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'SENT', alor_order_id = :oid, processed_at = now(), error_message = NULL WHERE id = :id",
+                "UPDATE order_outbox SET status = 'SENT', alor_order_id = :oid, processed_at = now(), " +
+                    "error_message = NULL WHERE id = :id AND status IN ('PENDING', 'PROCESSING')",
             ).bindOrNull("oid", alorOrderId)
             .bind("id", id)
             .then()
@@ -324,6 +328,10 @@ class OrderOutboxRepository(
      * но не более maxRetries раз — см. [claimRetryable].
      *
      * `processed_at` — время БД (`now()`), как и в backoff-предикате [claimRetryable].
+     *
+     * Предикат статуса обязателен: запоздавший воркер после успешной доставки другим
+     * инстансом превращал `SENT` в `FAILED` → строка снова попадала в повторную отправку,
+     * то есть уже исполненный ордер уходил на биржу второй раз (скан-14 P1).
      */
     suspend fun markFailed(
         id: UUID,
@@ -331,7 +339,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'FAILED', processed_at = now(), error_message = :err, retry_count = retry_count + 1 WHERE id = :id",
+                "UPDATE order_outbox SET status = 'FAILED', processed_at = now(), error_message = :err, " +
+                    "retry_count = retry_count + 1 WHERE id = :id AND status IN ('PENDING', 'PROCESSING')",
             ).bind("err", error.take(2000))
             .bind("id", id)
             .then()
@@ -349,7 +358,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'BLOCKED', processed_at = now(), error_message = :err WHERE id = :id",
+                "UPDATE order_outbox SET status = 'BLOCKED', processed_at = now(), error_message = :err " +
+                    "WHERE id = :id AND status IN ('PENDING', 'PROCESSING')",
             ).bind("err", error.take(2000))
             .bind("id", id)
             .then()
@@ -368,7 +378,8 @@ class OrderOutboxRepository(
     ) {
         databaseClient
             .sql(
-                "UPDATE order_outbox SET status = 'REJECTED', processed_at = now(), error_message = :err WHERE id = :id",
+                "UPDATE order_outbox SET status = 'REJECTED', processed_at = now(), error_message = :err " +
+                    "WHERE id = :id AND status IN ('PENDING', 'PROCESSING')",
             ).bind("err", error.take(2000))
             .bind("id", id)
             .then()

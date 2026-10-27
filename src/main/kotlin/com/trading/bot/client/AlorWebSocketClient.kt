@@ -344,9 +344,16 @@ class AlorWebSocketClient(
     /**
      * Экспоненциальный backoff: 1s, 2s, 4s, 8s, 16s, 32s, затем плато 60s.
      *
+     * Сдвиг ограничен: `1L shl 63` даёт `Long.MIN_VALUE`, с которым `delay(<0)`
+     * не ждёт вовсе — после 64-й попытки цикл реконнекта «сбрасывался» к 1 с
+     * вместо плато 60 с (скан-12 P2; тот же дефект уже закрыт в WsOrderTransport).
+     *
      * @param attempt номер попытки (>= 1)
      */
-    private fun reconnectDelaySeconds(attempt: Int): Long = minOf(1L shl (attempt - 1), 60L)
+    internal fun reconnectDelaySeconds(attempt: Int): Long {
+        val shift = (attempt - 1).coerceIn(0, 6)
+        return minOf(1L shl shift, 60L)
+    }
 
     /**
      * Heartbeat: ping каждые [AlorConfig.wsHeartbeatIntervalMs].

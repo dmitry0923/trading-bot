@@ -415,6 +415,7 @@ class TradingBotService(
                     // Раньше per-position исключения проглатывались и входы снова
                     // разрешались, даже если ни одна позиция не сверена (скан-2 P2).
                     var hadErrors = false
+                    val reconciledScopes = mutableSetOf<String>()
                     try {
                         val open =
                             positionRepo
@@ -423,6 +424,11 @@ class TradingBotService(
                         for (pos in open) {
                             try {
                                 engine.reconcilePosition(pos)
+                                // Скоуп считается сверенным только если позиция реально
+                                // прошла reconcile: иначе «чистый» проход по акциям снимал
+                                // блокировку входа по фьючерсному/пустому скоупу (скан-12 P1).
+                                reconciledScopes += "ticker:${pos.ticker}"
+                                pos.accountId?.let { reconciledScopes += "account:$it" }
                             } catch (e: Exception) {
                                 logger.error(e) { "Stock reconciler error for ${pos.id}/${pos.ticker}" }
                                 hadErrors = true
@@ -436,7 +442,7 @@ class TradingBotService(
                     if (hadErrors) {
                         logger.warn { "Reconcile pass had errors — DEGRADED stays until a clean pass" }
                     } else {
-                        entryLeaseRecoveryGate.recoverAll()
+                        entryLeaseRecoveryGate.recover(reconciledScopes)
                     }
                 }
             } finally {

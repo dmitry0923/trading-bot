@@ -64,7 +64,7 @@ class AuthController(
         val access = jwtService.issueAccessToken(authentication.name, roles)
         val refresh = refreshTokenService.issue(authentication.name, roles)
         setRefreshCookie(response, refresh)
-        return tokenResponse(access, refresh, authentication.name, roles)
+        return tokenResponse(access, authentication.name, roles)
     }
 
     @PostMapping("/refresh")
@@ -81,7 +81,7 @@ class AuthController(
                 ?: throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Refresh token invalid, expired or revoked")
         val access = jwtService.issueAccessToken(rotated.username, rotated.roles)
         setRefreshCookie(response, rotated.value)
-        return tokenResponse(access, rotated.value, rotated.username, rotated.roles)
+        return tokenResponse(access, rotated.username, rotated.roles)
     }
 
     @PostMapping("/logout")
@@ -98,7 +98,6 @@ class AuthController(
 
     private fun tokenResponse(
         access: JwtService.AccessToken,
-        refresh: String,
         username: String,
         roles: List<String>,
     ): Map<String, Any> =
@@ -106,7 +105,8 @@ class AuthController(
             "accessToken" to access.value,
             "tokenType" to "Bearer",
             "expiresIn" to Duration.between(java.time.Instant.now(), access.expiresAt).seconds,
-            "refreshToken" to refresh,
+            // refresh-токен НЕ дублируется в теле: он живёт только в httpOnly-cookie,
+            // иначе любой XSS/лог/прокси получал 30-дневный токен (скан-13 P2).
             "username" to username,
             "roles" to roles.map { "ROLE_$it" },
         )

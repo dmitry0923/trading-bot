@@ -3,6 +3,10 @@ package com.trading.bot.client
 import com.trading.bot.config.AlorConfig
 import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -129,4 +133,34 @@ class WebSocketManagerTest {
         val count = meterRegistry.counter("alor.ws.stale_connection", Tags.of("stream", "ORDERS")).count()
         assertTrue(count >= 1.0)
     }
+
+    @Test
+    fun `activity after watchdog disconnect restores connected state`() {
+        // Watchdog только помечает поток, реконнект не заказывает: без восстановления
+        // TradingGate блокировал бы все входы до рестарта процесса (скан-12 P1).
+        manager.onConnected(WsStream.ORDERS, 0)
+        alorConfig.wsHeartbeatTimeoutMs = 1
+        Thread.sleep(5)
+        manager.watchdog()
+        assertFalse(manager.isConnected(WsStream.ORDERS))
+
+        manager.onActivity(WsStream.ORDERS)
+
+        assertTrue(manager.isConnected(WsStream.ORDERS))
+        assertTrue(meterRegistry.counter("alor.ws.connected", Tags.of("stream", "ORDERS")).count() >= 2.0)
+    }
+
+    @Test
+    fun `last known status is replayed to a late subscriber`() =
+        runBlocking {
+            // StateReconciliationService подписывается на ApplicationReadyEvent, то есть
+            // позже установления WS-соединения: без replay первый CONNECTED терялся и
+            // сверка с биржей не запускалась (скан-12 P1).
+            manager.onConnected(WsStream.ORDERS, 0, "INIT")
+
+            val event = withTimeout(2000) { manager.events.first() }
+
+            assertEquals(WsConnectionStatus.CONNECTED, event.status)
+            assertEquals(WsStream.ORDERS, event.stream)
+        }
 }

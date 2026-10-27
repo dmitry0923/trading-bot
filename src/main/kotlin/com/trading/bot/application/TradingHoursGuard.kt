@@ -32,11 +32,16 @@ class TradingHoursGuard(
      * @return true, если now строго внутри торгового окна (границы исключены)
      */
     fun isTradingAllowed(now: LocalTime): Boolean {
-        val start = LocalTime.parse(riskConfig.tradingHoursStart)
-        val end = LocalTime.parse(riskConfig.tradingHoursEnd)
+        // Fail-closed: битое значение окна (например "9:00" из ручного POST /settings)
+        // раньше бросало DateTimeParseException, из-за чего /trading/status отвечал 500,
+        // а гейт входа падал на каждом цикле (скан-13 P1).
+        val start = parseOrNull(riskConfig.tradingHoursStart) ?: return false
+        val end = parseOrNull(riskConfig.tradingHoursEnd) ?: return false
         if (!start.isBefore(end)) {
             return false
         }
         return now.isAfter(start) && now.isBefore(end)
     }
+
+    private fun parseOrNull(value: String): LocalTime? = runCatching { LocalTime.parse(value) }.getOrNull()
 }

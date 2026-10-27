@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.application.PnlCalculator
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorClient.ReconcileResult
+import com.trading.bot.client.CancelResult
 import com.trading.bot.client.WebSocketManager
 import com.trading.bot.client.WsConnectionEvent
 import com.trading.bot.client.WsConnectionStatus
@@ -129,6 +130,18 @@ class StateReconciliationService(
 
     @EventListener(ApplicationReadyEvent::class)
     fun start() {
+        // Подписка на события — ОТДЕЛЬНОЙ корутиной и раньше sweep'а: иначе
+        // установленное при инициализации WS соединение не сверялось с биржей до
+        // реального реконнекта (скан-12 P1).
+        scope.launch {
+            webSocketManager.events.collect { event ->
+                try {
+                    handleEvent(event)
+                } catch (e: Exception) {
+                    logger.error(e) { "State reconciliation handler error for ${event.stream}" }
+                }
+            }
+        }
         scope.launch {
             // Стартовый sweep: крах между закрытием позиции и отменой защитных заявок
             // оставлял живой SL/TP, который позже открывал противоположную позицию
@@ -137,13 +150,6 @@ class StateReconciliationService(
                 cancelOrphanProtectionOrders()
             } catch (e: Exception) {
                 logger.error(e) { "Orphan protection sweep failed" }
-            }
-            webSocketManager.events.collect { event ->
-                try {
-                    handleEvent(event)
-                } catch (e: Exception) {
-                    logger.error(e) { "State reconciliation handler error for ${event.stream}" }
-                }
             }
         }
     }
@@ -168,18 +174,34 @@ class StateReconciliationService(
         logger.warn { "Orphan protection orders found: ${orphans.size} - cancelling" }
         for (pos in orphans) {
             val orderIds = listOfNotNull(pos.slOrderId, pos.tpOrderId)
+            var unresolved = false
             for (orderId in orderIds) {
-                try {
-                    alorClient.cancelOrder(
-                        orderId,
-                        idempotencyKey = "orphan-cancel-${pos.id}-$orderId",
-                        // Портфель передаём явно: default-аргумент вычисляется на реальном
-                        // объекте и в тестах с моком падал бы на null-конфиге.
-                        portfolio = alorConfig.portfolio,
-                    )
-                } catch (e: Exception) {
-                    logger.warn(e) { "Orphan cancel failed for ${pos.ticker} order=$orderId" }
+                val result =
+                    try {
+                        alorClient.cancelOrder(
+                            orderId,
+                            idempotencyKey = "orphan-cancel-${pos.id}-$orderId",
+                            // Портфель передаём явно: default-аргумент вычисляется на реальном
+                            // объекте и в тестах с моком падал бы на null-конфиге.
+                            portfolio = alorConfig.portfolio,
+                        )
+                    } catch (e: Exception) {
+                        logger.warn(e) { "Orphan cancel failed for ${pos.ticker} order=$orderId" }
+                        CancelResult.UNCERTAIN
+                    }
+                // REJECTED = заявки на бирже нет (уже отменена/исполнена) — тоже терминально.
+                if (result == CancelResult.UNCERTAIN) unresolved = true
+            }
+            if (unresolved) {
+                // Идентификаторы НЕ очищаем: иначе живая заявка навсегда выпадает из выборки
+                // (условие `sl_order_id IS NOT NULL`) и остаётся без надзора — скан-14 P1.
+                meterRegistry
+                    .counter("alor.reconcile.orphan_protection_unresolved", Tags.of("ticker", pos.ticker.uppercase()))
+                    .increment()
+                logger.warn {
+                    "Orphan protection orders for ${pos.ticker} (pos=${pos.id}) not confirmed cancelled — retry on next start"
                 }
+                continue
             }
             pos.id?.let { positionRepo.clearProtectionOrderIds(it) }
             meterRegistry

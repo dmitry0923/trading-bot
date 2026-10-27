@@ -620,7 +620,9 @@ class DrawdownProtectionServiceTest {
             // dirty-аккумулятор НЕ перезаписывается stale-recompute (0): оба персиста
             // (updateDailyPnl и computeStatus) сохраняют -1000, а не 0 (без dirty-гварда
             // второй был бы 0 — потеря инкремента в daily_risk_snapshot при рестарте).
-            // computeStatus updates peakEquity to max(0, equity=50000) = 50000
+            // computeStatus updates peakEquity to max(0, equity=50000) = 50000.
+            // Синхронный путь (updateDailyPnl) пишет upsert, suspend-путь (computeStatus) —
+            // upsertAwait (скан-13 P1: block() в корутине глушился и запись терялась).
             Mockito
                 .verify(
                     snapshotRepo,
@@ -630,7 +632,7 @@ class DrawdownProtectionServiceTest {
                 .verify(
                     snapshotRepo,
                     Mockito.times(1),
-                ).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
+                ).upsertAwait(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
         }
 
     // ===================== Equity-based drawdown HWM regression =====================

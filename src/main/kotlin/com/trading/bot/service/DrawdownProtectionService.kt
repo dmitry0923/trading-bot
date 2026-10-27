@@ -214,23 +214,31 @@ class DrawdownProtectionService(
                 if (accountId != null) {
                     // I/O — ДО критической секции: suspend-чтение не держит монитор (скан-8 P1).
                     loadAccountDailyStateAwait(accountId, now.toLocalDate())
-                    synchronized(this) {
-                        if (accountDirty[accountId] != true) {
-                            accountPnl[accountId] = dailyPnl
-                            accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
+                    val snapshot =
+                        synchronized(this) {
+                            if (accountDirty[accountId] != true) {
+                                accountPnl[accountId] = dailyPnl
+                                accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
+                            }
+                            PersistedDailyState(
+                                pnl = accountPnl[accountId] ?: BigDecimal.ZERO,
+                                lossReached = accountLossReached[accountId] ?: false,
+                                peakEquity = accountPeakEquity[accountId],
+                            )
                         }
-                        persistDailyState(accountId)
-                        effectiveDailyLossLimitRubFor(accountId, aum)
-                    }
+                    persistDailyStateAwait(snapshot, accountId)
+                    effectiveDailyLossLimitRubFor(accountId, aum)
                 } else {
-                    synchronized(this) {
-                        if (!accumulatorDirty) {
-                            todayPnl = dailyPnl
-                            todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+                    val snapshot =
+                        synchronized(this) {
+                            if (!accumulatorDirty) {
+                                todayPnl = dailyPnl
+                                todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
+                            }
+                            PersistedDailyState(todayPnl, todayDailyLossReached, todayPeakEquity)
                         }
-                        persistDailyState()
-                        effectiveDailyLossLimitRub(aum)
-                    }
+                    persistDailyStateAwait(snapshot, null)
+                    effectiveDailyLossLimitRub(aum)
                 }
             }
 
@@ -791,7 +799,9 @@ class DrawdownProtectionService(
     }
 
     /**
-     * Персист снимка. Один короткий upsert остаётся синхронным (durability счётчика 0     * важнее неблокирующего вызова), но все ЧТЕНИЯ вынесены из-под монитора в 0     * [computeStatus]/[updateDailyPnl] (скан-8 P1).
+     * Персист снимка. Один короткий upsert остаётся синхронным (durability счётчика важнее
+     * неблокирующего вызова), но все ЧТЕНИЯ вынесены из-под монитора в
+     * [computeStatus]/[updateDailyPnl] (скан-8 P1).
      */
     private fun persistDailyState() {
         try {
@@ -819,6 +829,35 @@ class DrawdownProtectionService(
             )
         } catch (e: Exception) {
             logger.warn(e) { "Failed to persist daily risk snapshot for account=$accountId" }
+        }
+    }
+
+    /** Снимок дневного состояния, зафиксированный под монитором перед записью в БД. */
+    private data class PersistedDailyState(
+        val pnl: BigDecimal,
+        val lossReached: Boolean,
+        val peakEquity: BigDecimal?,
+    )
+
+    /**
+     * Запись снимка suspend-путём: `Mono.block()` внутри корутины на реактивном потоке
+     * бросает `IllegalStateException`, и catch молча терял запись (скан-13 P1).
+     */
+    private suspend fun persistDailyStateAwait(
+        state: PersistedDailyState,
+        accountId: Long?,
+    ) {
+        try {
+            dailyRiskSnapshotRepo.upsertAwait(
+                LocalDate.now(clock),
+                state.pnl,
+                state.lossReached,
+                state.pnl.coerceAtMost(BigDecimal.ZERO),
+                accountId,
+                peakEquity = state.peakEquity,
+            )
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to persist daily risk snapshot (account=$accountId)" }
         }
     }
 

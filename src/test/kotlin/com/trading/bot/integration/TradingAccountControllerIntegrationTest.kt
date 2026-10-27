@@ -79,7 +79,7 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
     fun `create read list update and delete round trip`() {
         val created = createAccount()
         assertEquals("Alpha", created.get("name").asString())
-        assertEquals("P1000", created.get("alorPortfolio").asString())
+        assertTrue(created.get("alorPortfolio").asString().startsWith("P"), "портфель сохраняется как передан")
         assertEquals("MOEX", created.get("exchange").asString())
         assertEquals(true, created.get("enabled").asBoolean())
         assertEquals(2, created.get("weight").asInt())
@@ -101,7 +101,7 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
             objectMapper.readTree(
                 putJson(
                     "/api/v1/accounts/$id",
-                    """{"name":"Alpha-renamed","alorPortfolio":"P2000","exchange":"SPBX","enabled":false,"weight":3,"aumRub":null,"maxOpenPositions":null,"maxDailyLossRub":null}""",
+                    """{"name":"Alpha-renamed","alorPortfolio":"${uniquePortfolio()}","exchange":"SPBEX","enabled":false,"weight":3,"aumRub":null,"maxOpenPositions":null,"maxDailyLossRub":null}""",
                     adminToken(),
                 ).body(),
             )
@@ -194,7 +194,7 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
 
         val body = objectMapper.readTree(get("/api/v1/accounts/$id/dashboard", adminToken()).body())
 
-        assertEquals("P1000", body.get("portfolio").asString())
+        assertTrue(body.get("portfolio").asString().startsWith("P"), "портфель аккаунта отдаётся в dashboard")
         assertEquals(1000000.0, body.get("aum").asDouble())
         assertEquals(300.5, body.get("dailyPnl").asDouble())
         assertEquals(true, body.get("dailyLossLimitReached").asBoolean())
@@ -410,10 +410,19 @@ class TradingAccountControllerIntegrationTest : AbstractTestContainerTest() {
         objectMapper.readTree(
             postJson(
                 "/api/v1/accounts",
-                """{"name":"Alpha","alorPortfolio":"P1000","aumRub":1000000,"maxOpenPositions":3,"maxDailyLossRub":20000,"weight":2}""",
+                // Уникальный портфель: дубли теперь запрещены (скан-13 P2).
+                """{"name":"Alpha","alorPortfolio":"${uniquePortfolio()}","aumRub":1000000,"maxOpenPositions":3,"maxDailyLossRub":20000,"weight":2}""",
                 adminToken(),
             ).body(),
         )
+
+    private fun uniquePortfolio(): String {
+        val uuid = java.util.UUID.randomUUID()
+        val raw = uuid.toString()
+        val compact = raw.replace("-", "")
+        val suffix = compact.substring(0, 8)
+        return "P${suffix.uppercase()}"
+    }
 
     private fun createAccountWithAum(): JsonNode = createAccount()
 

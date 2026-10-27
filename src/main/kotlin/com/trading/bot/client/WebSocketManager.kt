@@ -88,7 +88,13 @@ class WebSocketManager(
 ) {
     private val logger = KotlinLogging.logger {}
 
-    private val _events = MutableSharedFlow<WsConnectionEvent>(extraBufferCapacity = 64)
+    /**
+     * `replay = 1`: подписчик, подключившийся после установления соединения
+     * (StateReconciliationService стартует на `ApplicationReadyEvent`, а WS — раньше),
+     * обязан увидеть последний статус. Без replay первый CONNECTED терялся, и первая
+     * сверка с биржей не выполнялась до реального реконнекта (скан-12 P1).
+     */
+    private val _events = MutableSharedFlow<WsConnectionEvent>(replay = 1, extraBufferCapacity = 64)
     val events: Flow<WsConnectionEvent> = _events.asSharedFlow()
 
     private val statuses = ConcurrentHashMap<WsStream, AtomicReference<WsConnectionStatus>>()
@@ -173,9 +179,16 @@ class WebSocketManager(
     /**
      * Фиксирует активность потока: любое входящее сообщение или успешный
      * heartbeat-ping. Используется watchdog'ом для определения «тихого» обрыва.
+     *
+     * Если watchdog уже перевёл поток в DISCONNECTED (таймаут heartbeat), а данные
+     * снова пошли, состояние обязано вернуться в CONNECTED: иначе `TradingGate`
+     * навсегда блокирует все входы (WS_DISCONNECTED) до рестарта процесса — скан-12 P1.
      */
     fun onActivity(stream: WsStream) {
         activityOf(stream).set(System.currentTimeMillis())
+        if (stateOf(stream).get() == WsConnectionStatus.DISCONNECTED) {
+            onConnected(stream, reconnectAttempt = 0, reason = "HEARTBEAT_RECOVERED")
+        }
     }
 
     fun isConnected(stream: WsStream): Boolean = stateOf(stream).get() == WsConnectionStatus.CONNECTED

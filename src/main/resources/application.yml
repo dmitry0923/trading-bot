@@ -401,10 +401,16 @@ trading:
   # Нормальный гейт спреда = 0.1%; жёсткий потолок 0.5% зашит в коде (не конфигурируется)
   signal-max-spread-percent: ${SIGNAL_MAX_SPREAD_PERCENT:0.1}
   # LLM как источник сигнала (research, дефолт off; docs/17-llm-signal-source.md).
-  # llm-signal-source: LlmSignalStrategy участвует в конкурентном выборе сигнала;
-  # llm-signal-only: в конкуренции остаётся ТОЛЬКО LLM.
-  llm-signal-source: ${LLM_SIGNAL_SOURCE_ENABLED:false}
+  # llm-signal-source-enabled: LlmSignalStrategy участвует в конкурентном выборе сигнала;
+  # llm-signal-only: в конкуренции остаётся ТОЛЬКО LLM;
+  # llm-signal-shadow: LLM-победитель только логируется (не исполняется);
+  # llm-signal-budget-ms: бюджет ожидания ответа LLM (fail-closed HOLD).
+  # Ключ обязательно с суффиксом *-enabled: без него Spring не связывал значение
+  # с полем llmSignalSourceEnabled, и документированный флаг молча не работал (скан-12 P2).
+  llm-signal-source-enabled: ${LLM_SIGNAL_SOURCE_ENABLED:false}
   llm-signal-only: ${LLM_SIGNAL_ONLY_ENABLED:false}
+  llm-signal-shadow: ${TRADING_LLM_SIGNAL_SHADOW:false}
+  llm-signal-budget-ms: ${TRADING_LLM_SIGNAL_BUDGET_MS:2000}
   # Funding Veto (research, дефолт off; AGENTS.md / docs/16): вето на вход по стороне,
   # когда per-clearing funding (MOEX SWAPRATE) дорог для удержания позиции.
   # LONG блокируется при funding > +long-threshold, SHORT — при funding < -short-threshold

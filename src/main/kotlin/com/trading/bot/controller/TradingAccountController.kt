@@ -248,6 +248,14 @@ class TradingAccountController(
         request.aumRub?.let {
             if (it.signum() <= 0) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "aumRub must be > 0")
         }
+        // Отрицательный дневной лимит делал порог положительным: `dailyPnl(0) <= +|limit|`
+        // → аккаунт навсегда в DAILY_LOSS, входы блокируются при 200 OK (скан-13 P2).
+        request.maxDailyLossRub?.let {
+            if (it.signum() <= 0) throw ResponseStatusException(HttpStatus.BAD_REQUEST, "maxDailyLossRub must be > 0")
+        }
+        if (request.exchange.uppercase() !in setOf("MOEX", "SPBEX")) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "exchange must be MOEX or SPBEX")
+        }
     }
 }
 

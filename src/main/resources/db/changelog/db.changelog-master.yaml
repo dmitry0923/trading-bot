@@ -87,3 +87,5 @@ databaseChangeLog:
       file: db/changelog/changes/043-candles-drop-retention.sql
   - include:
       file: db/changelog/changes/044-positions-status-widen.sql
+  - include:
+      file: db/changelog/changes/045-indexes-positions-accounts.sql

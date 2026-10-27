@@ -312,7 +312,11 @@ class InvestorRepository(
     }
 
     suspend fun findAccountByInvestor(investorId: UUID): InvestorAccount? {
-        val sql = "SELECT * FROM investor_accounts WHERE investor_id = :investorId LIMIT 1"
+        // Детерминированный выбор основного счёта: без ORDER BY PostgreSQL возвращает
+        // произвольную строку, и депозит/вывод могли уйти на разные счета (скан-14 P2).
+        val sql =
+            "SELECT * FROM investor_accounts WHERE investor_id = :investorId " +
+                "ORDER BY created_at ASC, id ASC LIMIT 1"
         return databaseClient
             .sql(sql)
             .bind("investorId", investorId)

@@ -52,4 +52,20 @@ class TradingHoursGuardTest {
             )
         assertFalse(broken.isTradingAllowed(LocalTime.of(12, 0)))
     }
+
+    @Test
+    fun `malformed window blocks instead of throwing`() {
+        // Битое значение могло попасть в bot_settings из POST /settings: раньше
+        // LocalTime.parse бросал DateTimeParseException → 500 на /trading/status
+        // и падение гейта входа на каждом цикле (скан-13 P1).
+        val broken =
+            TradingHoursGuard(
+                RiskConfig().apply {
+                    tradingHoursStart = "9:00"
+                    tradingHoursEnd = "18:30"
+                },
+            )
+
+        assertFalse(broken.isTradingAllowed(LocalTime.of(12, 0)))
+    }
 }

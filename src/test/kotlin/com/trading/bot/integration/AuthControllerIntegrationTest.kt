@@ -1,5 +1,9 @@
 package com.trading.bot.integration
 
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
@@ -42,7 +46,9 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
 
         val body = objectMapper.readTree(response.body())
         assertTrue(body.get("accessToken").asString().isNotBlank())
-        assertTrue(body.get("refreshToken").asString().isNotBlank())
+        // refresh-токен живёт ТОЛЬКО в httpOnly-cookie: в теле его быть не должно
+        // (иначе XSS/логи/proxy получают 30-дневный токен) — скан-13 P2.
+        assertNull(body.get("refreshToken"), "refreshToken must not be exposed in the response body")
         assertEquals("Bearer", body.get("tokenType").asString())
         assertEquals("test-admin", body.get("username").asString())
         assertTrue(body.get("roles").any { it.asString() == "ROLE_ADMIN" })
@@ -65,8 +71,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `refresh rotates token and detects reuse`() {
-        val loginBody = login()
-        val originalRefresh = loginBody.get("refreshToken").asString()
+        val originalRefresh = loginRefreshToken()
 
         val firstRefresh =
             postJson(
@@ -84,11 +89,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
         assertEquals(401, reuse.statusCode())
 
         // Обнаруженный reuse отзывает всю сессию пользователя
-        val rotated =
-            objectMapper
-                .readTree(firstRefresh.body())
-                .get("refreshToken")
-                .asString()
+        val rotated = refreshCookieOf(firstRefresh)
         val afterReuse =
             postJson(
                 "/api/v1/auth/refresh",
@@ -103,7 +104,7 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `logout revokes refresh token`() {
-        val refreshToken = login().get("refreshToken").asString()
+        val refreshToken = loginRefreshToken()
 
         val logout =
             postJson(
@@ -170,6 +171,30 @@ class AuthControllerIntegrationTest : AbstractTestContainerTest() {
     }
 
     private fun login(): JsonNode = login("test-admin", "test-admin-pass")
+
+    /**
+     * Refresh-токен теперь отдаётся только cookie: для сценариев ротации/логаута
+     * берём его из `Set-Cookie` ответа логина.
+     */
+    private fun loginRefreshToken(
+        username: String = "test-admin",
+        password: String = "test-admin-pass",
+    ): String {
+        val response =
+            postJson(
+                "/api/v1/auth/login",
+                """{"username":"$username","password":"$password"}""",
+            )
+        assertEquals(200, response.statusCode())
+        return refreshCookieOf(response)
+    }
+
+    private fun refreshCookieOf(response: HttpResponse<String>): String {
+        val cookie = response.headers().firstValue("Set-Cookie").orElse("")
+        val match = Regex("refresh_token=([^;]+)").find(cookie)
+        assertNotNull(match, "refresh cookie expected, got: $cookie")
+        return match!!.groupValues[1]
+    }
 
     private fun login(
         username: String,

@@ -104,6 +104,10 @@ services:
   app:
     build: .
     container_name: trading-bot-app
+    # Graceful shutdown: Spring ждёт до 30 с на слив HTTP (spring.lifecycle.timeout-per-shutdown-phase),
+    # а Docker по умолчанию убивает контейнер через 10 с → @PreDestroy (финальный flush
+    # микроструктуры/трейсов) не выполнялся (скан-12 P2).
+    stop_grace_period: 45s
     logging:
       driver: json-file
       options:

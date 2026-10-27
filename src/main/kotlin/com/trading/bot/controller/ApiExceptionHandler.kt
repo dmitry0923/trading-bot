@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import java.time.DateTimeException
 
 /**
  * Единый контракт ошибок входных данных: `IllegalArgumentException` → **400**, а не 500.
@@ -29,5 +30,19 @@ class ApiExceptionHandler {
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
             .body(mapOf("error" to message))
+    }
+
+    /**
+     * Ошибки разбора даты/времени (`LocalTime.parse("18-45")`) — тоже ошибка входных
+     * данных, а не сбой сервера: `DateTimeParseException` не наследует
+     * `IllegalArgumentException`, поэтому раньше уходил клиенту как 500 (скан-13 P2).
+     */
+    @ExceptionHandler(DateTimeException::class)
+    fun handleDateTime(ex: DateTimeException): ResponseEntity<Map<String, Any?>> {
+        val message = ex.message ?: "invalid date/time value"
+        logger.warn { "API 400 (invalid date/time): $message" }
+        return ResponseEntity
+            .status(HttpStatus.BAD_REQUEST)
+            .body(mapOf("error" to "Invalid date/time: $message"))
     }
 }

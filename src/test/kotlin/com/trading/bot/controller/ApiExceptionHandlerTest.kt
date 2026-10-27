@@ -1,6 +1,7 @@
 package com.trading.bot.controller
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.ExceptionHandler
@@ -33,7 +34,7 @@ class ApiExceptionHandlerTest {
     }
 
     @Test
-    fun `only illegal argument is mapped so real failures keep 500`() {
+    fun `only invalid input types are mapped so real failures keep 500`() {
         val mapped =
             ApiExceptionHandler::class.java.methods
                 .mapNotNull { it.getAnnotation(ExceptionHandler::class.java) }
@@ -41,9 +42,17 @@ class ApiExceptionHandlerTest {
                 .toSet()
 
         assertEquals(
-            setOf(IllegalArgumentException::class.java.name),
+            setOf(IllegalArgumentException::class.java.name, java.time.DateTimeException::class.java.name),
             mapped,
             "IllegalStateException и прочие не должны превращаться в 4xx",
         )
+    }
+
+    @Test
+    fun `malformed date time becomes 400 instead of 500`() {
+        val response = handler.handleDateTime(java.time.format.DateTimeParseException("bad time", "18-45", 0))
+
+        assertEquals(400, response.statusCode.value())
+        assertTrue(response.body!!["error"]!!.toString().contains("bad time", ignoreCase = true))
     }
 }

@@ -40,6 +40,8 @@ class TradingAccountServiceTest {
         Mockito.reset(repository, positionRepository)
         runBlocking {
             Mockito.`when`(repository.findEnabled()).thenReturn(emptyList())
+            // Валидация дубля alorPortfolio читает полный список аккаунтов.
+            Mockito.`when`(repository.findAll()).thenReturn(emptyList())
         }
     }
 

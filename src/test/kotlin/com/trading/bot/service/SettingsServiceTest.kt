@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import java.math.BigDecimal
@@ -203,5 +204,38 @@ class SettingsServiceTest {
             service.updateSettings(BotSettings(llmApiKey = "", maxOpenPositions = 1))
 
             assertEquals("", service.getSettings().llmApiKey)
+        }
+
+    @Test
+    fun `update from ui rejects malformed trading hours before persisting`(): Unit =
+        runBlocking {
+            // Битое окно ломало TradingHoursGuard: 500 на /trading/status и блокировка
+            // входов переживали рестарт, потому что значение уже лежало в БД (скан-13 P1).
+            Mockito.`when`(repo.loadSettings()).thenReturn(BotSettings())
+            service.init()
+
+            val ex =
+                assertThrows<IllegalArgumentException> {
+                    runBlocking {
+                        service.updateSettingsFromUi(BotSettings(tradingHoursStart = "9:00"))
+                    }
+                }
+            assertTrue(ex.message!!.contains("tradingHoursStart"), ex.message)
+
+            assertEquals("10:00", service.getSettings().tradingHoursStart)
+            assertEquals("10:00", riskConfig.tradingHoursStart)
+            Mockito.verify(repo, Mockito.never()).saveSettings(BotSettings(tradingHoursStart = "9:00"))
+        }
+
+    @Test
+    fun `update from ui rejects non positive daily loss limit`(): Unit =
+        runBlocking {
+            Mockito.`when`(repo.loadSettings()).thenReturn(BotSettings())
+            service.init()
+
+            assertThrows<IllegalArgumentException> {
+                runBlocking { service.updateSettingsFromUi(BotSettings(maxDailyLossRub = 0)) }
+            }
+            assertEquals(5000, service.getSettings().maxDailyLossRub)
         }
 }

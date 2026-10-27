@@ -302,7 +302,7 @@ class PositionRepository(
                     """
                     UPDATE positions
                     SET status = 'CLOSED', pending_close = FALSE, pending_entry = FALSE,
-                        close_reason = :closeReason, closed_at = now()
+                        close_reason = :closeReason, closed_at = :closedAt
                     WHERE id = :id AND status = 'RECONCILIATION_REQUIRED'
                     """.trimIndent()
                 }
@@ -311,10 +311,22 @@ class PositionRepository(
                     throw IllegalArgumentException("resolve target must be OPEN or CLOSED, got $target")
                 }
             }
-        return databaseClient
-            .sql(sql)
-            .bind("id", id)
-            .let { if (target == PositionStatus.CLOSED) it.bind("closeReason", closeReason.name) else it }
+        val withTarget =
+            databaseClient
+                .sql(sql)
+                .bind("id", id)
+                .let { spec ->
+                    if (target != PositionStatus.CLOSED) {
+                        spec
+                    } else {
+                        // Время закрытия — бизнес-время МСК (как в transitionToClosed):
+                        // `now()` в БД пишет UTC-зону и сдвигал позицию за границу дня,
+                        // из-за чего дневной лимит её не видел (скан-14 P2).
+                        val withReason = spec.bind("closeReason", closeReason.code)
+                        withReason.bind("closedAt", LocalDateTime.now(clock))
+                    }
+                }
+        return withTarget
             .fetch()
             .rowsUpdated()
             .awaitSingle() > 0
@@ -810,7 +822,9 @@ class PositionRepository(
             .sql(
                 "SELECT * FROM positions WHERE status IN ('CLOSED', 'RECONCILIATION_REQUIRED') " +
                     "AND (sl_order_id IS NOT NULL OR tp_order_id IS NOT NULL) " +
-                    "ORDER BY closed_at DESC NULLS LAST LIMIT :limit",
+                    // NULLS FIRST: рассинхрон (closed_at IS NULL) разбирается раньше закрытых,
+                    // id DESC — детерминированный tie-breaker (created_at/closed_at могут совпасть).
+                    "ORDER BY closed_at DESC NULLS FIRST, id DESC LIMIT :limit",
             ).bind("limit", limit)
             .map { row, _ -> toPosition(row) }
             .all()

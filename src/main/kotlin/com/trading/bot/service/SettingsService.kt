@@ -7,10 +7,13 @@ import com.trading.bot.model.entity.BotSettings
 import com.trading.bot.repository.SettingsRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
+import java.time.LocalTime
 
 /**
  * Персистентное хранилище настроек бота.
@@ -32,6 +35,9 @@ class SettingsService(
 
     @Volatile
     private var settings: BotSettings = BotSettings()
+
+    /** Сериализует read-modify-write настроек (скан-13 P2). */
+    private val settingsMutex = Mutex()
 
     @EventListener(ApplicationReadyEvent::class)
     fun init() {
@@ -66,9 +72,16 @@ class SettingsService(
 
     /**
      * Полная замена настроек (внутренний/тестовый путь): значения применяются как есть.
+     *
+     * Запись сериализована мьютексом: несколько эндпоинтов (trading/enable, experiment/enable,
+     * force-close-at, форма настроек) делают read-modify-write одного снимка, и без
+     * сериализации проигравший откатывал поля победителя (скан-13 P2).
      */
     suspend fun updateSettings(newSettings: BotSettings) {
-        apply(newSettings.copy(llmApiKeyConfigured = false))
+        settingsMutex.withLock {
+            validate(newSettings)
+            apply(newSettings.copy(llmApiKeyConfigured = false))
+        }
     }
 
     /**
@@ -77,13 +90,45 @@ class SettingsService(
      * ключ провайдера (скан-5 P2). Полная очистка ключа делается явным [updateSettings].
      */
     suspend fun updateSettingsFromUi(newSettings: BotSettings) {
-        val merged =
-            if (newSettings.llmApiKey.isBlank()) {
-                newSettings.copy(llmApiKey = settings.llmApiKey)
-            } else {
-                newSettings
-            }
-        apply(merged.copy(llmApiKeyConfigured = false))
+        settingsMutex.withLock {
+            val merged =
+                if (newSettings.llmApiKey.isBlank()) {
+                    newSettings.copy(llmApiKey = settings.llmApiKey)
+                } else {
+                    newSettings
+                }
+            validate(merged)
+            apply(merged.copy(llmApiKeyConfigured = false))
+        }
+    }
+
+    /**
+     * Проверка значений формы ДО записи.
+     *
+     * Раньше `POST /settings` принимал любое значение: `tradingHoursStart = "9:00"`
+     * сохранялся в БД, и `TradingHoursGuard` падал `DateTimeParseException` на каждом
+     * цикле — `/trading/status` отвечал 500, входы не проходили, а после рестарта
+     * битое значение применялось снова (скан-13 P1).
+     */
+    private fun validate(s: BotSettings) {
+        require(runCatching { LocalTime.parse(s.tradingHoursStart) }.isSuccess) {
+            "tradingHoursStart must be HH:mm, got '${s.tradingHoursStart}'"
+        }
+        require(runCatching { LocalTime.parse(s.tradingHoursEnd) }.isSuccess) {
+            "tradingHoursEnd must be HH:mm, got '${s.tradingHoursEnd}'"
+        }
+        require(s.maxPositionRub > 0) { "maxPositionRub must be > 0" }
+        require(s.maxDailyLossRub > 0) { "maxDailyLossRub must be > 0" }
+        require(s.maxOpenPositions >= 0) { "maxOpenPositions must be >= 0" }
+        require(s.futuresMaxOpenPositions >= 0) { "futuresMaxOpenPositions must be >= 0" }
+        require(s.riskPerTradePercent > 0.0 && s.riskPerTradePercent <= 100.0) {
+            "riskPerTradePercent must be in (0, 100]"
+        }
+        require(s.kellyFraction > 0.0 && s.kellyFraction <= 1.0) { "kellyFraction must be in (0, 1]" }
+        require(s.maxDailyLossPercent > 0.0 && s.maxDailyLossPercent <= 100.0) {
+            "maxDailyLossPercent must be in (0, 100]"
+        }
+        require(s.userLeverage >= 1.0) { "userLeverage must be >= 1" }
     }
 
     private suspend fun apply(newSettings: BotSettings) {

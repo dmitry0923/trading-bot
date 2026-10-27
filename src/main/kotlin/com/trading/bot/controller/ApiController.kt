@@ -2034,24 +2034,29 @@ class ApiController(
                 ),
             )
 
-        // Execution interlock: approval персистится ТОЛЬКО из DeploymentGate при
-        // LIVE_ALLOWED и привязывается к frozen fingerprint (SHA-256) ЗАМОРОЖЕННОЙ
-        // стратегии (P1-аудит: fingerprint строится из реально перевалидированных
-        // параметров HoldoutValidation, а не из текущего ambient-конфига).
-        // Любой другой статус отзывает одобрение (персистентный REVOKED, fail-closed).
+        // Execution interlock: approval персистится ТОЛЬКО production-прогоном гейта
+        // (`researchMode=false` + `confirmedForProduction=true`) и привязывается к frozen
+        // fingerprint (SHA-256) ЗАМОРОЖЕННОЙ стратегии (P1-аудит).
+        //
+        // GET не должен менять разрешение на торговлю: раньше любой research-вызов
+        // (проверка статуса, скрипт мониторинга, закладка в браузере) необратимо
+        // ОТЗЫВАЛ LIVE-одобрение и стирал frozen-стратегию (скан-13 P1).
         val frozen = holdout.frozenStrategy
         val frozenFingerprint = liveStrategyFingerprintProvider.fingerprint(frozen)
-        if (decision.status == DeploymentStatus.LIVE_ALLOWED) {
-            frozenStrategyStore.upsert(frozen)
-            deploymentApprovalService.approve(
-                ticker,
-                DeploymentApprovalService.LIVE_ALLOWED,
-                frozen.confidenceThreshold,
-                frozenFingerprint,
-            )
-        } else {
-            deploymentApprovalService.revoke(ticker)
-            frozenStrategyStore.clear(ticker)
+        val persistApproval = !decision.researchMode && decision.confirmedForProduction
+        if (persistApproval) {
+            if (decision.status == DeploymentStatus.LIVE_ALLOWED) {
+                frozenStrategyStore.upsert(frozen)
+                deploymentApprovalService.approve(
+                    ticker,
+                    DeploymentApprovalService.LIVE_ALLOWED,
+                    frozen.confidenceThreshold,
+                    frozenFingerprint,
+                )
+            } else {
+                deploymentApprovalService.revoke(ticker)
+                frozenStrategyStore.clear(ticker)
+            }
         }
         val liveApproval =
             deploymentApprovalService.isLiveAllowed(
@@ -2066,6 +2071,7 @@ class ApiController(
             "status" to decision.status.name,
             "liveAllowed" to (decision.status == DeploymentStatus.LIVE_ALLOWED),
             "liveApprovalActive" to liveApproval,
+            "approvalPersisted" to persistApproval,
             "researchMode" to decision.researchMode,
             "confirmedForProduction" to decision.confirmedForProduction,
             "frozenConfidenceThreshold" to (frozen.confidenceThreshold ?: backtestConfig.adaptiveConfidenceThreshold),

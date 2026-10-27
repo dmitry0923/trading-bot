@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import tools.jackson.module.kotlin.jacksonObjectMapper
@@ -258,5 +259,19 @@ class AlorWebSocketClientTest {
     @Test
     fun `parseQuote returns null on invalid json`() {
         assertNull(client.parseQuote("""{"guid":"q-SBER" """))
+    }
+
+    @Test
+    fun `reconnect backoff stays positive and caps at sixty seconds`() {
+        // 1L shl 63 = Long.MIN_VALUE: раньше delay(<0) не ждал вовсе и после 64-й
+        // попытки цикл реконнекта снова начинал с 1 с (скан-12 P2).
+        assertEquals(1L, client.reconnectDelaySeconds(1))
+        assertEquals(2L, client.reconnectDelaySeconds(2))
+        assertEquals(32L, client.reconnectDelaySeconds(6))
+        assertEquals(60L, client.reconnectDelaySeconds(7))
+        for (attempt in 1..200) {
+            val delay = client.reconnectDelaySeconds(attempt)
+            assertTrue(delay in 1..60, "attempt=$attempt delay=$delay")
+        }
     }
 }

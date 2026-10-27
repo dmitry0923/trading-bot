@@ -40,7 +40,29 @@ class EntryLeaseRecoveryGate(
     /** Вход в [scope] в данный момент запрещён (после LEASE_LOST, до reconciliation). */
     fun isDegraded(scope: String): Boolean = degradedScopes.contains(scope)
 
-    /** Reconciliation прошёл успешно — ENTRY по всем скоупам снова разрешены. */
+    /**
+     * Reconciliation подтвердил отсутствие незавершённых входов в [scopes].
+     *
+     * Снимать блокировку можно только по фактически сверенным скоупам: раньше
+     * «чистый» проход по акциям очищал ВСЕ скоупы, включая фьючерсные, и вход
+     * разблокировался без сверки состояния именно того входа (скан-12 P1).
+     *
+     * @return true, если хотя бы один скоуп разблокирован
+     */
+    fun recover(scopes: Collection<String>): Boolean {
+        if (scopes.isEmpty() || degradedScopes.isEmpty()) return false
+        var recovered = false
+        for (scope in scopes) {
+            if (degradedScopes.remove(scope)) recovered = true
+        }
+        if (recovered) meterRegistry.counter("entry.lease.recovery_completed").increment()
+        return recovered
+    }
+
+    /**
+     * Полная State Reconciliation (снимок биржи по открытым заявкам, позициям и
+     * сделкам) — авторитетна для ВСЕХ скоупов, поэтому снимает все блокировки.
+     */
     fun recoverAll() {
         if (degradedScopes.isEmpty()) return
         degradedScopes.clear()

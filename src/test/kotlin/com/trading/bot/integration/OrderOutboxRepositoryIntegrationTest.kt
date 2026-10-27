@@ -101,6 +101,32 @@ class OrderOutboxRepositoryIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `findSentWithoutPosition returns only delivered entry rows without link`() {
+        runBlocking {
+            // Крайние случаи: SENT без ордера, SENT со связью, PENDING с ордером —
+            // ни один не должен попасть в стартовый re-link (скан-10 P1).
+            val orphan = repo.save(row("idem-orphan"))
+            repo.markSent(orphan.id!!, "ord-orphan")
+
+            val linked = repo.save(row("idem-linked"))
+            repo.markSent(linked.id!!, "ord-linked")
+            repo.linkPosition(linked.id!!, 11L)
+
+            val pending = repo.save(row("idem-pending-order"))
+            repo.markSent(pending.id!!, "ord-pending")
+            repo.markFailed(pending.id!!, "network")
+
+            val noOrder = repo.save(row("idem-sent-no-order"))
+            repo.markSent(noOrder.id!!, null)
+
+            val orphans = repo.findSentWithoutPosition()
+
+            assertEquals(listOf(orphan.id), orphans.map { it.id })
+            assertEquals("ord-orphan", orphans.single().alorOrderId)
+        }
+    }
+
+    @Test
     fun `duplicate idempotency key returns existing row without second insert`() {
         runBlocking {
             val first = repo.save(row("idem-dup-1"))

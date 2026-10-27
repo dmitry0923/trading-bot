@@ -77,7 +77,20 @@ class RiskExposureService(
      * @return [RiskExposureReport] (без БД-записи)
      */
     suspend fun buildSnapshot(): RiskExposureReport {
-        val open = positionRepo.findByStatus(PositionStatus.OPEN)
+        // Скан-10 P2: позиция в RECONCILIATION_REQUIRED — реальная биржевая экспозиция
+        // с неизвестным состоянием. Исключать её из Gross/Net/VaR нельзя: снимок риска
+        // занижал бы портфель ровно в тот момент, когда состояние рассинхронизировано.
+        val open =
+            positionRepo.findByStatus(PositionStatus.OPEN) +
+                positionRepo.findByStatus(PositionStatus.RECONCILIATION_REQUIRED)
+        val unresolved = open.filter { it.status == PositionStatus.RECONCILIATION_REQUIRED }
+        if (unresolved.isNotEmpty()) {
+            logger.warn {
+                "Exposure snapshot includes ${unresolved.size} RECONCILIATION_REQUIRED position(s): " +
+                    unresolved.map { "${it.ticker}#${it.id}" }
+            }
+            meterRegistry.counter("risk.exposure.reconciliation_required").increment()
+        }
         val aum = aumProvider.currentAum()
         val timestamp = LocalDateTime.now()
 

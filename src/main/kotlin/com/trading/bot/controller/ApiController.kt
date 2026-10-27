@@ -405,6 +405,54 @@ class ApiController(
     @GetMapping("/positions/all")
     suspend fun getAllPositions() = positionRepository.findAll()
 
+    /**
+     * Разрешение позиции в статусе `RECONCILIATION_REQUIRED` после ручной сверки с биржей.
+     *
+     * Такой статус раньше был «тупиком»: позиция выпадала из `findOpenByAccount` и
+     * реконсиляторов, а эндпоинта перевода обратно не существовало (скан-10 P2).
+     *
+     * @param status `OPEN` — позиция реально открыта (вернуть в учёт и реконсиляцию);
+     *   `CLOSED` — на бирже пусто (закрыть локально, слот входа освобождается)
+     * @param closeReason причина закрытия для аудита (по умолчанию RECONCILE_PHANTOM)
+     */
+    @PostMapping("/positions/{positionId}/resolve-reconciliation")
+    suspend fun resolveReconciliation(
+        @PathVariable positionId: Long,
+        @RequestParam status: String,
+        @RequestParam(required = false) closeReason: String? = null,
+    ): Map<String, Any> {
+        val target =
+            runCatching { PositionStatus.valueOf(status.uppercase()) }.getOrNull()
+        require(target == PositionStatus.OPEN || target == PositionStatus.CLOSED) {
+            "status must be OPEN or CLOSED, got '$status'"
+        }
+        val position =
+            positionRepository.findByIdOrNull(positionId)
+                ?: throw IllegalArgumentException("position $positionId not found")
+        require(position.status == PositionStatus.RECONCILIATION_REQUIRED) {
+            "position $positionId is ${position.status}, not RECONCILIATION_REQUIRED"
+        }
+        val reason =
+            closeReason?.let { runCatching { CloseReason.valueOf(it.uppercase()) }.getOrNull() }
+                ?: CloseReason.RECONCILE_PHANTOM
+        val updated = positionRepository.resolveReconciliation(positionId, target, reason)
+        if (updated && target == PositionStatus.CLOSED) {
+            // Слот входа держится отдельной таблицей reservation: без освобождения
+            // тикер остался бы заблокированным для новых входов.
+            positionRepository.releaseEntry(position.ticker, position.accountId)
+        }
+        logger.info {
+            "Position $positionId (${position.ticker}) reconciliation resolved -> $target by API" +
+                if (updated) "" else " (no-op: status changed concurrently)"
+        }
+        meterRegistry.counter("positions.reconciliation_resolved", Tags.of("status", target.name)).increment()
+        return mapOf(
+            "positionId" to positionId,
+            "updated" to updated,
+            "status" to target.name,
+        )
+    }
+
     @GetMapping("/logs")
     suspend fun getLogs(
         @RequestParam(required = false) ticker: String?,

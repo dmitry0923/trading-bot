@@ -4,8 +4,10 @@ import com.trading.bot.config.ExperimentConfig
 import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.infrastructure.llm.PromptRegistry
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.ExperimentDecision
 import com.trading.bot.repository.ExperimentDecisionRepository
+import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -15,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
@@ -43,6 +46,7 @@ import java.math.RoundingMode
 class PaperTradingService(
     private val experimentConfig: ExperimentConfig,
     private val decisionRepository: ExperimentDecisionRepository,
+    private val positionRepository: PositionRepository,
     private val meterRegistry: MeterRegistry,
 ) {
     private val logger = KotlinLogging.logger {}
@@ -51,6 +55,53 @@ class PaperTradingService(
     @PreDestroy
     fun close() {
         scope.cancel()
+    }
+
+    /**
+     * Бэкфилл исходов, потерянных при крахе (скан-10 P3).
+     *
+     * `onPositionClosed` — единственный писатель `result_pnl`; если процесс падал
+     * между `transitionToClosed` и `markOutcome`, решение оставалось `closed = false`
+     * навсегда и A/B-выборка тихо теряла наблюдения. На старте добираем по факту
+     * закрытой позиции цикла (идемпотентно: markResult пишет те же значения).
+     */
+    @EventListener(ApplicationReadyEvent::class)
+    fun backfillOutcomesOnStartup() {
+        if (!isExperimentEnabled()) return
+        scope.launch {
+            try {
+                backfillOutcomes()
+            } catch (e: Exception) {
+                logger.warn(e) { "Experiment outcome backfill failed" }
+            }
+        }
+    }
+
+    /**
+     * Добор исходов по закрытым позициям (см. [backfillOutcomesOnStartup]).
+     *
+     * @return число восстановленных решений
+     */
+    internal suspend fun backfillOutcomes(): Int {
+        val unclosed = decisionRepository.findUnclosed()
+        if (unclosed.isEmpty()) return 0
+        var recovered = 0
+        for (group in unclosed.groupBy { it.cycleId to it.ticker }) {
+            val (cycleId, ticker) = group.key
+            val pnl =
+                positionRepository
+                    .findByCycleId(cycleId)
+                    .firstOrNull {
+                        it.ticker == ticker && it.status == PositionStatus.CLOSED && it.pnl != null
+                    }?.pnl ?: continue
+            markOutcome(cycleId, ticker, pnl)
+            recovered += group.value.size
+        }
+        if (recovered > 0) {
+            logger.warn { "Experiment outcomes backfilled on startup: $recovered decision(s)" }
+            meterRegistry.counter("experiment.outcome.backfilled").increment(recovered.toDouble())
+        }
+        return recovered
     }
 
     fun isExperimentEnabled(): Boolean = experimentConfig.enabled

@@ -23,6 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import org.springframework.boot.context.event.ApplicationReadyEvent
+import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.databind.ObjectMapper
@@ -87,6 +89,22 @@ class OrderOutboxService(
     @PreDestroy
     fun close() {
         scope.cancel()
+    }
+
+    /**
+     * Стартовый re-link (скан-10 P1): см. [relinkUnlinkedEntries]. Best-effort —
+     * сбой не должен мешать подъёму контекста, ордера retry-воркера продолжают работу.
+     */
+    @EventListener(ApplicationReadyEvent::class)
+    fun relinkOnStartup() {
+        scope.launch {
+            try {
+                val linked = relinkUnlinkedEntries()
+                if (linked > 0) logger.info { "Outbox startup re-link: $linked entry row(s) attached to positions" }
+            } catch (e: Exception) {
+                logger.error(e) { "Outbox startup re-link failed" }
+            }
+        }
     }
 
     data class PlaceOrderResult(
@@ -160,6 +178,39 @@ class OrderOutboxService(
         outboxId: UUID,
         positionId: Long,
     ) = outboxRepo.linkPosition(outboxId, positionId)
+
+    /**
+     * Стартовый re-link entry-строк outbox, оставшихся без `position_id`.
+     *
+     * Крах между сохранением позиции и [linkPosition] оставлял `SENT`-строку без
+     * связи: `resolveEntryViaOutbox` её не находил, позиция вечно висела
+     * `pendingEntry` (слот входа занят, защитные SL/TP не выставлены) — скан-10 P1.
+     * Связываем по `alor_order_id`: он пишется в позицию при подтверждении входа,
+     * поэтому крах в этом окне оставляет его в обеих записях.
+     */
+    suspend fun relinkUnlinkedEntries(): Int {
+        val orphans = outboxRepo.findSentWithoutPosition()
+        if (orphans.isEmpty()) return 0
+        var linked = 0
+        for (outbox in orphans) {
+            val orderId = outbox.alorOrderId ?: continue
+            val position = positionRepo.findByAlorOrderId(orderId)
+            if (position?.id == null) {
+                // Позиции нет вообще: крах ДО save() — это уже к биржевой
+                // реконсиляции (UNKNOWN_POSITION на WS-подключении).
+                meterRegistry.counter("outbox.relink", Tags.of("result", "no_position")).increment()
+                logger.warn {
+                    "Unlinked outbox ${outbox.id} order=$orderId has no local position — exchange reconciliation required"
+                }
+                continue
+            }
+            outbox.id?.let { outboxRepo.linkPosition(it, position.id) }
+            linked++
+            meterRegistry.counter("outbox.relink", Tags.of("result", "linked")).increment()
+            logger.warn { "Re-linked entry outbox ${outbox.id} to position ${position.id} (order=$orderId)" }
+        }
+        return linked
+    }
 
     /**
      * Гарантированная отмена биржевой заявки (защитные SL/TP при закрытии позиции,

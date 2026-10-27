@@ -601,12 +601,16 @@ class ProtectionOrderManager(
      */
     private suspend fun resetSlFillCounter(pos: Position) {
         pos.cumulativeSlFillQty = 0
-        pos.id?.let { positionRepo.resetProtectionFillQty(it, PositionRepository.ProtectionSide.SL) }
+        pos.id?.let {
+            positionRepo.resetProtectionFillQty(it, PositionRepository.ProtectionSide.SL, pos.slOrderId)
+        }
     }
 
     private suspend fun resetTpFillCounter(pos: Position) {
         pos.cumulativeTpFillQty = 0
-        pos.id?.let { positionRepo.resetProtectionFillQty(it, PositionRepository.ProtectionSide.TP) }
+        pos.id?.let {
+            positionRepo.resetProtectionFillQty(it, PositionRepository.ProtectionSide.TP, pos.tpOrderId)
+        }
     }
 }
 

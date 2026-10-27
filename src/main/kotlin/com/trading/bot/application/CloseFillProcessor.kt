@@ -403,12 +403,15 @@ class CloseFillProcessor(
      * Reset close state to clean OPEN. Only called AFTER exchange order is confirmed terminal.
      */
     private suspend fun resetCloseState(pos: Position) {
+        // Отменяемая заявка фиксируется ДО обнуления: reset не должен задеть счётчик
+        // уже выставленной новой заявки закрытия (скан-10 P3).
+        val cancelledOrderId = pos.closeOrderId
         pos.pendingClose = false
         pos.closeOrderId = null
         pos.closeReason = null
         pos.closeCancelPending = false
         pos.cumulativeCloseFillQty = 0
-        pos.id?.let { positionRepo.resetCloseFillQty(it) }
+        pos.id?.let { positionRepo.resetCloseFillQty(it, expectedOrderId = cancelledOrderId) }
         positionRepo.save(pos)
         logger.info { "Close state reset for ${pos.ticker} (${pos.id}) — position back to clean OPEN" }
     }

@@ -282,7 +282,7 @@ class ExecutionReconciler(
             // Position still OPEN — safe to clear old close state
             fresh.closeOrderId = null
             fresh.cumulativeCloseFillQty = 0
-            fresh.id?.let { positionRepo.resetCloseFillQty(it) }
+            fresh.id?.let { positionRepo.resetCloseFillQty(it, expectedOrderId = orderId) }
             fresh.closeReason = null
             fresh.closeCancelPending = false
             fresh.pendingClose = false

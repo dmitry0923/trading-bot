@@ -5,9 +5,12 @@ import com.trading.bot.domain.risk.TradeRiskDecision
 import com.trading.bot.event.PositionClosedEvent
 import com.trading.bot.infrastructure.llm.PromptRegistry
 import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.ExperimentDecision
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.ExperimentDecisionRepository
+import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
@@ -48,6 +51,7 @@ class PaperTradingServiceTest {
         }
 
     private val repository = mock<ExperimentDecisionRepository>()
+    private val positionRepository = mock<PositionRepository>()
 
     private val meterRegistry = SimpleMeterRegistry()
 
@@ -57,7 +61,7 @@ class PaperTradingServiceTest {
 
     @BeforeEach
     fun setUp() {
-        service = PaperTradingService(config, repository, meterRegistry)
+        service = PaperTradingService(config, repository, positionRepository, meterRegistry)
     }
 
     @AfterEach
@@ -282,6 +286,63 @@ class PaperTradingServiceTest {
         assertEquals(BigDecimal("100"), markedResults["cycle-1/CONTROL/SBER"])
         assertEquals(BigDecimal("-100"), markedResults["cycle-1/VARIANT/SBER"])
         runBlocking { verify(repository, never()).markResult(eq("other-cycle"), any(), any(), anyOrNull(), any()) }
+    }
+
+    @Test
+    fun `startup backfill marks outcome lost by a crash between close and marking`() {
+        // onPositionClosed — единственный писатель result_pnl: крах после закрытия
+        // оставлял решение closed=false навсегда (скан-10 P3).
+        stubMarkResult()
+        runBlocking {
+            whenever(repository.findUnclosed()).thenReturn(listOf(decisionRecord("cycle-9")))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-9", "CONTROL", "SBER"))
+                .thenReturn(listOf(decisionRecord("cycle-9")))
+            whenever(repository.findByCycleIdArmAndTicker("cycle-9", "VARIANT", "SBER"))
+                .thenReturn(emptyList())
+            whenever(positionRepository.findByCycleId("cycle-9")).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 2,
+                        entryPrice = BigDecimal("100"),
+                        pnl = BigDecimal("75"),
+                        status = PositionStatus.CLOSED,
+                    ),
+                ),
+            )
+        }
+
+        val recovered = runBlocking { service.backfillOutcomes() }
+
+        assertEquals(1, recovered)
+        assertEquals(BigDecimal("75"), markedResults["cycle-9/CONTROL/SBER"])
+        assertEquals(1.0, counter("experiment.outcome.backfilled"))
+    }
+
+    @Test
+    fun `startup backfill skips cycles without a closed position`() {
+        stubMarkResult()
+        runBlocking {
+            whenever(repository.findUnclosed()).thenReturn(listOf(decisionRecord("cycle-open")))
+            whenever(positionRepository.findByCycleId("cycle-open")).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 2,
+                        entryPrice = BigDecimal("100"),
+                        status = PositionStatus.OPEN,
+                    ),
+                ),
+            )
+        }
+
+        val recovered = runBlocking { service.backfillOutcomes() }
+
+        // Ничего не отмечаем: позиция ещё не закрыта (исхода ещё нет).
+        assertEquals(0, recovered)
+        assertTrue(markedResults.isEmpty(), "open position must not produce an outcome")
     }
 
     // ---------- helpers ----------

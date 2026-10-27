@@ -8,6 +8,10 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.PositionRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
@@ -206,6 +210,66 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
             repo.save(stale)
 
             assertEquals(6, repo.findById(saved.id)!!.quantity, "объём позиции монотонно убывает")
+        }
+    }
+
+    @Test
+    fun `resolveReconciliation reopens or closes a stuck position and is idempotent`() {
+        runBlocking {
+            val stuck =
+                repo.save(
+                    pos(ticker = "Si", status = PositionStatus.RECONCILIATION_REQUIRED, pendingClose = true),
+                )
+
+            assertTrue(repo.resolveReconciliation(stuck.id!!, PositionStatus.OPEN))
+            val reopened = repo.findById(stuck.id)
+            assertEquals(PositionStatus.OPEN, reopened.status)
+            assertFalse(reopened.pendingClose, "флаги ожидания сбрасываются при возврате в учёт")
+
+            // Повтор по уже разрешённой строке — no-op: статус не перетирается.
+            assertFalse(repo.resolveReconciliation(stuck.id, PositionStatus.CLOSED))
+
+            val stuck2 = repo.save(pos(ticker = "Si", status = PositionStatus.RECONCILIATION_REQUIRED))
+            assertTrue(repo.resolveReconciliation(stuck2.id!!, PositionStatus.CLOSED, CloseReason.RECONCILE_PHANTOM))
+            val closed = repo.findById(stuck2.id)
+            assertEquals(PositionStatus.CLOSED, closed.status)
+            assertEquals(CloseReason.RECONCILE_PHANTOM, closed.closeReason)
+            assertNotNull(closed.closedAt, "ручное закрытие фиксирует время закрытия")
+        }
+    }
+
+    @Test
+    fun `resolveReconciliation rejects any target except OPEN or CLOSED`() {
+        runBlocking {
+            val stuckId = repo.save(pos(status = PositionStatus.RECONCILIATION_REQUIRED)).id!!
+            assertThrows(IllegalArgumentException::class.java) {
+                runBlocking { repo.resolveReconciliation(stuckId, PositionStatus.TAKE_PROFIT) }
+            }
+            assertEquals(PositionStatus.RECONCILIATION_REQUIRED, repo.findById(stuckId).status)
+        }
+    }
+
+    @Test
+    fun `findRiskRelevant returns open and reconciliation-required positions only`() {
+        runBlocking {
+            repo.save(pos(ticker = "A"))
+            repo.save(pos(ticker = "B", status = PositionStatus.RECONCILIATION_REQUIRED))
+            repo.save(pos(ticker = "C", status = PositionStatus.CLOSED))
+
+            val relevant = repo.findRiskRelevant(null)
+
+            assertEquals(setOf("A", "B"), relevant.map { it.ticker }.toSet())
+        }
+    }
+
+    @Test
+    fun `reserveEntry is blocked by a reconciliation-required position of the same ticker`() {
+        runBlocking {
+            repo.save(pos(ticker = "Si", status = PositionStatus.RECONCILIATION_REQUIRED))
+
+            // Состояние на бирже неизвестно — второй вход по тому же тикеру запрещён
+            // (fail-closed), иначе возможна двойная экспозиция (скан-10 P2).
+            assertNull(repo.reserveEntry("Si", PositionDirection.LONG, null))
         }
     }
 }

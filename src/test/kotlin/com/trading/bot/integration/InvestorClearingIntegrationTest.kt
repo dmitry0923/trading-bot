@@ -22,6 +22,8 @@ import com.trading.bot.service.TradingHaltService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.mono
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -32,9 +34,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import org.springframework.transaction.reactive.TransactionalOperator
 import java.math.BigDecimal
 import java.time.LocalDateTime
 
@@ -79,6 +83,9 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
 
     @Autowired
     lateinit var tradingHaltService: TradingHaltService
+
+    @Autowired
+    lateinit var transactionalOperator: TransactionalOperator
 
     @MockitoBean
     lateinit var alorClient: AlorClient
@@ -131,6 +138,40 @@ class InvestorClearingIntegrationTest : AbstractTestContainerTest() {
             positionRepository.deleteAll()
             investorRepository.deleteAllData()
         }
+    }
+
+    @Test
+    fun `failed ledger write rolls the balance back inside the transaction`() {
+        // Проверяем саму инфраструктуру: без транзакции списание баланса осталось бы
+        // в БД, хотя проводка не записалась (скан-10 P3).
+        val view =
+            runBlocking {
+                investorService.createInvestor("Rollback", null, BigDecimal("1000"))
+            }
+        val accountId = view.account.id
+
+        runBlocking {
+            val failure =
+                assertThrows<IllegalStateException> {
+                    runBlocking {
+                        transactionalOperator
+                            .transactional(
+                                mono<Unit> {
+                                    investorRepository.debitBalanceIfSufficient(
+                                        accountId,
+                                        BigDecimal("400"),
+                                        LocalDateTime.now(),
+                                    )
+                                    error("ledger write failed")
+                                },
+                            ).awaitSingle()
+                    }
+                }
+            assertEquals("ledger write failed", failure.message)
+        }
+
+        val after = runBlocking { investorService.getInvestor(view.investor.id) }
+        assertEquals(0, BigDecimal("1000").compareTo(after.account.balance), "баланс не должен измениться")
     }
 
     @Test

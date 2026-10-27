@@ -13,6 +13,7 @@ import com.trading.bot.model.entity.OutboxStatus
 import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
+import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -1457,6 +1458,75 @@ class OrderOutboxServiceTest {
             Mockito
                 .verify(outboxRepo, Mockito.timeout(3000))
                 .claimRetryable(Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt(), Mockito.anyInt())
+        }
+    }
+
+    @Test
+    fun `startup relink attaches sent entry row to the position found by order id`() {
+        // Крах между save() позиции и linkPosition() оставлял строку SENT без
+        // positionId: resolveEntryViaOutbox не находил её, позиция висела
+        // pendingEntry навсегда (скан-10 P1).
+        val outbox =
+            OrderOutbox(
+                id = UUID.randomUUID(),
+                payloadJson = "{}",
+                status = OutboxStatus.SENT,
+                alorOrderId = "ord-1",
+                idempotencyKey = "idem-relink",
+            )
+        val position =
+            Position(
+                id = 5L,
+                ticker = "Si",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("92000"),
+                alorOrderId = "ord-1",
+                status = PositionStatus.OPEN,
+            )
+        runBlocking {
+            Mockito.`when`(outboxRepo.findSentWithoutPosition()).thenReturn(listOf(outbox))
+            Mockito.`when`(positionRepo.findByAlorOrderId("ord-1")).thenReturn(position)
+
+            val linked = service.relinkUnlinkedEntries()
+
+            assertEquals(1, linked)
+            Mockito.verify(outboxRepo).linkPosition(outbox.id!!, 5L)
+        }
+    }
+
+    @Test
+    fun `startup relink leaves rows without local position for exchange reconciliation`() {
+        val outbox =
+            OrderOutbox(
+                id = UUID.randomUUID(),
+                payloadJson = "{}",
+                status = OutboxStatus.SENT,
+                alorOrderId = "ord-2",
+                idempotencyKey = "idem-no-pos",
+            )
+        runBlocking {
+            Mockito.`when`(outboxRepo.findSentWithoutPosition()).thenReturn(listOf(outbox))
+            Mockito.`when`(positionRepo.findByAlorOrderId("ord-2")).thenReturn(null)
+
+            val linked = service.relinkUnlinkedEntries()
+
+            assertEquals(0, linked)
+            Mockito.verify(outboxRepo, Mockito.never()).linkPosition(anyUuid(), Mockito.anyLong())
+        }
+        // Позиции нет вообще (крах до save) — сигнал отдан биржевой реконсиляции,
+        // а не «тихому» пропуску.
+        assertEquals(1.0, meterRegistry.counter("outbox.relink", Tags.of("result", "no_position")).count())
+    }
+
+    @Test
+    fun `startup relink is a no-op when nothing is orphaned`() {
+        runBlocking {
+            Mockito.`when`(outboxRepo.findSentWithoutPosition()).thenReturn(emptyList())
+
+            assertEquals(0, service.relinkUnlinkedEntries())
+
+            Mockito.verify(positionRepo, Mockito.never()).findByAlorOrderId(Mockito.anyString())
         }
     }
 }

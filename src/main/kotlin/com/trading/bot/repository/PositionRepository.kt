@@ -237,6 +237,89 @@ class PositionRepository(
             .awaitSingle()
     }
 
+    /** Как [findById], но отсутствие строки возвращает null (400 вместо 500 в API). */
+    suspend fun findByIdOrNull(id: Long): Position? =
+        databaseClient
+            .sql("SELECT * FROM positions WHERE id = :id")
+            .bind("id", id)
+            .map { row, _ -> toPosition(row) }
+            .one()
+            .awaitSingleOrNull()
+
+    /**
+     * Позиции, релевантные риск-агрегатам входа: `OPEN` + `RECONCILIATION_REQUIRED`.
+     *
+     * `RECONCILIATION_REQUIRED` — реальная биржевая позиция неизвестного состояния.
+     * Игнорировать её в MAX_POSITIONS/Gross/Net нельзя: после снятия halt оператор
+     * мог открыть второй вход по тому же тикеру (скан-10 P2). Для циклов
+     * реконсиляции статус по-прежнему не OPEN — там остаётся [findOpenByAccount].
+     */
+    suspend fun findRiskRelevant(accountId: Long?): List<Position> {
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM positions WHERE status IN ('OPEN', 'RECONCILIATION_REQUIRED') " +
+                    "AND account_id IS NULL ORDER BY opened_at DESC"
+            } else {
+                "SELECT * FROM positions WHERE status IN ('OPEN', 'RECONCILIATION_REQUIRED') " +
+                    "AND account_id = :accountId ORDER BY opened_at DESC"
+            }
+        val spec = databaseClient.sql(sql)
+        return (if (accountId != null) spec.bind("accountId", accountId) else spec)
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
+    /**
+     * Разрешение позиции, «застрявшей» в `RECONCILIATION_REQUIRED` после ручной
+     * сверки с биржей (скан-10 P2): эндпоинта/команды перевода обратно не было,
+     * поэтому такая позиция навсегда выпадала из риск-контура и реконсиляции.
+     *
+     * Допустимы только `OPEN` (позиция реально есть — вернуть в учёт) и `CLOSED`
+     * (на бирже пусто — закрыть локально). Перевод атомарен по предикату статуса:
+     * повторный вызов не перетирает уже разрешённую строку.
+     *
+     * @return true, если строка действительно переведена
+     */
+    suspend fun resolveReconciliation(
+        id: Long,
+        target: PositionStatus,
+        closeReason: CloseReason = CloseReason.RECONCILE_PHANTOM,
+    ): Boolean {
+        val sql =
+            when (target) {
+                PositionStatus.OPEN -> {
+                    """
+                    UPDATE positions
+                    SET status = 'OPEN', pending_close = FALSE, pending_entry = FALSE,
+                        closed_at = NULL, close_reason = NULL
+                    WHERE id = :id AND status = 'RECONCILIATION_REQUIRED'
+                    """.trimIndent()
+                }
+
+                PositionStatus.CLOSED -> {
+                    """
+                    UPDATE positions
+                    SET status = 'CLOSED', pending_close = FALSE, pending_entry = FALSE,
+                        close_reason = :closeReason, closed_at = now()
+                    WHERE id = :id AND status = 'RECONCILIATION_REQUIRED'
+                    """.trimIndent()
+                }
+
+                else -> {
+                    throw IllegalArgumentException("resolve target must be OPEN or CLOSED, got $target")
+                }
+            }
+        return databaseClient
+            .sql(sql)
+            .bind("id", id)
+            .let { if (target == PositionStatus.CLOSED) it.bind("closeReason", closeReason.name) else it }
+            .fetch()
+            .rowsUpdated()
+            .awaitSingle() > 0
+    }
+
     /**
      * Все позиции цикла (lineage): открытие ведётся на signal цикла, поэтому
      * cycle_id связывает сделку с полной цепочкой решения. Используется
@@ -642,25 +725,51 @@ class PositionRepository(
      *
      * `save()` пишет счётчики через `GREATEST` (защита от stale-копии), поэтому
      * легитимное обнуление делается отдельным узким UPDATE (скан-9 P2).
+     *
+     * @param expectedOrderId заявка, к которой относится счётчик. Если за это время
+     *   позиция уже перевооружена НОВОЙ заявкой, запоздавший reset со старым id не
+     *   должен обнулять счётчик новой (скан-10 P3). `null` — сброс без проверки.
      */
     suspend fun resetProtectionFillQty(
         id: Long,
         side: ProtectionSide,
+        expectedOrderId: String? = null,
     ) {
         val column = if (side == ProtectionSide.SL) "cumulative_sl_fill_qty" else "cumulative_tp_fill_qty"
-        databaseClient
-            // Только OPEN: у закрытой позиции счётчик — исторический аудит, обнулять нельзя.
-            .sql("UPDATE positions SET $column = 0 WHERE id = :id AND status = 'OPEN'")
-            .bind("id", id)
+        val orderColumn = if (side == ProtectionSide.SL) "sl_order_id" else "tp_order_id"
+        val sql =
+            if (expectedOrderId == null) {
+                // Только OPEN: у закрытой позиции счётчик — исторический аудит, обнулять нельзя.
+                "UPDATE positions SET $column = 0 WHERE id = :id AND status = 'OPEN'"
+            } else {
+                "UPDATE positions SET $column = 0 WHERE id = :id AND status = 'OPEN' " +
+                    "AND $orderColumn = :expectedOrderId"
+            }
+        val spec = databaseClient.sql(sql).bind("id", id)
+        (if (expectedOrderId != null) spec.bind("expectedOrderId", expectedOrderId) else spec)
             .then()
             .awaitSingleOrNull()
     }
 
-    /** Сброс счётчика закрывающих филов (новый close-attempt). */
-    suspend fun resetCloseFillQty(id: Long) {
-        databaseClient
-            .sql("UPDATE positions SET cumulative_close_fill_qty = 0 WHERE id = :id AND status = 'OPEN'")
-            .bind("id", id)
+    /**
+     * Сброс счётчика закрывающих филов (новый close-attempt).
+     *
+     * @param expectedOrderId отменённая заявка закрытия; запоздавший reset не должен
+     *   обнулять счётчик уже выставленной новой (скан-10 P3).
+     */
+    suspend fun resetCloseFillQty(
+        id: Long,
+        expectedOrderId: String? = null,
+    ) {
+        val sql =
+            if (expectedOrderId == null) {
+                "UPDATE positions SET cumulative_close_fill_qty = 0 WHERE id = :id AND status = 'OPEN'"
+            } else {
+                "UPDATE positions SET cumulative_close_fill_qty = 0 WHERE id = :id AND status = 'OPEN' " +
+                    "AND close_order_id = :expectedOrderId"
+            }
+        val spec = databaseClient.sql(sql).bind("id", id)
+        (if (expectedOrderId != null) spec.bind("expectedOrderId", expectedOrderId) else spec)
             .then()
             .awaitSingleOrNull()
     }
@@ -818,7 +927,7 @@ class PositionRepository(
                 WHERE er.ticker = :ticker AND COALESCE(er.account_id, 0) = COALESCE(:accountId, 0)
             ) AND NOT EXISTS (
                 SELECT 1 FROM positions p
-                WHERE p.status = 'OPEN' AND p.ticker = :ticker
+                WHERE p.status IN ('OPEN', 'RECONCILIATION_REQUIRED') AND p.ticker = :ticker
                   AND COALESCE(p.account_id, 0) = COALESCE(:accountId, 0)
             )
             ON CONFLICT DO NOTHING

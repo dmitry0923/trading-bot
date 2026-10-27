@@ -90,6 +90,8 @@ class RiskExposureServiceTest {
 
     private suspend fun stubPositions(positions: List<Position>) {
         Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(positions)
+        // Снимок риска включает и RECONCILIATION_REQUIRED (скан-10 P2) — по умолчанию пусто.
+        Mockito.`when`(positionRepo.findByStatus(PositionStatus.RECONCILIATION_REQUIRED)).thenReturn(emptyList())
     }
 
     private fun stubCorrelations(
@@ -216,5 +218,29 @@ class RiskExposureServiceTest {
             // → нотионал 70000 × 1 × 1000, а не «пункты как рубли» (70000).
             assertEquals(BigDecimal("70000000.00"), report.grossExposureRub)
             assertEquals(BigDecimal("70000000.00"), report.perPositionExposure.single().notionalRub)
+        }
+
+    @Test
+    fun `reconciliation-required position stays visible in exposure`() =
+        runBlocking {
+            // Рассинхрон не должен «прятать» реальную биржевую экспозицию от лимитов
+            // и VaR (скан-10 P2).
+            stubPositions(emptyList())
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.RECONCILIATION_REQUIRED)).thenReturn(
+                listOf(
+                    position("SBER", BigDecimal("100")).copy(
+                        status = PositionStatus.RECONCILIATION_REQUIRED,
+                    ),
+                ),
+            )
+            stubAum()
+            stubCorrelations(listOf("SBER"), 1.0)
+            stubVols(listOf("SBER"))
+
+            val report = service.buildSnapshot()
+
+            assertEquals(0.2, report.grossExposurePercent.toDouble(), 0.001)
+            assertEquals(1, report.perPositionExposure.size)
+            assertEquals(1.0, meterRegistry.counter("risk.exposure.reconciliation_required").count())
         }
 }

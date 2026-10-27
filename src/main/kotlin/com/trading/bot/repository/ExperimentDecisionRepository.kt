@@ -92,6 +92,22 @@ class ExperimentDecisionRepository(
             .awaitSingle()
 
     /**
+     * Решения без зафиксированного исхода (`closed = FALSE`).
+     *
+     * Крах между `transitionToClosed` и `markOutcome` терял исход эксперимента
+     * навсегда: `onPositionClosed` — единственный писатель `result_pnl`, а
+     * бэкфилла не существовало (скан-10 P3).
+     */
+    suspend fun findUnclosed(limit: Int = 500): List<ExperimentDecision> =
+        databaseClient
+            .sql("SELECT * FROM experiment_decisions WHERE closed = FALSE ORDER BY decided_at ASC LIMIT :limit")
+            .bind("limit", limit.coerceIn(1, 1000))
+            .map { row, _ -> toDecision(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /**
      * Все решения конкретной руки по тикеру в цикле. В одном цикле на каждый
      * тикер (и таймфрейм) пишется своя строка, поэтому результат — список,
      * а не одна запись: `LIMIT 1`/`.one()` теряли остальные строки.

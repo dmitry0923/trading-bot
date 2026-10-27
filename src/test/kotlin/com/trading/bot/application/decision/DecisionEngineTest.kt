@@ -108,7 +108,7 @@ class DecisionEngineTest {
             Mockito.`when`(alorClient.getMarketSnapshot("Si")).thenReturn(
                 MarketSnapshot(ticker = "Si", currentPrice = BigDecimal("100")),
             )
-            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(emptyList())
+            Mockito.`when`(positionRepo.findRiskRelevant(null)).thenReturn(emptyList())
             Mockito
                 .`when`(portfolioRiskEngine.evaluate(anyPortfolioRiskRequest()))
                 .thenReturn(PortfolioRiskReport(allowed = true))
@@ -321,7 +321,9 @@ class DecisionEngineTest {
         runBlocking {
             Mockito.`when`(tradingAccountService.selectAccount()).thenReturn(5L)
             Mockito.`when`(tradingAccountService.hasEnabledAccounts()).thenReturn(true)
-            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(listOf(own1, other, own2))
+            // Репозиторий фильтрует по аккаунту сам (скан-10 P2), движок дополнительно
+            // отсекает чужие позиции — защита от ошибки скоупа на уровне запроса.
+            Mockito.`when`(positionRepo.findRiskRelevant(5L)).thenReturn(listOf(own1, other, own2))
             engine(profile).openPosition(signal(), gateway())
         }
 

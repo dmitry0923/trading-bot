@@ -1,7 +1,11 @@
 package com.trading.bot.integration
 
+import com.trading.bot.model.PositionDirection
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.entity.Candle
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.CandleRepository
+import com.trading.bot.repository.PositionRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -53,6 +57,9 @@ class ApiControllerHeavyEndpointsIntegrationTest : AbstractTestContainerTest() {
 
     @Autowired
     lateinit var candleRepository: CandleRepository
+
+    @Autowired
+    lateinit var positionRepository: PositionRepository
 
     private val objectMapper = ObjectMapper()
 
@@ -239,6 +246,38 @@ class ApiControllerHeavyEndpointsIntegrationTest : AbstractTestContainerTest() {
 
         // Возвращаем торговлю во включённое состояние, чтобы не влиять на другие тесты класса.
         assertOkJson("/api/v1/trading/enable", method = "POST")
+    }
+
+    @Test
+    fun `reconciliation required position is resolved through operator endpoint`() {
+        // Рассинхрон раньше был «тупиком»: статус выпадал из всех реконсиляторов,
+        // а перевести позицию обратно было нечем (скан-10 P2).
+        val stuck =
+            runBlocking {
+                positionRepository.save(
+                    Position(
+                        ticker = "RECON_SYNTH",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100.00"),
+                        status = PositionStatus.RECONCILIATION_REQUIRED,
+                    ),
+                )
+            }
+
+        val resolved =
+            assertOkJson(
+                "/api/v1/positions/${stuck.id}/resolve-reconciliation?status=closed",
+                method = "POST",
+            )
+        assertEquals(true, resolved.get("updated").asBoolean())
+        assertEquals("CLOSED", resolved.get("status").asString())
+        assertEquals(PositionStatus.CLOSED, runBlocking { positionRepository.findById(stuck.id!!) }.status)
+
+        // Повторный resolve по уже разрешённой строке — 400, а не тихий 200 no-op:
+        // оператор должен увидеть, что решать нечего.
+        val repeated = post("/api/v1/positions/${stuck.id}/resolve-reconciliation?status=OPEN")
+        assertEquals(400, repeated.statusCode(), repeated.body())
     }
 
     @Test

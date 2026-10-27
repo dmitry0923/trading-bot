@@ -297,7 +297,10 @@ class DecisionEngine(
         // F-11 (roadmap 13.25): открытые позиции берутся ТОЛЬКО по выбранному аккаунту —
         // иначе MAX_POSITIONS, корреляционные и портфельные лимиты считались по ПУЛУ всех
         // аккаунтов. accountId = null (legacy) — позиции с account_id = NULL.
-        val openPositions = positionRepo.findByStatus(PositionStatus.OPEN).filter { it.accountId == accountId }
+        // Скан-10 P2: в агрегаты входит и RECONCILIATION_REQUIRED — позиция с неизвестным
+        // биржевым состоянием иначе невидима лимитам, и после снятия halt открывался
+        // второй вход по тому же тикеру.
+        val openPositions = positionRepo.findRiskRelevant(accountId).filter { it.accountId == accountId }
 
         // Риск-этап: Да/Нет (дневной лимит, drawdown, волатильность, дубли,
         // лимиты позиций/секторов, ATR%, STRESS, валидность входных данных).

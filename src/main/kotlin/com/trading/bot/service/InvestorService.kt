@@ -10,7 +10,10 @@ import com.trading.bot.model.entity.InvestorTransactionType
 import com.trading.bot.repository.InvestorRepository
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.reactor.awaitSingle
+import kotlinx.coroutines.reactor.mono
 import org.springframework.stereotype.Service
+import org.springframework.transaction.reactive.TransactionalOperator
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Clock
@@ -32,6 +35,8 @@ import java.util.UUID
 class InvestorService(
     private val investorRepo: InvestorRepository,
     private val positionRepo: PositionRepository,
+    /** Оператор транзакций: деньги и проводка применяются атомарно (скан-10 P3). */
+    private val transactionalOperator: TransactionalOperator,
     /** Бизнес-время (МСК): метки операций и дата делового дня. */
     private val clock: Clock = Clock.system(BUSINESS_ZONE),
 ) {
@@ -84,14 +89,14 @@ class InvestorService(
         val investor = requireInvestor(investorId)
         val account = requireAccount(investorId)
 
-        // Атомарное условное списание: проверка достаточности и списание — один
-        // UPDATE. Read-then-write (`saveAccount` снимком) терял параллельные
-        // операции, а `max(0, …)` прощал нехватку.
-        investorRepo.debitBalanceIfSufficient(account.id, amount, LocalDateTime.now(clock))
-            ?: throw IllegalArgumentException("Insufficient balance: ${account.balance} < $amount")
-        // Баланс уже списан: сбой записи в леджер компенсируем возвратом,
-        // иначе деньги ушли со счёта без проводки (скан-4 P2).
-        try {
+        // Атомарное условное списание и проводка — одна транзакция: прежняя
+        // компенсация в catch не покрывала падение процесса (скан-10 P3).
+        inTransaction {
+            // Атомарное условное списание: проверка достаточности и списание — один
+            // UPDATE. Read-then-write (`saveAccount` снимком) терял параллельные
+            // операции, а `max(0, …)` прощал нехватку.
+            investorRepo.debitBalanceIfSufficient(account.id, amount, LocalDateTime.now(clock))
+                ?: throw IllegalArgumentException("Insufficient balance: ${account.balance} < $amount")
             recordTransaction(
                 investorId = investorId,
                 accountId = account.id,
@@ -99,9 +104,6 @@ class InvestorService(
                 amount = amount,
                 description = description ?: "Ручной вывод",
             )
-        } catch (e: Exception) {
-            investorRepo.reverseBalance(account.id, amount, LocalDateTime.now(clock))
-            throw e
         }
         logger.info { "Withdrawal for $investorId: $amount ₽" }
         return viewOf(investor, requireAccount(investorId))
@@ -150,12 +152,13 @@ class InvestorService(
         account: InvestorAccount,
         amount: BigDecimal,
     ) {
-        // Атомарный инкремент: снимок `saveAccount` затирал параллельные операции.
-        investorRepo.creditDeposit(account.id, amount, LocalDateTime.now(clock))
-            ?: throw IllegalStateException("Account not found: ${account.id}")
-        // Баланс/аллокация пишутся после зачисления: сбой леджера компенсируем
-        // обратным списанием, иначе баланс и журнал расходятся (скан-4 P2).
-        try {
+        // Баланс, проводка и аллокация — одна транзакция: крах процесса между
+        // ними больше не оставляет «деньги без записи» (скан-10 P3). Прежняя
+        // try/catch-компенсация покрывала только исключение, не сбой процесса.
+        inTransaction {
+            // Атомарный инкремент: снимок `saveAccount` затирал параллельные операции.
+            investorRepo.creditDeposit(account.id, amount, LocalDateTime.now(clock))
+                ?: throw IllegalStateException("Account not found: ${account.id}")
             recordTransaction(
                 investorId = investor.id,
                 accountId = account.id,
@@ -171,10 +174,18 @@ class InvestorService(
                     amount = amount,
                 ),
             )
-        } catch (e: Exception) {
-            investorRepo.reverseBalance(account.id, amount.negate(), LocalDateTime.now(clock))
-            throw e
         }
+    }
+
+    /**
+     * Выполняет блок в одной транзакции R2DBC.
+     *
+     * Контекст транзакции передаётся через Reactor-context, поэтому `mono { }`
+     * (корутинный мост) исполняется внутри того же соединения: все записи
+     * репозиториев коммитятся или откатываются вместе.
+     */
+    private suspend fun inTransaction(block: suspend () -> Unit) {
+        transactionalOperator.transactional(mono<Unit> { block() }).awaitSingle()
     }
 
     private suspend fun recordTransaction(

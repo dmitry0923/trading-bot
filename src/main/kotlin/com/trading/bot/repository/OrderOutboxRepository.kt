@@ -218,6 +218,25 @@ class OrderOutboxRepository(
     }
 
     /**
+     * Отправленные entry-строки, оставшиеся без `position_id`.
+     *
+     * Крах между `positionRepo.save()` и [linkPosition] оставлял строку `SENT`
+     * без связи: реконсилятор ищет строку по `payload->>'positionId'` и не находил,
+     * позиция навсегда оставалась `pendingEntry` (слот входа занят, SL/TP не
+     * выставлены) — скан-10 P1.
+     */
+    suspend fun findSentWithoutPosition(limit: Int = 100): List<OrderOutbox> =
+        databaseClient
+            .sql(
+                "SELECT * FROM order_outbox WHERE status = 'SENT' AND position_id IS NULL " +
+                    "AND alor_order_id IS NOT NULL ORDER BY created_at ASC LIMIT :limit",
+            ).bind("limit", limit)
+            .map { row, _ -> toOrderOutbox(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /**
      * Последняя outbox-запись для позиции (для сверки входов/закрытий).
      *
      * @param purpose назначение ордера ("entry"/"close"/"sl"/"tp") — фильтр по

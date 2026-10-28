@@ -403,7 +403,10 @@ class ApiController(
     suspend fun getOpenPositions() = positionRepository.findByStatus(PositionStatus.OPEN)
 
     @GetMapping("/positions/all")
-    suspend fun getAllPositions() = positionRepository.findAll()
+    suspend fun getAllPositions(
+        @RequestParam(defaultValue = "500") limit: Int,
+        @RequestParam(defaultValue = "0") offset: Int,
+    ) = positionRepository.findPage(limit, offset)
 
     /**
      * Разрешение позиции в статусе `RECONCILIATION_REQUIRED` после ручной сверки с биржей.
@@ -499,7 +502,7 @@ class ApiController(
     @GetMapping("/risk/drawdown")
     suspend fun getDrawdownStatus(
         @RequestParam(name = "accountId", required = false) accountId: Long? = null,
-    ) = drawdownProtectionService.computeStatus(accountId)
+    ) = drawdownProtectionService.computeStatus(accountId, persist = false)
 
     /**
      * Append-only audit trail позиции (Event Sourcing): события
@@ -1328,7 +1331,9 @@ class ApiController(
             ).increment()
         val effectiveDays = days ?: backtestConfig.days
         val effectiveTimeframe = timeframe ?: backtestConfig.timeframe
-        val effectiveSimulations = simulations ?: backtestConfig.monteCarloSimulations
+        // Верхняя граница: `simulations` приходит из query и раньше уходил прямо в
+        // Array(simulations) → одно значение вида 10^9 валило сервис OOM (скан-13 P3).
+        val effectiveSimulations = (simulations ?: backtestConfig.monteCarloSimulations).coerceIn(10, 5_000)
         val effectiveSeed = seed ?: backtestConfig.monteCarloSeed
         if (loadHistory) {
             historicalDataLoader.loadAndSave(ticker, effectiveDays)

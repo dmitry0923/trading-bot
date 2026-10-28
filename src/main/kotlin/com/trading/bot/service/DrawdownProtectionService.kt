@@ -167,6 +167,23 @@ class DrawdownProtectionService(
         } catch (e: Exception) {
             logger.warn(e) { "Failed to load daily risk state at startup" }
         }
+        // Скан-15 P1: rolling 7д/30д лимиты и Shadow-mode считались ТОЛЬКО в computeStatus,
+        // который вызывается из HTTP и события закрытия. После рестарта до первого закрытия
+        // кэш был пуст → `isEntryBlocked` отдавал нейтральный статус, и вход открывался при
+        // уже пробитом лимите. Прогреваем кэш чтением (persist=false — ничего не пишем).
+        scope.launch {
+            try {
+                computeStatus(accountId = null, persist = false)
+                tradingAccountService.findAll().forEach { account ->
+                    computeStatus(accountId = account.id, persist = false)
+                }
+                logger.info {
+                    "Drawdown state warmed at startup: rolling 7d/30d limits and shadow mode restored from DB"
+                }
+            } catch (e: Exception) {
+                logger.warn(e) { "Failed to warm drawdown state at startup" }
+            }
+        }
     }
 
     /**
@@ -177,9 +194,17 @@ class DrawdownProtectionService(
      * агрегаты, AUM, дневной аккумулятор и Shadow/Read-only режим считаются по позициям
      * конкретного [accountId]; accountId = null — legacy-путь без привязки.
      *
+     * @param persist писать ли снимок в `daily_risk_snapshot` и разрешать ли автоблокировку.
+     *   HTTP-путь (`GET /risk/drawdown`) обязан вызывать с `false`: чтение не должно
+     *   менять состояние и тем более останавливать торговлю (скан-13 P1);
+     *   write-путь (событие закрытия) оставляет `true`.
+     *
      * @return текущий [DrawdownStatus]
      */
-    suspend fun computeStatus(accountId: Long? = null): DrawdownStatus {
+    suspend fun computeStatus(
+        accountId: Long? = null,
+        persist: Boolean = true,
+    ): DrawdownStatus {
         // RISK-OPEN-3 (roadmap 13.28.3): сброс/восстановление дневного стейта
         // сериализован тем же монитором, что и @Synchronized updateDailyPnl.
         synchronized(this) {
@@ -216,7 +241,9 @@ class DrawdownProtectionService(
                     loadAccountDailyStateAwait(accountId, now.toLocalDate())
                     val snapshot =
                         synchronized(this) {
-                            if (accountDirty[accountId] != true) {
+                            // Read-путь (persist=false) не переписывает аккумулятор:
+                            // отчёт обязан быть только чтением.
+                            if (persist && accountDirty[accountId] != true) {
                                 accountPnl[accountId] = dailyPnl
                                 accountLossReached[accountId] = dailyPnl <= effectiveDailyLossLimitRubFor(accountId, aum).negate()
                             }
@@ -226,18 +253,18 @@ class DrawdownProtectionService(
                                 peakEquity = accountPeakEquity[accountId],
                             )
                         }
-                    persistDailyStateAwait(snapshot, accountId)
+                    if (persist) persistDailyStateAwait(snapshot, accountId)
                     effectiveDailyLossLimitRubFor(accountId, aum)
                 } else {
                     val snapshot =
                         synchronized(this) {
-                            if (!accumulatorDirty) {
+                            if (persist && !accumulatorDirty) {
                                 todayPnl = dailyPnl
                                 todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
                             }
                             PersistedDailyState(todayPnl, todayDailyLossReached, todayPeakEquity)
                         }
-                    persistDailyStateAwait(snapshot, null)
+                    if (persist) persistDailyStateAwait(snapshot, null)
                     effectiveDailyLossLimitRub(aum)
                 }
             }
@@ -258,7 +285,7 @@ class DrawdownProtectionService(
             hourlyPnl.toDouble(),
             if (accountId != null) Tags.of("account", accountId.toString()) else Tags.empty(),
         )
-        if (riskConfig.autoStopEnabled) {
+        if (persist && riskConfig.autoStopEnabled) {
             val hourlyLossLimit = percentOfAum(aum, riskConfig.autoStopHourlyLossPercent)
             val triggeredUntil = autoStopTriggeredUntilByAccount[key(accountId)]
             if (hourlyPnl <= hourlyLossLimit.negate() &&

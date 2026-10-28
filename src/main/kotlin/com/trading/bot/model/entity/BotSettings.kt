@@ -26,7 +26,7 @@ data class BotSettings(
     val tradingHoursEnd: String = "18:30",
     val botIntervalMs: Long = 300000,
     val strategyIntervalMs: Long = 600000,
-    val kellyFraction: Double = 0.5,
+    val kellyFraction: Double = 0.25,
     val timeframes: List<String> = listOf("MINUTE_10"),
     val llmProvider: String = "ROUTER_AI",
     val llmModel: String = "",

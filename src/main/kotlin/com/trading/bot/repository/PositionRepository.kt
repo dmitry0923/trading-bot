@@ -481,6 +481,27 @@ class PositionRepository(
             .awaitSingle()
 
     /**
+     * Страница позиций (листинг API).
+     *
+     * Полная история в память (`findAll`) при росте таблицы — OOM/latency: `positions`
+     * партиционирована, поэтому запрос без LIMIT читает все партиции (скан-13 P3).
+     * `LIMIT/OFFSET` усекает выборку; индекс `idx_positions_opened_at` (миграция 045)
+     * снимает Sort.
+     */
+    suspend fun findPage(
+        limit: Int,
+        offset: Int,
+    ): List<Position> =
+        databaseClient
+            .sql("SELECT * FROM positions ORDER BY opened_at DESC, id DESC LIMIT :limit OFFSET :offset")
+            .bind("limit", limit.coerceIn(1, 5_000))
+            .bind("offset", offset.coerceAtLeast(0))
+            .map { row, _ -> toPosition(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+
+    /**
      * Закрытые позиции (status != OPEN) для экспорта ML-датасета (roadmap v2.4).
      * Необязательные фильтры: [ticker], [since] (по closedAt).
      */

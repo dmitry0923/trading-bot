@@ -214,6 +214,21 @@ class PositionRepositoryIntegrationTest : AbstractTestContainerTest() {
     }
 
     @Test
+    fun `findPage returns a bounded slice ordered by opened_at desc`() {
+        runBlocking {
+            // Полная история в память (findAll) — OOM-риск; листинг обязан быть страницей.
+            val now = java.time.LocalDateTime.now()
+            repo.save(pos(ticker = "OLD", openedAt = now.minusHours(2)))
+            repo.save(pos(ticker = "MID", openedAt = now.minusHours(1)))
+            repo.save(pos(ticker = "NEW", openedAt = now))
+
+            assertEquals(listOf("NEW", "MID"), repo.findPage(limit = 2, offset = 0).map { it.ticker })
+            assertEquals(listOf("OLD"), repo.findPage(limit = 2, offset = 2).map { it.ticker })
+            assertEquals(listOf("NEW", "MID", "OLD"), repo.findPage(limit = 100, offset = 0).map { it.ticker })
+        }
+    }
+
+    @Test
     fun `resolveReconciliation reopens or closes a stuck position and is idempotent`() {
         runBlocking {
             val stuck =

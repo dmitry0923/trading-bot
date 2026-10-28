@@ -492,6 +492,24 @@ class OrderExecutionEngine(
 
         val current = positionRepo.findById(positionId)
 
+        if (current.pendingEntry) {
+            // Неподтверждённый вход: market-закрытие продавало бы объём, которого может не быть
+            // (для фьючерса — открывало бы противоположную позицию), а entry-заявка оставалась
+            // бы живой на бирже (скан-15 P0). Сначала снимаем вход и сверяемся, закрытие
+            // подтверждённого остатка выполнит следующий проход.
+            logger.warn {
+                "Close skipped for ${current.ticker} ($reason): entry is not confirmed — " +
+                    "cancelling entry and reconciling before any market close"
+            }
+            current.alorOrderId?.let { entryOrderId ->
+                orderOutboxService.placeCancelOrder(positionId, entryOrderId, accountId = current.accountId)
+            }
+            positionRepo.releaseCloseClaim(positionId)
+            meterRegistry.counter("$metricPrefix.close.pending_entry_skipped", Tags.of("ticker", current.ticker)).increment()
+            reconciler.reconcilePosition(positionRepo.findById(positionId))
+            return
+        }
+
         if (current.pendingClose && current.closeOrderId != null) {
             if (current.closeCancelPending) {
                 return

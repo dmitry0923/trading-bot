@@ -38,4 +38,44 @@ class TradingHaltServiceTest {
 
         assertNull(service.last())
     }
+
+    @Test
+    fun `stale daily loss halt is ignored on the next trading day`() {
+        // Иначе первый пробитый дневной лимит блокировал бы входы навсегда,
+        // переживая и смену дня, и рестарт (скан-15 P1).
+        val service = TradingHaltService(repository)
+        val yesterdayNoon =
+            java.time.LocalDate
+                .now(java.time.ZoneId.of("Europe/Moscow"))
+                .minusDays(1)
+                .atTime(12, 0)
+                .atZone(java.time.ZoneId.of("Europe/Moscow"))
+                .toInstant()
+
+        runBlocking {
+            service.record(TradingHaltService.DAILY_LOSS_LIMIT_REASON, "RISK_SYSTEM", haltedAt = yesterdayNoon)
+        }
+
+        assertNull(service.last(), "дневной halt вчерашнего дня не должен блокировать сегодняшние входы")
+    }
+
+    @Test
+    fun `daily loss halt recorded today still blocks`() {
+        val service = TradingHaltService(repository)
+        runBlocking { service.record(TradingHaltService.DAILY_LOSS_LIMIT_REASON, "RISK_SYSTEM") }
+
+        assertEquals(TradingHaltService.DAILY_LOSS_LIMIT_REASON, service.last()?.reason)
+    }
+
+    @Test
+    fun `clear keeps emergency stop halt`() {
+        // EMERGENCY_STOP снимается только resume(); обычный тумблер enable не должен его стирать.
+        val service = TradingHaltService(repository)
+        runBlocking { service.record(TradingHaltService.EMERGENCY_STOP_REASON, "EMERGENCY_STOP") }
+
+        runBlocking { service.clear(keepReasons = setOf(TradingHaltService.EMERGENCY_STOP_REASON)) }
+
+        assertEquals(TradingHaltService.EMERGENCY_STOP_REASON, service.last()?.reason)
+        runBlocking { Mockito.verify(repository, Mockito.never()).deleteAll() }
+    }
 }

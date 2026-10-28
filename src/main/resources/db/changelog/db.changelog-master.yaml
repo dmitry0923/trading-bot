@@ -89,3 +89,5 @@ databaseChangeLog:
       file: db/changelog/changes/044-positions-status-widen.sql
   - include:
       file: db/changelog/changes/045-indexes-positions-accounts.sql
+  - include:
+      file: db/changelog/changes/046-microstructure-table-fallback.sql

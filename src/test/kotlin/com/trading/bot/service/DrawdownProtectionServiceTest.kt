@@ -246,6 +246,25 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
+    fun `read-only computeStatus does not persist snapshot and does not auto stop`() =
+        runBlocking {
+            // GET /risk/drawdown обязан быть чтением: раньше он писал снимок и мог
+            // запустить emergency stop из read-пути (скан-13 P1).
+            stubNoOpenPositions()
+            stubClosedPositions(
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.now(ZoneId.of("Europe/Moscow")))),
+            )
+            val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+            val s = service(publisher = publisher)
+
+            s.computeStatus(persist = false)
+
+            Mockito.verify(publisher, Mockito.times(0)).publishEvent(any<AutoStopTriggeredEvent>())
+            Mockito.verify(snapshotRepo, Mockito.never()).upsert(any(), any(), any(), any(), anyOrNull(), anyOrNull())
+            Mockito.verify(snapshotRepo, Mockito.never()).upsertAwait(any(), any(), any(), any(), anyOrNull(), anyOrNull())
+        }
+
+    @Test
     fun `hourly realized loss within limit does not publish auto stop event`() =
         runBlocking {
             stubNoOpenPositions()

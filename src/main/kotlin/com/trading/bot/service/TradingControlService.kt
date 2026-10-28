@@ -63,11 +63,19 @@ class TradingControlService(
      * Включает/выключает торговлю единым флагом.
      */
     suspend fun setTradingEnabled(enabled: Boolean) {
+        if (enabled && tradingHaltService.last()?.reason == TradingHaltService.EMERGENCY_STOP_REASON) {
+            // Скан-15 P1: раньше `enable` стирал ЛЮБОЙ halt, включая EMERGENCY_STOP, и
+            // `/bot/trigger` открывал позиции при активном emergency stop. Снять его
+            // может только `EmergencyStopService.resume()`.
+            logger.warn { "Enable trading ignored: $TradingHaltService.EMERGENCY_STOP_REASON is active — call /bot/resume first" }
+            meterRegistry.counter("trading.control.enable_refused", Tags.of("reason", TradingHaltService.EMERGENCY_STOP_REASON)).increment()
+            return
+        }
         val current = settingsService.getSettings()
         settingsService.updateSettings(current.copy(tradingEnabled = enabled))
         if (enabled) {
-            // Ручное включение снимает последнюю глобальную остановку (если была).
-            tradingHaltService.clear()
+            // Ручное включение снимает последнюю глобальную остановку (кроме emergency).
+            tradingHaltService.clear(keepReasons = setOf(TradingHaltService.EMERGENCY_STOP_REASON))
         } else {
             // Персистим причину ручной остановки — видна в статусе/логах даже после рестарта.
             tradingHaltService.record(

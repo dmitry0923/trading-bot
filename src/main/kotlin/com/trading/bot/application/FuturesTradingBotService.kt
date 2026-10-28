@@ -260,9 +260,10 @@ class FuturesTradingBotService(
                                 ) {
                                     // per-clearing funding: обновляем ряд ставок на дату
                                     // клиринга, чтобы P&L учёл фактическое значение (в LIVE — MOEX).
-                                    if (instrumentsConfig.find(pos.ticker)?.fundingPerClearing()?.let { it > BigDecimal.ZERO } == true) {
-                                        fundingSnapshotService.refresh(pos.ticker)
-                                    }
+                                    // Скан-15 P2: в LIVE финансирование берётся с MOEX для ВСЕХ
+                                    // фьючерсов (конфиг — только SIM/fallback), поэтому ряд
+                                    // обновляем без условия «конфиг-ставка > 0».
+                                    fundingSnapshotService.refresh(pos.ticker)
                                     engine.reconcilePosition(pos)
                                 }
                                 // Блокировку входа снимаем только по фактически сверенным

@@ -106,19 +106,21 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
-    fun `live instrument without configured funding never marks unknown`(): Unit =
+    fun `live instrument without configured funding still requires MOEX and marks unknown`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)
             val registry = SimpleMeterRegistry()
-            // CONFIG funding = 0 (Si/RI) → funding не начисляется, даже если MOEX недоступен.
+            // LIVE: первоисточник — MOEX, конфиг не подставляется. Тикер без настроенной
+            // ставки (Si/RI/перпетуалы) и без MOEX-снапшота обязан дать FUNDING_UNKNOWN,
+            // иначе P&L завышается «тихим нулём» (скан-15 P2).
             val service = service(mode = "LIVE", moex = moex, configValue = BigDecimal.ZERO, registry = registry)
 
             service.refresh("RI")
             val total = service.fundingForClearings("RI", listOf(LocalDate.of(2026, 9, 8)))
 
-            assertEquals(BigDecimal.ZERO, total)
+            assertNull(total)
             assertEquals(
-                0.0,
+                1.0,
                 registry.counter("funding.live.clearing_unknown", "ticker", "RI").count(),
             )
         }

@@ -134,8 +134,13 @@ class FundingSnapshotService(
     ): BigDecimal? {
         if (clearings.isEmpty()) return BigDecimal.ZERO
         val configured = configuredFunding.value(ticker)
-        if (configured <= BigDecimal.ZERO) return BigDecimal.ZERO
-        if (!isLive) return configured.multiply(BigDecimal(clearings.size))
+        // В LIVE первоисточник — MOEX, а не конфиг: иначе тикер без `funding.rub-per-contract-per-day`
+        // (USDRUBF/EURRUBF/GLDRUBF/IMOEXF/SBERF/GAZPF) молча получал funding = 0 и P&L был
+        // завышен, хотя политика требует FUNDING_UNKNOWN (скан-15 P2). Конфиг — SIM/backtest
+        // и только fallback, когда MOEX-снапшота нет вовсе.
+        if (!isLive) {
+            return if (configured > BigDecimal.ZERO) configured.multiply(BigDecimal(clearings.size)) else BigDecimal.ZERO
+        }
         val tickerSeries = series[ticker].orEmpty()
         val missing = mutableListOf<LocalDate>()
         var total = BigDecimal.ZERO

@@ -772,15 +772,17 @@ class OrderExecutionEngineDeltaModelTest {
             awaitAll(closeFill, slFill)
         }
 
-        // Both applied via mutex. The final position should be closed.
-        // If closeFill ran first: SL closes the remainder → CLOSED.
-        // If SL ran first: SL closes position, closeFill skips (pendingClose=false) → CLOSED.
-        // Either way, position is fully closed and no exception was thrown.
+        // Both applied via mutex. Возможны два безопасных исхода:
+        //  - позиция полностью закрыта (SL закрыл остаток до появления close-заявки), либо
+        //  - RECONCILIATION_REQUIRED: полный фил защиты пришёл, пока close-заявка ещё жива,
+        //    и финализация потеряла бы её поздний фил (двойное исполнение на бирже, скан-15 P0).
+        //    Такой исход — осознанный fail-closed, оператор разрешает рассинхрон.
         val finalState = savedPositions.last()
         assertTrue(
             finalState.status == PositionStatus.CLOSED ||
-                finalState.status == PositionStatus.TAKE_PROFIT,
-        ) { "Position should be fully closed after both fills: status=${finalState.status}" }
+                finalState.status == PositionStatus.TAKE_PROFIT ||
+                finalState.status == PositionStatus.RECONCILIATION_REQUIRED,
+        ) { "Position must end either fully closed or escalated for reconciliation: status=${finalState.status}" }
     }
 
     // ─── Multi-step partial fill: 100 → 37 → 100 → duplicate 100 ──

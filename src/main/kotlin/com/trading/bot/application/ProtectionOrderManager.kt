@@ -431,6 +431,23 @@ class ProtectionOrderManager(
             else -> {}
         }
 
+        if (!partialFill && pos.pendingClose && pos.closeOrderId != null) {
+            // Полный фил защиты при ЖИВОЙ close-заявке: финализировать нельзя — поздний фил
+            // этой close-заявки стал бы невидимым (findByCloseOrderId уже NULL) и биржа
+            // закрыла бы позицию дважды (скан-15 P0). Безопасный исход — эскалация оператору:
+            // позиция уходит из-под управления бота, но остаётся видимой риск-контролю.
+            logger.error {
+                "Protection $reason filled fully (${execution.filledQuantity}) for ${pos.ticker} while " +
+                    "close order ${pos.closeOrderId} is live — escalating to RECONCILIATION_REQUIRED " +
+                    "(possible double execution on exchange)"
+            }
+            pos.status = PositionStatus.RECONCILIATION_REQUIRED
+            pos.pendingClose = false
+            pos.pendingEntry = false
+            positionRepo.save(pos)
+            return
+        }
+
         if (pos.pendingClose && !pos.closeCancelPending) {
             val closeId = pos.closeOrderId
             val positionId = pos.id

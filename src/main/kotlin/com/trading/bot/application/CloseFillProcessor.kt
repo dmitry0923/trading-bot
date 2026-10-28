@@ -382,6 +382,17 @@ class CloseFillProcessor(
                             "verified terminal (${execution.status}) — clearing close state"
                     }
                     resetCloseState(pos)
+                } else if (execution != null && isFilledStatus(execution)) {
+                    // Заявка исполнена, но дельта невозможна: локальный объём уже не совпадает
+                    // с биржевым. Повторять cancel/reconcile бессмысленно — раньше это давало
+                    // вечный цикл 15 с без сходимости (скан-15 P1). Эскалируем оператору.
+                    logger.error {
+                        "Impossible close: order $orderId for ${pos.ticker} is FILLED while local qty=" +
+                            "${pos.quantity} (applied=${pos.cumulativeCloseFillQty}) — escalating to " +
+                            "RECONCILIATION_REQUIRED"
+                    }
+                    meterRegistry.counter("$metricPrefix.close.impossible_escalated", Tags.of("ticker", pos.ticker)).increment()
+                    markReconciliationRequired(pos)
                 } else {
                     logger.warn {
                         "Impossible close: order $orderId for ${pos.ticker} cancel rejected, " +

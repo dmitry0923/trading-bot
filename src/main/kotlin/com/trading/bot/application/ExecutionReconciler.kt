@@ -141,7 +141,47 @@ class ExecutionReconciler(
                 val filledWithoutQty =
                     execution.filledQuantity <= 0 &&
                         execution.status.uppercase() in FILLED_WITHOUT_QTY_STATUSES
-                if (execution.filledQuantity <= 0 && !filledWithoutQty) return
+                if (execution.filledQuantity <= 0 && !filledWithoutQty) {
+                    // Полностью неисполненный вход нельзя держать бесконечно: заявка занимает
+                    // слот/риск-бюджет, а защита посчитана на цену решения (скан-15 P1).
+                    val elapsedMs = Duration.between(outbox.createdAt, LocalDateTime.now(clock)).toMillis()
+                    if (elapsedMs < alorConfig.entryPartialFillCancelAfterMs) return
+                    val cancelled =
+                        try {
+                            alorClient.cancelOrder(
+                                outbox.alorOrderId,
+                                outbox.idempotencyKey ?: "",
+                                portfolio = portfolioResolver(pos.accountId),
+                            )
+                        } catch (e: Exception) {
+                            logger.error(e) { "Unfilled entry cancel FAILED for ${pos.ticker} — retry next cycle" }
+                            AlorClient.CancelResult.UNCERTAIN
+                        }
+                    val finalExec = alorClient.verifyOrder(outbox.alorOrderId, portfolio = portfolioResolver(pos.accountId))
+                    val filledNow = finalExec?.filledQuantity ?: 0
+                    if (filledNow > 0) {
+                        // Пока отменяли — появился фил: финализируем по факту на следующем проходе.
+                        logger.info {
+                            "Unfilled entry ${pos.ticker}: fill $filledNow appeared during cancel — finalize next pass"
+                        }
+                        return
+                    }
+                    if (cancelled != AlorClient.CancelResult.CONFIRMED &&
+                        !isGoneStatus(finalExec ?: execution)
+                    ) {
+                        logger.warn {
+                            "Unfilled entry ${pos.ticker}: cancel=$cancelled, order not confirmed terminal " +
+                                "(order=${outbox.alorOrderId}) — retry next cycle"
+                        }
+                        return
+                    }
+                    logger.warn {
+                        "Unfilled entry ${pos.ticker}: order=${outbox.alorOrderId} not filled in ${elapsedMs}ms — abandoning"
+                    }
+                    meterRegistry.counter("$metricPrefix.entry.unfilled_cancelled", Tags.of("ticker", pos.ticker)).increment()
+                    abandonEntry(pos, CloseReason.ENTRY_NOT_CONFIRMED)
+                    return
+                }
                 val cumulative =
                     if (filledWithoutQty) requestedQty else execution.filledQuantity.coerceIn(1, requestedQty)
                 val remainder = requestedQty - cumulative

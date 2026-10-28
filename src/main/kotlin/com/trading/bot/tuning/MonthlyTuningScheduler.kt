@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.YearMonth
@@ -30,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @see MonthlyTuningService — оркестратор цикла тюнинга.
  */
 @Component
+@ConditionalOnProperty(name = ["tuning.enabled"], havingValue = "true")
 class MonthlyTuningScheduler(
     private val monthlyTuningService: MonthlyTuningService,
     private val tuningMetricsProvider: TuningMetricsProvider,
@@ -88,6 +90,15 @@ class MonthlyTuningScheduler(
         scope.cancel()
     }
 
+    /**
+     * Целевой период тюнинга — ПРЕДЫДУЩИЙ месяц: ровно его возвращает
+     * `MonthlyTuningService.runTuningCycle` по умолчанию. Гард идемпотентности обязан
+     * сравнивать тот же ключ, иначе cron 1–7 числа выполнял до 5 циклов в месяц
+     * (повторные halt/письма) — скан-16 P1.
+     */
+    internal fun targetPeriod(): String = YearMonth.now(moscowZone).minusMonths(1).toString()
+
+    /** @deprecated оставлено для совместимости тестов: использовать [targetPeriod]. */
     internal fun currentPeriod(): String = YearMonth.now(moscowZone).toString()
 
     /** Тюнинг за [period] уже зафиксирован в журнале версий (best-effort: БД может быть недоступна). */
@@ -95,7 +106,7 @@ class MonthlyTuningScheduler(
         runCatching { strategyVersionRepository?.findByVersion(period) != null }.getOrDefault(false)
 
     private fun runCycle(force: Boolean) {
-        val period = currentPeriod()
+        val period = targetPeriod()
         // Период-гард ДО захвата флага: иначе повторный cron-запуск в том же месяце
         // оставлял running=true и планировщик замолкал навсегда (скан-9 P1).
         if (!force && lastRunPeriod == period) {
@@ -115,8 +126,11 @@ class MonthlyTuningScheduler(
                     return@launch
                 }
                 val (metrics, parameters) = tuningMetricsProvider.collectCurrentMonthlyData()
-                val result = monthlyTuningService.runTuningCycle(metrics, parameters)
-                lastRunPeriod = result.period.ifBlank { period }
+                val result = monthlyTuningService.runTuningCycle(metrics, parameters, YearMonth.parse(period))
+                // Гард помнит ТОТ ЖЕ ключ, по которому проверяет (`targetPeriod`), иначе
+                // повторные тики в том же месяце проходили проверку и цикл выполнялся
+                // до 5 раз с повторным halt (скан-16 P1).
+                lastRunPeriod = period
                 logger.info(
                     "MonthlyTuningScheduler: цикл завершён - " +
                         "period=${result.period}, gate=${result.gateVerdict}, " +

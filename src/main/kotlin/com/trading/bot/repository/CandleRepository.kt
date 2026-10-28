@@ -112,7 +112,12 @@ class CandleRepository(
                 """
                 INSERT INTO candles (ticker, timeframe, open_price, high_price, low_price, close_price, volume, time)
                 VALUES $values
-                ON CONFLICT (ticker, timeframe, time) DO NOTHING
+                ON CONFLICT (ticker, timeframe, time) DO UPDATE SET
+                open_price = EXCLUDED.open_price,
+                high_price = EXCLUDED.high_price,
+                low_price = EXCLUDED.low_price,
+                close_price = EXCLUDED.close_price,
+                volume = EXCLUDED.volume
                 """.trimIndent()
             var spec = databaseClient.sql(sql)
             bindings.forEach { (name, value) -> spec = spec.bind(name, value) }

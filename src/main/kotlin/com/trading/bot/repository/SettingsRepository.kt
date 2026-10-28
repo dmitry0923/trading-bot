@@ -2,6 +2,7 @@ package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.entity.BotSettings
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
@@ -19,6 +20,8 @@ class SettingsRepository(
     private val databaseClient: DatabaseClient,
     private val objectMapper: ObjectMapper,
 ) {
+    private val logger = KotlinLogging.logger {}
+
     companion object {
         private const val GLOBAL_KEY = "global"
     }
@@ -32,7 +35,16 @@ class SettingsRepository(
                 .one()
                 .awaitSingleOrNull()
                 ?: return null
-        return runCatching { objectMapper.readValue(value, BotSettings::class.java) }.getOrNull()
+        return try {
+            objectMapper.readValue(value, BotSettings::class.java)
+        } catch (e: Exception) {
+            // Скан-16 P1: раньше битый/устаревший JSON молча превращался в null, и
+            // SettingsService перезаписывал реальные настройки дефолтами (снимался ручной
+            // запрет торговли, отключалось плановое закрытие дня, менялся дневной лимит).
+            // Теперь это ошибка: решение принимает вызывающий (fail-closed, без перезаписи).
+            logger.error(e) { "bot_settings is corrupted (key=$GLOBAL_KEY) — refusing to fall back to defaults" }
+            throw IllegalStateException("bot_settings is corrupted: ${e.message}", e)
+        }
     }
 
     suspend fun saveSettings(settings: BotSettings) {

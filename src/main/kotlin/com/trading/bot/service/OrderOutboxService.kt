@@ -512,8 +512,11 @@ class OrderOutboxService(
             try {
                 positionRepo.findById(positionId)
             } catch (e: Exception) {
-                logger.warn(e) { "Outbox ${outbox.id}: cannot load position $positionId for close reconcile" }
-                return CloseReconcile.NOT_EXECUTED
+                // Чтение позиции упало — состояние НЕИЗВЕСТНО. Трактовка «ордер не исполнен»
+                // приводила к повторной отправке close и второй продаже/покупке (скан-16 P1).
+                logger.error(e) { "Outbox ${outbox.id}: cannot load position $positionId for close reconcile — NOT resending" }
+                meterRegistry.counter("outbox.close_reconcile_db_error").increment()
+                return CloseReconcile.REDUCED_UNCONFIRMED
             }
         if (!pos.pendingClose) return CloseReconcile.NOT_EXECUTED
 

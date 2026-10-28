@@ -65,9 +65,12 @@ class TuningMetricsProvider(
         }
 
         // Расчёт метрик.
-        val profits = closedPositions.mapNotNull { it.realizedPnl?.toDouble() }.filter { it > 0 }
-        val losses = closedPositions.mapNotNull { it.realizedPnl?.toDouble() }.filter { it < 0 }
-
+        // P&L закрытой сделки пишется в `pnl` (transitionToClosed), а `realizedPnl`
+        // остаётся 0 — из-за этого PF считался как 1.0 и гейт каждый месяц давал
+        // ALERT «стратегия убыточна» (скан-16 P1).
+        val tradePnls = closedPositions.mapNotNull { (it.pnl ?: it.realizedPnl)?.toDouble() }
+        val profits = tradePnls.filter { it > 0 }
+        val losses = tradePnls.filter { it < 0 }
         val totalProfit = profits.sum()
         val totalLoss = Math.abs(losses.sum())
         val profitFactor = if (totalLoss > 0) totalProfit / totalLoss else 1.0

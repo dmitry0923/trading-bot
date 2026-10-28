@@ -41,15 +41,23 @@ class SettingsService(
 
     @EventListener(ApplicationReadyEvent::class)
     fun init() {
-        runBlocking {
-            val persisted = settingsRepository.loadSettings()
-            if (persisted != null) {
-                settings = persisted
-                logger.info { "Loaded bot settings from DB: tradingEnabled=${settings.tradingEnabled}" }
-            } else {
-                settingsRepository.saveSettings(settings)
-                logger.info { "No persisted settings found, saved defaults" }
+        try {
+            runBlocking {
+                val persisted = settingsRepository.loadSettings()
+                if (persisted != null) {
+                    settings = persisted
+                    logger.info { "Loaded bot settings from DB: tradingEnabled=${settings.tradingEnabled}" }
+                } else {
+                    // Нет строки — сидируем дефолты (первый старт).
+                    settingsRepository.saveSettings(settings)
+                    logger.info { "No persisted settings found, saved defaults" }
+                }
             }
+        } catch (e: Exception) {
+            // Скан-16 P1: раньше исключение из @EventListener роняло контекст целиком.
+            // Настройки — не критичный для живости ресурс: стартуем fail-closed.
+            logger.error(e) { "Failed to load bot settings at startup — starting with trading DISABLED" }
+            settings = settings.copy(tradingEnabled = false)
         }
         applyRuntimeConfig(settings)
     }

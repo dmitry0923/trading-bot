@@ -817,6 +817,10 @@ instruments:
       maxGapPercent: "5.0"
       commissionRub: "10.0"
 
+tuning:
+  # Monthly Tuning (docs/24): авто-тюнинг параметров и halt по ALERT. По умолчанию OFF —
+  # включать в LIVE только осознанно (решение пользователя, AGENTS.md).
+  enabled: ${TUNING_ENABLED:false}
 risk:
   enabled: true
   max-position-rub: 50000

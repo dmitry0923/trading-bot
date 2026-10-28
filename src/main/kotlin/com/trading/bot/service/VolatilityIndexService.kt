@@ -6,6 +6,7 @@ import com.trading.bot.domain.risk.VolatilityFilter
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Tags
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,10 @@ class VolatilityIndexService(
     @Volatile
     private var lastFetchedAt: Instant? = null
 
+    /** Момент последнего УСПЕШНОГО значения (для проверки устаревания). */
+    @Volatile
+    private var lastValueAt: Instant? = null
+
     /**
      * Обновляет кэш индекса волатильности (не чаще [cacheTtl]).
      */
@@ -58,19 +63,43 @@ class VolatilityIndexService(
         lastFetchedAt = Instant.now()
         if (value != null && value > BigDecimal.ZERO) {
             lastValue = value
+            lastValueAt = Instant.now()
             MutableGauges.set(meterRegistry, "risk.volatility.index", value.toDouble())
         } else {
+            // Значение не обновилось: lastValueAt намеренно НЕ двигаем, иначе устаревшее
+            // значение считалось бы свежим (скан-15 P2).
             logger.warn { "Volatility index unavailable; keeping last known value=$lastValue" }
+            meterRegistry.counter("risk.volatility.index.fetch_failed").increment()
         }
     }
 
     /**
      * Аномален ли текущий уровень индекса волатильности (торговля на паузе).
-     * Если индекс недоступен — фильтр не блокирует (fail-open).
+     *
+     * Fail-closed (решение пользователя 2026-10-28): индекс недоступен или его значение
+     * старше [RiskConfig.volatilityIndexTtlMinutes] → считаем условие аномальным и
+     * блокируем входы. Раньше отсутствие данных молча выключало фильтр (fail-open).
      */
     override fun isVolatilityAnomalous(): Boolean {
         if (!riskConfig.volatilityIndexEnabled) return false
-        val value = lastValue ?: return false
+        val value = lastValue
+        val valueAt = lastValueAt
+        if (value == null || valueAt == null) {
+            meterRegistry.counter("risk.volatility.index.stale", Tags.of("cause", "missing")).increment()
+            logger.warn {
+                "VOLATILITY INDEX UNAVAILABLE: fail-closed = ${riskConfig.volatilityIndexFailClosed}"
+            }
+            return riskConfig.volatilityIndexFailClosed
+        }
+        val age = Duration.between(valueAt, Instant.now())
+        if (age > Duration.ofMinutes(riskConfig.volatilityIndexTtlMinutes)) {
+            meterRegistry.counter("risk.volatility.index.stale", Tags.of("cause", "aged")).increment()
+            logger.warn {
+                "VOLATILITY INDEX STALE: value=$value age=${age.toMinutes()}min > " +
+                    "${riskConfig.volatilityIndexTtlMinutes}min — fail-closed=${riskConfig.volatilityIndexFailClosed}"
+            }
+            return riskConfig.volatilityIndexFailClosed
+        }
         val anomalous = value.toDouble() > riskConfig.maxVolatilityIndexPercent
         MutableGauges.set(meterRegistry, "risk.volatility.anomalous", if (anomalous) 1.0 else 0.0)
         if (anomalous) {

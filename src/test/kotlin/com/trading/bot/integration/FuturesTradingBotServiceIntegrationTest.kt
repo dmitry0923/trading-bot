@@ -105,6 +105,13 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
     @MockitoBean
     lateinit var netEvGate: NetEvGate
 
+    /**
+     * RVI-фильтр замокан: с 2026-10-28 он fail-closed (нет свежего MOEX-значения → входы
+     * блокируются), а в тесте MOEX недоступен. Проверяем здесь путь входа, не RVI.
+     */
+    @MockitoBean
+    lateinit var volatilityFilter: com.trading.bot.domain.risk.VolatilityFilter
+
     @BeforeEach
     fun setup() {
         runBlocking { positionRepo.deleteAll() }
@@ -120,6 +127,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
         drawdownProtection.resetDailyAccumulator()
         runBlocking { drawdownProtection.computeStatus() }
         Mockito.`when`(tradingHoursGuard.isTradingAllowed()).thenReturn(true)
+        Mockito.`when`(volatilityFilter.isVolatilityAnomalous()).thenReturn(false)
         // Данные всегда «свежие»: эти тесты проверяют риск-движок, а не MarketDataGate.
         Mockito.`when`(marketDataGate.isPriceDataFresh(Mockito.anyString())).thenReturn(true)
         Mockito

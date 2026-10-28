@@ -918,6 +918,10 @@ risk:
   volatility-index-enabled: true
   volatility-index-ticker: "RVI"
   max-volatility-index-percent: 50.0
+  # Fail-closed: нет свежего RVI (MOEX недоступен или значение старше TTL) → входы
+  # блокируются. Решение пользователя 2026-10-28 (скан-15 P2: раньше фильтр молча выключался).
+  volatility-index-fail-closed: ${RISK_VOLATILITY_INDEX_FAIL_CLOSED:true}
+  volatility-index-ttl-minutes: ${RISK_VOLATILITY_INDEX_TTL_MINUTES:30}
   # Volatility Engine 2.0 (Market Regime + Implied Volatility Si по опционам FORTS)
   market-regime-enabled: true
   regime-lookback-days: 60

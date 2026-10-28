@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.application.TradingGate
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.model.CloseReason
+import com.trading.bot.model.PositionStatus
 import com.trading.bot.repository.PositionRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -95,12 +96,28 @@ class TradingControlService(
      * @return общее количество закрытых позиций
      */
     suspend fun forceCloseNow(reason: CloseReason = CloseReason.FORCE_CLOSE): Int {
-        val openCount = positionRepo.findOpenCount()
-        val stocks = tradingBotService.forceCloseAll(reason)
-        val futures = futuresTradingBotService.forceCloseAll(reason)
-        val closed = stocks + futures
+        val openBefore = positionRepo.findByStatus(PositionStatus.OPEN)
+        val attempted = tradingBotService.forceCloseAll(reason) + futuresTradingBotService.forceCloseAll(reason)
+        // Скан-15 P2: сервисы возвращают число КАНДИДАТОВ. Оператору нужны подтверждённые
+        // закрытия: позиция считается закрытой, если после попытки она уже не OPEN
+        // (перешла в CLOSED) либо реально получила close-ордер (pendingClose/closeOrderId).
+        // Отказы (interlock/спред/биржа) в счётчик не попадают.
+        var confirmed = 0
+        for (pos in openBefore) {
+            val id = pos.id ?: continue
+            val after = runCatching { positionRepo.findById(id) }.getOrNull() ?: continue
+            if (after.status != PositionStatus.OPEN || after.pendingClose || after.closeOrderId != null) confirmed++
+        }
+        val closed = confirmed.coerceAtMost(attempted)
+        val failed = (attempted - closed).coerceAtLeast(0)
+        if (failed > 0) {
+            meterRegistry.counter("trading.control.force_close_failed", Tags.of("reason", reason.code)).increment(failed.toDouble())
+            logger.error { "Force close: $failed of $attempted close order(s) were NOT accepted (still open, no close order)" }
+        }
         meterRegistry.counter("trading.control.force_close", Tags.of("reason", reason.code)).increment()
-        logger.info { "Force close completed: closed=$closed (open before=$openCount), reason=$reason" }
+        logger.info {
+            "Force close completed: confirmed=$closed requested=$attempted (open before=${openBefore.size}), reason=$reason"
+        }
         return closed
     }
 

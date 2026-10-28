@@ -68,6 +68,17 @@ class FuturesRiskEngine(
         if (riskConfig.marketRegimeEnabled && marketRegimeProvider.currentRegime() == MarketRegime.STRESS) {
             return reject("MARKET_STRESS")
         }
+        // ATR%-гейт: раньше только у акций, для фьючерсов «рисовался» в статусе, но вход
+        // не блокировал (скан-15 P2). Применяем, когда ATR известен: candle cache может быть
+        // холодным на старте, и fail-closed здесь заблокировал бы все входы по единственному
+        // LIVE-допущенному инструменту (CNYRUBF — фьючерс) до прогрева истории.
+        val atr = request.atr
+        if (atr == null) {
+            meterRegistry.counter("risk.futures.volatility.atr_unavailable").increment()
+            logger.warn { "Futures volatility gate skipped for ${request.ticker}: ATR unavailable" }
+        } else if (isVolatilityTooHigh(atr, request.entryPrice)) {
+            return reject("VOLATILITY_GUARD")
+        }
 
         // Считаем только фьючерсные позиции: иначе открытая акция в общем портфеле
         // блокировала любой вход по фьючерсу (скан-6 P2).
@@ -90,6 +101,29 @@ class FuturesRiskEngine(
     }
 
     private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger)
+
+    /**
+     * ATR%-гейт (та же семантика, что у акций): ATR недоступен → fail-closed по
+     * `risk.volatility-fail-closed`, ATR% выше лимита → блокировка.
+     */
+    private fun isVolatilityTooHigh(
+        atr: BigDecimal?,
+        price: BigDecimal,
+    ): Boolean {
+        if (!riskConfig.enabled) return false
+        if (atr == null || atr <= BigDecimal.ZERO || price <= BigDecimal.ZERO) {
+            if (riskConfig.volatilityFailClosed) {
+                logger.warn { "Futures volatility check: ATR/price unavailable (atr=$atr, price=$price) -> BLOCK" }
+            }
+            return riskConfig.volatilityFailClosed
+        }
+        val atrPercent =
+            atr
+                .multiply(BigDecimal("100"))
+                .divide(price, 4, RoundingMode.HALF_UP)
+                .toDouble()
+        return atrPercent > riskConfig.maxVolatilityPercent
+    }
 
     // ===================== Guardrail ликвидации (удержание) =====================
 

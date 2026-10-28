@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.context.event.EventListener
+import org.springframework.core.annotation.Order
 import org.springframework.stereotype.Service
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -921,6 +922,7 @@ class DrawdownProtectionService(
      * должны обновиться немедленно (без ожидания следующего стратегического цикла).
      * Полный пересчёт из БД реконсилит синхронный дневной аккумулятор (перезапись).
      */
+    @Order(2)
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
         scope.launch {

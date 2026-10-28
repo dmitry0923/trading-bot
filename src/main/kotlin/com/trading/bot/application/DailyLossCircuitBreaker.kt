@@ -7,6 +7,7 @@ import com.trading.bot.service.DrawdownProtectionService
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.context.event.EventListener
+import org.springframework.core.annotation.Order
 import org.springframework.stereotype.Component
 import java.time.LocalDate
 import java.time.ZoneId
@@ -55,6 +56,7 @@ class DailyLossCircuitBreaker(
      *
      * @param event событие закрытия позиции с P&L сделки
      */
+    @Order(1)
     @EventListener
     fun onPositionClosed(event: PositionClosedEvent) {
         drawdownProtection.updateDailyPnl(event.pnl, event.accountId)

@@ -137,6 +137,9 @@ class FuturesEntryProfile(
             accountId = accountId,
             frozenStrategy = liveFrozenStrategyResolver.resolveActive(signal.ticker),
             futuresRiskSnapshot = snapshot,
+            // ATR% — вход волатильностного гейта. Без него LIVE-фьючерсный вход либо
+            // не проверялся (скан-15 P2), либо блокировался бы fail-closed всегда.
+            atr = candleCache.calculateAtr(signal.ticker, "MINUTE_10", 14),
         )
     }
 

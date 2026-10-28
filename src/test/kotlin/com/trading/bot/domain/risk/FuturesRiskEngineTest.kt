@@ -59,6 +59,7 @@ class FuturesRiskEngineTest {
     private fun entryRequest(
         openPositions: List<Position> = emptyList(),
         ticker: String = "Si",
+        atr: BigDecimal? = BigDecimal("920"),
     ) = EntryRequest(
         ticker = ticker,
         action = StrategyAction.BUY,
@@ -67,6 +68,7 @@ class FuturesRiskEngineTest {
         portfolioMoney = BigDecimal("50000"),
         currentGo = BigDecimal("15000"),
         openPositions = openPositions,
+        atr = atr,
     )
 
     @Test
@@ -75,6 +77,15 @@ class FuturesRiskEngineTest {
             val result = engine().canEnter(entryRequest())
 
             assertTrue(result is RiskVerdict.Allowed)
+        }
+
+    @Test
+    fun `volatility guard blocks futures entry above atr percent limit`() =
+        runBlocking {
+            // ATR 92000/92000 = 100% >> лимит: раньше для фьючерсов гейт не применялся (скан-15 P2).
+            val result = engine().canEnter(entryRequest(atr = BigDecimal("92000")))
+
+            assertTrue(result is RiskVerdict.Rejected && result.reason == "VOLATILITY_GUARD", "got $result")
         }
 
     @Test

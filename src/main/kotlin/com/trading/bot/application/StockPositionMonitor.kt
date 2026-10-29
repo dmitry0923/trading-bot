@@ -162,7 +162,18 @@ class StockPositionMonitor(
             }
         }
         if (slUpdated || tpUpdated || trailingChanged) {
-            positionRepo.save(pos)
+            // Узкий UPDATE: полнострочный save() затирал pendingClose/closeOrderId/realizedPnl
+            // из устаревшего снимка (скан-16 P0).
+            pos.id?.let { positionId ->
+                positionRepo.updateMonitorState(
+                    positionId,
+                    currentPrice = pos.currentPrice,
+                    pnl = pos.pnl,
+                    trailingStopPrice = pos.trailingStopPrice,
+                    stopLoss = pos.stopLoss,
+                    takeProfit = pos.takeProfit,
+                )
+            }
             tradeEventService.recordPositionUpdated(pos)
             engine.onProtectionLevelsChanged(pos)
         }

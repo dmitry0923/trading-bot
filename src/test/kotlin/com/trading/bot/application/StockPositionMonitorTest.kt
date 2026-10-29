@@ -269,7 +269,15 @@ class StockPositionMonitorTest {
             assertNotNull(position.trailingStopPrice)
             // 110 - 1% = 108.9, округление CEILING до шага 0.01
             assertEquals(0, BigDecimal("108.90").compareTo(position.trailingStopPrice!!))
-            verify(positionRepo).save(position)
+            verify(positionRepo).updateMonitorState(
+                Mockito.anyLong(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+            )
             verify(tradeEventService).recordPositionUpdated(position)
             verify(engine).onProtectionLevelsChanged(position)
         }
@@ -285,7 +293,15 @@ class StockPositionMonitorTest {
             monitor.monitor(PriceChangedEvent("UNKNOWN", BigDecimal("110")))
 
             assertEquals(null, position.trailingStopPrice)
-            verify(positionRepo, never()).save(anyPosition())
+            verify(positionRepo, never()).updateMonitorState(
+                Mockito.anyLong(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+            )
         }
 
     @Test
@@ -309,7 +325,15 @@ class StockPositionMonitorTest {
 
             assertEquals(0, BigDecimal("98").compareTo(position.stopLoss!!))
             assertEquals(0, BigDecimal("115").compareTo(position.takeProfit!!))
-            verify(positionRepo).save(position)
+            verify(positionRepo).updateMonitorState(
+                Mockito.anyLong(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+            )
             verify(engine).onProtectionLevelsChanged(position)
         }
 
@@ -366,7 +390,15 @@ class StockPositionMonitorTest {
             monitor.monitor(price("90"))
 
             verify(engine, never()).closePosition(anyPosition(), anyBigDecimal(), anyReason())
-            verify(positionRepo, never()).save(anyPosition())
+            verify(positionRepo, never()).updateMonitorState(
+                Mockito.anyLong(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+            )
         }
 
     @Test
@@ -407,6 +439,14 @@ class StockPositionMonitorTest {
             monitor.monitor(price("110"))
 
             assertEquals(null, position.trailingStopPrice)
-            verify(positionRepo, never()).save(anyPosition())
+            verify(positionRepo, never()).updateMonitorState(
+                Mockito.anyLong(),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+                Mockito.nullable(BigDecimal::class.java),
+            )
         }
 }

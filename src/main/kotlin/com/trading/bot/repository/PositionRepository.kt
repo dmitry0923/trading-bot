@@ -811,6 +811,46 @@ class PositionRepository(
     enum class ProtectionSide { SL, TP }
 
     /**
+     * Узкое обновление полей, которые меняет монитор позиции (цена/P&L/маржа/трейлинг/SL/TP).
+     *
+     * Полнострочный `save()` из монитора писал **устаревший снимок** и мог затереть
+     * `pending_close` / `close_order_id` / `realized_pnl`, выставленные другим потоком
+     * (закрытие в полёте) → второе закрытие и потерянная часть P&L (скан-16 P0).
+     * `COALESCE` сохраняет прежнее значение, если поле не передано.
+     */
+    suspend fun updateMonitorState(
+        id: Long,
+        currentPrice: BigDecimal?,
+        pnl: BigDecimal?,
+        variationMargin: BigDecimal? = null,
+        trailingStopPrice: BigDecimal? = null,
+        stopLoss: BigDecimal? = null,
+        takeProfit: BigDecimal? = null,
+    ) {
+        databaseClient
+            .sql(
+                """
+                UPDATE positions SET
+                    current_price = COALESCE(:currentPrice, current_price),
+                    pnl = COALESCE(:pnl, pnl),
+                    variation_margin = COALESCE(:variationMargin, variation_margin),
+                    trailing_stop_price = COALESCE(:trailingStopPrice, trailing_stop_price),
+                    stop_loss = COALESCE(:stopLoss, stop_loss),
+                    take_profit = COALESCE(:takeProfit, take_profit)
+                WHERE id = :id AND status = 'OPEN'
+                """.trimIndent(),
+            ).bind("id", id)
+            .bindOrNull("currentPrice", currentPrice)
+            .bindOrNull("pnl", pnl)
+            .bindOrNull("variationMargin", variationMargin)
+            .bindOrNull("trailingStopPrice", trailingStopPrice)
+            .bindOrNull("stopLoss", stopLoss)
+            .bindOrNull("takeProfit", takeProfit)
+            .then()
+            .awaitSingleOrNull()
+    }
+
+    /**
      * Узкое mark-to-market обновление: только `current_price`/`pnl` у OPEN-позиции.
      *
      * Монитор акций держит detached-сущность (репозиторий возвращает новый объект

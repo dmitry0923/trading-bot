@@ -126,7 +126,20 @@ class FuturesPositionMonitor(
                 instrumentsConfig.find(pos.ticker)?.priceStep ?: BigDecimal("0.01"),
             )
         }
-        positionRepo.save(pos)
+        // Узкий UPDATE вместо полнострочного save(): снимок монитора устаревает и мог
+        // затереть pendingClose/closeOrderId/realizedPnl, выставленные закрытием
+        // в полёте (скан-16 P0).
+        pos.id?.let { positionId ->
+            positionRepo.updateMonitorState(
+                positionId,
+                currentPrice = pos.currentPrice,
+                pnl = pos.pnl,
+                variationMargin = pos.variationMargin,
+                trailingStopPrice = pos.trailingStopPrice,
+                stopLoss = pos.stopLoss,
+                takeProfit = pos.takeProfit,
+            )
+        }
         // Сдвиг SL-порога (trailing) → биржевая заявка перевыставляется
         // (отмена старой + новая по текущему уровню), если он синхронизирован.
         engine.onProtectionLevelsChanged(pos)

@@ -396,8 +396,32 @@ class ApiController(
     @GetMapping("/strategies/{ticker}")
     suspend fun getStrategy(
         @PathVariable ticker: String,
-    ) = redisCacheService.getStrategy(ticker)
-        ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(ticker)
+    ): Map<String, Any?> {
+        val strategy =
+            redisCacheService.getStrategy(ticker)
+                ?: strategyRepository.findTopByTickerOrderByCreatedAtDesc(ticker)
+        // Раньше отсутствующая стратегия давала 200 с пустым телом → фронт падал на
+        // `r.json()`, а поле `confidence` (которое он читает) вообще не отдавалось (скан-17 P1).
+        if (strategy == null) {
+            throw org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND,
+                "no strategy for $ticker",
+            )
+        }
+        return mapOf(
+            "id" to strategy.id,
+            "ticker" to ticker,
+            "action" to strategy.action,
+            "confidence" to strategy.signalStrength,
+            "signalStrength" to strategy.signalStrength,
+            "targetPrice" to strategy.targetPrice,
+            "quantity" to strategy.quantity,
+            "stopLoss" to strategy.stopLoss,
+            "takeProfit" to strategy.takeProfit,
+            "reasoning" to strategy.reasoning,
+            "cycleId" to strategy.cycleId,
+        )
+    }
 
     @GetMapping("/positions")
     suspend fun getOpenPositions() = positionRepository.findByStatus(PositionStatus.OPEN)
@@ -766,7 +790,7 @@ class ApiController(
             "sharpeRatio" to result.sharpeRatio,
             "maxDrawdown" to result.maxDrawdown,
             "winRate" to result.winRate,
-            "profitFactor" to result.profitFactor.takeIf { it.isFinite() },
+            "profitFactor" to result.profitFactor.finiteOrSentinel(),
             "totalTrades" to result.totalTrades,
             "edgeStatisticallySignificant" to result.edgeStatisticallySignificant,
             "probabilityOfNoEdge" to result.probabilityOfNoEdge,
@@ -885,7 +909,7 @@ class ApiController(
                         "sortinoRatio" to r.sortinoRatio,
                         "maxDrawdown" to r.maxDrawdown,
                         "winRate" to r.winRate,
-                        "profitFactor" to r.profitFactor.takeIf { it.isFinite() },
+                        "profitFactor" to r.profitFactor.finiteOrSentinel(),
                         "totalTrades" to r.totalTrades,
                         "edgeStatisticallySignificant" to r.edgeStatisticallySignificant,
                         "probabilityOfNoEdge" to r.probabilityOfNoEdge,
@@ -933,7 +957,7 @@ class ApiController(
                         "sharpeRatio" to r.sharpeRatio,
                         "maxDrawdown" to r.maxDrawdown,
                         "winRate" to r.winRate,
-                        "profitFactor" to r.profitFactor.takeIf { it.isFinite() },
+                        "profitFactor" to r.profitFactor.finiteOrSentinel(),
                         "totalTrades" to r.totalTrades,
                         "edgeStatisticallySignificant" to r.edgeStatisticallySignificant,
                         "probabilityOfNoEdge" to r.probabilityOfNoEdge,
@@ -2103,7 +2127,7 @@ class ApiController(
             "sharpeRatio" to scenario.sharpeRatio,
             "sortinoRatio" to scenario.sortinoRatio,
             "maxDrawdown" to scenario.maxDrawdown,
-            "profitFactor" to scenario.profitFactor.takeIf { it.isFinite() },
+            "profitFactor" to scenario.profitFactor.finiteOrSentinel(),
             "winRate" to scenario.winRate,
             "totalTrades" to scenario.totalTrades,
             "passable" to scenario.passable,
@@ -2196,7 +2220,11 @@ class ApiController(
         @RequestParam(defaultValue = "14") days: Int,
     ): Map<String, TradeStats> {
         meterRegistry.counter("api.analytics.trade-stats").increment()
-        return tradeAnalysisService.analyzeLastNDays(clampAnalyticsDays(days))
+        // Скан-17 P1: PF без убыточных сделок = +∞; Jackson квотирует его строкой,
+        // и фронт падает на .toFixed. Отдаём -1.0 (как в остальных эндпоинтах).
+        return tradeAnalysisService
+            .analyzeLastNDays(clampAnalyticsDays(days))
+            .mapValues { (_, stats) -> stats.copy(profitFactor = stats.profitFactor.finiteOrSentinel()) }
     }
 
     @GetMapping("/analytics/adaptive-params/{ticker}")
@@ -2472,4 +2500,11 @@ class ApiController(
  * `since` в будущее, а `days=100000` растягивал окно на всю таблицу сделок
  * (полный скан на каждый запрос дашборда).
  */
+
 internal fun clampAnalyticsDays(days: Int): Int = days.coerceIn(1, 365)
+
+/**
+ * Не-финитный PF (нет убыточных сделок) отдаём как -1.0: Jackson квотирует Infinity
+ * строкой, и фронт падает на .toFixed (скан-17 P1).
+ */
+internal fun Double.finiteOrSentinel(): Double = if (isFinite()) this else -1.0

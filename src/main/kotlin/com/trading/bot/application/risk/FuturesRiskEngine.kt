@@ -100,7 +100,7 @@ class FuturesRiskEngine(
         return RiskVerdict.Allowed
     }
 
-    private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger)
+    private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger, "risk.futures.entry.allowed")
 
     /**
      * ATR%-гейт (та же семантика, что у акций): ATR недоступен → fail-closed по

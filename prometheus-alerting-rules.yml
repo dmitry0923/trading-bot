@@ -46,7 +46,7 @@ groups:
       # HighSpread: спред > 0.1% (LIVE-гейт signal-max-spread-percent = 0.1%).
       # Спред > 0.5% — жёсткий потолок (cap) — аварийная пауза, не warning.
       - alert: HighSpread
-        expr: market.data.spread_percent > 0.1
+        expr: market_data_spread_percent > 0.1
         for: 5m
         labels:
           severity: warning
@@ -57,7 +57,7 @@ groups:
       # SpreadCapExceeded: спред превысил жёсткий потолок 0.5% (вход в таких
       # условиях невозможен — сигналы блокируются; ожидается 0).
       - alert: SpreadCapExceeded
-        expr: market.data.spread_percent > 0.5
+        expr: market_data_spread_percent > 0.5
         for: 1m
         labels:
           severity: critical
@@ -119,7 +119,7 @@ groups:
       # MarketDataStale: нет свежих данных > 15 с (LIVE-гейт market-data-max-age-ms).
       # 10 с — предупреждение, 15 с — порог блокировки входа.
       - alert: MarketDataStale
-        expr: market.data.age_ms > 10000
+        expr: market_data_age_ms > 10000
         for: 2m
         labels:
           severity: warning
@@ -129,7 +129,7 @@ groups:
 
       # MarketDataBlocked: свежесть упала за гейт (15 с) — входы по тикеру блокируются.
       - alert: MarketDataBlocked
-        expr: market.data.age_ms > 15000
+        expr: market_data_age_ms > 15000
         for: 1m
         labels:
           severity: critical
@@ -140,7 +140,7 @@ groups:
       # FuturesGoCacheAge: возраст кэша ГО > 30 с (LIVE safety: вход fail-closed
       # при устаревшем кэше). 20 с — предупреждение, 30 с — критично.
       - alert: FuturesGoCacheAge
-        expr: futures.go_cache_age_ms > 20000
+        expr: futures_go_cache_age_ms > 20000
         for: 1m
         labels:
           severity: warning
@@ -151,7 +151,7 @@ groups:
       # FuturesMarginStale: ГО-кэш старше гейта 30 с — вход по тикеру в LIVE
       # будет отклонён (getFuturesGO возвращает null).
       - alert: FuturesMarginStale
-        expr: futures.go_cache_age_ms > 30000
+        expr: futures_go_cache_age_ms > 30000
         for: 1m
         labels:
           severity: critical
@@ -161,7 +161,7 @@ groups:
 
       # FuturesBalanceCacheAge: возраст кэша баланса (портфельные деньги) > 30 с.
       - alert: FuturesBalanceCacheAge
-        expr: futures.balance_cache_age_ms > 20000
+        expr: futures_balance_cache_age_ms > 20000
         for: 1m
         labels:
           severity: warning

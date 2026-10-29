@@ -60,8 +60,10 @@ class ApiControllerReadSmokeIntegrationTest : AbstractTestContainerTest() {
         assertOkJson("/api/v1/llm/providers")
         assertOkJson("/api/v1/accounts")
 
-        // Последняя стратегия тикера может отсутствовать — тело пустое, но статус 200.
-        assertEquals(200, get("/api/v1/strategies/CNYRUBF", adminToken()).statusCode())
+        // Стратегия тикера может отсутствовать: контракт — 404 (а не 200 с пустым телом,
+        // на котором фронт падал в r.json()) — скан-17 P1.
+        val strategyStatus = get("/api/v1/strategies/CNYRUBF", adminToken()).statusCode()
+        assertTrue(strategyStatus == 200 || strategyStatus == 404, "unexpected status $strategyStatus")
     }
 
     @Test

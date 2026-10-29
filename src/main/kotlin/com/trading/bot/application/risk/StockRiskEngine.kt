@@ -97,5 +97,5 @@ class StockRiskEngine(
         return atrPercent > riskConfig.maxVolatilityPercent
     }
 
-    private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger)
+    private fun reject(reason: String): RiskVerdict = rejected(reason, meterRegistry, logger, "risk.stock.entry.allowed")
 }

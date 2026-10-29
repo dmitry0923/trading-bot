@@ -17,6 +17,7 @@ import com.trading.bot.repository.SettingsRepository
 import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.repository.StrategyRepository
 import com.trading.bot.repository.TradeEventRepository
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -400,6 +401,33 @@ class TradingRepositoriesIntegrationTest : AbstractTestContainerTest() {
             assertEquals(0, BigDecimal("10").compareTo(window[LocalDate.of(2026, 8, 5)]))
             assertEquals(1, fundingRepository.findValuesBetween("AAA", LocalDate.of(2026, 8, 6), LocalDate.of(2026, 8, 6)).size)
             assertTrue(fundingRepository.findValuesBetween("CCC", LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 9)).isEmpty())
+        }
+    }
+
+    @Test
+    fun `corrupted settings are reported instead of silently falling back to defaults`() {
+        // Скан-16 P1: битый JSON раньше давал `null` → SettingsService перезаписывал
+        // настройки дефолтами (снимался ручной запрет торговли). Теперь — исключение,
+        // строка в БД не меняется.
+        runBlocking {
+            databaseClient
+                .sql(
+                    "INSERT INTO bot_settings (settings_key, settings_value, updated_at) " +
+                        "VALUES ('global', '{not-a-json', now()) " +
+                        "ON CONFLICT (settings_key) DO UPDATE SET settings_value = EXCLUDED.settings_value",
+                ).then()
+                .awaitSingleOrNull()
+
+            val failure = runCatching { settingsRepository.loadSettings() }.exceptionOrNull()
+
+            assertTrue(failure is IllegalStateException, "expected IllegalStateException, got $failure")
+            val raw =
+                databaseClient
+                    .sql("SELECT settings_value FROM bot_settings WHERE settings_key = 'global'")
+                    .map { row, _ -> row.get("settings_value", String::class.java)!! }
+                    .one()
+                    .awaitSingle()
+            assertEquals("{not-a-json", raw, "повреждённое значение не должно перезаписываться")
         }
     }
 

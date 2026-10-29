@@ -91,6 +91,38 @@ class CandleRepositoryIntegrationTest : AbstractTestContainerTest() {
         }
     }
 
+    @Test
+    fun `repeated save of the same bar updates OHLCV instead of freezing the first snapshot`() {
+        // Скан-16 P1: `ON CONFLICT DO NOTHING` навсегда фиксировал первый (частичный) снимок
+        // незакрытого бара — в research попадал несуществующий бар.
+        runBlocking {
+            val now = LocalDateTime.now()
+            val truncated = now.minusHours(1)
+            val time = truncated.withSecond(0).withNano(0)
+            repo.saveAll(listOf(candle("SBER", "MINUTE_10", time, close = 100.0)))
+
+            val corrected =
+                Candle(
+                    ticker = "SBER",
+                    timeframe = "MINUTE_10",
+                    openPrice = BigDecimal("100"),
+                    highPrice = BigDecimal("105"),
+                    lowPrice = BigDecimal("99"),
+                    closePrice = BigDecimal("104"),
+                    volume = 9999L,
+                    time = time,
+                )
+            repo.saveAll(listOf(corrected))
+
+            val stored = repo.findByTickerAndTimeframeAndTimeBetween("SBER", "MINUTE_10", time, time.plusMinutes(1))
+            assertEquals(1, stored.size, "повторная запись не должна дублировать бар")
+            val bar = stored.single()
+            assertEquals(0, BigDecimal("105").compareTo(bar.highPrice))
+            assertEquals(0, BigDecimal("104").compareTo(bar.closePrice))
+            assertEquals(9999L, bar.volume)
+        }
+    }
+
     private fun candle(
         ticker: String,
         timeframe: String,

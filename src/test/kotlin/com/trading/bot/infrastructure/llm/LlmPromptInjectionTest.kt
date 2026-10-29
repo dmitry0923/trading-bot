@@ -31,6 +31,21 @@ class LlmPromptInjectionTest {
     }
 
     @Test
+    fun `every prompt version of fundamental analysis warns about untrusted content`() {
+        // Скан-17 P2: директива была только в `default`; версии aggressive/conservative
+        // (рабочие research-версии) были открыты для prompt-injection из новостей.
+        val registry = PromptRegistry()
+        for (version in listOf("default", "conservative", "aggressive")) {
+            val template = registry.getTemplate("fundamental-analysis", version = version)
+            val system = template.system.uppercase()
+            assertTrue(
+                system.contains("НЕДОВЕРЕННЫЙ КОНТЕНТ"),
+                "prompt version '$version' must warn about untrusted content",
+            )
+        }
+    }
+
+    @Test
     fun `schema rejects conclusion with instructions embedded`() {
         val malicious =
             """

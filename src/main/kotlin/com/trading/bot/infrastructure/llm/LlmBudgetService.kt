@@ -58,6 +58,21 @@ class LlmBudgetService(
     data class BudgetDecision(
         val allowed: Boolean,
         val reason: String?,
+        /** Что именно зарезервировано — нужно для возврата резерва при сбое вызова. */
+        val reservation: Reservation? = null,
+    )
+
+    /**
+     * Резерв токенов под один вызов LLM.
+     *
+     * Скан-17 P2: без возврата резерва каждый сетевой сбой/таймаут навсегда съедал
+     * ~4000 токенов дневного лимита, и LLM-путь умирал до полуночи при нулевом
+     * фактическом расходе.
+     */
+    data class Reservation(
+        val tokens: Int,
+        val costEstimate: Double,
+        val keys: List<String>,
     )
 
     /**
@@ -123,7 +138,12 @@ class LlmBudgetService(
             val allowed = result?.firstOrNull()?.toString() == "1"
             if (allowed) {
                 meterRegistry.counter("llm.budget.reserve").increment()
-                BudgetDecision(allowed = true, reason = null)
+                BudgetDecision(
+                    allowed = true,
+                    reason = null,
+                    // Ключи 1..3 — токены, ключ 4 — стоимость дня.
+                    reservation = Reservation(reserveTokens, costEstimate, keys),
+                )
             } else {
                 val reason = result?.getOrNull(1)?.toString() ?: "TOKEN_BUDGET_EXCEEDED"
                 meterRegistry.counter("llm.budget.reject", Tags.of("agent", agent, "reason", reason)).increment()
@@ -137,8 +157,54 @@ class LlmBudgetService(
         }
     }
 
+    /**
+     * Возвращает зарезервированные токены после неуспешного/отменённого вызова.
+     *
+     * Без этого сетевой сбой или таймаут навсегда съедал резерв (~4000 токенов) из
+     * минутного/циклового/дневного лимита — 50 отказов подряд исчерпывали день
+     * при нулевом фактическом расходе (скан-17 P2). Идемпотентно-безопасно: DECRBY
+     * с клампом на 0, стоимость — `INCRBYFLOAT -cost`.
+     */
+    fun release(reservation: Reservation?) {
+        if (reservation == null || !llmConfig.budgetEnabled) return
+        val tokensArg = reservation.tokens.toString()
+        val costArg = "%.6f".format(Locale.ROOT, reservation.costEstimate)
+        try {
+            redisTemplate.execute(RELEASE_SCRIPT, reservation.keys, tokensArg, costArg)
+            meterRegistry.counter("llm.budget.released").increment()
+        } catch (e: Exception) {
+            logger.warn(e) { "LLM budget release failed (${reservation.tokens} tokens)" }
+        }
+    }
+
     companion object {
         private const val MILLION = 1_000_000.0
+
+        /**
+         * Возврат резерва: DECRBY по трём токенным ключам (кламп на 0) и
+         * `INCRBYFLOAT -cost` по ключу стоимости дня.
+         * KEYS: 1=минута, 2=цикл, 3=день, 4=стоимость дня. ARGV: tokens, cost.
+         */
+        private val RELEASE_SCRIPT: RedisScript<List<*>> =
+            DefaultRedisScript(
+                // language=lua
+                """
+                local tokens = tonumber(ARGV[1])
+                local cost = tonumber(ARGV[2])
+                for i = 1, 3 do
+                    local v = tonumber(redis.call('GET', KEYS[i]) or '0') or 0
+                    local nv = v - tokens
+                    if nv < 0 then nv = 0 end
+                    redis.call('SET', KEYS[i], string.format('%.0f', nv), 'KEEPTTL')
+                end
+                local c = tonumber(redis.call('GET', KEYS[4]) or '0') or 0
+                local nc = c - cost
+                if nc < 0 then nc = 0 end
+                redis.call('SET', KEYS[4], string.format('%.6f', nc), 'KEEPTTL')
+                return {1}
+                """.trimIndent(),
+                List::class.java,
+            )
 
         /**
          * Атомарное резервирование по всем лимитам сразу с полным откатом при

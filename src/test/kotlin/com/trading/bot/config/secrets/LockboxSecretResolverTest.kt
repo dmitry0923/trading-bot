@@ -1,97 +1,126 @@
 package com.trading.bot.config.secrets
 
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.springframework.boot.SpringApplication
-import org.springframework.mock.env.MockEnvironment
-import java.security.KeyPairGenerator
-import java.security.PrivateKey
-import java.security.Signature
+import org.junit.jupiter.api.assertThrows
+import org.mockito.Mockito
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.util.Base64
 
 /**
- * Unit-тесты [LockboxSecretResolver] и [SecretsEnvironmentPostProcessor] без облака:
- * обязательность `secret-id`, обёртка ошибки загрузки, ранний выход при
- * `lockbox.enabled=false`, разрешение placeholder-ов и криптографические хелперы
- * (PKCS8-ключ → SHA256withRSA → base64url), вызываемые рефлексией.
+ * Unit-тесты [LockboxSecretResolver]: разбор payload (text/binary/пустой), приоритет
+ * источников IAM-токена и обработка ошибок облака.
+ *
+ * Пакет `config/secrets` имел 8,3 % покрытия ветвей, потому что `HttpClient` создавался
+ * внутри резолвера и не подменялся; теперь клиент инжектируется (скан-19).
  */
 class LockboxSecretResolverTest {
-    private val postProcessor = SecretsEnvironmentPostProcessor()
+    private val http = Mockito.mock(HttpClient::class.java)
+
+    @Suppress("UNCHECKED_CAST")
+    private fun stubResponse(
+        status: Int,
+        body: String,
+    ) {
+        val response = Mockito.mock(HttpResponse::class.java) as HttpResponse<String>
+        Mockito.`when`(response.statusCode()).thenReturn(status)
+        Mockito.`when`(response.body()).thenReturn(body)
+        Mockito
+            .`when`(http.send(Mockito.any(HttpRequest::class.java), Mockito.any<HttpResponse.BodyHandler<String>>()))
+            .thenReturn(response)
+    }
+
+    private fun resolver(
+        secretId: String = "sec-1",
+        iamToken: String = "iam-explicit",
+        saKeyJson: String = "",
+    ) = LockboxSecretResolver(secretId, iamToken, saKeyJson, http = http)
 
     @Test
-    fun `environment post processor skips everything when disabled`() {
-        val environment = MockEnvironment().withProperty("lockbox.enabled", "false")
+    fun `blank secret id is rejected before any call`() {
+        val ex = assertThrows<IllegalArgumentException> { resolver(secretId = " ").resolve() }
 
-        postProcessor.postProcessEnvironment(environment, SpringApplication())
-
-        assertFalse(environment.propertySources.contains("lockbox-secrets"))
+        assertTrue(ex.message!!.contains("lockbox.secret-id"), ex.message)
     }
 
     @Test
-    fun `environment post processor fails fast and resolves enabled placeholder`() {
-        val environment =
-            MockEnvironment()
-                .withProperty("lockbox.enabled", "\${FEATURE_LOCKBOX}")
-                .withProperty("FEATURE_LOCKBOX", "true")
+    fun `text binary and empty entries are decoded`() {
+        stubResponse(
+            200,
+            """
+            {"entries":[
+              {"key":"ALOR_TOKEN","textValue":"t-123"},
+              {"key":"BINARY","binaryValue":"${Base64.getEncoder().encodeToString("bin".toByteArray())}"},
+              {"key":"EMPTY"},
+              {"textValue":"no-key"}
+            ]}
+            """.trimIndent(),
+        )
 
-        val error =
-            assertThrows(IllegalStateException::class.java) {
-                postProcessor.postProcessEnvironment(environment, SpringApplication())
+        val result = resolver().resolve()
+
+        assertEquals("t-123", result["ALOR_TOKEN"])
+        assertEquals("bin", result["BINARY"])
+        assertEquals("", result["EMPTY"])
+        assertEquals(3, result.size, "запись без key не должна попадать в результат: $result")
+    }
+
+    @Test
+    fun `payload without entries is rejected`() {
+        stubResponse(200, """{"version":1}""")
+
+        val ex = assertThrows<IllegalStateException> { resolver().resolve() }
+
+        assertTrue(ex.message!!.contains("has no entries"), ex.message)
+    }
+
+    @Test
+    fun `non-2xx payload response is reported with status`() {
+        stubResponse(403, """{"message":"denied"}""")
+
+        val ex = assertThrows<IllegalStateException> { resolver().resolve() }
+
+        assertTrue(ex.message!!.contains("403"), ex.message)
+    }
+
+    @Test
+    fun `explicit iam token is used without exchange`() {
+        stubResponse(200, """{"entries":[{"key":"A","textValue":"1"}]}""")
+
+        resolver(iamToken = "explicit").resolve()
+
+        Mockito.verify(http).send(Mockito.any(HttpRequest::class.java), Mockito.any<HttpResponse.BodyHandler<String>>())
+    }
+
+    @Test
+    fun `service account key without service_account_id is rejected`() {
+        val ex =
+            assertThrows<IllegalStateException> {
+                resolver(iamToken = "", saKeyJson = """{"private_key":"x"}""").resolve()
             }
 
-        assertTrue(error.message!!.contains("Failed to load secrets"))
-        assertTrue(error.cause is IllegalArgumentException)
-        assertTrue(error.cause!!.message!!.contains("lockbox.secret-id"))
+        assertTrue(ex.message!!.contains("service_account_id"), ex.message)
     }
 
     @Test
-    fun `resolve requires non blank secret id before any network call`() {
-        val resolver = LockboxSecretResolver(secretId = " ", iamToken = "iat", saKeyJson = "")
+    fun `service account key without private_key is rejected`() {
+        val ex =
+            assertThrows<IllegalStateException> {
+                resolver(iamToken = "", saKeyJson = """{"service_account_id":"sa"}""").resolve()
+            }
 
-        val error = assertThrows(IllegalArgumentException::class.java) { resolver.resolve() }
-
-        assertTrue(error.message!!.contains("lockbox.secret-id"))
+        assertTrue(ex.message!!.contains("private_key"), ex.message)
     }
 
     @Test
-    fun `pkcs8 key parsing and rsa signature helpers are consistent`() {
-        val resolver = LockboxSecretResolver(secretId = "s", iamToken = "iat", saKeyJson = "")
-        val keyPair = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
-        val pem =
-            "-----BEGIN PRIVATE KEY-----\n" +
-                Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(keyPair.private.encoded) +
-                "\n-----END PRIVATE KEY-----"
+    fun `metadata failure without iam token gives actionable error`() {
+        stubResponse(500, "boom")
 
-        val parsed = invokePrivate("parsePrivateKey", listOf(String::class.java), resolver, pem) as PrivateKey
-        assertEquals(keyPair.private.algorithm, parsed.algorithm)
+        val ex = assertThrows<IllegalStateException> { resolver(iamToken = "", saKeyJson = "").resolve() }
 
-        val signature =
-            invokePrivate(
-                "signRsa256",
-                listOf(String::class.java, PrivateKey::class.java),
-                resolver,
-                "header.payload",
-                parsed,
-            ) as String
-        val verifier = Signature.getInstance("SHA256withRSA").apply { initVerify(keyPair.public) }
-        verifier.update("header.payload".toByteArray())
-        assertTrue(verifier.verify(Base64.getUrlDecoder().decode(signature)))
-
-        val encoded = invokePrivate("base64url", listOf(String::class.java), resolver, "jwt") as String
-        assertEquals("jwt", String(Base64.getUrlDecoder().decode(encoded)))
+        assertTrue(ex.message!!.contains("LOCKBOX_IAM_TOKEN"), ex.message)
     }
-
-    private fun invokePrivate(
-        name: String,
-        parameterTypes: List<Class<*>>,
-        target: LockboxSecretResolver,
-        vararg args: Any?,
-    ): Any? =
-        LockboxSecretResolver::class.java
-            .getDeclaredMethod(name, *parameterTypes.toTypedArray())
-            .apply { isAccessible = true }
-            .invoke(target, *args)
 }

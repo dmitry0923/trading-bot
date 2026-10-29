@@ -33,12 +33,17 @@ class LockboxSecretResolver(
     private val iamToken: String,
     private val saKeyJson: String,
     private val timeoutSeconds: Int = 10,
-) {
-    private val http =
+    /**
+     * HTTP-клиент. Вынесен в конструктор для тестируемости: раньше создавался внутри,
+     * и ветки error-handling (5xx, отсутствие токена, битый SA-json) не покрывались
+     * тестами вообще (скан-19, branch 8 %).
+     */
+    private val http: HttpClient =
         HttpClient
             .newBuilder()
             .connectTimeout(Duration.ofSeconds(timeoutSeconds.toLong()))
-            .build()
+            .build(),
+) {
     private val objectMapper = ObjectMapper()
 
     fun resolve(): Map<String, String> {

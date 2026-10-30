@@ -14,6 +14,7 @@ import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.domain.risk.RegimeDetector
 import com.trading.bot.domain.strategy.Strategy
 import com.trading.bot.domain.strategy.StrategyContext
+import com.trading.bot.domain.strategy.StrategyDecision
 import com.trading.bot.domain.technical.CandleResampler
 import com.trading.bot.domain.technical.IndicatorCalculator
 import com.trading.bot.model.StrategyAction
@@ -1024,7 +1025,15 @@ class LiveStrategyBacktestSignalGenerator(
                 try {
                     it.evaluate(context)
                 } catch (_: Exception) {
-                    null
+                    // Сбой фильтра не должен выглядеть как «фильтра нет»: при
+                    // blockOnUnknown=true это fail-closed HOLD (как и неизвестный
+                    // вердикт), иначе фильтр молча пропускал бы входы, которые сам
+                    // обязан блокировать (скан-19).
+                    if (mlDirectionBlockOnUnknown) {
+                        StrategyDecision.hold(snapshot.currentPrice, "ML_UNKNOWN")
+                    } else {
+                        null
+                    }
                 }
             }
 

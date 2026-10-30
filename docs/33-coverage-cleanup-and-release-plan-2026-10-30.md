@@ -31,6 +31,8 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 | C-06 | `BacktestRiskSimulator.calculateExpectedNet` | мёртвый код | Условие `avgWin <= 0 && avgLoss <= 0` недостижимо: при нулевом `avgWin` Kelly-гейт (шаг раньше) даёт отрицательный размер и блокирует вход с `ZERO_RISK_SIZE` | DEAD |
 | C-07 | `PortfolioMomentumEngine` | мёртвый код | Защиты `base < 0` (momentum-окно) и `base.size < rangePeriod` недостижимы по построению индексов; NaN/Infinity-ветви σ не воспроизводятся на конечных данных | DEAD |
 | C-08 | `BacktestRiskSimulator` | поведение | `recordClose` получает `cash` уже **после** закрытия и не прибавляет P&L повторно (регресс-тест есть); daily P&L сбрасывается при смене дня, поэтому intraday-убытки не видны rolling-гейтам на следующем дне | DOC |
+| C-09 | `LiveStrategyBacktestSignalGenerator.signal` | асимметрия fail-режимов | Сбой расчёта `emaCross`/`volumeSpike`/`squeeze`/`rangeSqueeze` = **HOLD** при `blockOnUnknown`, а сбой `blocksEntry` (session/pullback), `blocksDirection`, `ORB`, `panic`/`macro`/`vwapMr` всегда = «не блокировать». Причина — разные контракты фильтров, но при добавлении нового фильтра легко потерять fail-closed | DOC |
+| C-10 | `LiveStrategyBacktestSignalGenerator.signal` (ML) | **дефект (исправлен)** | Сбой `mlDirection.evaluate()` игнорировался (`null`) даже при `mlDirectionBlockOnUnknown=true` → фильтр, объявленный fail-closed, молча пропускал входы. Теперь возвращается HOLD-вердикт (`ML_UNKNOWN`) | FIXED |
 
 > Правило: `DOC`-пункты **не меняют** опубликованные research-числа и live-поведение
 > без отдельного решения. `DEAD`-пункты чистятся на этапе 3 (либо удаляются, либо

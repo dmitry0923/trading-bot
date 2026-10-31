@@ -803,6 +803,47 @@ class StrategyServiceCycleBranchesTest {
         Mockito.verifyNoInteractions(strategyRunner)
     }
 
+    @Test
+    fun `fresh cached candles evaluate every timeframe staleness window`() {
+        // В отличие от теста выше, кэш отдаёт >=50 свежих свечей: isCandlesFresh
+        // реально вызывает timeframeDurationMs для каждого ТФ (ветви `when`).
+        val timeframes =
+            listOf(
+                "MINUTE_1",
+                "M1",
+                "MINUTE_5",
+                "M5",
+                "MINUTE_10",
+                "M10",
+                "MINUTE_15",
+                "M15",
+                "MINUTE_30",
+                "M30",
+                "HOUR_1",
+                "H1",
+                "HOUR_2",
+                "H2",
+                "HOUR_4",
+                "H4",
+                "DAY_1",
+                "D1",
+                "WEEK_1",
+            )
+        stubSettings(timeframes = timeframes)
+        Mockito
+            .`when`(candleCache.getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+            .thenAnswer { invocation -> freshCandles(rising = true, timeframe = invocation.getArgument(1)) }
+        stubMarketSnapshot(snapshot())
+        stubStrategyPipeline()
+
+        runCycle()
+
+        // Каждый ТФ обязан дойти до loadCandles → isCandlesFresh → timeframeDurationMs.
+        Mockito
+            .verify(candleCache, Mockito.times(timeframes.size))
+            .getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt())
+    }
+
     /** Helper-паттерн Mockito для suspend-метода с non-null параметром. */
     private fun anyRisk(): com.trading.bot.domain.risk.TradeRiskDecision {
         Mockito.any(com.trading.bot.domain.risk.TradeRiskDecision::class.java)

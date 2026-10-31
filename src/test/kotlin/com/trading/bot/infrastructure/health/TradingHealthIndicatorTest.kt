@@ -30,11 +30,9 @@ class TradingHealthIndicatorTest {
         }
 
     private fun activeWindow(): Pair<String, String> {
-        val now = LocalTime.now(ZoneId.of("Europe/Moscow"))
-        val start = now.minusHours(1)
-        val end = now.plusHours(1)
-        val fmt = DateTimeFormatter.ofPattern("HH:mm")
-        return start.format(fmt) to end.format(fmt)
+        // Фиксированное окно на весь день: now±1ч пересекало полночь и тест падал
+        // вечером (end < start), хотя проверяет именно «внутри торговых часов».
+        return "00:00" to "23:59"
     }
 
     private fun stubRedis(result: () -> Boolean) {

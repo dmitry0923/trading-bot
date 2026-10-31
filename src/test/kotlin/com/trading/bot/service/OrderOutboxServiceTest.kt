@@ -1462,6 +1462,45 @@ class OrderOutboxServiceTest {
     }
 
     @Test
+    fun `startup relink tolerates rows without an order id`() {
+        runBlocking {
+            val orphan =
+                outboxRow(retryCount = 0, key = "idem-no-order", type = "limit", price = "100")
+                    .copy(status = OutboxStatus.SENT, alorOrderId = null)
+            Mockito.`when`(outboxRepo.findSentWithoutPosition()).thenReturn(listOf(orphan))
+
+            assertEquals(0, service.relinkUnlinkedEntries())
+
+            Mockito.verify(positionRepo, Mockito.never()).findByAlorOrderId(Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `startup relink tolerates rows without a database id`() {
+        runBlocking {
+            val orphan =
+                outboxRow(retryCount = 0, key = "idem-no-db-id", type = "limit", price = "100")
+                    .copy(status = OutboxStatus.SENT, alorOrderId = "ord-77", id = null)
+            val position =
+                Position(
+                    id = 8L,
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("92000"),
+                    alorOrderId = "ord-77",
+                    status = PositionStatus.OPEN,
+                )
+            Mockito.`when`(outboxRepo.findSentWithoutPosition()).thenReturn(listOf(orphan))
+            Mockito.`when`(positionRepo.findByAlorOrderId("ord-77")).thenReturn(position)
+
+            assertEquals(1, service.relinkUnlinkedEntries(), "позиция найдена, но без id строки linkPosition не вызывается")
+
+            Mockito.verify(outboxRepo, Mockito.never()).linkPosition(anyUuid(), Mockito.anyLong())
+        }
+    }
+
+    @Test
     fun `startup relink attaches sent entry row to the position found by order id`() {
         // Крах между save() позиции и linkPosition() оставлял строку SENT без
         // positionId: resolveEntryViaOutbox не находил её, позиция висела

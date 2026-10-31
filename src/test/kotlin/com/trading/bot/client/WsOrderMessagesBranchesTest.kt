@@ -56,4 +56,44 @@ class WsOrderMessagesBranchesTest {
         assertSame(WsOrderMessages.MatchResult.NotMatch, WsOrderMessages.matchCancel("{broken", "ord-1", "guid"))
         assertSame(WsOrderMessages.MatchResult.NotMatch, WsOrderMessages.matchCancel("", "ord-1", "guid"))
     }
+
+    @Test
+    fun `matchPlace unwraps a data envelope without root identifiers`() {
+        val result =
+            WsOrderMessages.matchPlace("""{"data":{"id":"idem-1","orderNumber":"ord-data"}}""", "idem-1", "guid")
+
+        val confirmed = assertInstanceOf(WsOrderMessages.MatchResult.Confirmed::class.java, result)
+        assertEquals("ord-data", confirmed.orderNumber)
+    }
+
+    @Test
+    fun `matchPlace keeps root identifiers instead of unwrapping data`() {
+        val result =
+            WsOrderMessages.matchPlace(
+                """{"id":"idem-1","orderNumber":"root-ord","data":{"id":"other","orderNumber":"data-ord"}}""",
+                "idem-1",
+                "guid",
+            )
+
+        val confirmed = assertInstanceOf(WsOrderMessages.MatchResult.Confirmed::class.java, result)
+        assertEquals("root-ord", confirmed.orderNumber)
+    }
+
+    @Test
+    fun `matchCancel unwraps a data envelope and accepts requestStatus cancel`() {
+        val nested =
+            WsOrderMessages.matchCancel("""{"data":{"orderNumber":"ord-1","status":"cancelled"}}""", "ord-1", "guid")
+        assertInstanceOf(WsOrderMessages.MatchResult.Confirmed::class.java, nested)
+
+        val byRequest = WsOrderMessages.matchCancel("""{"requestId":"guid-1","requestStatus":"canceled"}""", "ord-1", "guid-1")
+        assertInstanceOf(WsOrderMessages.MatchResult.Confirmed::class.java, byRequest)
+    }
+
+    @Test
+    fun `matchCancel rejects on an error field without status`() {
+        val result = WsOrderMessages.matchCancel("""{"orderNumber":"ord-1","error":"denied"}""", "ord-1", "guid")
+
+        val rejected = assertInstanceOf(WsOrderMessages.MatchResult.Rejected::class.java, result)
+        assertEquals("denied", rejected.reason)
+    }
 }

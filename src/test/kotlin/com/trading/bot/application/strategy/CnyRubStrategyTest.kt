@@ -199,12 +199,116 @@ class CnyRubStrategyTest {
             assertTrue(result.signalStrength in 0.0..1.0)
         }
 
+    @Test
+    fun `microstructure confirms sell when ask pressure dominates`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.5000"),
+                    indicators =
+                        indicators(
+                            rsi = 75.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    bidSize = 100L,
+                    askSize = 1000L,
+                )
+            val result = strategy.evaluate(ctx)
+            assertEquals(StrategyAction.SELL, result.action)
+        }
+
+    @Test
+    fun `microstructure blocks sell when bid pressure dominates`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.5000"),
+                    indicators =
+                        indicators(
+                            rsi = 75.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    bidSize = 1000L,
+                    askSize = 100L,
+                )
+            val result = strategy.evaluate(ctx)
+            assertEquals(StrategyAction.HOLD, result.action)
+        }
+
+    @Test
+    fun `microprice below mid blocks buy even with bid pressure`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.3400"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    bidSize = 1000L,
+                    askSize = 100L,
+                    micropriceOverride = BigDecimal("12.3300"),
+                )
+            val result = strategy.evaluate(ctx)
+            assertEquals(StrategyAction.HOLD, result.action)
+        }
+
+    @Test
+    fun `price below the lower band clamps percent b to zero`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.3000"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                )
+            val result = strategy.evaluate(ctx)
+            assertEquals(StrategyAction.BUY, result.action)
+            assertTrue(result.signalStrength in 0.0..1.0)
+        }
+
+    @Test
+    fun `zero bollinger range does not divide by zero`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.3400"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.3400"),
+                            bbMiddle = BigDecimal("12.3400"),
+                        ),
+                )
+            val result = strategy.evaluate(ctx)
+            assertEquals(StrategyAction.BUY, result.action)
+        }
+
     private fun context(
         ticker: String,
         price: BigDecimal = BigDecimal("12.42"),
         indicators: IndicatorCalculator.Indicators? = indicators(rsi = 50.0),
         bidSize: Long? = null,
         askSize: Long? = null,
+        micropriceOverride: BigDecimal? = null,
     ): StrategyContext {
         val obi =
             if (bidSize != null && askSize != null) {
@@ -216,12 +320,13 @@ class CnyRubStrategyTest {
         val bid = price.multiply(BigDecimal("0.999")).setScale(4, RoundingMode.HALF_UP)
         val ask = price.multiply(BigDecimal("1.001")).setScale(4, RoundingMode.HALF_UP)
         val microprice =
-            if (bidSize != null && askSize != null) {
-                com.trading.bot.domain.microstructure.MicropriceCalculator
-                    .calculate(bid, ask, bidSize, askSize)
-            } else {
-                null
-            }
+            micropriceOverride
+                ?: if (bidSize != null && askSize != null) {
+                    com.trading.bot.domain.microstructure.MicropriceCalculator
+                        .calculate(bid, ask, bidSize, askSize)
+                } else {
+                    null
+                }
 
         return StrategyContext(
             ticker = ticker,

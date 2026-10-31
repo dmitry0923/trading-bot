@@ -12,6 +12,8 @@ import com.trading.bot.domain.signal.Signal
 import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.entity.AgentLog
+import com.trading.bot.model.entity.Position
 import com.trading.bot.repository.AgentLogRepository
 import com.trading.bot.service.AdaptiveRiskService
 import com.trading.bot.service.AumProvider
@@ -706,6 +708,141 @@ class StockEntryProfileTest {
             whenever(adaptiveRisk.exceedsSectorCorrelationLimit(any(), any())).thenReturn(true)
             assertEquals("SECTOR_CORRELATION", profile.preSizingChecks("CNYRUB_TOM", emptyList()))
         }
+
+    @Test
+    fun `sizePosition uses the ATR stop distance when ATR stops are active`() =
+        runBlocking {
+            riskConfig.riskPerTradePercent = 10.0
+            Mockito
+                .doReturn(BigDecimal("50000"))
+                .`when`(adaptiveRisk)
+                .calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+
+            val request =
+                EntryRequest(
+                    ticker = "CNYRUB_TOM",
+                    action = StrategyAction.BUY,
+                    entryPrice = BigDecimal("12.42"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal.ZERO,
+                    atr = BigDecimal("1"),
+                    openPositions = emptyList(),
+                )
+
+            val size = profile.sizePosition(makeSignal(), BigDecimal("12.42"), request)
+
+            // slDistance = 1 × 2.0 = 2; loss/lot = 2 × 1000 + 2 × 10 = 2020;
+            // risk = 10% от 50 000 = 5000 → maxLots = 2; Kelly 50 000 / 12 420 = 4
+            assertEquals(2, size.quantity)
+        }
+
+    @Test
+    fun `buildOrderParams forwards frozen percentages to the spot builder`() {
+        val frozen =
+            FrozenStrategy(
+                ticker = "CNYRUB_TOM",
+                strategyVersion = "v1",
+                gitCommitSha = null,
+                slPercent = 0.5,
+                tpPercent = 1.0,
+                slPoints = null,
+                tpPoints = null,
+                confidenceThreshold = null,
+                leverage = 1.0,
+                riskPerTradePercent = null,
+                futuresMaxContractsPerPosition = null,
+            )
+        val request = request().copy(frozenStrategy = frozen)
+        val size =
+            PositionSizeResult(
+                quantity = 1,
+                marginRequired = BigDecimal.ZERO,
+                riskAmount = BigDecimal.ZERO,
+                liquidationPrice = null,
+                reason = null,
+            )
+
+        profile.buildOrderParams("CNYRUB_TOM", PositionDirection.LONG, BigDecimal("12.42"), size, request)
+
+        Mockito.verify(orderBuilder).buildSpotOrderParams(
+            "CNYRUB_TOM",
+            PositionDirection.LONG,
+            1,
+            BigDecimal("12.42"),
+            null,
+            frozenSlPercent = 0.5,
+            frozenTpPercent = 1.0,
+        )
+    }
+
+    @Test
+    fun `onOpened resets daily pnl and writes an agent log`(): Unit =
+        runBlocking {
+            val decision =
+                TradeRiskDecision(
+                    ticker = "CNYRUB_TOM",
+                    cycleId = "c1",
+                    timeframe = "MINUTE_10",
+                    action = StrategyAction.BUY,
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    requestedQuantity = 2,
+                    targetPrice = BigDecimal("12.42"),
+                    signalStrength = 0.7,
+                    reasoning = "test",
+                )
+            val opened =
+                Position(
+                    ticker = "CNYRUB_TOM",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("12.42"),
+                    accountId = 7L,
+                )
+            var captured: AgentLog? = null
+            whenever(agentLogRepo.save(anyAgentLog())).thenAnswer { invocation ->
+                val log = invocation.getArgument<AgentLog>(0)
+                captured = log
+                log
+            }
+
+            profile.onOpened(decision, opened)
+
+            Mockito.verify(risk).updateDailyPnL(BigDecimal.ZERO, 7L)
+            assertEquals("OPEN", captured?.action)
+            assertEquals("TradingBot", captured?.agentName)
+            assertEquals("CNYRUB_TOM", captured?.ticker)
+        }
+
+    @Test
+    fun `buildPosition falls back to STOCK for an unknown instrument`() {
+        val decision =
+            TradeRiskDecision(
+                ticker = "ZZZZ",
+                cycleId = "c1",
+                timeframe = "MINUTE_10",
+                action = StrategyAction.BUY,
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                targetPrice = BigDecimal("100"),
+                signalStrength = 0.5,
+                reasoning = "test",
+            )
+
+        val position = profile.buildPosition(decision, null, false, BigDecimal("100"), 1)
+
+        assertEquals(InstrumentType.STOCK, position.instrumentType)
+    }
+
+    private fun anyAgentLog(): AgentLog {
+        Mockito.any(AgentLog::class.java)
+        return AgentLog(
+            cycleId = "matcher",
+            agentName = "matcher",
+            action = "OPEN",
+        )
+    }
 
     // ── helpers ─────────────────────────────────────────────
 

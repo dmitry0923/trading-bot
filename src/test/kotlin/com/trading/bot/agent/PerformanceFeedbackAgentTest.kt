@@ -209,6 +209,37 @@ class PerformanceFeedbackAgentTest {
         assertTrue(meterRegistry.counter("feedback.cache.hit", "ticker", "SBER").count() > 0)
     }
 
+    @Test
+    fun `sparse llm json fills optional fields with safe defaults`() {
+        stub.responses += LlmResponse(content = "{}")
+        runBlocking { Mockito.`when`(tradeAnalysis.analyzeLastNDays(14)).thenReturn(mapOf("SBER" to stats())) }
+
+        val fb = runBlocking { agent.generateFeedback("SBER") }
+
+        assertEquals(0.0, fb.confidenceAdjustment)
+        assertEquals(0.0, fb.slAdjustmentPercent)
+        assertEquals(0.0, fb.tpAdjustmentPercent)
+        assertEquals("", fb.contextPrompt)
+        assertFalse(fb.shouldPauseTrading)
+        assertTrue(fb.agentSpecificNotes.getValue("techAgentNote").isEmpty())
+        assertTrue(fb.agentSpecificNotes.getValue("contrarianNote").isEmpty())
+    }
+
+    @Test
+    fun `prompt shows N A for missing best and worst entry hours`() {
+        stub.responses += LlmResponse(content = """{"confidenceAdjustment":0.05}""")
+        runBlocking {
+            Mockito.`when`(tradeAnalysis.analyzeLastNDays(14)).thenReturn(
+                mapOf("SBER" to stats(bestEntryHour = null, worstEntryHour = null)),
+            )
+        }
+
+        runBlocking { agent.generateFeedback("SBER") }
+
+        assertEquals("N/A", stub.lastVariables?.get("bestEntryHour"))
+        assertEquals("N/A", stub.lastVariables?.get("worstEntryHour"))
+    }
+
     private fun ruleBasedCount(reason: String): Double =
         meterRegistry
             .find("feedback.rule_based")
@@ -222,6 +253,8 @@ class PerformanceFeedbackAgentTest {
         winRate: Double = 0.5,
         slHitRate: Double = 0.2,
         maxConsecutiveLosses: Int = 0,
+        bestEntryHour: Int? = 14,
+        worstEntryHour: Int? = 9,
     ): TradeStats =
         TradeStats(
             ticker = "SBER",
@@ -237,8 +270,8 @@ class PerformanceFeedbackAgentTest {
             slHitRate = slHitRate,
             tpHitRate = 0.3,
             strategyCloseRate = 0.5,
-            bestEntryHour = 14,
-            worstEntryHour = 9,
+            bestEntryHour = bestEntryHour,
+            worstEntryHour = worstEntryHour,
             blindSpots = emptyList(),
         )
 
@@ -292,6 +325,7 @@ class PerformanceFeedbackAgentTest {
         ) {
         var calls: Int = 0
         var failOnCall: Boolean = false
+        var lastVariables: Map<String, Any>? = null
         val responses: ArrayDeque<LlmResponse> = ArrayDeque()
 
         override suspend fun complete(
@@ -304,6 +338,7 @@ class PerformanceFeedbackAgentTest {
             cacheNamespace: String?,
         ): LlmResponse {
             calls++
+            lastVariables = variables
             if (failOnCall) throw RuntimeException("llm down")
             return responses.removeFirst()
         }

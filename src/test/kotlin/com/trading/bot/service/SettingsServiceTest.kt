@@ -238,4 +238,53 @@ class SettingsServiceTest {
             }
             assertEquals(5000, service.getSettings().maxDailyLossRub)
         }
+
+    @Test
+    fun `startup failure disables trading instead of crashing the context`() {
+        runBlocking { Mockito.`when`(repo.loadSettings()).thenThrow(IllegalStateException("db down")) }
+
+        service.init()
+
+        assertFalse(service.getSettings().tradingEnabled, "fail-closed: настройки недоступны → торговля выключена")
+        // остальные значения — дефолтные, применены в runtime-конфиг
+        assertEquals(0, BigDecimal("50000").compareTo(riskConfig.maxPositionRub))
+    }
+
+    @Test
+    fun `validation rejects out of range risk and sizing parameters`(): Unit =
+        runBlocking {
+            val invalid =
+                listOf(
+                    BotSettings(tradingHoursStart = "9:00"),
+                    BotSettings(tradingHoursEnd = "25:00"),
+                    BotSettings(maxPositionRub = 0),
+                    BotSettings(maxOpenPositions = -1),
+                    BotSettings(futuresMaxOpenPositions = -1),
+                    BotSettings(riskPerTradePercent = 0.0),
+                    BotSettings(riskPerTradePercent = 101.0),
+                    BotSettings(kellyFraction = 0.0),
+                    BotSettings(kellyFraction = 1.1),
+                    BotSettings(maxDailyLossPercent = 0.0),
+                    BotSettings(maxDailyLossPercent = 101.0),
+                    BotSettings(userLeverage = 0.5),
+                )
+
+            invalid.forEach { settings ->
+                assertThrows<IllegalArgumentException>("must reject: $settings") {
+                    runBlocking { service.updateSettings(settings) }
+                }
+            }
+        }
+
+    @Test
+    fun `ui update with a non blank api key replaces the stored key`(): Unit =
+        runBlocking {
+            Mockito.`when`(repo.loadSettings()).thenReturn(BotSettings(llmApiKey = "old-key"))
+            service.init()
+
+            service.updateSettingsFromUi(BotSettings(llmApiKey = "new-key"))
+
+            assertEquals("new-key", service.getSettings().llmApiKey)
+            Mockito.verify(repo).saveSettings(any())
+        }
 }

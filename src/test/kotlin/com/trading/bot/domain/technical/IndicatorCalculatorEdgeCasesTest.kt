@@ -151,6 +151,34 @@ class IndicatorCalculatorEdgeCasesTest {
         assertTrue(IndicatorCalculator.adx(candles, 14) > 0.0)
     }
 
+    @Test
+    fun `adx is positive on a falling trend too`() {
+        val candles =
+            List(40) { i ->
+                candle(
+                    close = (200 - i).toString(),
+                    high = (201 - i).toString(),
+                    low = (199 - i).toString(),
+                )
+            }
+
+        assertTrue(IndicatorCalculator.adx(candles, 14) > 0.0)
+    }
+
+    @Test
+    fun `calculate reports a bearish macd conclusion when rsi is not extreme`() {
+        val prices =
+            List(15) { 100.0 } +
+                List(5) { 100.0 + (it + 1) * 0.2 } +
+                List(10) { 101.0 - (it + 1) * 0.05 }
+        val indicators =
+            IndicatorCalculator.calculate(
+                prices.mapIndexed { i, p -> candle(p.toString(), time = LocalDateTime.of(2026, 10, 1, 10, 0).plusMinutes(10L * i)) },
+            )!!
+
+        assertEquals("BEARISH", indicators.conclusion)
+    }
+
     // ─── Keltner / squeeze ──────────────────────────────────────────
 
     @Test

@@ -6,7 +6,9 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.model.PositionDirection
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -121,5 +123,24 @@ class MarketDataGateTest {
         assertFalse(gate.isObiOpposing("SBER", PositionDirection.LONG), "|OBI| ниже порога")
         gate.updateObi("SBER", BigDecimal("0.49"))
         assertFalse(gate.isObiOpposing("SBER", PositionDirection.SHORT))
+    }
+
+    // ===== spread metric =====
+
+    @Test
+    fun `record spread updates the per ticker gauge`() {
+        gate.recordSpread("sber", BigDecimal("99"), BigDecimal("101"))
+
+        val gauge = meterRegistry.find("market.data.spread_percent").tag("ticker", "SBER").gauge()
+        assertEquals(2.0, gauge?.value() ?: 0.0, 1e-9)
+    }
+
+    @Test
+    fun `invalid book does not create a spread gauge`() {
+        gate.recordSpread("SBER", BigDecimal.ZERO, BigDecimal("101"))
+        gate.recordSpread("SBER", BigDecimal("99"), BigDecimal.ZERO)
+        gate.recordSpread("SBER", BigDecimal("101"), BigDecimal("101"))
+
+        assertNull(meterRegistry.find("market.data.spread_percent").tag("ticker", "SBER").gauge())
     }
 }

@@ -169,6 +169,52 @@ class CorrelationMatrixProviderTest {
     }
 
     @Test
+    fun `resolved fills missing pairs with the maximum observed correlation`() {
+        stubSeries("A", (1..50).map { i -> 100.0 + i })
+        stubSeries("B", (1..50).map { i -> 200.0 - i })
+        // C без данных: пары C-* заменяются консервативным fallback (max observed = 1.0).
+        stubCandles("C", emptyList())
+
+        val matrix = provider.resolved(listOf("A", "B", "C"))
+
+        assertEquals(3, matrix.size)
+        assertEquals(-1.0, matrix[0][1], 1e-6)
+        assertEquals(1.0, matrix[2][0], 1e-9)
+        assertEquals(1.0, matrix[2][1], 1e-9)
+        assertEquals(1.0, matrix[2][2], 1e-9)
+    }
+
+    @Test
+    fun `resolved of an empty universe is an empty matrix`() {
+        assertEquals(emptyList<List<Double>>(), provider.resolved(emptyList()))
+    }
+
+    @Test
+    fun `resolved keeps duplicate tickers with a unit diagonal`() {
+        stubSeries("A", (1..50).map { i -> 100.0 + i })
+
+        val matrix = provider.resolved(listOf("A", "A"))
+
+        assertEquals(1.0, matrix[0][0], 1e-9)
+        assertEquals(1.0, matrix[1][1], 1e-9)
+        assertEquals(1.0, matrix[0][1], 1e-9)
+    }
+
+    @Test
+    fun `aligned closes of an empty side are empty`() {
+        assertTrue(provider.alignedCloses(emptyList(), closes((1..5).map { it.toDouble() })).isEmpty())
+        assertTrue(provider.alignedCloses(closes((1..5).map { it.toDouble() }), emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `constant series have no correlation`() {
+        stubSeries("A", List(50) { 100.0 })
+        stubSeries("B", (1..50).map { i -> 100.0 + i })
+
+        assertNull(provider.correlationOf("A", "B"))
+    }
+
+    @Test
     fun `correlations rejects a too small period instead of returning an all-null matrix`() {
         // /risk/correlation?period=10 раньше возвращал матрицу из null с HTTP 200 —
         // «нет данных» было неотличимо от «корреляция не считается».

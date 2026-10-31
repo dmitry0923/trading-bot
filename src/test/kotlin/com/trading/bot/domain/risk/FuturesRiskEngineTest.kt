@@ -169,6 +169,88 @@ class FuturesRiskEngineTest {
         }
 
     @Test
+    fun `entry is rejected when risk or leverage is disabled`() =
+        runBlocking {
+            riskConfig.enabled = false
+            assertEquals(RiskVerdict.Rejected("RISK_DISABLED"), engine().canEnter(entryRequest()))
+            riskConfig.enabled = true
+
+            leverageConfig.enabled = false
+            assertEquals(RiskVerdict.Rejected("LEVERAGE_DISABLED"), engine().canEnter(entryRequest()))
+            leverageConfig.enabled = true
+        }
+
+    @Test
+    fun `drawdown and volatility-index guards block entry`() =
+        runBlocking {
+            Mockito.`when`(dailyRiskGuard.isEntryBlocked(Mockito.nullable(Long::class.java))).thenReturn(true)
+            assertEquals(RiskVerdict.Rejected("DRAWDOWN_PROTECTION"), engine().canEnter(entryRequest()))
+            Mockito.`when`(dailyRiskGuard.isEntryBlocked(Mockito.nullable(Long::class.java))).thenReturn(false)
+
+            Mockito.`when`(volatilityFilter.isVolatilityAnomalous()).thenReturn(true)
+            assertEquals(RiskVerdict.Rejected("VOLATILITY_INDEX"), engine().canEnter(entryRequest()))
+            Mockito.`when`(volatilityFilter.isVolatilityAnomalous()).thenReturn(false)
+        }
+
+    @Test
+    fun `zero atr is fail-closed by default and allowed when the flag is off`() =
+        runBlocking {
+            assertEquals(RiskVerdict.Rejected("VOLATILITY_GUARD"), engine().canEnter(entryRequest(atr = BigDecimal.ZERO)))
+
+            riskConfig.volatilityFailClosed = false
+            assertEquals(RiskVerdict.Allowed, engine().canEnter(entryRequest(atr = BigDecimal.ZERO)))
+            riskConfig.volatilityFailClosed = true
+        }
+
+    @Test
+    fun `invalid entry inputs are rejected`() =
+        runBlocking {
+            assertEquals(
+                RiskVerdict.Rejected("INVALID_INPUT"),
+                engine().canEnter(entryRequest(atr = null).copy(entryPrice = BigDecimal.ZERO)),
+            )
+            assertEquals(RiskVerdict.Rejected("INVALID_INPUT"), engine().canEnter(entryRequest().copy(portfolioMoney = BigDecimal.ZERO)))
+            assertEquals(RiskVerdict.Rejected("INVALID_INPUT"), engine().canEnter(entryRequest().copy(currentGo = BigDecimal.ZERO)))
+        }
+
+    @Test
+    fun `request max open positions overrides the config`() =
+        runBlocking {
+            val open =
+                listOf(
+                    Position(
+                        ticker = "Si",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("92000"),
+                        instrumentType = InstrumentType.FUTURES,
+                    ),
+                )
+
+            val result = engine().canEnter(entryRequest(openPositions = open).copy(maxOpenPositions = 2))
+
+            assertEquals(RiskVerdict.Allowed, result)
+        }
+
+    @Test
+    fun `liquidation check without price data is safe`() {
+        val e = engine()
+        val noLiq =
+            Position(
+                ticker = "Si",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("92000"),
+            )
+
+        assertEquals(FuturesRiskEngine.LiquidationStatus.SAFE, e.checkLiquidationDistance(noLiq, BigDecimal("90000")))
+        assertEquals(
+            FuturesRiskEngine.LiquidationStatus.SAFE,
+            e.checkLiquidationDistance(noLiq.copy(liquidationPrice = BigDecimal("80000")), BigDecimal.ZERO),
+        )
+    }
+
+    @Test
     fun `liquidation status thresholds`() {
         val e = engine()
         val pos =

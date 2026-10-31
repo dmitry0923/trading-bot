@@ -148,6 +148,44 @@ class FuturesEntryProfilePostSizingTest {
         }
 
     @Test
+    fun `margin utilization breach blocks entry`(): Unit =
+        runBlocking {
+            val risk = Mockito.mock(RiskManagementService::class.java)
+            Mockito.`when`(risk.freshMarginOfPositions(anyList(), anyGoMap())).thenReturn(BigDecimal.ZERO)
+            Mockito.`when`(risk.exceedsMarginUtilization(anyBigDecimal(), anyBigDecimal(), anyBigDecimal())).thenReturn(true)
+
+            val result = profile(risk).postSizingChecks(request("CNYRUBF"), PositionDirection.LONG, size(BigDecimal("850")), emptyList())
+
+            assertEquals("PORTFOLIO_MARGIN_LIMIT", result)
+            Mockito.verify(risk, Mockito.never()).exceedsPortfolioLimits(
+                anyBigDecimal(),
+                anyDirection(),
+                anyList(),
+                Mockito.nullable(Long::class.java),
+            )
+        }
+
+    @Test
+    fun `portfolio gross net breach blocks entry`(): Unit =
+        runBlocking {
+            val risk = Mockito.mock(RiskManagementService::class.java)
+            Mockito.`when`(risk.freshMarginOfPositions(anyList(), anyGoMap())).thenReturn(BigDecimal.ZERO)
+            Mockito.`when`(risk.exceedsMarginUtilization(anyBigDecimal(), anyBigDecimal(), anyBigDecimal())).thenReturn(false)
+            Mockito
+                .`when`(risk.exceedsPortfolioLimits(anyBigDecimal(), anyDirection(), anyList(), Mockito.nullable(Long::class.java)))
+                .thenReturn(true)
+
+            val result = profile(risk).postSizingChecks(request("CNYRUBF"), PositionDirection.LONG, size(BigDecimal("850")), emptyList())
+
+            assertEquals("PORTFOLIO_LIMIT", result)
+        }
+
+    private fun anyDirection(): PositionDirection {
+        Mockito.any(PositionDirection::class.java)
+        return PositionDirection.LONG
+    }
+
+    @Test
     fun `snapshot GO map is passed to freshMarginOfPositions as precomputed data`(): Unit =
         runBlocking {
             val risk = Mockito.mock(RiskManagementService::class.java)

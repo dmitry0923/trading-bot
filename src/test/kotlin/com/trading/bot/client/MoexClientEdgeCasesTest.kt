@@ -143,6 +143,57 @@ class MoexClientEdgeCasesTest {
             }
         }
 
+    @Test
+    fun `stock candles without a usable column set are ignored`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.stockCandlesBody = """{"candles":{"data":[["2026-07-01"]]}}"""
+                assertTrue(
+                    client(server)
+                        .getCandles("SBER", LocalDateTime.of(2026, 7, 1, 10, 0))
+                        .isEmpty(),
+                )
+
+                server.stockCandlesBody =
+                    """{"candles":{"columns":["begin","open","high","low","close","volume"],"data":[["bad"]]}}"""
+                assertTrue(
+                    client(server)
+                        .getCandles("SBER", LocalDateTime.of(2026, 7, 1, 10, 0))
+                        .isEmpty(),
+                )
+            }
+        }
+
+    @Test
+    fun `daily closes ignore a non-array data payload`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.closesBody = """{"candles":{"columns":["close"],"data":"x"}}"""
+
+                assertTrue(client(server).getVolatilityIndexDailyCloses(from = LocalDate.of(2026, 7, 1)).isEmpty())
+            }
+        }
+
+    @Test
+    fun `forts options treat zero and blank prices as absent`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.optionsBody =
+                    """
+                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE","UNDERLYINGASSET"],
+                      "data":[["RIU6C90000","RI","C","90000","2026-09-03","RI"]]},
+                     "marketdata":{"columns":["SECID","LAST","BID","OPENPOSITION"],
+                      "data":[["RIU6C90000","0","","7"]]}}
+                    """.trimIndent()
+
+                val option = client(server).getFortsOptions().single()
+
+                assertNull(option.last)
+                assertNull(option.bid)
+                assertEquals(7L, option.openPosition)
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
 
@@ -150,6 +201,7 @@ class MoexClientEdgeCasesTest {
         var volatilityBody: String = "{}"
         var optionsBody: String = "{}"
         var closesBody: String = "{}"
+        var stockCandlesBody: String = "{}"
         var futuresSecuritiesBody: String = """{"securities":{"columns":["SECID","LASTDELDATE"],"data":[]}}"""
 
         val baseUrl: String
@@ -165,6 +217,7 @@ class MoexClientEdgeCasesTest {
                         path.contains("/markets/index/boards/SNDX/") -> closesBody
                         path.contains("/markets/index/securities/") -> volatilityBody
                         path.contains("/forts/boards/RFUD/securities.json") -> futuresSecuritiesBody
+                        path.endsWith("/candles.json") -> stockCandlesBody
                         else -> "{}"
                     }
                 val bytes = body.toByteArray()

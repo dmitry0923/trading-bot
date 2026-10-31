@@ -804,8 +804,89 @@ class StrategyServiceCycleBranchesTest {
     }
 
     @Test
+    fun `config timeframes are used when settings are empty and a missing pair quote is tolerated`() {
+        val previousTimeframes = tradingConfig.timeframes
+        val previousPairs = tradingConfig.pairs
+        try {
+            stubSettings(timeframes = emptyList())
+            tradingConfig.timeframes = listOf("MINUTE_10", "MINUTE_10")
+            tradingConfig.pairs = mapOf("SBER" to "USD000UTSTOM")
+            stubCachedCandles(freshCandles(rising = true))
+            stubMarketSnapshot(snapshot())
+            stubStrategyPipeline()
+
+            runCycle()
+
+            // Дубли в конфиге схлопываются (distinct), отсутствующая котировка пары не блокирует цикл.
+            assertEquals(1.0, strategySaved(), "ровно один цикл стратегии по MINUTE_10")
+            runBlocking { Mockito.verify(alorClient).getMarketSnapshot("USD000UTSTOM") }
+        } finally {
+            tradingConfig.timeframes = previousTimeframes
+            tradingConfig.pairs = previousPairs
+        }
+    }
+
+    @Test
+    fun `empty settings and config timeframes fall back to the single configured timeframe`() {
+        val previousTimeframes = tradingConfig.timeframes
+        val previousTimeframe = tradingConfig.timeframe
+        try {
+            stubSettings(timeframes = emptyList())
+            tradingConfig.timeframes = emptyList()
+            tradingConfig.timeframe = "MINUTE_10"
+            stubCachedCandles(freshCandles(rising = true))
+            stubMarketSnapshot(snapshot())
+            stubStrategyPipeline()
+
+            runCycle()
+
+            assertEquals(1.0, strategySaved(), "фолбэк на trading.timeframe")
+        } finally {
+            tradingConfig.timeframes = previousTimeframes
+            tradingConfig.timeframe = previousTimeframe
+        }
+    }
+
+    @Test
+    fun `stale cached candles fall back to fresh database candles`() {
+        stubSettings()
+        val stale =
+            freshCandles(rising = true).map { it.copy(time = it.time.minusDays(10)) }
+        stubCachedCandles(stale)
+        runBlocking {
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyLocalDateTime(),
+                        anyLocalDateTime(),
+                    ),
+                ).thenReturn(freshCandles(rising = true))
+        }
+        stubMarketSnapshot(snapshot())
+        stubStrategyPipeline()
+
+        runCycle()
+
+        assertEquals(1.0, strategySaved(), "свежие свечи из БД должны перекрыть устаревший кэш")
+        runBlocking {
+            Mockito
+                .verify(candleRepo)
+                .findByTickerAndTimeframeAndTimeBetween(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyLocalDateTime(),
+                    anyLocalDateTime(),
+                )
+        }
+    }
+
+    @Test
     fun `fresh cached candles evaluate every timeframe staleness window`() {
         // В отличие от теста выше, кэш отдаёт >=50 свежих свечей: isCandlesFresh
+        // реально вызывает timeframeDurationMs для каждого ТФ (ветви `when`).
+        // Каждый ТФ обязан дойти до loadCandles → isCandlesFresh → timeframeDurationMs.
         // реально вызывает timeframeDurationMs для каждого ТФ (ветви `when`).
         val timeframes =
             listOf(

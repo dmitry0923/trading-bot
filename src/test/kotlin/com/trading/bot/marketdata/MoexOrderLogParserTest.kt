@@ -345,4 +345,55 @@ class MoexOrderLogParserTest {
         val latest = LocalDateTime.of(2024, 10, 2, 23, 59)
         assertTrue(bucketTimes.all { it >= earliest && it <= latest }, "unexpected bucket range")
     }
+
+    @Test
+    fun `malformed and foreign rows are counted instead of failing the parse`() {
+        val dir =
+            java.nio.file.Files
+                .createTempDirectory("orderlog-rows")
+                .toFile()
+        try {
+            File(dir, "20241001_CNYRUBF_fut_tick.csv").writeText(
+                listOf(
+                    "#header",
+                    "",
+                    "OTHER,1,B,20241001100000000,0,100.0,5",
+                    "CNYRUBF,1,B,20241001100000000,0,100.0",
+                    "CNYRUBF,1,B,not-a-moment,0,100.0,5",
+                    "CNYRUBF,1,B,20241001100000000,0,bad-price,5",
+                    "CNYRUBF,1,B,20241001100000000,0,100.0,bad-volume",
+                    "CNYRUBF,1,X,20241001100000000,0,100.0,5",
+                    "CNYRUBF,1,B,20241001100000000,0,100.0,5",
+                    "CNYRUBF,1,S,20241001100000000,0,101.0,5",
+                ).joinToString("\n"),
+            )
+            File(dir, "20241001_CNYRUBF_fut_deal.csv").writeText(
+                listOf(
+                    "#header",
+                    "",
+                    "OTHER,1,20241001100000000,1,100.0,1,0,B",
+                    "CNYRUBF,1,20241001100000000,2,100.0",
+                    "CNYRUBF,1,not-a-moment,3,100.0,1,0,B",
+                    "CNYRUBF,1,20241001100000000,bad-id,100.0,1,0,B",
+                    "CNYRUBF,1,20241001100000000,4,bad-price,1,0,B",
+                    "CNYRUBF,1,20241001100000000,5,100.0,bad-volume,0,B",
+                    "CNYRUBF,1,20241001100000000,6,100.0,1,0,",
+                    "CNYRUBF,1,20241001100000000,7,100.0,1,0,B",
+                ).joinToString("\n"),
+            )
+            // Третий файл не является ни tick, ни deal — обязан игнорироваться.
+            File(dir, "20241001_CNYRUBF_futs_options.csv").writeText("ignored")
+
+            val result = parse(dir = dir)
+            val stats = requireNotNull(result.stats)
+
+            assertEquals(4L, stats.malformedTick, stats.toString())
+            assertEquals(1L, stats.tickRowsForeignTicker, stats.toString())
+            assertEquals(1L, stats.tickRowsUnknownType, stats.toString())
+            assertEquals(6L, stats.malformedDeal, stats.toString())
+            assertEquals(1L, stats.dealRowsForeignTicker, stats.toString())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

@@ -262,4 +262,32 @@ class IndicatorCalculatorEdgeCasesTest {
 
         assertTrue(states.last(), "narrow tail must be classified as squeezed")
     }
+
+    @Test
+    fun `flat market reports a sideways trend`() {
+        val indicators = IndicatorCalculator.calculate(flatCandles(40))!!
+
+        assertEquals("SIDEWAYS", indicators.trend)
+        assertEquals("SIDEWAYS", indicators.trend, "плоский ряд без тренда")
+    }
+
+    @Test
+    fun `falling market gives a bearish macd conclusion`() {
+        val falling = List(40) { i -> candle((140 - i).toString()) }
+
+        assertEquals("BEARISH", IndicatorCalculator.calculate(falling)!!.conclusion)
+    }
+
+    @Test
+    fun `degenerate channels return null instead of a zero width`() {
+        assertNull(IndicatorCalculator.keltner(flatCandles(40)))
+        assertNull(IndicatorCalculator.isSqueeze(flatCandles(40)))
+        val zero = List(40) { candle("0") }
+        assertNull(IndicatorCalculator.keltner(zero))
+    }
+
+    @Test
+    fun `adx returns zero when the directional window is shorter than the period`() {
+        assertEquals(0.0, IndicatorCalculator.adx(flatCandles(5)), 1e-9)
+    }
 }

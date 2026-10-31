@@ -733,4 +733,48 @@ class ProtectionOrderManagerBranchesTest {
             assertTrue(pos.closeCancelPending)
             runBlocking { verify(orderOutboxService).placeCancelOrder(1L, "CLOSE-9", accountId = null) }
         }
+
+    @Test
+    fun `reconcile a closed position without protection ids returns immediately`(): Unit =
+        runBlocking {
+            val pos = openPosition(status = PositionStatus.CLOSED, stopLoss = null, takeProfit = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            verify(orderOutboxRepo, never()).findLatestByPositionId(anyOrNull(), anyOrNull())
+            verify(positionRepo, never()).save(anyPosition())
+        }
+
+    @Test
+    fun `cancelled SENT row does not count as an active protection order`(): Unit =
+        runBlocking {
+            stubPlaceOrder("SL-NEW")
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "sl"))
+                .thenReturn(outbox(OutboxStatus.SENT, orderId = "SL-OLD"))
+            whenever(orderOutboxRepo.findLatestConfirmedCancel(1L, "SL-OLD"))
+                .thenReturn(outbox(OutboxStatus.SENT, orderId = "SL-OLD"))
+            val pos = openPosition(takeProfit = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals("SL-NEW", pos.slOrderId, "отменённая заявка не блокирует новую защиту")
+        }
+
+    @Test
+    fun `close cancel is not scheduled twice while it is already pending`(): Unit =
+        runBlocking {
+            val pos =
+                openPosition(
+                    slOrderId = "SL-1",
+                    stopLoss = "91500",
+                    pendingClose = true,
+                    closeCancelPending = true,
+                    closeOrderId = "CLOSE-9",
+                )
+
+            manager.applyExchangeProtectionClosePublic(pos, execution("PARTIALLY_FILLED", 3), CloseReason.STOP_LOSS)
+
+            assertTrue(pos.closeCancelPending)
+            assertEquals(3, appliedClose.get()!!.first)
+        }
 }

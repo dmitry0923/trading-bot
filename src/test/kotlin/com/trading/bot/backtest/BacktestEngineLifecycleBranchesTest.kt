@@ -23,6 +23,7 @@ import org.springframework.r2dbc.core.DatabaseClient
 import java.math.BigDecimal
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * [BacktestEngine] — жизненный цикл позиции и комиссии: замыкание сделки в
@@ -87,6 +88,8 @@ class BacktestEngineLifecycleBranchesTest {
         fundingRepo: FundingHistoryRepository? = null,
         riskSimulator: BacktestRiskSimulator? = null,
         instruments: InstrumentsConfig = InstrumentsConfig(),
+        mlEntryFilter: com.trading.bot.service.MlEntryFilter? = null,
+        higherTfTrendFilter: com.trading.bot.service.HigherTfTrendFilter? = null,
     ): BacktestEngine =
         BacktestEngine(
             candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
@@ -98,6 +101,8 @@ class BacktestEngineLifecycleBranchesTest {
             riskConfig = permissiveRiskConfig(),
             riskSimulator = riskSimulator,
             fundingHistoryRepository = fundingRepo,
+            mlEntryFilter = mlEntryFilter,
+            higherTfTrendFilter = higherTfTrendFilter,
         )
 
     @Test
@@ -553,6 +558,156 @@ class BacktestEngineLifecycleBranchesTest {
                     .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
 
             assertTrue(result.trades.any { it.closeReason == "FUNDING_VETO_REVERSAL" })
+        }
+
+    @Test
+    fun `empty candle list returns an empty result without touching funding`(): Unit =
+        runBlocking {
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false })
+                    .simulate("SBER", emptyList())
+
+            assertEquals(0, result.totalTrades)
+        }
+
+    @Test
+    fun `reversal with a rejected sizing leaves no new position`(): Unit =
+        runBlocking {
+            val sizer = mock<PositionSizer>()
+            val calls = AtomicInteger(0)
+            whenever(
+                sizer.calculateContracts(
+                    org.mockito.kotlin.any(),
+                    anyBigDecimal(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyDirection(),
+                ),
+            ).thenAnswer {
+                if (calls.getAndIncrement() == 0) {
+                    PositionSizeResult(1, BigDecimal("1275"), BigDecimal("500"), null, null)
+                } else {
+                    PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "ZERO_GO")
+                }
+            }
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    futuresLiquidationSimulation = false
+                }
+
+            val result =
+                engine(config = config, sizer = sizer)
+                    .simulate(
+                        "CNYRUBF",
+                        minuteCandles("CNYRUBF", count = 40),
+                        minBarsForSignal = 3,
+                        slPoints = 50_000,
+                        tpPoints = 50_000,
+                    )
+
+            assertTrue(result.trades.any { it.closeReason == "REVERSAL" }, "${result.trades.map { it.closeReason }}")
+            assertTrue(
+                result.trades.none { it.closeReason == "LIQUIDATION" || it.closeReason == "FUNDING_WINDOW_EXIT" },
+                "после отказа сайзера новая позиция не открывается",
+            )
+        }
+
+    @Test
+    fun `explicit veto overrides reach the simulate run`(): Unit =
+        runBlocking {
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false })
+                    .simulate(
+                        "SBER",
+                        minuteCandles("SBER"),
+                        minBarsForSignal = 5,
+                        fundingVetoEnabled = false,
+                        fundingVetoLongThresholdRub = 1.0,
+                        fundingVetoShortThresholdRub = 1.0,
+                        fundingVetoBlockOnUnknown = false,
+                    )
+
+            assertTrue(result.trades.isNotEmpty())
+        }
+
+    @Test
+    fun `fractional commission on an unknown ticker falls back to the unit lot`(): Unit =
+        runBlocking {
+            val backtest = engine(BacktestConfig().apply { liveRiskGates = false })
+
+            assertEquals(0, BigDecimal.ZERO.compareTo(backtest.computeCommission("ZZZZ", BigDecimal("100"), 0)))
+        }
+
+    @Test
+    fun `null registry tolerates blocked ml mtf and risk metrics`(): Unit =
+        runBlocking {
+            val mlFilter = mock<com.trading.bot.service.MlEntryFilter>()
+            whenever(
+                mlFilter.shouldBlock(
+                    org.mockito.kotlin.any(),
+                    anyAction(),
+                    anyNullableDouble(),
+                    anyDateTime(),
+                    org.mockito.kotlin.eq(false),
+                ),
+            ).thenReturn("ML_BLOCK")
+            val mlResult =
+                engine(
+                    config =
+                        BacktestConfig().apply {
+                            liveRiskGates = false
+                            mlFilterEnabled = true
+                        },
+                    meterRegistry = null,
+                    mlEntryFilter = mlFilter,
+                ).simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+            assertTrue(mlResult.trades.isEmpty())
+
+            val mtfFilter = mock<com.trading.bot.service.HigherTfTrendFilter>()
+            whenever(
+                mtfFilter.shouldBlock(
+                    org.mockito.kotlin.any(),
+                    anyAction(),
+                    anyCandleList(),
+                    anyDateTime(),
+                    org.mockito.kotlin.eq(false),
+                ),
+            ).thenReturn("MTF_BLOCK")
+            val mtfResult =
+                engine(
+                    config =
+                        BacktestConfig().apply {
+                            liveRiskGates = false
+                            mtfFilterEnabled = true
+                        },
+                    meterRegistry = null,
+                    higherTfTrendFilter = mtfFilter,
+                ).simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+            assertTrue(mtfResult.trades.isEmpty())
+
+            val simulator = mock<BacktestRiskSimulator>()
+            whenever(
+                simulator.checkEntry(
+                    org.mockito.kotlin.any(),
+                    anyAction(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyCandle(),
+                    anyCandleList(),
+                    anyNullableDouble(),
+                    anyDateTime(),
+                    anyFundingMap(),
+                ),
+            ).thenReturn(BacktestRiskSimulator.GateResult(allowed = false, reason = null))
+            val riskResult =
+                engine(
+                    config = BacktestConfig().apply { liveRiskGates = true },
+                    meterRegistry = null,
+                    riskSimulator = simulator,
+                ).simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+            assertTrue(riskResult.trades.isEmpty())
         }
 
     private fun anyBigDecimal(): BigDecimal {

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
@@ -122,5 +123,72 @@ class LockboxSecretResolverTest {
         val ex = assertThrows<IllegalStateException> { resolver(iamToken = "", saKeyJson = "").resolve() }
 
         assertTrue(ex.message!!.contains("LOCKBOX_IAM_TOKEN"), ex.message)
+    }
+
+    @Test
+    fun `metadata success without access_token is rejected`() {
+        stubResponse(200, """{"expires_in":3600}""")
+
+        val ex = assertThrows<IllegalStateException> { resolver(iamToken = "", saKeyJson = "").resolve() }
+
+        assertTrue(ex.message!!.contains("LOCKBOX_IAM_TOKEN"), ex.message)
+    }
+
+    @Test
+    fun `service account key is exchanged for an iam token before the payload call`() {
+        val requests = mutableListOf<String>()
+        Mockito
+            .`when`(http.send(Mockito.any(HttpRequest::class.java), Mockito.any<HttpResponse.BodyHandler<String>>()))
+            .thenAnswer { invocation ->
+                val request = invocation.getArgument<HttpRequest>(0)
+                requests += request.uri().toString()
+                if (request.uri().toString().contains("iam")) {
+                    httpResponse("""{"iamToken":"iam-from-sa"}""")
+                } else {
+                    httpResponse("""{"entries":[{"key":"K","textValue":"v"}]}""")
+                }
+            }
+
+        val result = LockboxSecretResolver("sec-1", "", rsaKeyJson(), http = http).resolve()
+
+        assertEquals("v", result["K"])
+        assertEquals(2, requests.size, requests.toString())
+        assertTrue(requests.first().contains("iam"), requests.toString())
+        assertTrue(requests.last().contains("payload"), requests.toString())
+    }
+
+    @Test
+    fun `iam endpoint without a token is rejected`() {
+        stubResponse(200, """{"ok":true}""")
+
+        val ex =
+            assertThrows<IllegalStateException> {
+                LockboxSecretResolver("sec-1", "", rsaKeyJson(), http = http).resolve()
+            }
+
+        assertTrue(ex.message!!.contains("no iamToken"), ex.message)
+    }
+
+    private fun rsaKeyJson(): String {
+        val generator = java.security.KeyPairGenerator.getInstance("RSA")
+        generator.initialize(2048)
+        val keyPair = generator.generateKeyPair()
+        val encoder = Base64.getMimeEncoder(64, "\n".toByteArray())
+        val pem =
+            buildString {
+                appendLine("-----BEGIN PRIVATE KEY-----")
+                appendLine(encoder.encodeToString(keyPair.private.encoded))
+                append("-----END PRIVATE KEY-----")
+            }
+        val mapper = jacksonObjectMapper()
+        return mapper.writeValueAsString(mapOf("service_account_id" to "sa-1", "private_key" to pem))
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun httpResponse(body: String): HttpResponse<String> {
+        val response = Mockito.mock(HttpResponse::class.java) as HttpResponse<String>
+        Mockito.`when`(response.statusCode()).thenReturn(200)
+        Mockito.`when`(response.body()).thenReturn(body)
+        return response
     }
 }

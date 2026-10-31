@@ -755,6 +755,72 @@ class EntryFiltersDirectionTest {
         assertEquals(StrategyAction.HOLD, f.macroTrendDirection(huge, List(3) { BigDecimal(100) }))
     }
 
+    @Test
+    fun `macro trend fails closed on a non finite higher timeframe ema`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    macroTrendEnabled = true,
+                    macroTrendFastEma = 2,
+                    macroTrendSlowEma = 3,
+                    macroTrendMinHigherBars = 4,
+                    macroTrendPullbackEmaPeriod = 3,
+                    macroTrendBlockOnUnknown = true,
+                ),
+            )
+        val huge = (0 until 6).map { BigDecimal("1e400") }
+
+        assertEquals(StrategyAction.HOLD, f.macroTrendDirection(huge, List(4) { BigDecimal(100) }))
+    }
+
+    @Test
+    fun `volume spike fails closed on a zero volume bar even with a positive sma`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    volumeSpikeEnabled = true,
+                    volumeSpikePeriod = 3,
+                    volumeSpikeMultiplier = 2.0,
+                    volumeSpikeBlockOnUnknown = true,
+                ),
+            )
+        val candles =
+            listOf(
+                candle(100.0, volume = 1_000, minutes = 0),
+                candle(100.0, volume = 1_000, minutes = 10),
+                candle(100.0, volume = 1_000, minutes = 20),
+                candle(100.0, volume = 0, minutes = 30),
+            )
+
+        assertEquals(StrategyAction.HOLD, f.volumeSpikeAllows(candles))
+    }
+
+    @Test
+    fun `panic reversal holds when the higher timeframe rsi is not oversold`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    panicReversalEnabled = true,
+                    panicMinBars = 2,
+                    panicRsiPeriod = 2,
+                    panicMaxRsi = 30.0,
+                    panicRequireBullishBar = true,
+                    panicUseSessionDrop = true,
+                    panicMinSessionDropPercent = 3.0,
+                    panicBlockOnUnknown = true,
+                ),
+            )
+        // Сильный рост на старшем ТФ → RSI 100 (не перепродан) при глубокой просадке сессии.
+        val rising = (0 until 10).map { BigDecimal(100 + it * 5) }
+        val panic =
+            listOf(
+                candle(100.0, high = 100.0, low = 89.0, open = 100.0, minutes = 0),
+                candle(90.0, high = 90.5, low = 89.0, open = 89.5, minutes = 10),
+            )
+
+        assertEquals(StrategyAction.HOLD, f.panicReversalDirection(panic, rising))
+    }
+
     // ----------------------------------------------------------------- time direction
 
     @Test

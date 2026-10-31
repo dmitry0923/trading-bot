@@ -118,6 +118,109 @@ class FundamentalAnalysisAgentNewsTest {
             issuerDataProvider = provider,
         )
 
+    private fun instrumentsConfig(): com.trading.bot.config.InstrumentsConfig =
+        com.trading.bot.config.InstrumentsConfig().apply {
+            instruments =
+                mutableListOf(
+                    com.trading.bot.config.InstrumentsConfig.InstrumentSpec(
+                        ticker = "CNYRUBF",
+                        type = "FUTURES",
+                        baseAsset = "CNY",
+                        quoteAsset = "RUB",
+                    ),
+                    com.trading.bot.config.InstrumentsConfig.InstrumentSpec(
+                        ticker = "Si",
+                        type = "FUTURES",
+                        baseAsset = "USD",
+                        quoteAsset = "RUB",
+                    ),
+                    com.trading.bot.config.InstrumentsConfig.InstrumentSpec(
+                        ticker = "USDRUB_TOM",
+                        type = "FX",
+                        baseAsset = "USD",
+                        quoteAsset = "RUB",
+                    ),
+                    com.trading.bot.config.InstrumentsConfig.InstrumentSpec(
+                        ticker = "GAZP",
+                        type = "STOCK",
+                        baseAsset = "GAZP",
+                        quoteAsset = "RUB",
+                    ),
+                    com.trading.bot.config.InstrumentsConfig.InstrumentSpec(
+                        ticker = "OILF",
+                        type = "FUTURES",
+                        baseAsset = "OIL",
+                        quoteAsset = "RUB",
+                    ),
+                )
+        }
+
+    private fun fxAgent(
+        llm: ResilientLlmClient,
+        provider: IssuerDataProvider?,
+    ): FundamentalAnalysisAgent =
+        FundamentalAnalysisAgent(
+            llmClient = llm,
+            promptRegistry = promptRegistry,
+            macroContextService = macro,
+            semanticCache = mock<SemanticCache>(),
+            agentLogRepository = logRepo,
+            meterRegistry = SimpleMeterRegistry(),
+            objectMapper = objectMapper,
+            issuerDataProvider = provider,
+            instrumentsConfig = instrumentsConfig(),
+        )
+
+    @Test
+    fun `currency futures use the FX macro context instead of issuer news`() {
+        runBlocking { stubMacro() }
+        val llm = RecordingLlmClient()
+        val provider = mock<IssuerDataProvider>()
+
+        runBlocking { fxAgent(llm, provider).analyze("CNYRUBF", "c1") }
+
+        val context = llm.lastVariables["issuerNews"] as String
+        assertTrue(context.contains("FX-контекст"), "context='$context'")
+        assertTrue(context.contains("CNY/RUB"), "context='$context'")
+        assertTrue(context.contains("ставка ЦБ РФ"), "context='$context'")
+        org.mockito.kotlin.verifyNoInteractions(provider)
+    }
+
+    @Test
+    fun `currency futures Si and spot FX also use the macro context`() {
+        runBlocking { stubMacro() }
+        val llm = RecordingLlmClient()
+        val agent = fxAgent(llm, mock<IssuerDataProvider>())
+
+        runBlocking { agent.analyze("Si", "c1") }
+        assertTrue((llm.lastVariables["issuerNews"] as String).contains("USD/RUB"))
+
+        runBlocking { agent.analyze("USDRUB_TOM", "c1") }
+        assertTrue((llm.lastVariables["issuerNews"] as String).contains("USD/RUB"))
+    }
+
+    @Test
+    fun `non currency futures and unknown tickers keep the issuer news path`() {
+        runBlocking { stubMacro() }
+        val llm = RecordingLlmClient()
+        val provider =
+            runBlocking {
+                newsProvider(
+                    NewsItem(title = "Новость", publishedAt = Instant.parse("2026-09-11T08:00:00Z")),
+                )
+            }
+        val agent = fxAgent(llm, provider)
+
+        runBlocking { agent.analyze("GAZP", "c1") }
+        assertTrue((llm.lastVariables["issuerNews"] as String).contains("Новость"))
+
+        runBlocking { agent.analyze("OILF", "c1") }
+        assertTrue(!(llm.lastVariables["issuerNews"] as String).contains("FX-контекст"))
+
+        runBlocking { agent.analyze("UNKNOWN", "c1") }
+        assertTrue(!(llm.lastVariables["issuerNews"] as String).contains("FX-контекст"))
+    }
+
     @Test
     fun `good news digest reaches prompt variables`() {
         runBlocking { stubMacro() }

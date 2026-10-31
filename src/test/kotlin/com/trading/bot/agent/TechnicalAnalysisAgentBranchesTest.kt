@@ -168,4 +168,52 @@ class TechnicalAnalysisAgentBranchesTest {
 
         assertEquals("NEUTRAL", report.conclusion)
     }
+
+    private fun volatileCandles(halfRange: Double): List<Candle> =
+        (0 until 60).map { i ->
+            val close = BigDecimal("100")
+            val high = BigDecimal.valueOf(100 + halfRange)
+            val low = BigDecimal.valueOf(100 - halfRange)
+            Candle(
+                ticker = "SBER",
+                timeframe = "MINUTE_10",
+                openPrice = close,
+                highPrice = high,
+                lowPrice = low,
+                closePrice = close,
+                volume = 1_000L,
+                time = LocalDateTime.of(2026, 1, 5, 10, 0).plusMinutes(10L * i),
+            )
+        }
+
+    @Test
+    fun `medium and high volatility buckets are rendered`() {
+        // ATR ≈ 2×halfRange; при цене 100 это 2×halfRange процентов.
+        val medium =
+            runBlocking {
+                agent("""{"conclusion":"NEUTRAL","signalStrength":0.1,"reasoning":"m"}""")
+                    .analyze("SBER", volatileCandles(0.8), fullBookSnapshot(), "c1")
+            }
+        val high =
+            runBlocking {
+                agent("""{"conclusion":"NEUTRAL","signalStrength":0.1,"reasoning":"h"}""")
+                    .analyze("SBER", volatileCandles(2.0), fullBookSnapshot(), "c1")
+            }
+
+        assertEquals("NEUTRAL", medium.conclusion)
+        assertEquals("NEUTRAL", high.conclusion)
+    }
+
+    @Test
+    fun `empty book fields degrade to NA without failing`() {
+        val snapshot = MarketSnapshot(ticker = "SBER", currentPrice = BigDecimal("100"))
+
+        val report =
+            runBlocking {
+                agent("""{"conclusion":"NEUTRAL","signalStrength":0.1,"reasoning":"na"}""")
+                    .analyze("SBER", flatCandles(30), snapshot, "c1")
+            }
+
+        assertEquals("NEUTRAL", report.conclusion)
+    }
 }

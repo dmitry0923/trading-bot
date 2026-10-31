@@ -11,7 +11,9 @@ import com.trading.bot.backtest.LoadResult
 import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestService
 import com.trading.bot.backtest.PortfolioBacktestGuard
+import com.trading.bot.backtest.ValidationResult
 import com.trading.bot.backtest.WalkForwardAnalyzer
+import com.trading.bot.backtest.WfaConfig
 import com.trading.bot.config.BacktestConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
@@ -90,6 +92,19 @@ import java.time.LocalDateTime
  * guard-ветви `/strategies/{ticker}` и `/positions/{id}/resolve-reconciliation`.
  */
 class ApiControllerDefaultsTest {
+    private val sampleResult =
+        BacktestResult(
+            ticker = "SBER",
+            totalReturn = 1.5,
+            sharpeRatio = 0.7,
+            maxDrawdown = 2.0,
+            winRate = 0.5,
+            profitFactor = 1.3,
+            totalTrades = 2,
+            avgHoldBars = 5.0,
+            equityCurve = listOf(BigDecimal("100000"), BigDecimal("101500")),
+            monthlyReturns = emptyMap(),
+        )
     private val candleRepository = mock<CandleRepository>()
     private val backtestConfig = BacktestConfig()
     private val backtestEngine =
@@ -100,6 +115,7 @@ class ApiControllerDefaultsTest {
             meterRegistry = SimpleMeterRegistry(),
         )
     private val historicalDataLoader = mock<HistoricalDataLoader>()
+    private val walkForwardAnalyzer = mock<WalkForwardAnalyzer>()
     private val strategyRepository = mock<StrategyRepository>()
     private val positionRepository = mock<PositionRepository>()
     private val redisCacheService = mock<RedisCacheService>()
@@ -128,7 +144,7 @@ class ApiControllerDefaultsTest {
             adjustmentRepository = mock<StrategyAdjustmentRepository>(),
             tradeEventRepository = mock<TradeEventRepository>(),
             backtestEngine = backtestEngine,
-            walkForwardAnalyzer = mock<WalkForwardAnalyzer>(),
+            walkForwardAnalyzer = walkForwardAnalyzer,
             monteCarloAnalyzer = mock<MonteCarloAnalyzer>(),
             finalHoldoutValidator = mock<FinalHoldoutValidator>(),
             backtestResultRepository = mock<BacktestResultRepository>(),
@@ -307,6 +323,47 @@ class ApiControllerDefaultsTest {
         assertEquals(0.7, payload["confidence"])
     }
 
+    @Test
+    fun `validate endpoint resolves query defaults and explicit overrides`() {
+        stubCandles()
+        val validation = ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult)
+        runBlocking {
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(validation)
+        }
+
+        val defaults = dispatch(get("/api/v1/backtest/SBER/validate").param("days", "10"))
+        assertEquals(200, defaults.status)
+        assertTrue(defaults.contentAsString.contains("\"oosTrades\":2"), defaults.contentAsString)
+
+        val overrides =
+            dispatch(
+                get("/api/v1/backtest/SBER/validate")
+                    .param("days", "10")
+                    .param("folds", "2")
+                    .param("leverage", "2.0")
+                    .param("riskPerTradePercent", "5.0")
+                    .param("futuresMaxContractsPerPosition", "3")
+                    .param("maxHoldBars", "5")
+                    .param("adaptiveConfidenceThreshold", "0.7")
+                    .param("timeframe", "HOUR_1")
+                    .param("includeOosTrades", "true")
+                    .param("sessionFilterEnabled", "true"),
+            )
+
+        assertEquals(200, overrides.status)
+        assertTrue(overrides.contentAsString.contains("\"timeframe\":\"HOUR_1\""), overrides.contentAsString)
+    }
+
+    @Test
+    fun `holdout without candles returns not found`() {
+        stubCandles()
+
+        val response = dispatch(get("/api/v1/backtest/SBER/holdout").param("days", "10"))
+
+        assertEquals(404, response.status)
+    }
+
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {
         val initial = mockMvc.perform(builder).andReturn()
         if (!initial.request.isAsyncStarted) return initial.response
@@ -456,6 +513,11 @@ class ApiControllerDefaultsTest {
         assertTrue(missing.exceptionOrNull() is ResponseStatusException, "${missing.exceptionOrNull()}")
 
         assertEquals(mapOf("ok" to true), runBlocking { controller.getDashboard(7L) })
+    }
+
+    private fun anyWfaConfig(): WfaConfig {
+        Mockito.any(WfaConfig::class.java)
+        return WfaConfig()
     }
 
     private fun anyLocalDateTime(): LocalDateTime {

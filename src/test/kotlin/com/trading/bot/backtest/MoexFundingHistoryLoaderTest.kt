@@ -294,13 +294,113 @@ class MoexFundingHistoryLoaderTest {
                 val fundingConfig = FundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
-                Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(1)
+                Mockito
+                    .`when`(repo.saveAll(Mockito.anyList()))
+                    .thenReturn(1)
                 val loader = loader(fundingConfig = fundingConfig, repo = repo)
 
                 val result = loader.loadAndSave("CNYRUBF", 3220)
 
                 assertEquals(1, result.loaded, "валидная строка со второй страницы должна подтянуться")
                 assertEquals(2, requests.get(), "обход не должен обрываться на странице с пустым SWAPRATE")
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `parse skips malformed history rows and keeps valid ones`() {
+        val loader = loader(fundingConfig = FundingConfig())
+        val body =
+            """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
+                "data": [["2026-09-21", ""],
+                         ["", "1.5"],
+                         ["not-a-date", "1.5"],
+                         "not-an-array",
+                         ["2026-09-22", "1.5"]]}}"""
+
+        val parsed = loader.parseHistory(body, "GLDRUBF")
+
+        assertEquals(1, parsed.size)
+        assertEquals("2026-09-22", parsed.single().clearingDate.toString())
+    }
+
+    @Test
+    fun `parse without the funding column or history block yields no rows`() {
+        val loader = loader(fundingConfig = FundingConfig())
+
+        val noFundingColumn =
+            loader.parseHistory(
+                """{"history": {"columns": ["TRADEDATE"], "data": [["2026-09-22"]]}}""",
+                "GLDRUBF",
+            )
+        val noHistoryBlock = loader.parseHistory("""{"other": {}}""", "GLDRUBF")
+        val nonArrayData = loader.parseHistory("""{"history": {"columns": ["TRADEDATE"], "data": "x"}}""", "GLDRUBF")
+
+        assertTrue(noFundingColumn.isEmpty())
+        assertTrue(noHistoryBlock.isEmpty())
+        assertTrue(nonArrayData.isEmpty())
+    }
+
+    @Test
+    fun `instrument without a usable lot size is not converted`() {
+        val config =
+            InstrumentsConfig().apply {
+                instruments =
+                    mutableListOf(
+                        InstrumentsConfig.InstrumentSpec(
+                            ticker = "ZEROLOT",
+                            type = "FUTURES",
+                            lotSize = 0,
+                            priceStep = BigDecimal("0.01"),
+                            priceStepCost = BigDecimal("1.0"),
+                            go = BigDecimal("100"),
+                            leverage = BigDecimal("1.0"),
+                            baseAsset = "X",
+                        ),
+                    )
+            }
+        val loader =
+            MoexFundingHistoryLoader(
+                FundingConfig(),
+                config,
+                Mockito.mock(FundingHistoryRepository::class.java),
+                ObjectMapper(),
+                SimpleMeterRegistry(),
+            )
+
+        val parsed =
+            loader.parseHistory(
+                """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [["2026-09-22", "1.5"]]}}""",
+                "ZEROLOT",
+            )
+
+        assertTrue(parsed.isEmpty())
+    }
+
+    @Test
+    fun `zero raw rows on the first page stop the pagination`(): Unit =
+        runBlocking {
+            val requests = AtomicInteger(0)
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/") { exchange ->
+                requests.incrementAndGet()
+                respond(exchange, """{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": []}}""", 200)
+            }
+            server.start()
+            try {
+                val fundingConfig = FundingConfig()
+                fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
+                val repo = Mockito.mock(FundingHistoryRepository::class.java)
+                Mockito
+                    .`when`(repo.saveAll(Mockito.anyList()))
+                    .thenReturn(0)
+                val loader = loader(fundingConfig = fundingConfig, repo = repo)
+
+                val result = loader.loadAndSave("CNYRUBF", 30)
+
+                assertEquals(0, result.loaded)
+                assertEquals(1, requests.get(), "пустая первая страница — обход завершён")
             } finally {
                 server.stop(0)
             }

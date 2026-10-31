@@ -11,12 +11,16 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import org.springframework.data.redis.core.StringRedisTemplate
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
@@ -29,7 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * 429 → throttled-метрика). HTTP замокан JDK HttpServer (см. MoexFundingProviderTest).
  */
 class RgRuNewsProviderTest {
-    private val objectMapper = ObjectMapper()
+    private val objectMapper: ObjectMapper = jacksonObjectMapper()
     private val fixedClock =
         Clock.fixed(Instant.parse("2026-09-11T10:00:00Z"), ZoneId.of("Europe/Moscow"))
     private val redis: StringRedisTemplate = mock()
@@ -244,6 +248,141 @@ class RgRuNewsProviderTest {
             CircuitBreakerRegistry.ofDefaults(),
         )
     }
+
+    @Test
+    fun `cache hit avoids the http call and increments the hit metric`() =
+        runBlocking {
+            val valueOps = mock<org.springframework.data.redis.core.ValueOperations<String, String>>()
+            val cachedJson =
+                """[{"title":"из кэша","url":"https://c"}]"""
+            whenever(redis.opsForValue()).thenReturn(valueOps)
+            whenever(valueOps.get("news:rgru:GAZP:24")).thenReturn(cachedJson)
+            val meter = SimpleMeterRegistry()
+            // Сервер не должен быть вызван: ответ обязан прийти из кэша.
+            val server = jsonServer("""[{"title":"из сети","publishedAt":"2026-09-11T09:00:00Z"}]""")
+            try {
+                val provider = provider(server, NewsConfig().apply { enabled = true }, meter)
+
+                val items = provider.newsFor("GAZP", 24)
+
+                assertEquals(1, items.size)
+                assertEquals("из кэша", items.single().title)
+                assertEquals(1.0, meter.counter("news.cache.hit", "ticker", "GAZP").count())
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `cache read and write failures are fail soft`() =
+        runBlocking {
+            val valueOps = mock<org.springframework.data.redis.core.ValueOperations<String, String>>()
+            whenever(redis.opsForValue()).thenReturn(valueOps)
+            whenever(valueOps.get("news:rgru:GAZP:24")).thenThrow(IllegalStateException("redis down"))
+            org.mockito.kotlin
+                .whenever(valueOps.set(any(), any(), any<Duration>()))
+                .thenThrow(IllegalStateException("redis down"))
+            val server = jsonServer("""[{"title":"после сбоя кэша","publishedAt":"2026-09-11T09:00:00Z"}]""")
+            try {
+                val items = provider(server, NewsConfig().apply { enabled = true }).newsFor("GAZP", 24)
+
+                assertEquals(1, items.size)
+                assertEquals("после сбоя кэша", items.single().title)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `wrapped response arrays are found under known keys`() =
+        runBlocking {
+            val cases =
+                listOf(
+                    """{"news":[{"title":"n","publishedAt":"2026-09-11T09:00:00Z"}]}""",
+                    """{"items":[{"title":"i","publishedAt":"2026-09-11T09:00:00Z"}]}""",
+                    """{"data":{"articles":[{"title":"a","publishedAt":"2026-09-11T09:00:00Z"}]}}""",
+                    """{"result":{"items":[{"title":"r","publishedAt":"2026-09-11T09:00:00Z"}]}}""",
+                )
+            for (body in cases) {
+                val server = jsonServer(body)
+                try {
+                    val items = provider(server, NewsConfig().apply { enabled = true }).newsFor("GAZP", 24)
+                    assertEquals(1, items.size, "не разобран ответ: $body")
+                } finally {
+                    server.stop(0)
+                }
+            }
+        }
+
+    @Test
+    fun `response without a recognized array yields an empty list`() =
+        runBlocking {
+            val server = jsonServer("""{"unexpected":{"x":1}}""")
+            try {
+                assertTrue(provider(server, NewsConfig().apply { enabled = true }).newsFor("GAZP", 24).isEmpty())
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `news fields fall back to alternative keys and date only timestamps`() =
+        runBlocking {
+            val body =
+                """[{"title":"fallback-поля","link":"https://l","description":"описание",""" +
+                    """"date":"2026-09-11"},""" +
+                    """{"title":"text-сниппет","published":"2026-09-11T09:00:00Z","text":"t"},""" +
+                    """{"title":"summary-сниппет","pub_date":"2026-09-11T09:00:00Z","summary":"s"},""" +
+                    """{"title":"datetime-ключ","datetime":"2026-09-11T09:00:00Z"}]"""
+            val server = jsonServer(body)
+            try {
+                val items = provider(server, NewsConfig().apply { enabled = true }).newsFor("GAZP", 72)
+
+                assertEquals(4, items.size)
+                val fallback = items.first { it.title == "fallback-поля" }
+                assertEquals("https://l", fallback.url)
+                assertEquals("описание", fallback.snippet)
+                // Дата без времени — начало дня МСК (21:00 UTC предыдущего дня).
+                assertEquals(Instant.parse("2026-09-10T21:00:00Z"), fallback.publishedAt)
+                assertEquals("t", items.first { it.title == "text-сниппет" }.snippet)
+                assertEquals("s", items.first { it.title == "summary-сниппет" }.snippet)
+                assertEquals("", items.first { it.title == "datetime-ключ" }.snippet)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `unparseable publish date is dropped`() =
+        runBlocking {
+            val body =
+                """[{"title":"битая дата","publishedAt":"not-a-date"},""" +
+                    """{"title":"нормальная","publishedAt":"2026-09-11T09:00:00Z"}]"""
+            val server = jsonServer(body)
+            try {
+                val items = provider(server, NewsConfig().apply { enabled = true }).newsFor("GAZP", 24)
+
+                assertEquals(1, items.size)
+                assertEquals("нормальная", items.single().title)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `generic fetch failure is metered as provider error`() =
+        runBlocking {
+            val server = jsonServer("", statusCode = 500)
+            try {
+                val meter = SimpleMeterRegistry()
+                val items = provider(server, NewsConfig().apply { enabled = true }, meter).newsFor("GAZP", 24)
+
+                assertTrue(items.isEmpty())
+                assertEquals(1.0, meter.counter("news.provider.error", "ticker", "GAZP").count())
+            } finally {
+                server.stop(0)
+            }
+        }
 
     private fun jsonServer(
         body: String,

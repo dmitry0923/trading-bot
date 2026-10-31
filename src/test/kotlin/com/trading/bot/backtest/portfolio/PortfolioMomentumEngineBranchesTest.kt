@@ -1,6 +1,8 @@
 package com.trading.bot.backtest.portfolio
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
@@ -298,5 +300,29 @@ class PortfolioMomentumEngineBranchesTest {
         val expectedCash = 100_000.0 + result.trades.sumOf { it.netPnl }
         assertEquals(expectedCash, result.equityCurve.last(), 1e-6, "equity последнего бара — после ликвидации")
         assertTrue(result.trades.count { it.closeReason == "REBALANCE" } > 0)
+    }
+
+    @Test
+    fun `bar equality and hash code compare time and both price arrays`() {
+        val time = start
+        val bar = PortfolioMomentumEngine.Bar(time, doubleArrayOf(1.0, 2.0), doubleArrayOf(3.0, 4.0))
+        val same = PortfolioMomentumEngine.Bar(time, doubleArrayOf(1.0, 2.0), doubleArrayOf(3.0, 4.0))
+
+        assertTrue(bar == bar, "same instance is equal to itself")
+        assertEquals(bar, same)
+        assertEquals(bar.hashCode(), same.hashCode())
+        assertNotEquals(
+            bar,
+            PortfolioMomentumEngine.Bar(time.plusMinutes(1), doubleArrayOf(1.0, 2.0), doubleArrayOf(3.0, 4.0)),
+        )
+        assertNotEquals(
+            bar,
+            PortfolioMomentumEngine.Bar(time, doubleArrayOf(9.0, 2.0), doubleArrayOf(3.0, 4.0)),
+        )
+        assertNotEquals(
+            bar,
+            PortfolioMomentumEngine.Bar(time, doubleArrayOf(1.0, 2.0), doubleArrayOf(9.0, 4.0)),
+        )
+        assertFalse(bar.equals("not a bar"))
     }
 }

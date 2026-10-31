@@ -356,7 +356,137 @@ class LiveStrategyBacktestSignalGeneratorBranchesTest {
         val second = collect(generator, candles)
         val third = collect(generator, candles.toList())
 
-        assertEquals(first, second, "кэш по идентичности списка — результат воспроизводим")
+        assertEquals(first, second, "кэш по идентичности списка - результат воспроизводим")
         assertEquals(first, third, "копия списка даёт тот же результат (пересчёт ряда)")
+    }
+
+    // --------------------------------------------------- фильтры в signal-конвейере
+
+    private fun holdFilters(): List<EntryFilters> =
+        listOf(
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(emaCrossEnabled).thenReturn(true)
+                Mockito.`when`(emaCrossDirection(Mockito.anyList())).thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(volumeSpikeEnabled).thenReturn(true)
+                Mockito.`when`(volumeSpikeAllows(Mockito.anyList())).thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(squeezeEnabled).thenReturn(true)
+                Mockito
+                    .`when`(
+                        squeezeDirection(
+                            Mockito.anyList(),
+                            Mockito.nullable(BooleanArray::class.java),
+                            Mockito.anyInt(),
+                        ),
+                    ).thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(rangeSqueezeEnabled).thenReturn(true)
+                Mockito
+                    .`when`(rangeSqueezeDirection(Mockito.anyList(), Mockito.nullable(BooleanArray::class.java)))
+                    .thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(panicReversalEnabled).thenReturn(true)
+                Mockito.`when`(panicTimeframe).thenReturn("HOUR_1")
+                Mockito.`when`(panicRsiPeriod).thenReturn(5)
+                Mockito
+                    .`when`(panicReversalDirection(Mockito.anyList(), Mockito.anyList()))
+                    .thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(macroTrendEnabled).thenReturn(true)
+                Mockito.`when`(macroTrendTimeframe).thenReturn("HOUR_1")
+                Mockito.`when`(macroTrendMinHigherBars).thenReturn(5)
+                Mockito
+                    .`when`(macroTrendDirection(Mockito.anyList(), Mockito.anyList()))
+                    .thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(orbDirection(Mockito.anyList(), Mockito.anyInt())).thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(vwapMrEnabled).thenReturn(true)
+                Mockito.`when`(vwapMrTimeframe).thenReturn("HOUR_1")
+                Mockito
+                    .`when`(vwapMrDirection(Mockito.anyList(), Mockito.anyList()))
+                    .thenReturn(StrategyAction.HOLD)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(blocksDirection(anyTime(), anyAction())).thenReturn(true)
+            },
+        )
+
+    @Test
+    fun `any filter hold blocks the entry in the signal pipeline`() {
+        val probe = holdFilters().first()
+        assertTrue(probe.emaCrossEnabled, "mock enabled")
+        assertEquals(StrategyAction.HOLD, probe.emaCrossDirection(emptyList()))
+        holdFilters().forEachIndexed { idx, filters ->
+            val signals = collect(LiveStrategyBacktestSignalGenerator(entryFilters = filters))
+            assertTrue(signals.all { it == StrategyAction.HOLD }, "HOLD фильтра #$idx обязан блокировать вход: $signals")
+        }
+    }
+
+    private fun oppositeFilters(): List<EntryFilters> =
+        listOf(
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(emaCrossEnabled).thenReturn(true)
+                Mockito.`when`(emaCrossDirection(Mockito.anyList())).thenReturn(StrategyAction.SELL)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(squeezeEnabled).thenReturn(true)
+                Mockito
+                    .`when`(
+                        squeezeDirection(
+                            Mockito.anyList(),
+                            Mockito.nullable(BooleanArray::class.java),
+                            Mockito.anyInt(),
+                        ),
+                    ).thenReturn(StrategyAction.SELL)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(rangeSqueezeEnabled).thenReturn(true)
+                Mockito
+                    .`when`(rangeSqueezeDirection(Mockito.anyList(), Mockito.nullable(BooleanArray::class.java)))
+                    .thenReturn(StrategyAction.SELL)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(panicReversalEnabled).thenReturn(true)
+                Mockito.`when`(panicTimeframe).thenReturn("HOUR_1")
+                Mockito.`when`(panicRsiPeriod).thenReturn(5)
+                Mockito
+                    .`when`(panicReversalDirection(Mockito.anyList(), Mockito.anyList()))
+                    .thenReturn(StrategyAction.SELL)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(macroTrendEnabled).thenReturn(true)
+                Mockito.`when`(macroTrendTimeframe).thenReturn("HOUR_1")
+                Mockito.`when`(macroTrendMinHigherBars).thenReturn(5)
+                Mockito
+                    .`when`(macroTrendDirection(Mockito.anyList(), Mockito.anyList()))
+                    .thenReturn(StrategyAction.SELL)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(orbDirection(Mockito.anyList(), Mockito.anyInt())).thenReturn(StrategyAction.SELL)
+            },
+            Mockito.mock(EntryFilters::class.java).apply {
+                Mockito.`when`(vwapMrEnabled).thenReturn(true)
+                Mockito.`when`(vwapMrTimeframe).thenReturn("HOUR_1")
+                Mockito
+                    .`when`(vwapMrDirection(Mockito.anyList(), Mockito.anyList()))
+                    .thenReturn(StrategyAction.SELL)
+            },
+        )
+
+    @Test
+    fun `a filter side opposite to the winner blocks long entries`() {
+        for (filters in oppositeFilters()) {
+            val signals = collect(LiveStrategyBacktestSignalGenerator(entryFilters = filters))
+            assertTrue(signals.none { it == StrategyAction.BUY }, "BUY не должен пройти мимо SELL-фильтра: $signals")
+        }
     }
 }

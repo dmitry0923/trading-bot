@@ -405,6 +405,15 @@ class ApiControllerDefaultsTest {
         assertEquals(200, clampedLow.status)
         assertTrue(clampedLow.contentAsString.contains("\"simulations\":10"), clampedLow.contentAsString)
 
+        // Frozen без %-стопов: slPercent/tpPercent = null → 0.0 (points-политика).
+        runBlocking {
+            whenever(frozenStrategyStore.current("SBER")).thenReturn(
+                frozen.copy(slPercent = null, tpPercent = null),
+            )
+        }
+        assertEquals(200, dispatch(get("/api/v1/backtest/SBER/robustness").param("days", "10")).status)
+        runBlocking { whenever(frozenStrategyStore.current("SBER")).thenReturn(frozen) }
+
         val clampedHigh =
             dispatch(
                 get("/api/v1/backtest/SBER/robustness")
@@ -518,6 +527,105 @@ class ApiControllerDefaultsTest {
             assertEquals(BigDecimal("1000"), params["maxPositionRub"])
             assertEquals(false, params["shouldPause"])
         }
+    }
+
+    @Test
+    fun `research endpoints use config defaults when query params are absent`() {
+        stubCandles()
+        val validation = ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult)
+        runBlocking {
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(validation)
+        }
+
+        assertEquals(200, dispatch(get("/api/v1/backtest/SBER")).status)
+        assertEquals(200, dispatch(get("/api/v1/backtest/SBER/validate")).status)
+        assertEquals(200, dispatch(get("/api/v1/backtest/SBER/robustness")).status)
+        assertEquals(404, dispatch(get("/api/v1/backtest/SBER/holdout")).status)
+        assertEquals(404, dispatch(get("/api/v1/backtest/SBER/deployment-gate")).status)
+    }
+
+    @Test
+    fun `research endpoints load history on demand`() {
+        stubCandles()
+        val validation = ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult)
+        runBlocking {
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(validation)
+        }
+
+        val paths =
+            listOf(
+                "backtest/SBER",
+                "backtest/SBER/validate",
+                "backtest/SBER/robustness",
+                "backtest/SBER/holdout",
+                "backtest/SBER/deployment-gate",
+            )
+        paths.forEach { path ->
+            dispatch(get("/api/v1/$path").param("days", "10").param("loadHistory", "true"))
+        }
+
+        runBlocking { Mockito.verify(historicalDataLoader, Mockito.times(5)).loadAndSave("SBER", 10) }
+    }
+
+    @Test
+    fun `daily pnl history maps persisted snapshots`() {
+        whenever(dailyRiskSnapshotRepository.findRecent(30)).thenReturn(
+            listOf(
+                com.trading.bot.model.entity.DailyRiskSnapshot(
+                    tradeDate = java.time.LocalDate.of(2026, 10, 31),
+                    dailyPnl = BigDecimal("-100"),
+                    limitReached = false,
+                    maxDrawdownToday = BigDecimal("100"),
+                ),
+            ),
+        )
+
+        val history = runBlocking { controller.getDailyPnlHistory(30) }
+        val points = history["points"] as List<*>
+
+        assertEquals(1, points.size)
+        assertTrue(points.single().toString().contains("2026-10-31"))
+    }
+
+    @Test
+    fun `reconciliation resolver accepts a valid reason and keeps the slot for OPEN`() {
+        val required =
+            Position(
+                id = 6L,
+                ticker = "SBER",
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                entryPrice = BigDecimal("100"),
+                status = PositionStatus.RECONCILIATION_REQUIRED,
+                accountId = 5L,
+            )
+        val captured = arrayOfNulls<CloseReason>(1)
+        runBlocking {
+            whenever(positionRepository.findByIdOrNull(6L)).thenReturn(required)
+            whenever(
+                positionRepository.resolveReconciliation(6L, PositionStatus.OPEN, CloseReason.STOP_LOSS),
+            ).thenAnswer { invocation ->
+                captured[0] = invocation.getArgument(2)
+                true
+            }
+        }
+
+        val response = runBlocking { controller.resolveReconciliation(6L, "open", "stop_loss") }
+
+        assertEquals(true, response["updated"])
+        assertEquals(CloseReason.STOP_LOSS, captured[0])
+        runBlocking { Mockito.verify(positionRepository, Mockito.never()).releaseEntry("SBER", 5L) }
+    }
+
+    @Test
+    fun `dashboard stream rejects an unknown account`() {
+        runBlocking { whenever(tradingAccountService.findById(99L)).thenReturn(null) }
+
+        val failure = runCatching { controller.streamDashboard(99L) }
+
+        assertTrue(failure.exceptionOrNull() is ResponseStatusException, "${failure.exceptionOrNull()}")
     }
 
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {

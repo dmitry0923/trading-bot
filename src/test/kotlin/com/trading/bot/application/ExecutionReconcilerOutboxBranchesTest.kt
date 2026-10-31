@@ -293,4 +293,89 @@ class ExecutionReconcilerOutboxBranchesTest {
                 1e-9,
             )
         }
+
+    @Test
+    fun `close cancel without order id clears the flags without REST`(): Unit =
+        runBlocking {
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+            val pos = closing(closeOrderId = null, closeCancelPending = true)
+
+            reconciler.resolveCloseCancel(pos)
+
+            assertFalse(pos.closeCancelPending)
+            assertFalse(pos.pendingClose)
+            Mockito.verifyNoInteractions(alorClient)
+        }
+
+    @Test
+    fun `gone close order with a late delta confirms the fill before cleanup`(): Unit =
+        runBlocking {
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("CANCELED", 3, BigDecimal("101")))
+            whenever(positionRepo.findById(1L)).thenReturn(closing().copy(status = PositionStatus.CLOSED))
+            val pos = closing(closeCancelPending = true)
+
+            reconciler.resolveCloseCancel(pos)
+
+            assertEquals(1, confirmCalls.get(), "дельта исполнения обязана примениться")
+            assertEquals(
+                1.0,
+                meterRegistry.counter("test.reconciler.close.cancel_confirmed", "ticker", "SBER").count(),
+                1e-9,
+            )
+        }
+
+    @Test
+    fun `close cancel passes the entry price when the current price is unknown`(): Unit =
+        runBlocking {
+            val captured = arrayOfNulls<Pair<String?, BigDecimal?>>(1)
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull())).thenAnswer {
+                captured[0] = it.getArgument<String>(0) to it.getArgument<BigDecimal>(1)
+                null
+            }
+            val pos = closing(closeCancelPending = true).copy(currentPrice = null)
+
+            reconciler.resolveCloseCancel(pos)
+
+            assertEquals("CLOSE-1", captured[0]?.first)
+            assertEquals(0, BigDecimal("100").compareTo(captured[0]!!.second))
+        }
+
+    @Test
+    fun `close outbox SENT sets the order id and confirms the fill`(): Unit =
+        runBlocking {
+            val row =
+                outbox(LocalDateTime.now()).copy(status = OutboxStatus.SENT, alorOrderId = "CLOSE-9")
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "close")).thenReturn(row)
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+            val pos = closing(closeOrderId = null)
+
+            reconciler.resolveCloseViaOutbox(pos)
+
+            assertEquals("CLOSE-9", pos.closeOrderId)
+            assertEquals(1, confirmCalls.get())
+        }
+
+    @Test
+    fun `close outbox terminal failures reset the pending close`(): Unit =
+        runBlocking {
+            val terminalRows =
+                listOf(
+                    outbox(LocalDateTime.now()).copy(status = OutboxStatus.FAILED, retryCount = 5),
+                    outbox(LocalDateTime.now()).copy(status = OutboxStatus.BLOCKED),
+                    outbox(LocalDateTime.now()).copy(status = OutboxStatus.REJECTED),
+                )
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+
+            for (row in terminalRows) {
+                whenever(orderOutboxRepo.findLatestByPositionId(1L, "close")).thenReturn(row)
+                val pos = closing()
+
+                reconciler.resolveCloseViaOutbox(pos)
+
+                assertFalse(pos.pendingClose, "терминальный outbox ${row.status} — сброс pendingClose")
+                org.junit.jupiter.api.Assertions
+                    .assertNull(pos.closeOrderId)
+            }
+        }
 }

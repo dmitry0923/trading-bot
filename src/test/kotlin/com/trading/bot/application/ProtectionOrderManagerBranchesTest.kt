@@ -173,6 +173,87 @@ class ProtectionOrderManagerBranchesTest {
     // ─── attach: пропуски и неподтверждённая постановка ─────────────────
 
     @Test
+    fun `attach skips a non open position`(): Unit =
+        runBlocking {
+            val pos = openPosition(status = PositionStatus.CLOSED)
+
+            manager.attachProtectionOrders(pos)
+
+            verify(orderOutboxService, never()).placeOrder(
+                anyOrNull(),
+                anyOrNull(),
+                Mockito.anyInt(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+            )
+        }
+
+    @Test
+    fun `cancel without a position id is a no-op`(): Unit =
+        runBlocking {
+            val pos = openPosition(id = null, slOrderId = "SL-1", tpOrderId = "TP-1")
+
+            manager.cancelProtectionOrders(pos)
+
+            verify(orderOutboxService, never()).placeCancelOrder(anyOrNull(), anyOrNull(), anyOrNull())
+            assertFalse(pos.slCancelPending)
+            assertFalse(pos.tpCancelPending)
+        }
+
+    @Test
+    fun `reconcile without a position id leaves protection untouched`(): Unit =
+        runBlocking {
+            val pos = openPosition(id = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            // resolveProtectionOutbox выходит до обращения к outbox; финальный save — штатный.
+            verify(orderOutboxRepo, never()).findLatestByPositionId(anyOrNull(), anyOrNull())
+        }
+
+    @Test
+    fun `sent row without an order id does not suppress re-placement`(): Unit =
+        runBlocking {
+            stubPlaceOrder("SL-NEW")
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "sl"))
+                .thenReturn(outbox(OutboxStatus.SENT, orderId = null))
+            val pos = openPosition(takeProfit = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals("SL-NEW", pos.slOrderId)
+            assertNull(protectionFailed.get())
+        }
+
+    @Test
+    fun `take profit outbox failure below the retry limit does not fail protection`(): Unit =
+        runBlocking {
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "tp"))
+                .thenReturn(outbox(OutboxStatus.FAILED, retryCount = 1))
+            val pos = openPosition(stopLoss = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertNull(protectionFailed.get())
+        }
+
+    @Test
+    fun `partial protection fill without a close order id does not schedule a cancel`(): Unit =
+        runBlocking {
+            val pos = openPosition(slOrderId = "SL-1", stopLoss = "91500", pendingClose = true)
+
+            manager.applyExchangeProtectionClosePublic(pos, execution("PARTIALLY_FILLED", 3), CloseReason.STOP_LOSS)
+
+            assertFalse(pos.closeCancelPending)
+            verify(orderOutboxService, never()).placeCancelOrder(anyOrNull(), anyOrNull(), anyOrNull())
+        }
+
+    @Test
     fun `attach skips while a close cancellation is pending`(): Unit =
         runBlocking {
             val pos = openPosition(closeCancelPending = true)

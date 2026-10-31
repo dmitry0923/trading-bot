@@ -1529,4 +1529,57 @@ class OrderOutboxServiceTest {
             Mockito.verify(positionRepo, Mockito.never()).findByAlorOrderId(Mockito.anyString())
         }
     }
+
+    @Test
+    fun `rabbit redispatch on BLOCKED acks final interlock denial without resend`() {
+        val outbox =
+            outboxRow(retryCount = 0, key = "idem-blocked", type = "limit", price = "92000")
+                .copy(status = OutboxStatus.BLOCKED)
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
+
+            val result = service.redispatchById(checkNotNull(outbox.id))
+
+            assertFalse(result.success)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyPurpose(),
+                )
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
+
+    @Test
+    fun `rabbit redispatch on REJECTED acks final exchange reject without resend`() {
+        val outbox =
+            outboxRow(retryCount = 0, key = "idem-rejected", type = "limit", price = "92000")
+                .copy(status = OutboxStatus.REJECTED)
+        runBlocking {
+            Mockito.`when`(outboxRepo.findById(checkNotNull(outbox.id))).thenReturn(outbox)
+
+            val result = service.redispatchById(checkNotNull(outbox.id))
+
+            assertFalse(result.success)
+            assertNull(result.alorOrderId)
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeLimitOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyPurpose(),
+                )
+            Mockito.verify(outboxRepo, Mockito.never()).markSent(anyUuid(), Mockito.anyString())
+        }
+    }
 }

@@ -6,6 +6,7 @@ import com.trading.bot.application.funding.FundingSnapshotService
 import com.trading.bot.client.AlorClient
 import com.trading.bot.config.DistributedLockConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.order.OrderParams
 import com.trading.bot.domain.risk.EntryRequest
@@ -128,6 +129,8 @@ class DecisionEngineTest {
     private fun engine(
         profile: FakeEntryProfile = FakeEntryProfile(),
         config: TradingConfig = tradingConfig,
+        netEv: NetEvGate = netEvGate,
+        fundingVeto: FundingVetoGate = fundingVetoGate,
     ): DecisionEngine =
         DecisionEngine(
             marketDataGate,
@@ -145,10 +148,10 @@ class DecisionEngineTest {
             higherTfTrendFilter,
             degenerateCaseGuard,
             instrumentsConfig,
-            netEvGate,
+            netEv,
             Mockito.mock(com.trading.bot.service.AdaptiveRiskService::class.java),
             entryLeaseRecoveryGate,
-            fundingVetoGate,
+            fundingVeto,
         )
 
     private fun signal(
@@ -694,6 +697,60 @@ class DecisionEngineTest {
         assertEquals(1, gatewayCalls)
     }
 
+    @Test
+    fun `unknown instrument is rejected before any sizing`() {
+        val profile = FakeEntryProfile(matchesTicker = "UNKNOWN")
+        Mockito.`when`(marketDataGate.isPriceDataFresh("UNKNOWN")).thenReturn(true)
+
+        runBlocking { engine(profile).openPosition(signal(ticker = "UNKNOWN"), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(
+            1.0,
+            meterRegistry
+                .counter("test.entry.rejected", Tags.of("ticker", "UNKNOWN", "reason", "UNKNOWN_INSTRUMENT"))
+                .count(),
+        )
+        assertEquals(0, profile.buildEntryRequestCalls)
+    }
+
+    @Test
+    fun `net ev gate rejection stops the entry and records the reason`() {
+        runBlocking { engine(netEv = BlockingNetEvGate()).openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, rejectMetric("NET_EV_TOO_LOW"))
+    }
+
+    @Test
+    fun `portfolio scale below one lot blocks the entry`() {
+        runBlocking {
+            Mockito
+                .`when`(portfolioRiskEngine.evaluate(anyPortfolioRiskRequest()))
+                .thenReturn(PortfolioRiskReport(allowed = true, scaleDownFactor = BigDecimal("0.1")))
+        }
+
+        runBlocking { engine().openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, meterRegistry.counter("test.risk.scaleBlock", Tags.of("ticker", "Si")).count())
+    }
+
+    @Test
+    fun `portfolio recheck after scale rejects the entry`() {
+        runBlocking {
+            Mockito
+                .`when`(portfolioRiskEngine.evaluate(anyPortfolioRiskRequest()))
+                .thenReturn(PortfolioRiskReport(allowed = true, scaleDownFactor = BigDecimal("0.5")))
+                .thenReturn(PortfolioRiskReport(allowed = false, reasons = listOf("PORTFOLIO_VAR")))
+        }
+
+        runBlocking { engine().openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertEquals(1.0, meterRegistry.counter("test.risk.scaleReject", Tags.of("ticker", "Si")).count())
+    }
+
     private class FakeEntryProfile(
         var riskVerdict: RiskVerdict = RiskVerdict.Allowed,
         var preSizingReason: String? = null,
@@ -835,5 +892,18 @@ class DecisionEngineTest {
             ticker: String,
             direction: PositionDirection,
         ): VetoResult = if (blocked) VetoResult.Blocked(java.math.BigDecimal("2.79")) else VetoResult.Pass
+    }
+
+    /** NetEvGate, который всегда блокирует вход (детерминированный отказ EV). */
+    private class BlockingNetEvGate :
+        NetEvGate(
+            instrumentsConfig = InstrumentsConfig(),
+            riskConfig = RiskConfig(),
+        ) {
+        override fun check(
+            ticker: String,
+            expectedNet: BigDecimal?,
+            snapshot: MarketSnapshot?,
+        ): GateResult = GateResult.Blocked(netEV = BigDecimal("-1"), expectedNet = expectedNet, executionCost = BigDecimal.ONE)
     }
 }

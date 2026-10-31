@@ -277,6 +277,46 @@ class ExecutionReconcilerOutboxBranchesTest {
         }
 
     @Test
+    fun `close cancel without a position id clears the pending flags`(): Unit =
+        runBlocking {
+            val pos = closing().copy(id = null)
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+
+            reconciler.resolveCloseCancel(pos)
+
+            assertFalse(pos.closeCancelPending)
+            assertFalse(pos.pendingClose)
+            Mockito.verifyNoInteractions(alorClient)
+        }
+
+    @Test
+    fun `close order terminal without quantity still confirms the fill`(): Unit =
+        runBlocking {
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("EXECUTED", 0, null))
+            whenever(positionRepo.findById(1L)).thenReturn(closing().copy(status = PositionStatus.CLOSED))
+            val pos = closing(closeCancelPending = true)
+
+            reconciler.resolveCloseCancel(pos)
+
+            assertEquals(1, confirmCalls.get(), "EXECUTED без filledQty — терминальный фил")
+        }
+
+    @Test
+    fun `close outbox fill falls back to entry price and reconciliation reason`(): Unit =
+        runBlocking {
+            val row = outbox(LocalDateTime.now()).copy(status = OutboxStatus.SENT, alorOrderId = "CLOSE-9")
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "close")).thenReturn(row)
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+            val pos = closing(closeOrderId = null, closeReason = null).copy(currentPrice = null)
+
+            reconciler.resolveCloseViaOutbox(pos)
+
+            assertEquals("CLOSE-9", pos.closeOrderId)
+            assertEquals(1, confirmCalls.get())
+        }
+
+    @Test
     fun `confirmed close cancel clears state only for a still open position`(): Unit =
         runBlocking {
             whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))

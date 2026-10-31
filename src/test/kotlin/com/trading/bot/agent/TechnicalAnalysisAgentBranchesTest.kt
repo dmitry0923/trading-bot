@@ -216,4 +216,28 @@ class TechnicalAnalysisAgentBranchesTest {
 
         assertEquals("NEUTRAL", report.conclusion)
     }
+
+    @Test
+    fun `a one sided book degrades only the spread and keeps the quote`() {
+        val snapshot =
+            MarketSnapshot(
+                ticker = "SBER",
+                currentPrice = BigDecimal("100"),
+                bid = BigDecimal("99.5"),
+                ask = null,
+                volume = null,
+                bidSize = 10,
+                askSize = 5,
+                microprice = BigDecimal("99.8"),
+                obi = BigDecimal("0.25"),
+            )
+
+        val report =
+            runBlocking {
+                agent("""{"conclusion":"NEUTRAL","signalStrength":0.1,"reasoning":"one-side"}""")
+                    .analyze("SBER", flatCandles(30), snapshot, "c1")
+            }
+
+        assertEquals("NEUTRAL", report.conclusion)
+    }
 }

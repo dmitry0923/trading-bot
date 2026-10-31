@@ -339,6 +339,63 @@ class AlorClientParsingBranchesTest {
             }
         }
 
+    @Test
+    fun `positive quote sizes are preserved`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.quotesBody = """{"lastPrice":"100","bid":"99.9","ask":"100.1","bidVolume":10,"askVolume":20}"""
+
+                val snapshot = buildClient(server).getMarketSnapshot("SBER")!!
+
+                assertEquals(10L, snapshot.bidSize)
+                assertEquals(20L, snapshot.askSize)
+            }
+        }
+
+    @Test
+    fun `market buy uses the ask and falls back to the last price without a book`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.quotesBody = """{"lastPrice":"100","ask":"100.2"}"""
+                whenever(orderTransport.placeLimit(any(), any(), any(), any(), any(), any(), any()))
+                    .thenReturn("ord-buy")
+                val client = buildClient(server)
+
+                client.placeMarketOrder("SBER", "buy", 1, "idem-buy")
+
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .placeLimit("SBER", "buy", 1, BigDecimal("100.2"), "idem-buy", "P1", OrderPurpose.ENTRY)
+
+                server.quotesBody = """{"lastPrice":"100"}"""
+                client.placeMarketOrder("SBER", "sell", 1, "idem-nobook")
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .placeLimit("SBER", "sell", 1, BigDecimal("100"), "idem-nobook", "P1", OrderPurpose.ENTRY)
+            }
+        }
+
+    @Test
+    fun `verified order with an expected price records slippage`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.orderByIdBody = """{"status":"FILLED","filledQty":2,"avgFillPrice":"101"}"""
+                val registry = SimpleMeterRegistry()
+                val client = buildClient(server, registry)
+
+                val execution = client.verifyOrder("ord-1", expectedPrice = BigDecimal("100"))!!
+
+                assertEquals(2, execution.filledQuantity)
+                assertTrue(
+                    registry
+                        .find("trade.slippage.rub")
+                        .meters()
+                        .isNotEmpty(),
+                    "слиппедж должен публиковаться",
+                )
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())

@@ -86,10 +86,11 @@ class BacktestEngineLifecycleBranchesTest {
         sizer: PositionSizer? = null,
         fundingRepo: FundingHistoryRepository? = null,
         riskSimulator: BacktestRiskSimulator? = null,
+        instruments: InstrumentsConfig = InstrumentsConfig(),
     ): BacktestEngine =
         BacktestEngine(
             candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
-            instrumentsConfig = InstrumentsConfig(),
+            instrumentsConfig = instruments,
             backtestConfig = config,
             meterRegistry = meterRegistry,
             signalGenerator = AlternatingGenerator(),
@@ -363,6 +364,195 @@ class BacktestEngineLifecycleBranchesTest {
 
             assertTrue(result.totalTrades > 0)
             assertEquals(1.0, registry.counter("bt_pass_total", "result", "REJECT").count())
+        }
+
+    @Test
+    fun `execution fill covers bps tick realistic and passive branches`() {
+        val futures =
+            InstrumentsConfig.InstrumentSpec(
+                ticker = "FUT1",
+                type = "FUTURES",
+                lotSize = 1000,
+                priceStep = BigDecimal("0.001"),
+                priceStepCost = BigDecimal("1.0"),
+                go = BigDecimal("850"),
+                leverage = BigDecimal("1.0"),
+                baseAsset = "CNY",
+                slippageBps = BigDecimal("1.0"),
+            )
+        val zeroBps = futures.copy(ticker = "FUT0", slippageBps = BigDecimal.ZERO)
+        val noBps = futures.copy(ticker = "FUTN", slippageBps = null)
+        val stock =
+            InstrumentsConfig.InstrumentSpec(
+                ticker = "STK",
+                type = "STOCK",
+                lotSize = 1,
+                priceStep = BigDecimal("0.01"),
+                priceStepCost = BigDecimal("0.01"),
+                go = BigDecimal.ZERO,
+                leverage = BigDecimal.ONE,
+                baseAsset = "STK",
+            )
+        val instruments =
+            InstrumentsConfig().apply { this.instruments = mutableListOf(futures, zeroBps, noBps, stock) }
+        val engine = engine(BacktestConfig().apply { liveRiskGates = false }, instruments = instruments)
+        val ref = BigDecimal("100")
+        val candle = candle("STK", 100.0, start, high = 101.0, low = 99.0)
+
+        // Фьючерсы: bps-модель, tick-модель (0 и null bps).
+        for ((ticker, spec) in listOf("FUT1" to futures, "FUT0" to zeroBps, "FUTN" to noBps)) {
+            val buy = engine.executionFill(spec, ticker, ref, isBuy = true, slippageMultiplier = 1.0)
+            val sell = engine.executionFill(spec, ticker, ref, isBuy = false, slippageMultiplier = 1.0)
+            assertTrue(buy.price >= ref, "$ticker buy fill must not be better than reference")
+            assertTrue(sell.price <= ref, "$ticker sell fill must not be better than reference")
+        }
+
+        // Акции: realistic half-spread при наличии свечи, market-fill без свечи.
+        val realistic =
+            engine.executionFill(stock, "STK", ref, isBuy = true, slippageMultiplier = 1.0, candle = candle)
+        assertTrue(realistic.price >= ref)
+        val noCandle =
+            engine.executionFill(stock, "STK", ref, isBuy = true, slippageMultiplier = 1.0, candle = null)
+        assertTrue(noCandle.price >= ref)
+
+        val lenient =
+            engine(
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    realisticExecution = false
+                },
+                instruments = instruments,
+            )
+        val plain =
+            lenient.executionFill(stock, "STK", ref, isBuy = true, slippageMultiplier = 1.0, candle = candle)
+        assertTrue(plain.price >= ref)
+
+        // Passive-ветка: включается флагом/параметром и только для passiveEligible.
+        val passive =
+            engine.executionFill(
+                stock,
+                "STK",
+                ref,
+                isBuy = true,
+                slippageMultiplier = 1.0,
+                candle = candle,
+                passiveEligible = true,
+                passiveFillEnabled = true,
+            )
+        assertTrue(passive.price <= ref, "passive buy исполняется не выше mid")
+        val takerOnly =
+            engine.executionFill(
+                stock,
+                "STK",
+                ref,
+                isBuy = true,
+                slippageMultiplier = 1.0,
+                candle = candle,
+                passiveEligible = false,
+                passiveFillEnabled = true,
+            )
+        assertTrue(takerOnly.price >= ref, "passiveEligible=false — taker-филл")
+    }
+
+    @Test
+    fun `funding window takes the long side on a deeply negative rate`(): Unit =
+        runBlocking {
+            val d1 = LocalDate.of(2026, 3, 2)
+            val candles =
+                (0..3).flatMap { day ->
+                    (0..1).map { hour ->
+                        candle("SBER", 100.0, d1.plusDays(day.toLong()).atTime(10 + hour, 0))
+                    }
+                }
+            val funding = mock<FundingHistoryRepository>()
+            whenever(funding.findValuesBetween(org.mockito.kotlin.any(), anyDate(), anyDate())).thenReturn(
+                mapOf(
+                    d1 to BigDecimal("-5.0"),
+                    d1.plusDays(1) to BigDecimal("-5.0"),
+                    d1.plusDays(2) to BigDecimal("0.00"),
+                ),
+            )
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    fundingWindowEnabled = true
+                    fundingWindowLongThresholdRub = 2.0
+                    fundingWindowShortThresholdRub = 1.0
+                    fundingWindowBlockOnUnknown = true
+                }
+
+            val result =
+                engine(config = config, fundingRepo = funding)
+                    .simulate("SBER", candles, minBarsForSignal = 2, initialCapital = BigDecimal("100000"))
+
+            assertTrue(result.trades.any { it.closeReason == "FUNDING_WINDOW_EXIT" })
+            assertTrue(result.trades.any { it.direction == PositionDirection.LONG }, "ставка ≤ −long → LONG")
+        }
+
+    @Test
+    fun `funding window with a rejected sizing leaves no position`(): Unit =
+        runBlocking {
+            val d1 = LocalDate.of(2026, 3, 2)
+            val candles =
+                (0..2).flatMap { day ->
+                    (0..1).map { hour ->
+                        candle("CNYRUBF", 100.0, d1.plusDays(day.toLong()).atTime(10 + hour, 0))
+                    }
+                }
+            val funding = mock<FundingHistoryRepository>()
+            whenever(funding.findValuesBetween(org.mockito.kotlin.any(), anyDate(), anyDate())).thenReturn(
+                mapOf(d1 to BigDecimal("5.0")),
+            )
+            val sizer = mock<PositionSizer>()
+            whenever(
+                sizer.calculateContracts(
+                    org.mockito.kotlin.any(),
+                    anyBigDecimal(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyDirection(),
+                ),
+            ).thenReturn(PositionSizeResult(0, BigDecimal.ZERO, BigDecimal.ZERO, null, "ZERO_GO"))
+            val registry = SimpleMeterRegistry()
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    fundingWindowEnabled = true
+                    fundingWindowLongThresholdRub = 2.0
+                    fundingWindowShortThresholdRub = 1.0
+                    fundingWindowBlockOnUnknown = true
+                }
+
+            val result =
+                engine(config = config, meterRegistry = registry, sizer = sizer, fundingRepo = funding)
+                    .simulate("CNYRUBF", candles, minBarsForSignal = 1)
+
+            assertTrue(result.trades.isEmpty())
+            assertEquals(0.0, registry.counter("bt_funding_window_entry_total", "ticker", "CNYRUBF").count())
+        }
+
+    @Test
+    fun `funding veto blocks the short side on a negative rate`(): Unit =
+        runBlocking {
+            val funding = mock<FundingHistoryRepository>()
+            whenever(funding.findValuesBetween(org.mockito.kotlin.any(), anyDate(), anyDate())).thenReturn(
+                mapOf(LocalDate.of(2026, 2, 27) to BigDecimal("-5.0")),
+            )
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    fundingVetoEnabled = true
+                    fundingVetoLongThresholdRub = 1.0
+                    fundingVetoShortThresholdRub = 1.0
+                    fundingVetoBlockOnUnknown = true
+                }
+
+            val result =
+                engine(config = config, fundingRepo = funding)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+
+            assertTrue(result.trades.any { it.closeReason == "FUNDING_VETO_REVERSAL" })
         }
 
     private fun anyBigDecimal(): BigDecimal {

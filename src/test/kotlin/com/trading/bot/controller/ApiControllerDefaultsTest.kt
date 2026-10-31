@@ -26,6 +26,7 @@ import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.dto.RagAnalysis
 import com.trading.bot.model.dto.RagAnalyzeRequest
 import com.trading.bot.model.dto.RagTraceRequest
+import com.trading.bot.model.entity.BacktestResultEntity
 import com.trading.bot.model.entity.Position
 import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.AgentLogRepository
@@ -128,29 +129,39 @@ class ApiControllerDefaultsTest {
     private val drawdownProtectionService = mock<DrawdownProtectionService>()
     private val dashboardService = mock<DashboardService>()
     private val frozenStrategyStore = mock<FrozenStrategyStore>()
+    private val agentLogRepository = mock<AgentLogRepository>()
+    private val blindSpotRepository = mock<BlindSpotRepository>()
+    private val adjustmentRepository = mock<StrategyAdjustmentRepository>()
+    private val tradeEventRepository = mock<TradeEventRepository>()
+    private val backtestResultRepository = mock<BacktestResultRepository>()
+    private val tradeAnalysisService = mock<TradeAnalysisService>()
+    private val adaptiveRiskService = mock<AdaptiveRiskService>()
+    private val riskManagementService = mock<RiskManagementService>()
+    private val fundingHistoryRepository = mock<FundingHistoryRepository>()
+    private val moexFundingHistoryLoader = mock<com.trading.bot.backtest.MoexFundingHistoryLoader>()
     private val monteCarloAnalyzer = MonteCarloAnalyzer(backtestEngine, backtestConfig)
 
     private val controller: ApiController =
         ApiController(
             strategyRepository = strategyRepository,
             positionRepository = positionRepository,
-            agentLogRepository = mock<AgentLogRepository>(),
+            agentLogRepository = agentLogRepository,
             redisCacheService = redisCacheService,
-            riskManagementService = mock<RiskManagementService>(),
+            riskManagementService = riskManagementService,
             drawdownProtectionService = drawdownProtectionService,
             strategyService = mock<StrategyService>(),
             tradingBotService = mock<TradingBotService>(),
             settingsService = mock<SettingsService>(),
-            tradeAnalysisService = mock<TradeAnalysisService>(),
-            adaptiveRiskService = mock<AdaptiveRiskService>(),
-            blindSpotRepository = mock<BlindSpotRepository>(),
-            adjustmentRepository = mock<StrategyAdjustmentRepository>(),
-            tradeEventRepository = mock<TradeEventRepository>(),
+            tradeAnalysisService = tradeAnalysisService,
+            adaptiveRiskService = adaptiveRiskService,
+            blindSpotRepository = blindSpotRepository,
+            adjustmentRepository = adjustmentRepository,
+            tradeEventRepository = tradeEventRepository,
             backtestEngine = backtestEngine,
             walkForwardAnalyzer = walkForwardAnalyzer,
             monteCarloAnalyzer = monteCarloAnalyzer,
             finalHoldoutValidator = mock<FinalHoldoutValidator>(),
-            backtestResultRepository = mock<BacktestResultRepository>(),
+            backtestResultRepository = backtestResultRepository,
             panelBacktestService = mock<PanelBacktestService>(),
             portfolioBacktestGuard = mock<PortfolioBacktestGuard>(),
             backtestConfig = backtestConfig,
@@ -176,8 +187,8 @@ class ApiControllerDefaultsTest {
             deploymentApprovalService = mock<DeploymentApprovalService>(),
             liveStrategyFingerprintProvider = mock<LiveStrategyFingerprintProvider>(),
             frozenStrategyStore = frozenStrategyStore,
-            moexFundingHistoryLoader = mock<com.trading.bot.backtest.MoexFundingHistoryLoader>(),
-            fundingHistoryRepository = mock<FundingHistoryRepository>(),
+            moexFundingHistoryLoader = moexFundingHistoryLoader,
+            fundingHistoryRepository = fundingHistoryRepository,
             contrarianAgent = mock<ContrarianAgent>(),
             arbitratorAgent = mock<ArbitratorAgent>(),
         )
@@ -415,6 +426,98 @@ class ApiControllerDefaultsTest {
         val response = dispatch(get("/api/v1/backtest/SBER/deployment-gate").param("days", "10"))
 
         assertEquals(404, response.status)
+    }
+
+    @Test
+    fun `read endpoints map repository results and clamp limits`() {
+        runBlocking {
+            whenever(
+                agentLogRepository.findFiltered(
+                    Mockito.nullable(String::class.javaObjectType),
+                    Mockito.nullable(String::class.javaObjectType),
+                    Mockito.anyInt(),
+                ),
+            ).thenReturn(emptyList())
+            whenever(riskManagementService.getDailyPnL()).thenReturn(BigDecimal.ZERO)
+            whenever(paperTradingService.status()).thenReturn(emptyMap())
+            whenever(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            whenever(adjustmentRepository.findAll()).thenReturn(emptyList())
+            whenever(adjustmentRepository.findByTickerOrderByCreatedAtDesc("SBER")).thenReturn(emptyList())
+
+            whenever(fundingHistoryRepository.hasData("CNYRUBF")).thenReturn(true)
+            whenever(fundingHistoryRepository.hasData("SBER")).thenReturn(false)
+            assertEquals(true, controller.fundingHistoryStatus("CNYRUBF")["hasHistory"])
+            assertEquals(false, controller.fundingHistoryStatus("SBER")["hasHistory"])
+
+            whenever(moexFundingHistoryLoader.loadAndSave("CNYRUBF", 365))
+                .thenReturn(LoadResult("CNYRUBF", 5, 5))
+            whenever(moexFundingHistoryLoader.loadAndSave("CNYRUBF", 7))
+                .thenReturn(LoadResult("CNYRUBF", 2, 2, partial = true))
+            assertEquals(5, controller.fundingHistoryBackfill("CNYRUBF", null)["loaded"])
+            assertEquals(2, controller.fundingHistoryBackfill("CNYRUBF", 7)["loaded"])
+
+            whenever(backtestResultRepository.findRecent("SBER", 1)).thenReturn(
+                listOf(
+                    BacktestResultEntity(
+                        id = 1L,
+                        ticker = "SBER",
+                        params = """{"days":10}""",
+                        metrics = """{"pf":1.2}""",
+                        oos = null,
+                    ),
+                ),
+            )
+            val results = controller.backtestResults("SBER", 0)
+            assertEquals(1, results["results"].let { (it as List<*>).size })
+            org.mockito.kotlin
+                .verify(backtestResultRepository)
+                .findRecent("SBER", 1)
+
+            assertEquals(emptyList<Any>(), controller.getLogs(null, null, 100))
+            assertEquals(0, BigDecimal.ZERO.compareTo(controller.getDailyPnl()["dailyPnl"] as BigDecimal))
+            assertEquals(emptyMap<String, Any?>(), controller.experimentStatus())
+            assertEquals(emptyList<Any>(), controller.getBlindSpots())
+            assertEquals(emptyList<Any>(), controller.getAdjustments(null))
+            assertEquals(emptyList<Any>(), controller.getAdjustments("SBER"))
+        }
+    }
+
+    @Test
+    fun `position events analytics health and adaptive params endpoints`() {
+        runBlocking {
+            whenever(tradeEventRepository.findByAggregateId(org.mockito.kotlin.any())).thenReturn(emptyList())
+            assertEquals(emptyList<Any>(), controller.getPositionEvents(5L))
+
+            whenever(tradeAnalysisService.analyzeLastNDays(7)).thenReturn(emptyMap())
+            val health = controller.getAnalyticsHealth()
+            assertEquals(0, health["totalTickersAnalyzed"])
+            assertEquals("0.00%", health["averageWinRate"])
+
+            whenever(tradeAnalysisService.analyzeLastNDays(1)).thenReturn(emptyMap())
+            assertEquals(emptyMap<String, Any>(), controller.getTradeStats(0))
+
+            whenever(adaptiveRiskService.diagnoseConfidenceCalibration("SBER")).thenReturn(
+                AdaptiveRiskService.ConfidenceCalibrationDiagnostic(
+                    ticker = "SBER",
+                    source = AdaptiveRiskService.ConfidenceSource.FALLBACK,
+                    threshold = 0.6,
+                    reason = "cold-start",
+                    closedTrades = 0,
+                    scoredTrades = 0,
+                    sampleSize = 0,
+                    winRate = 0.0,
+                ),
+            )
+            whenever(adaptiveRiskService.calculateOptimalPositionSize("SBER")).thenReturn(BigDecimal("1000"))
+            whenever(adaptiveRiskService.isInDrawdownRecovery()).thenReturn(false)
+            whenever(adaptiveRiskService.shouldPauseTrading("SBER")).thenReturn(false)
+
+            val params = controller.getAdaptiveParams("SBER")
+            assertEquals("SBER", params["ticker"])
+            assertEquals("FALLBACK", params["confidenceSource"])
+            assertEquals(BigDecimal("1000"), params["maxPositionRub"])
+            assertEquals(false, params["shouldPause"])
+        }
     }
 
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {

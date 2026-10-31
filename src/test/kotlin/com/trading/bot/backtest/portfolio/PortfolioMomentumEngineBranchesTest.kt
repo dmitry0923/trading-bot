@@ -91,7 +91,6 @@ class PortfolioMomentumEngineBranchesTest {
 
     @Test
     fun `tickers with unusable prices are excluded from the cross section`() {
-        // Третий инструмент имеет нулевую цену в окне momentum → невалиден.
         val broken =
             bars(
                 200,
@@ -324,5 +323,52 @@ class PortfolioMomentumEngineBranchesTest {
             PortfolioMomentumEngine.Bar(time, doubleArrayOf(1.0, 2.0), doubleArrayOf(9.0, 4.0)),
         )
         assertFalse(bar.equals("not a bar"))
+    }
+
+    @Test
+    fun `non finite prices are excluded from the cross section and carry notional`() {
+        val bars =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> exp(2.4 + 0.0008 * i) },
+                        { _: Int -> Double.NaN },
+                        { i: Int -> exp(2.4 - 0.0008 * i) },
+                    ),
+            )
+
+        val result =
+            PortfolioMomentumEngine.run(
+                bars,
+                listOf(spec("UP"), spec("BROKEN"), spec("DOWN")),
+                params().copy(momentumWeight = 0.0, carryWeight = 1.0),
+            )
+
+        assertTrue(result.trades.isEmpty(), "NaN-цена не должна попадать в сечение")
+    }
+
+    @Test
+    fun `risk parity falls back to equal weights without a volatility window`() {
+        val result =
+            PortfolioMomentumEngine.run(
+                trending(200),
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params().copy(volScalingEnabled = true, volLookbackBars = 10_000),
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "недостаток окна σ не должен отменять вход")
+    }
+
+    @Test
+    fun `vol targeting without enough history keeps the exposure unchanged`() {
+        val result =
+            PortfolioMomentumEngine.run(
+                trending(200),
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params().copy(volTargetEnabled = true, volLookbackBars = 10_000),
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "недостаток истории σ — экспозиция не меняется")
     }
 }

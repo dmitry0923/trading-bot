@@ -6,6 +6,7 @@ import com.trading.bot.application.TradingGate
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestResult
 import com.trading.bot.backtest.FinalHoldoutValidator
+import com.trading.bot.backtest.FrozenStrategy
 import com.trading.bot.backtest.HistoricalDataLoader
 import com.trading.bot.backtest.LoadResult
 import com.trading.bot.backtest.MonteCarloAnalyzer
@@ -126,6 +127,8 @@ class ApiControllerDefaultsTest {
     private val dailyRiskSnapshotRepository = mock<DailyRiskSnapshotRepository>()
     private val drawdownProtectionService = mock<DrawdownProtectionService>()
     private val dashboardService = mock<DashboardService>()
+    private val frozenStrategyStore = mock<FrozenStrategyStore>()
+    private val monteCarloAnalyzer = MonteCarloAnalyzer(backtestEngine, backtestConfig)
 
     private val controller: ApiController =
         ApiController(
@@ -145,7 +148,7 @@ class ApiControllerDefaultsTest {
             tradeEventRepository = mock<TradeEventRepository>(),
             backtestEngine = backtestEngine,
             walkForwardAnalyzer = walkForwardAnalyzer,
-            monteCarloAnalyzer = mock<MonteCarloAnalyzer>(),
+            monteCarloAnalyzer = monteCarloAnalyzer,
             finalHoldoutValidator = mock<FinalHoldoutValidator>(),
             backtestResultRepository = mock<BacktestResultRepository>(),
             panelBacktestService = mock<PanelBacktestService>(),
@@ -172,7 +175,7 @@ class ApiControllerDefaultsTest {
             meterRegistry = SimpleMeterRegistry(),
             deploymentApprovalService = mock<DeploymentApprovalService>(),
             liveStrategyFingerprintProvider = mock<LiveStrategyFingerprintProvider>(),
-            frozenStrategyStore = mock<FrozenStrategyStore>(),
+            frozenStrategyStore = frozenStrategyStore,
             moexFundingHistoryLoader = mock<com.trading.bot.backtest.MoexFundingHistoryLoader>(),
             fundingHistoryRepository = mock<FundingHistoryRepository>(),
             contrarianAgent = mock<ContrarianAgent>(),
@@ -360,6 +363,56 @@ class ApiControllerDefaultsTest {
         stubCandles()
 
         val response = dispatch(get("/api/v1/backtest/SBER/holdout").param("days", "10"))
+
+        assertEquals(404, response.status)
+    }
+
+    @Test
+    fun `robustness endpoint resolves defaults, clamps simulations and uses frozen stops`() {
+        stubCandles()
+        val frozen =
+            FrozenStrategy(
+                ticker = "SBER",
+                strategyVersion = "v1",
+                gitCommitSha = null,
+                slPercent = 1.0,
+                tpPercent = 2.0,
+                slPoints = null,
+                tpPoints = null,
+                confidenceThreshold = 0.6,
+                leverage = 1.0,
+                riskPerTradePercent = 5.0,
+                futuresMaxContractsPerPosition = 2,
+            )
+        runBlocking { whenever(frozenStrategyStore.current("SBER")).thenReturn(frozen) }
+
+        val defaults = dispatch(get("/api/v1/backtest/SBER/robustness").param("days", "10"))
+        assertEquals(200, defaults.status)
+        assertTrue(defaults.contentAsString.contains("\"ticker\":\"SBER\""), defaults.contentAsString)
+
+        val clampedLow = dispatch(get("/api/v1/backtest/SBER/robustness").param("days", "10").param("simulations", "1"))
+        assertEquals(200, clampedLow.status)
+        assertTrue(clampedLow.contentAsString.contains("\"simulations\":10"), clampedLow.contentAsString)
+
+        val clampedHigh =
+            dispatch(
+                get("/api/v1/backtest/SBER/robustness")
+                    .param("days", "10")
+                    .param("simulations", "1000000")
+                    .param("seed", "42")
+                    .param("method", "IID")
+                    .param("avgBlockLength", "2.0")
+                    .param("blockLength", "3"),
+            )
+        assertEquals(200, clampedHigh.status)
+        assertTrue(clampedHigh.contentAsString.contains("\"simulations\":5000"), clampedHigh.contentAsString)
+    }
+
+    @Test
+    fun `deployment gate without candles returns not found`() {
+        stubCandles()
+
+        val response = dispatch(get("/api/v1/backtest/SBER/deployment-gate").param("days", "10"))
 
         assertEquals(404, response.status)
     }

@@ -67,6 +67,26 @@ class CbrRatesProviderTest {
     }
 
     @Test
+    fun `skips invalid rows and accepts date only timestamps`() {
+        val xml =
+            soap(
+                """<KeyRateResponse xmlns="http://web.cbr.ru/"><KeyRateResult><diffgr:diffgram xmlns:diffgr="urn:schemas-microsoft-com:xml-diffgram-v1"><KeyRate xmlns="">
+                   <KR><DT>2026-10-16</DT><Rate>14.5</Rate></KR>
+                   <KR><DT>not-a-date</DT><Rate>1.0</Rate></KR>
+                   <KR><DT>2026-10-15</DT><Rate>not-a-number</Rate></KR>
+                   <KR><DT>2026-10-14</DT></KR>
+                   <KR><DT>2026-10-13</DT><Rate> </Rate></KR>
+                   </KeyRate></diffgr:diffgram></KeyRateResult></KeyRateResponse>""",
+            )
+
+        val rows = provider().parseKeyRates(xml)
+
+        assertEquals(1, rows.size)
+        assertEquals(LocalDate.of(2026, 10, 16), rows.single().rateDate)
+        assertEquals(0, BigDecimal("14.5").compareTo(rows.single().keyRate))
+    }
+
+    @Test
     fun `fetches key rates over http and sends soap envelope`() =
         runBlocking {
             val capturedBody = AtomicReference("")

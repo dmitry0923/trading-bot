@@ -535,4 +535,192 @@ class ExitRulesTest {
         // R:R = tpDistance / slDistance = 3.0 / 2.0 = 1.5
         assertEquals(0, BigDecimal("1.5").compareTo(tpDistance.divide(slDistance, 4, java.math.RoundingMode.HALF_UP)))
     }
+
+    // ── useAtrStops (единый предикат сайзера и билдера заявки) ───────────
+
+    @Test
+    fun `useAtrStops requires both frozen percents to be absent`() {
+        assertTrue(ExitRules.useAtrStops(null, null, BigDecimal("1.0"), BigDecimal("2"), BigDecimal("3")))
+        assertFalse(ExitRules.useAtrStops(BigDecimal("2"), null, BigDecimal("1.0"), BigDecimal("2"), BigDecimal("3")))
+        assertFalse(ExitRules.useAtrStops(null, BigDecimal("4"), BigDecimal("1.0"), BigDecimal("2"), BigDecimal("3")))
+    }
+
+    @Test
+    fun `useAtrStops requires positive atr and multipliers`() {
+        assertFalse(ExitRules.useAtrStops(null, null, null, BigDecimal("2"), BigDecimal("3")))
+        assertFalse(ExitRules.useAtrStops(null, null, BigDecimal.ZERO, BigDecimal("2"), BigDecimal("3")))
+        assertFalse(ExitRules.useAtrStops(null, null, BigDecimal("1.0"), BigDecimal.ZERO, BigDecimal("3")))
+        assertFalse(ExitRules.useAtrStops(null, null, BigDecimal("1.0"), BigDecimal("2"), BigDecimal.ZERO))
+    }
+
+    // ── exchange covers: неполные данные защитной заявки ─────────────────
+
+    @Test
+    fun `exchangeSlCovers false when order price is missing`() {
+        val pos = makePos(direction = PositionDirection.LONG, stopLoss = BigDecimal("12.3580"), slOrderId = "sl-1")
+        assertFalse(ExitRules.exchangeSlCovers(pos))
+    }
+
+    @Test
+    fun `exchangeSlCovers false when no effective stop exists`() {
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                slOrderId = "sl-1",
+                slOrderPrice = BigDecimal("12.3580"),
+            )
+        assertFalse(ExitRules.exchangeSlCovers(pos))
+    }
+
+    @Test
+    fun `exchangeTpCovers false when order price is missing`() {
+        val pos = makePos(direction = PositionDirection.LONG, takeProfit = BigDecimal("12.5440"), tpOrderId = "tp-1")
+        assertFalse(ExitRules.exchangeTpCovers(pos))
+    }
+
+    @Test
+    fun `exchangeTpCovers false when take profit is missing`() {
+        val pos =
+            makePos(
+                direction = PositionDirection.LONG,
+                tpOrderId = "tp-1",
+                tpOrderPrice = BigDecimal("12.5440"),
+            )
+        assertFalse(ExitRules.exchangeTpCovers(pos))
+    }
+
+    @Test
+    fun `shouldCloseBySL SHORT with null stop returns false`() {
+        val pos = makePos(direction = PositionDirection.SHORT)
+        assertFalse(ExitRules.shouldCloseBySL(pos, BigDecimal("13.00")))
+    }
+
+    @Test
+    fun `shouldCloseByTrailing SHORT fires above trailing`() {
+        val pos = makePos(direction = PositionDirection.SHORT, trailingStop = BigDecimal("12.4500"))
+        assertTrue(ExitRules.shouldCloseByTrailing(pos, BigDecimal("12.4600")))
+        assertFalse(ExitRules.shouldCloseByTrailing(pos, BigDecimal("12.4400")))
+    }
+
+    @Test
+    fun `updateTrailingStop LONG tightens a non-null stop when price rises`() {
+        val pos = makePos(direction = PositionDirection.LONG, trailingStop = BigDecimal("100.00"))
+        ExitRules.updateTrailingStop(pos, BigDecimal("101.00"), 0.0, BigDecimal("0.01"))
+        assertEquals(0, BigDecimal("101.00").compareTo(pos.trailingStopPrice))
+    }
+
+    // ── updateFuturesTrailingStop (вариационная маржа) ──────────────────
+
+    @Test
+    fun `futures trailing stop moves only in profit and sets variation margin`() {
+        val pos = futuresPos(direction = PositionDirection.LONG, entry = "100", qty = 2)
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("110"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        // vm = (110 - 100) * 10 * 2 = 200
+        assertEquals(0, BigDecimal("200").compareTo(pos.variationMargin))
+        // candidate = 110 * 0.95 = 104.5 → CEILING по 0.5
+        assertEquals(0, BigDecimal("104.5").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop is not moved when variation margin is not positive`() {
+        val pos = futuresPos(direction = PositionDirection.LONG, entry = "100", qty = 1)
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("99"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        // vm = (99 - 100) * 10 = -10 → выход до расчёта стопа
+        assertEquals(0, BigDecimal("-10").compareTo(pos.variationMargin))
+        assertNull(pos.trailingStopPrice)
+    }
+
+    @Test
+    fun `futures trailing stop LONG never weakens below hard stop`() {
+        val pos = futuresPos(direction = PositionDirection.LONG, entry = "100", qty = 1, stopLoss = "105")
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("110"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        // candidate 104.5 < hard 105 → поднимаем до жёсткого стопа
+        assertEquals(0, BigDecimal("105").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop LONG keeps candidate above hard stop`() {
+        val pos = futuresPos(direction = PositionDirection.LONG, entry = "100", qty = 1, stopLoss = "100")
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("110"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        assertEquals(0, BigDecimal("104.5").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop SHORT moves down in profit`() {
+        val pos = futuresPos(direction = PositionDirection.SHORT, entry = "100", qty = 1)
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("90"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        // vm = (100 - 90) * 10 = 100 > 0; candidate = 90 * 1.05 = 94.5 → FLOOR по 0.5
+        assertEquals(0, BigDecimal("100").compareTo(pos.variationMargin))
+        assertEquals(0, BigDecimal("94.5").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop SHORT clamps candidate to hard stop`() {
+        val pos = futuresPos(direction = PositionDirection.SHORT, entry = "100", qty = 1, stopLoss = "90")
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("89"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        // vm = 110; candidate 89 * 1.05 = 93.45 → 93.0 > hard 90 → стоп не может быть выше жёсткого
+        assertEquals(0, BigDecimal("90").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop SHORT keeps candidate below hard stop`() {
+        val pos = futuresPos(direction = PositionDirection.SHORT, entry = "100", qty = 1, stopLoss = "95")
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("90"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        assertEquals(0, BigDecimal("94.5").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop does not widen an already tighter LONG stop`() {
+        val pos =
+            futuresPos(
+                direction = PositionDirection.LONG,
+                entry = "100",
+                qty = 1,
+                stopLoss = "100",
+                trailingStop = "106",
+            )
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("110"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        assertEquals(0, BigDecimal("106").compareTo(pos.trailingStopPrice))
+    }
+
+    @Test
+    fun `futures trailing stop does not widen an already tighter SHORT stop`() {
+        val pos =
+            futuresPos(
+                direction = PositionDirection.SHORT,
+                entry = "100",
+                qty = 1,
+                stopLoss = "95",
+                trailingStop = "93",
+            )
+        ExitRules.updateFuturesTrailingStop(pos, BigDecimal("90"), 5.0, BigDecimal("10"), BigDecimal("0.5"))
+
+        assertEquals(0, BigDecimal("93").compareTo(pos.trailingStopPrice))
+    }
+
+    private fun futuresPos(
+        direction: PositionDirection,
+        entry: String,
+        qty: Int,
+        stopLoss: String? = null,
+        trailingStop: String? = null,
+    ) = Position(
+        id = 2L,
+        ticker = "Si",
+        direction = direction,
+        quantity = qty,
+        entryPrice = BigDecimal(entry),
+        instrumentType = InstrumentType.FUTURES,
+        status = PositionStatus.OPEN,
+        stopLoss = stopLoss?.toBigDecimal(),
+        trailingStopPrice = trailingStop?.toBigDecimal(),
+    )
 }

@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 93,42 % (24 284 / 25 994) |
-| BRANCH | 76,79 % (8 160 / 10 626) |
-| Тестов | 2752 |
+| LINE | 93,70 % (24 356 / 25 994) |
+| BRANCH | 78,04 % (8 292 / 10 626) |
+| Тестов | 2 841 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -33,6 +33,8 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 | C-08 | `BacktestRiskSimulator` | поведение | `recordClose` получает `cash` уже **после** закрытия и не прибавляет P&L повторно (регресс-тест есть); daily P&L сбрасывается при смене дня, поэтому intraday-убытки не видны rolling-гейтам на следующем дне | DOC |
 | C-09 | `LiveStrategyBacktestSignalGenerator.signal` | асимметрия fail-режимов | Сбой расчёта `emaCross`/`volumeSpike`/`squeeze`/`rangeSqueeze` = **HOLD** при `blockOnUnknown`, а сбой `blocksEntry` (session/pullback), `blocksDirection`, `ORB`, `panic`/`macro`/`vwapMr` всегда = «не блокировать». Причина — разные контракты фильтров, но при добавлении нового фильтра легко потерять fail-closed | DOC |
 | C-10 | `LiveStrategyBacktestSignalGenerator.signal` (ML) | **дефект (исправлен)** | Сбой `mlDirection.evaluate()` игнорировался (`null`) даже при `mlDirectionBlockOnUnknown=true` → фильтр, объявленный fail-closed, молча пропускал входы. Теперь возвращается HOLD-вердикт (`ML_UNKNOWN`) | FIXED |
+| C-11 | `TradingControlService.scheduledForceClose` | латентный | При `!scope.isActive` (shutdown) флаг `forceCloseInFlight` остаётся `true` (ранний `return` до `finally`). После shutdown тиков нет, поэтому эффекта в проде нет; при переиспользовании scope потребовался бы сброс | DOC |
+| C-12 | `ExitRules.useAtrStops` | контракт | Стопы по ATR включаются только если **оба** frozen-процента `null` и ATR положителен; иначе заявка получила бы процентный стоп шире риск-бюджета сайзера. Покрыто всеми комбинациями условий | DOC |
 
 > Правило: `DOC`-пункты **не меняют** опубликованные research-числа и live-поведение
 > без отдельного решения. `DEAD`-пункты чистятся на этапе 3 (либо удаляются, либо

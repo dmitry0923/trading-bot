@@ -277,6 +277,68 @@ class AlorClientParsingBranchesTest {
             }
         }
 
+    @Test
+    fun `getLastPrice returns the quote or null without a usable price`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.quotesBody = """{"lastPrice":"101.5"}"""
+                assertEquals(0, BigDecimal("101.5").compareTo(buildClient(server).getLastPrice("SBER")!!))
+
+                server.quotesBody = """{"lastPrice":"0"}"""
+                assertNull(buildClient(server).getLastPrice("SBER"))
+            }
+        }
+
+    @Test
+    fun `conditional orders and cancel delegate to the transport with defaults`() =
+        runBlocking {
+            FakeServer().use { server ->
+                whenever(
+                    orderTransport.placeConditional(any(), any(), any(), any(), any(), any(), any(), any()),
+                ).thenReturn("cond-1")
+                whenever(orderTransport.cancel(any(), any(), any())).thenReturn(AlorClient.CancelResult.CONFIRMED)
+                val client = buildClient(server)
+
+                assertEquals(
+                    "cond-1",
+                    client.placeStopOrder("SBER", "sell", 1, BigDecimal("99"), "idem-sl"),
+                )
+                assertEquals(
+                    "cond-1",
+                    client.placeTakeProfitOrder("SBER", "sell", 1, BigDecimal("101"), "idem-tp"),
+                )
+                assertEquals(AlorClient.CancelResult.CONFIRMED, client.cancelOrder("ord-1", "idem-cancel"))
+
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .placeConditional(
+                        "stop",
+                        "SBER",
+                        "sell",
+                        1,
+                        BigDecimal("99"),
+                        "idem-sl",
+                        "P1",
+                        OrderPurpose.SL,
+                    )
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .placeConditional(
+                        "take-profit",
+                        "SBER",
+                        "sell",
+                        1,
+                        BigDecimal("101"),
+                        "idem-tp",
+                        "P1",
+                        OrderPurpose.TP,
+                    )
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .cancel("ord-1", "idem-cancel", "P1")
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())

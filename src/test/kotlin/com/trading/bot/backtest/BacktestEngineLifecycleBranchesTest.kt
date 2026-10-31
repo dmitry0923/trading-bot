@@ -12,6 +12,7 @@ import com.trading.bot.repository.CandleRepository
 import com.trading.bot.repository.FundingHistoryRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -229,6 +230,139 @@ class BacktestEngineLifecycleBranchesTest {
             } finally {
                 logger.level = previous
             }
+        }
+
+    @Test
+    fun `commission handles per lot fixed and fractional quantities`(): Unit =
+        runBlocking {
+            val backtest = engine(BacktestConfig().apply { liveRiskGates = false })
+
+            // Фьючерс: фиксированная комиссия за лот/сторону × qty.
+            val fixed = backtest.computeCommission("CNYRUBF", BigDecimal("100"), 2)
+            assertTrue(fixed > BigDecimal.ZERO, "fixed commission must be positive: $fixed")
+
+            // Дробное количество (< 1 лота): процентный путь, без падения.
+            val fractional = backtest.computeCommission("CNYRUBF", BigDecimal("100"), 0)
+            assertEquals(0, BigDecimal.ZERO.compareTo(fractional))
+
+            // Акция без фиксированной комиссии: процент от оборота.
+            assertTrue(backtest.computeCommission("SBER", BigDecimal("100"), 2) >= BigDecimal.ZERO)
+        }
+
+    @Test
+    fun `debug logging covers sizing overrides on both sides`(): Unit =
+        runBlocking {
+            val logger = LoggerFactory.getLogger(BacktestEngine::class.java) as ch.qos.logback.classic.Logger
+            val previous = logger.level
+            logger.level = ch.qos.logback.classic.Level.DEBUG
+            try {
+                val sizer = mock<PositionSizer>()
+                whenever(
+                    sizer.calculateContracts(
+                        org.mockito.kotlin.any(),
+                        anyBigDecimal(),
+                        Mockito.anyInt(),
+                        anyBigDecimal(),
+                        anyBigDecimal(),
+                        anyDirection(),
+                        org.mockito.kotlin.any(),
+                        org.mockito.kotlin.any(),
+                    ),
+                ).thenReturn(PositionSizeResult(2, BigDecimal("1275"), BigDecimal("500"), null, null))
+
+                val result =
+                    engine(
+                        config =
+                            BacktestConfig().apply {
+                                liveRiskGates = false
+                                futuresLiquidationSimulation = false
+                            },
+                        sizer = sizer,
+                    ).simulate(
+                        "CNYRUBF",
+                        minuteCandles("CNYRUBF", count = 40),
+                        minBarsForSignal = 2,
+                        riskPerTradePercent = 5.0,
+                        futuresMaxContractsPerPosition = 2,
+                        slPoints = 100,
+                        tpPoints = 200,
+                    )
+
+                assertTrue(result.trades.isNotEmpty())
+            } finally {
+                logger.level = previous
+            }
+        }
+
+    @Test
+    fun `passive fill override enables the passive branch`(): Unit =
+        runBlocking {
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false })
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5, passiveFillEnabled = true)
+
+            assertTrue(result.trades.isNotEmpty())
+        }
+
+    @Test
+    fun `null meter registry is tolerated by veto and funding window metrics`(): Unit =
+        runBlocking {
+            val funding = mock<FundingHistoryRepository>()
+            whenever(funding.findValuesBetween(org.mockito.kotlin.any(), anyDate(), anyDate())).thenReturn(
+                mapOf(LocalDate.of(2026, 2, 27) to BigDecimal("5.0")),
+            )
+            val vetoConfig =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    fundingVetoEnabled = true
+                    fundingVetoLongThresholdRub = 1.0
+                    fundingVetoShortThresholdRub = 1.0
+                    fundingVetoBlockOnUnknown = true
+                }
+            val vetoResult =
+                engine(config = vetoConfig, meterRegistry = null, fundingRepo = funding)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+            assertTrue(vetoResult.trades.isNotEmpty())
+
+            val d1 = LocalDate.of(2026, 3, 2)
+            val windowCandles =
+                (0..3).flatMap { day ->
+                    (0..1).map { hour ->
+                        candle("SBER", 100.0, d1.plusDays(day.toLong()).atTime(10 + hour, 0))
+                    }
+                }
+            val windowFunding = mock<FundingHistoryRepository>()
+            whenever(windowFunding.findValuesBetween(org.mockito.kotlin.any(), anyDate(), anyDate())).thenReturn(
+                mapOf(
+                    d1 to BigDecimal("1.50"),
+                    d1.plusDays(1) to BigDecimal("1.50"),
+                    d1.plusDays(2) to BigDecimal("0.00"),
+                ),
+            )
+            val windowConfig =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    fundingWindowEnabled = true
+                    fundingWindowLongThresholdRub = 2.0
+                    fundingWindowShortThresholdRub = 1.0
+                    fundingWindowBlockOnUnknown = true
+                }
+            val windowResult =
+                engine(config = windowConfig, meterRegistry = null, fundingRepo = windowFunding)
+                    .simulate("SBER", windowCandles, minBarsForSignal = 2, initialCapital = BigDecimal("100000"))
+            assertTrue(windowResult.trades.isNotEmpty())
+        }
+
+    @Test
+    fun `run persists a result and meters a rejected pass`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false }, meterRegistry = registry)
+                    .run("SBER", days = 10, minBarsForSignal = 5, candlesOverride = minuteCandles("SBER"))
+
+            assertTrue(result.totalTrades > 0)
+            assertEquals(1.0, registry.counter("bt_pass_total", "result", "REJECT").count())
         }
 
     private fun anyBigDecimal(): BigDecimal {

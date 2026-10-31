@@ -857,4 +857,110 @@ class StockEntryProfileTest {
             cycleId = "test-cycle",
             strategyName = "CNYRUB_TOM",
         )
+
+    @Test
+    fun `sizePosition without an instrument spec uses unit lot and zero commission`() =
+        runBlocking {
+            val signal = makeSignal().copy(ticker = "ZZZZ")
+            Mockito.doReturn(BigDecimal("50000")).`when`(adaptiveRisk).calculateOptimalPositionSize("ZZZZ", signalStrength = 0.7)
+            val request =
+                EntryRequest(
+                    ticker = "ZZZZ",
+                    action = StrategyAction.BUY,
+                    entryPrice = BigDecimal("100"),
+                    direction = PositionDirection.LONG,
+                    portfolioMoney = BigDecimal("50000"),
+                    currentGo = BigDecimal.ZERO,
+                    openPositions = emptyList(),
+                )
+
+            val size = profile.sizePosition(signal, BigDecimal("100"), request)
+
+            assertTrue(size.quantity >= 1)
+            // Нет spec → маржа считается как entryPrice × qty.
+            assertEquals(0, BigDecimal("100").multiply(BigDecimal(size.quantity)).compareTo(size.marginRequired))
+        }
+
+    @Test
+    fun `sizePosition with a zero price has no notional`() =
+        runBlocking {
+            Mockito.doReturn(BigDecimal("12500")).`when`(adaptiveRisk).calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+
+            val size = profile.sizePosition(makeSignal(), BigDecimal.ZERO, request())
+
+            assertEquals(0, size.quantity)
+            assertEquals("ZERO_RISK_SIZE", size.reason)
+        }
+
+    @Test
+    fun `sizePosition with a zero stop distance produces no risk cap`() =
+        runBlocking {
+            val previous = riskConfig.defaultStopLossPercent
+            riskConfig.defaultStopLossPercent = BigDecimal.ZERO
+            try {
+                val signal = makeSignal().copy(ticker = "ZZZZ")
+                Mockito.doReturn(BigDecimal("50000")).`when`(adaptiveRisk).calculateOptimalPositionSize("ZZZZ", signalStrength = 0.7)
+                val request =
+                    EntryRequest(
+                        ticker = "ZZZZ",
+                        action = StrategyAction.BUY,
+                        entryPrice = BigDecimal("100"),
+                        direction = PositionDirection.LONG,
+                        portfolioMoney = BigDecimal("50000"),
+                        currentGo = BigDecimal.ZERO,
+                        openPositions = emptyList(),
+                    )
+
+                val size = profile.sizePosition(signal, BigDecimal("100"), request)
+
+                assertEquals(0, size.quantity)
+                assertEquals("ZERO_RISK_SIZE", size.reason)
+            } finally {
+                riskConfig.defaultStopLossPercent = previous
+            }
+        }
+
+    @Test
+    fun `frozen zero values fall back to the runtime configuration`() =
+        runBlocking {
+            Mockito.doReturn(BigDecimal("12500")).`when`(adaptiveRisk).calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+            val frozen =
+                FrozenStrategy(
+                    ticker = "CNYRUB_TOM",
+                    strategyVersion = "v1",
+                    gitCommitSha = null,
+                    slPercent = 0.0,
+                    tpPercent = -1.0,
+                    slPoints = null,
+                    tpPoints = null,
+                    confidenceThreshold = null,
+                    leverage = 1.0,
+                    riskPerTradePercent = 0.0,
+                    futuresMaxContractsPerPosition = null,
+                )
+
+            val size = profile.sizePosition(makeSignal(), BigDecimal("12.42"), request().copy(frozenStrategy = frozen))
+
+            assertTrue(size.quantity >= 1, "нулевые frozen-поля не должны обнулять сайзинг")
+        }
+
+    @Test
+    fun `buildPosition maps a futures instrument spec to FUTURES`() {
+        val decision =
+            TradeRiskDecision(
+                ticker = "Si",
+                cycleId = "c1",
+                timeframe = "MINUTE_10",
+                action = StrategyAction.BUY,
+                direction = PositionDirection.LONG,
+                quantity = 1,
+                targetPrice = BigDecimal("92000"),
+                signalStrength = 0.5,
+                reasoning = "test",
+            )
+
+        val position = profile.buildPosition(decision, null, false, BigDecimal("92000"), 1)
+
+        assertEquals(InstrumentType.FUTURES, position.instrumentType)
+    }
 }

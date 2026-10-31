@@ -432,6 +432,81 @@ class WsOrderTransportTest {
             assertEquals(0, fakeConnection.sent.count { it.contains("idem-tp1") })
         }
 
+    @Test
+    fun `live entry outside the allowlist is blocked before the socket`(): Unit =
+        runBlocking {
+            awaitSubscribe()
+            assertFailsWith<OrderInterlockDeniedException> {
+                transport.placeLimit("GAZP", "buy", 1, BigDecimal("250"), "idem-gazp", "P1", OrderPurpose.ENTRY)
+            }
+            assertEquals(0, fakeConnection.sent.count { it.contains("idem-gazp") })
+        }
+
+    @Test
+    fun `duplicate in-flight limit key is rejected as uncertain`(): Unit =
+        runBlocking {
+            supervisorScope {
+                awaitSubscribe()
+                val first = async { transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-dup", "P1") }
+                awaitCommandContaining("idem-dup")
+                assertFailsWith<OrderDeliveryUncertainException> {
+                    transport.placeLimit("SBER", "buy", 1, BigDecimal("250"), "idem-dup", "P1")
+                }
+                first.cancel()
+            }
+        }
+
+    @Test
+    fun `duplicate in-flight conditional key is rejected as uncertain`(): Unit =
+        runBlocking {
+            supervisorScope {
+                awaitSubscribe()
+                val first =
+                    async {
+                        transport.placeConditional("stop", "SBER", "sell", 1, BigDecimal("240"), "idem-dup-c", "P1")
+                    }
+                awaitCommandContaining("idem-dup-c")
+                assertFailsWith<OrderDeliveryUncertainException> {
+                    transport.placeConditional("stop", "SBER", "sell", 1, BigDecimal("240"), "idem-dup-c", "P1")
+                }
+                first.cancel()
+            }
+        }
+
+    @Test
+    fun `duplicate in-flight cancel key is rejected as uncertain`(): Unit =
+        runBlocking {
+            supervisorScope {
+                awaitSubscribe()
+                val first = async { transport.cancel("ord-1", "idem-dup-x", "P1") }
+                awaitCommandContaining("idem-dup-x")
+                assertFailsWith<OrderDeliveryUncertainException> {
+                    transport.cancel("ord-1", "idem-dup-x", "P1")
+                }
+                first.cancel()
+            }
+        }
+
+    @Test
+    fun `conditional send failure is reported as uncertain`(): Unit =
+        runBlocking {
+            awaitSubscribe()
+            fakeConnection.failSends = true
+            assertFailsWith<OrderDeliveryUncertainException> {
+                transport.placeConditional("take-profit", "SBER", "sell", 1, BigDecimal("280"), "idem-tp-fail", "P1")
+            }
+        }
+
+    @Test
+    fun `cancel send failure is reported as uncertain`(): Unit =
+        runBlocking {
+            awaitSubscribe()
+            fakeConnection.failSends = true
+            assertFailsWith<OrderDeliveryUncertainException> {
+                transport.cancel("ord-1", "idem-c-fail", "P1")
+            }
+        }
+
     private suspend fun awaitFakeSubscribe(connection: FakeConnection) {
         withTimeout(5_000) {
             while (connection.sent.isEmpty()) delay(10)

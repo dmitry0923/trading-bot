@@ -258,4 +258,60 @@ class TradingGateTest {
         assertTrue(status.enabled)
         assertTrue(status.blocks.any { it.reason == TradingBlockReason.TICKER_PAUSED && it.ticker == "SBER" })
     }
+
+    @Test
+    fun `every persisted halt reason maps to its block reason and source`() {
+        val expected =
+            mapOf(
+                "DAILY_LOSS_LIMIT" to (TradingBlockReason.DAILY_LOSS_LIMIT to TradingBlockSource.RISK_SYSTEM),
+                "LEVERAGE_DISABLED" to (TradingBlockReason.LEVERAGE_DISABLED to TradingBlockSource.RISK_SYSTEM),
+                "SL_PROTECTION_FAILED" to (TradingBlockReason.SL_PROTECTION_FAILED to TradingBlockSource.RISK_SYSTEM),
+                "MANUAL" to (TradingBlockReason.MANUAL_DISABLE to TradingBlockSource.MANUAL),
+                "MANUAL_DISABLE" to (TradingBlockReason.MANUAL_DISABLE to TradingBlockSource.MANUAL),
+                "EMERGENCY_STOP" to (TradingBlockReason.EMERGENCY_STOP to TradingBlockSource.RISK_SYSTEM),
+            )
+
+        for ((raw, mapped) in expected) {
+            val halt = TradingHaltRecord(reason = raw, source = "AUTO", haltedAt = Instant.parse("2026-01-01T10:00:00Z"))
+            val status = runBlocking { gate(halt = halt).getStatus() }
+
+            assertFalse(status.enabled, "halt $raw должен блокировать торговлю")
+            assertEquals(mapped.first, status.reason, "reason для $raw")
+            assertEquals(mapped.second, status.source, "source для $raw")
+        }
+    }
+
+    @Test
+    fun `detached websockets block globally only when both streams are down`() {
+        val g = gate()
+        Mockito.`when`(webSocketManager.isConnected(any<WsStream>())).thenReturn(false)
+        val down = runBlocking { g.getStatus() }
+        assertFalse(down.enabled)
+        assertTrue(down.blocks.any { it.reason == TradingBlockReason.WS_DISCONNECTED })
+
+        Mockito
+            .`when`(webSocketManager.isConnected(any<WsStream>()))
+            .thenAnswer { invocation -> invocation.getArgument<WsStream>(0) == WsStream.ORDERS }
+        val ordersOnly = runBlocking { g.getStatus() }
+        assertTrue(ordersOnly.enabled, "достаточно одного живого WS-потока")
+        assertTrue(ordersOnly.blocks.none { it.reason == TradingBlockReason.WS_DISCONNECTED })
+    }
+
+    @Test
+    fun `halt event records the mapped source for each reason`() {
+        val expected =
+            mapOf(
+                "MANUAL" to "MANUAL",
+                "MANUAL_DISABLE" to "MANUAL",
+                "EMERGENCY_STOP" to "MANUAL",
+                "STATE_DESYNC" to "STATE_RECONCILIATION",
+                "DAILY_LOSS_LIMIT" to "RISK_SYSTEM",
+            )
+        for ((reason, source) in expected) {
+            val g = gate()
+            g.onTradingHalted(TradingHaltedEvent(reason = reason, timestamp = Instant.parse("2026-01-01T10:00:00Z")))
+
+            runBlocking { verify(tradingHaltService).record(eq(reason), eq(source), eq(""), eq(Instant.parse("2026-01-01T10:00:00Z"))) }
+        }
+    }
 }

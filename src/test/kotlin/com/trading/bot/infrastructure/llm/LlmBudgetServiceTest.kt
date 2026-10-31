@@ -23,7 +23,7 @@ import java.util.Locale
  * скрипта (скрипт отправляет 8 строковых аргументов).
  */
 class LlmBudgetServiceTest {
-    private fun redisTemplate(result: List<Any?>): StringRedisTemplate {
+    private fun redisTemplate(result: List<Any?>?): StringRedisTemplate {
         val redis: StringRedisTemplate = Mockito.mock(StringRedisTemplate::class.java)
         @Suppress("UNCHECKED_CAST")
         Mockito
@@ -212,6 +212,59 @@ class LlmBudgetServiceTest {
 
         assertEquals(4, s.estimateTokens("0123456789ab", "0123"))
         assertEquals(0, s.estimateTokens("", ""))
+        assertEquals(1, s.estimateTokens("abcd", null), "null user prompt не должен ронять оценку")
+    }
+
+    @Test
+    fun `init tolerates a minute ceiling above max tokens`() {
+        val config =
+            LlmConfig().apply {
+                budgetEnabled = true
+                maxTokens = 1_000
+                maxTokensPerMinute = 4_000
+            }
+
+        LlmBudgetService(Mockito.mock(StringRedisTemplate::class.java), SimpleMeterRegistry(), config)
+    }
+
+    @Test
+    fun `reserve passes through a zero estimate without Redis`() {
+        val redis: StringRedisTemplate = Mockito.mock(StringRedisTemplate::class.java)
+
+        val decision = service(redis, SimpleMeterRegistry(), LlmConfig(), true).reserve("technical", "c", 0)
+
+        assertTrue(decision.allowed)
+        Mockito.verifyNoInteractions(redis)
+    }
+
+    @Test
+    fun `reserve defaults the reject reason when the script returns no payload`() {
+        val decision = service(redisTemplate(null), SimpleMeterRegistry(), LlmConfig(), true).reserve("technical", "c", 400)
+
+        assertFalse(decision.allowed)
+        assertEquals("TOKEN_BUDGET_EXCEEDED", decision.reason)
+    }
+
+    @Test
+    fun `release is a no-op without a reservation or with the budget disabled`() {
+        val enabledRedis: StringRedisTemplate = Mockito.mock(StringRedisTemplate::class.java)
+        service(enabledRedis, SimpleMeterRegistry(), LlmConfig(), true).release(null)
+        Mockito.verifyNoInteractions(enabledRedis)
+
+        val disabledRedis: StringRedisTemplate = Mockito.mock(StringRedisTemplate::class.java)
+        service(disabledRedis, SimpleMeterRegistry(), LlmConfig(), false)
+            .release(LlmBudgetService.Reservation(100, 0.5, listOf("k")))
+        Mockito.verifyNoInteractions(disabledRedis)
+    }
+
+    @Test
+    fun `release returns the reservation and records the metric`() {
+        val registry = SimpleMeterRegistry()
+        val s = service(redisTemplate(listOf("1", "")), registry, LlmConfig(), true)
+
+        s.release(LlmBudgetService.Reservation(123, 0.25, listOf("a", "b", "c", "d")))
+
+        assertEquals(1.0, registry.counter("llm.budget.released").count())
     }
 
     @Test

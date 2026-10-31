@@ -546,4 +546,110 @@ class ProtectionOrderManagerBranchesTest {
 
             assertFalse(pos.tpPendingReplace)
         }
+
+    @Test
+    fun `sent outbox rows resolve ids for both protection legs`(): Unit =
+        runBlocking {
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "sl"))
+                .thenReturn(outbox(OutboxStatus.SENT, orderId = "SL-9"))
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "tp"))
+                .thenReturn(outbox(OutboxStatus.SENT, orderId = "TP-9"))
+            val pos = openPosition()
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals("SL-9", pos.slOrderId)
+            assertEquals("TP-9", pos.tpOrderId)
+            runBlocking { verify(positionRepo, Mockito.atLeastOnce()).save(pos) }
+        }
+
+    @Test
+    fun `blocked and permanently failed take profit trigger protection failure`(): Unit =
+        runBlocking {
+            for ((status, retry) in listOf(OutboxStatus.BLOCKED to 0, OutboxStatus.FAILED to 3)) {
+                protectionFailed.set(null)
+                whenever(orderOutboxRepo.findLatestByPositionId(1L, "tp"))
+                    .thenReturn(outbox(status, retryCount = retry))
+                val pos = openPosition()
+
+                manager.reconcileProtectionOrders(pos)
+
+                assertNotNull(protectionFailed.get(), "TP $status = защита не выставлена")
+            }
+        }
+
+    @Test
+    fun `filled take profit closes the position with the take profit reason`(): Unit =
+        runBlocking {
+            stubVerifyOrderSequence(execution("FILLED", 10))
+            val pos = openPosition(tpOrderId = "TP-1", tpOrderPrice = "92000", stopLoss = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals(CloseReason.TAKE_PROFIT, appliedClose.get()?.third)
+            assertEquals(10, appliedClose.get()?.first)
+        }
+
+    @Test
+    fun `partial take profit fill keeps the id and cancels the remainder`(): Unit =
+        runBlocking {
+            stubVerifyOrderSequence(execution("CANCELED", 4))
+            val pos = openPosition(tpOrderId = "TP-1", tpOrderPrice = "92000", stopLoss = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals(4, appliedClose.get()!!.first)
+            assertEquals("TP-1", pos.tpOrderId, "частичный фил — id сохраняется до подтверждения отмены")
+            assertTrue(pos.tpCancelPending)
+        }
+
+    @Test
+    fun `cancelled take profit without an extra fill re-arms the order`(): Unit =
+        runBlocking {
+            stubVerifyOrderSequence(execution("CANCELED", 0))
+            val pos = openPosition(tpOrderId = "TP-1", tpOrderPrice = "92000", stopLoss = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertNull(appliedClose.get(), "терминальный статус без филла не закрывает позицию")
+            assertNull(pos.tpOrderId)
+            assertNull(pos.tpOrderPrice)
+        }
+
+    @Test
+    fun `full protection fill with a live close order escalates to reconciliation`(): Unit =
+        runBlocking {
+            val pos =
+                openPosition(
+                    slOrderId = "SL-1",
+                    stopLoss = "91500",
+                    pendingClose = true,
+                    closeOrderId = "CLOSE-9",
+                )
+
+            manager.applyExchangeProtectionClosePublic(pos, execution("FILLED", 10), CloseReason.STOP_LOSS)
+
+            assertEquals(PositionStatus.RECONCILIATION_REQUIRED, pos.status)
+            assertFalse(pos.pendingClose)
+            assertFalse(pos.pendingEntry)
+            runBlocking { verify(positionRepo).save(pos) }
+        }
+
+    @Test
+    fun `partial protection fill cancels the live close order before closing`(): Unit =
+        runBlocking {
+            val pos =
+                openPosition(
+                    slOrderId = "SL-1",
+                    stopLoss = "91500",
+                    pendingClose = true,
+                    closeOrderId = "CLOSE-9",
+                )
+
+            manager.applyExchangeProtectionClosePublic(pos, execution("FILLED", 3), CloseReason.STOP_LOSS)
+
+            assertEquals(3, appliedClose.get()!!.first)
+            assertTrue(pos.closeCancelPending)
+            runBlocking { verify(orderOutboxService).placeCancelOrder(1L, "CLOSE-9", accountId = null) }
+        }
 }

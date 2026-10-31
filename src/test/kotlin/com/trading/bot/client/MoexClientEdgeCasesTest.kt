@@ -194,6 +194,27 @@ class MoexClientEdgeCasesTest {
             }
         }
 
+    @Test
+    fun `forts options tolerate mismatched tables and missing open position column`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.optionsBody =
+                    """
+                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE","UNDERLYINGASSET"],
+                      "data":[["RIU6C90000","RI","C","90000","2026-09-03","RI"],
+                              ["RIU6P90000","RI","P","90000","2026-09-03","RI"]]},
+                     "marketdata":{"columns":["SECID","LAST"],
+                      "data":[["RIU6C90000","1200"]]}}
+                    """.trimIndent()
+
+                val options = client(server).getFortsOptions()
+
+                assertEquals(1, options.size, "строка без marketdata пропускается")
+                assertEquals(0L, options.single().openPosition)
+                assertNull(options.single().bid)
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
 

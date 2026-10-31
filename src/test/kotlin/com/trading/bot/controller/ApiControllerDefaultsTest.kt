@@ -628,6 +628,69 @@ class ApiControllerDefaultsTest {
         assertTrue(failure.exceptionOrNull() is ResponseStatusException, "${failure.exceptionOrNull()}")
     }
 
+    @Test
+    fun `research endpoints accept ml filter veto and execution overrides`() {
+        stubCandles()
+        val validation = ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult)
+        runBlocking {
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(validation)
+        }
+        val overrides =
+            listOf(
+                "mlDirectionEnabled" to "true",
+                "mlDirectionBlockOnUnknown" to "false",
+                "sessionFilterEnabled" to "true",
+                "orbEnabled" to "true",
+                "llmVetoEnabled" to "true",
+                "llmVetoBlockOnUnknown" to "true",
+                "maxHoldBars" to "5",
+                "executionPassiveFill" to "true",
+                "leverage" to "2.0",
+            )
+
+        for (path in listOf("backtest/SBER", "backtest/SBER/validate", "backtest/SBER/robustness")) {
+            val builder = get("/api/v1/$path")
+            overrides.forEach { (key, value) -> builder.param(key, value) }
+            assertEquals(200, dispatch(builder).status, "$path должен принять overrides")
+        }
+
+        // holdout/deployment-gate: свечей нет → 404, но overrides и defaults исполняются до guard.
+        for (path in listOf("backtest/SBER/holdout", "backtest/SBER/deployment-gate")) {
+            val builder =
+                get("/api/v1/$path")
+                    .param("holdoutFraction", "0.3")
+                    .param("timeframe", "HOUR_1")
+            overrides.forEach { (key, value) -> builder.param(key, value) }
+            assertEquals(404, dispatch(builder).status, path)
+        }
+    }
+
+    @Test
+    fun `config level veto and max hold defaults reach every research endpoint`() {
+        stubCandles()
+        val validation = ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult)
+        runBlocking {
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(validation)
+        }
+        val previousVeto = backtestConfig.llmVetoEnabled
+        val previousHold = backtestConfig.maxHoldBars
+        backtestConfig.llmVetoEnabled = true
+        backtestConfig.maxHoldBars = 5
+        try {
+            for (path in listOf("backtest/SBER", "backtest/SBER/validate", "backtest/SBER/robustness")) {
+                assertEquals(200, dispatch(get("/api/v1/$path")).status, path)
+            }
+            for (path in listOf("backtest/SBER/holdout", "backtest/SBER/deployment-gate")) {
+                assertEquals(404, dispatch(get("/api/v1/$path")).status, path)
+            }
+        } finally {
+            backtestConfig.llmVetoEnabled = previousVeto
+            backtestConfig.maxHoldBars = previousHold
+        }
+    }
+
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {
         val initial = mockMvc.perform(builder).andReturn()
         if (!initial.request.isAsyncStarted) return initial.response

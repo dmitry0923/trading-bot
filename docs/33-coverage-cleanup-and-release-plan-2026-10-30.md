@@ -60,6 +60,45 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 Критерий этапа: `./gradlew clean build` зелёный, дифф не меняет поведения
 (число тестов не падает, research-артефакты не пересчитываются).
 
+## 3a. Достижимость 90 % BRANCH: анализ остатка (2026-11-01)
+
+Замер после итерации 2026-11-01: **BRANCH 84,89 % (9 020 / 10 626)**, LINE 95,67 %,
+тестов 3 211, падений 0. До цели не хватает **≈544** покрытых ветвей.
+
+Структура остатка (по данным `build/reports/kover/report.xml`):
+
+- 1 606 непокрытых ветвей в 246 классах; **430** из них находятся на строках с `?:`.
+- Крупнейшие остатки: `BacktestEngine` 57, `ApiController` 54, `PortfolioMomentumEngine` 40,
+  `ProtectionOrderManager` 28, `PositionRepository` 27, `DrawdownProtectionService` 26,
+  `OrderExecutionEngine` 26, `TradingBotService` 23, `AdaptiveRiskService` 21,
+  `LiveStrategyBacktestSignalGenerator` 21, `ExecutionReconciler` 20, `StrategyService` 19,
+  `MoexClient` 19, `BacktestRiskSimulator` 19, `AlorClient` 18, `OrderOutboxService` 18.
+
+**Часть остатка структурно недостижима (DEAD) — подтверждено кодом и схемой БД:**
+
+1. `PositionRepository` (13 строк, 27 ветвей): `row.get("...", X) ?: default` для колонок,
+   объявленных `NOT NULL DEFAULT` (`variation_margin`, `pending_entry`, `realized_pnl`,
+   `cumulative_sl_fill_qty`, `funding_unknown` и т.д., миграции 019+). SQL не может вернуть
+   `NULL` → правая ветвь `?:` не исполняется ни при каких данных. Фильтры исключать нельзя
+   по правилам задачи — фиксируется как DEAD.
+2. `BacktestEngine`: `pos0.stopLoss ?: return` / `pos0.takeProfit ?: return` — `openPosition`
+   всегда строит оба уровня через `stopPrice`/`takePrice` (возвращают `BigDecimal`, не null);
+   `fundingWindowTarget` ветвь `else -> null` недостижима (после `inMarket`-проверки условия
+   покрывают весь диапазон).
+3. `PortfolioMomentumEngine`: `notionals[idx] ?: 0.0` и `alloc[idx] ?: 0.0` — карты строятся
+   для всех элементов `selection.longs + selection.shorts`, ключ всегда присутствует.
+4. `MoexClient`: `marketdata.path("data").path(0) ?: return null` — Jackson `path()` не
+   возвращает `null` (возвращает `MissingNode`), проверка недостижима.
+5. `WsOrderTransport`/`DecisionEngine`: часть ветвей требует одновременного `LEASE_LOST` и
+   реального `DistributedLockService`; мок сервиса меняет способ проверки, а не поведение —
+   требует отдельного интеграционного сценария.
+
+**Вывод:** 90 % BRANCH на текущем коде достижимо только если (а) часть DEAD-ветвей удалить
+из production-кода либо заменить на `require`/`check` с сохранением поведения, либо
+(б) разрешить фиксировать DEAD-ветви в знаменателе (фильтр/исключение), что текущими
+правилами запрещено. Без этого потолок оценивается существенно ниже 90 %; точная доля
+DEAD-ветвей требует отдельного пофайлового аудита (реестр C-01…C-12 в §2).
+
 ## 4. Релизная сборка (этап 4)
 
 1. `build.gradle.kts`: `koverVerify` — LINE ≥ 90 **и** BRANCH ≥ 90.

@@ -301,4 +301,30 @@ class DrawdownProtectionServiceEdgeBranchesTest {
             // Si: pointValue = 10 / 0.01 = 1000 → (102-100) * 1000 = 2000
             assertEquals(0, BigDecimal("2000").compareTo(status.dailyPnlRub))
         }
+
+    @Test
+    fun `startup tolerates a broken snapshot repository`() {
+        runBlocking {
+            whenever(snapshotRepo.findByDate(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
+                .thenThrow(IllegalStateException("db down"))
+            whenever(tradingAccountService.findAll()).thenReturn(emptyList())
+            stubNoOpen()
+            val drawdown = service()
+
+            drawdown.init()
+
+            assertFalse(drawdown.isEntryBlocked())
+            assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl(null)))
+        }
+    }
+
+    @Test
+    fun `account snapshot failure falls back to zero instead of blocking`() {
+        whenever(snapshotRepo.findByDate(anyDate(), Mockito.anyLong()))
+            .thenThrow(IllegalStateException("db down"))
+        val drawdown = service()
+
+        assertFalse(drawdown.isDailyLossLimitReached(7L))
+        assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl(7L)))
+    }
 }

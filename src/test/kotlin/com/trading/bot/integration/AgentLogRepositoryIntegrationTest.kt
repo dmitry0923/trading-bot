@@ -4,6 +4,7 @@ import com.trading.bot.model.entity.AgentLog
 import com.trading.bot.repository.AgentLogRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -128,6 +129,42 @@ class AgentLogRepositoryIntegrationTest : AbstractTestContainerTest() {
                 result.map { it.agentName },
             )
             assertTrue(result.all { it.cycleId == cycle })
+        }
+    }
+
+    @Test
+    fun `filtered lookup applies optional filters and ignores blank values`() {
+        runBlocking {
+            val suffix = System.nanoTime().toString().takeLast(6)
+            val tickerA = "FA$suffix"
+            val tickerB = "FB$suffix"
+            val tech = "Tech$suffix"
+            val strat = "Strat$suffix"
+            val cycle = "INT_FILTERED_CYCLE"
+            repo.save(AgentLog(cycleId = cycle, agentName = tech, ticker = tickerA, action = "BUY", latencyMs = 0, tokensUsed = 0))
+            repo.save(AgentLog(cycleId = cycle, agentName = strat, ticker = tickerA, action = "BUY"))
+            repo.save(AgentLog(cycleId = cycle, agentName = tech, ticker = tickerB, action = "SELL"))
+
+            val byTicker = repo.findFiltered(tickerA, null, 50)
+            assertEquals(2, byTicker.size)
+            assertTrue(byTicker.all { it.ticker == tickerA })
+
+            val byAgent = repo.findFiltered(null, tech, 50)
+            assertEquals(2, byAgent.size)
+            assertTrue(byAgent.all { it.agentName == tech })
+
+            val byBoth = repo.findFiltered(tickerB, tech, 50)
+            assertEquals(1, byBoth.size)
+            assertEquals("SELL", byBoth.single().action)
+
+            // Пустые строки — фильтр не применяется, а limit клампится в допустимый диапазон.
+            assertTrue(repo.findFiltered("  ", "", 10_000).isNotEmpty())
+            assertEquals(1, repo.findFiltered(tickerA, null, 0).size)
+
+            // Нулевые latency/tokens читаются как «неизвестно» (null), а не как 0.
+            val technical = repo.findFiltered(tickerA, tech, 50).single()
+            assertNull(technical.latencyMs)
+            assertNull(technical.tokensUsed)
         }
     }
 }

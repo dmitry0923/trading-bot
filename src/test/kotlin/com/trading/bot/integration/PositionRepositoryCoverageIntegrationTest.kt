@@ -8,6 +8,7 @@ import com.trading.bot.model.entity.Position
 import com.trading.bot.model.entity.TradingAccount
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.repository.TradingAccountRepository
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -295,6 +296,36 @@ class PositionRepositoryCoverageIntegrationTest : AbstractTestContainerTest() {
 
             // 09:15 UTC = 12:15 МСК: закрытие обязано попасть в московское окно авто-стопа.
             assertEquals(LocalDateTime.of(2026, 10, 26, 12, 15), repo.findById(saved.id!!).closedAt)
+        }
+    }
+
+    @Test
+    fun `row with null optional columns maps to safe defaults`() {
+        runBlocking {
+            databaseClient
+                .sql(
+                    "INSERT INTO positions (ticker, direction, quantity, entry_price) " +
+                        "VALUES ('NULLY', 'LONG', 3, 100)",
+                ).fetch()
+                .rowsUpdated()
+                .awaitSingle()
+
+            val stored = repo.findByStatus(PositionStatus.OPEN).single { it.ticker == "NULLY" }
+
+            assertEquals(0, stored.cumulativeSlFillQty)
+            assertEquals(0, stored.cumulativeTpFillQty)
+            assertEquals(0, BigDecimal.ZERO.compareTo(stored.variationMargin))
+            assertEquals(0, BigDecimal.ZERO.compareTo(stored.realizedPnl))
+            assertEquals(0, stored.cumulativeCloseFillQty)
+            assertFalse(stored.slPendingReplace)
+            assertFalse(stored.tpPendingReplace)
+            assertFalse(stored.slCancelPending)
+            assertFalse(stored.tpCancelPending)
+            assertFalse(stored.closeCancelPending)
+            assertFalse(stored.pendingClose)
+            assertFalse(stored.pendingEntry)
+            assertFalse(stored.fundingUnknown)
+            assertNull(stored.closeReason)
         }
     }
 }

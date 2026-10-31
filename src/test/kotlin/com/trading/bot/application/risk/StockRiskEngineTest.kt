@@ -39,6 +39,22 @@ class StockRiskEngineTest {
             meterRegistry = SimpleMeterRegistry(),
         )
 
+    private fun engine(
+        config: RiskConfig,
+        calendar: TradingCalendar,
+        leverage: LeverageConfig,
+        daily: DailyRiskGuard,
+        volatility: VolatilityFilter,
+    ): StockRiskEngine =
+        StockRiskEngine(
+            riskConfig = config,
+            leverageConfig = leverage,
+            tradingCalendar = calendar,
+            dailyRiskGuard = daily,
+            volatilityFilter = volatility,
+            meterRegistry = SimpleMeterRegistry(),
+        )
+
     private fun entryRequest(atr: BigDecimal?): EntryRequest =
         EntryRequest(
             ticker = "SBER",
@@ -93,5 +109,149 @@ class StockRiskEngineTest {
             val result = engine().canEnter(entryRequest(atr = BigDecimal("10")))
             assertTrue(result is RiskVerdict.Rejected)
             assertEquals("VOLATILITY_GUARD", (result as RiskVerdict.Rejected).reason)
+        }
+
+    @Test
+    fun `disabled risk and leverage reject before any other gate`() =
+        runBlocking {
+            val disabledRisk = RiskConfig().apply { enabled = false }
+            assertEquals(
+                RiskVerdict.Rejected("RISK_DISABLED"),
+                engine(disabledRisk).canEnter(entryRequest(atr = BigDecimal("1"))),
+            )
+
+            val disabledLeverage = LeverageConfig().apply { enabled = false }
+            assertEquals(
+                RiskVerdict.Rejected("LEVERAGE_DISABLED"),
+                engine(RiskConfig(), { true }, disabledLeverage, dailyRiskGuard, volatilityFilter)
+                    .canEnter(entryRequest(atr = BigDecimal("1"))),
+            )
+        }
+
+    @Test
+    fun `calendar daily and volatility index guards reject`() =
+        runBlocking {
+            assertEquals(
+                RiskVerdict.Rejected("OUTSIDE_HOURS"),
+                engine(RiskConfig(), { false }, leverageConfig, dailyRiskGuard, volatilityFilter)
+                    .canEnter(entryRequest(atr = BigDecimal("1"))),
+            )
+
+            Mockito.`when`(dailyRiskGuard.isDailyLossLimitReached(Mockito.nullable(Long::class.javaObjectType))).thenReturn(true)
+            assertEquals(
+                RiskVerdict.Rejected("DAILY_LIMIT"),
+                engine().canEnter(entryRequest(atr = BigDecimal("1"))),
+            )
+            Mockito.`when`(dailyRiskGuard.isDailyLossLimitReached(Mockito.nullable(Long::class.javaObjectType))).thenReturn(false)
+
+            Mockito.`when`(dailyRiskGuard.isEntryBlocked(Mockito.nullable(Long::class.javaObjectType))).thenReturn(true)
+            assertEquals(
+                RiskVerdict.Rejected("DRAWDOWN_PROTECTION"),
+                engine().canEnter(entryRequest(atr = BigDecimal("1"))),
+            )
+            Mockito.`when`(dailyRiskGuard.isEntryBlocked(Mockito.nullable(Long::class.javaObjectType))).thenReturn(false)
+
+            Mockito.`when`(volatilityFilter.isVolatilityAnomalous()).thenReturn(true)
+            assertEquals(
+                RiskVerdict.Rejected("VOLATILITY_INDEX"),
+                engine().canEnter(entryRequest(atr = BigDecimal("1"))),
+            )
+            Mockito.`when`(volatilityFilter.isVolatilityAnomalous()).thenReturn(false)
+        }
+
+    @Test
+    fun `invalid inputs duplicate and position cap reject`() =
+        runBlocking {
+            val lenient = RiskConfig().apply { volatilityFailClosed = false }
+            assertEquals(
+                RiskVerdict.Rejected("INVALID_INPUT"),
+                engine(lenient).canEnter(entryRequest(atr = BigDecimal("1")).copy(entryPrice = BigDecimal.ZERO)),
+            )
+            assertEquals(
+                RiskVerdict.Rejected("INVALID_INPUT"),
+                engine(lenient).canEnter(entryRequest(atr = BigDecimal("1")).copy(portfolioMoney = BigDecimal.ZERO)),
+            )
+
+            val existing =
+                com.trading.bot.model.entity.Position(
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("100"),
+                )
+            assertEquals(
+                RiskVerdict.Rejected("DUPLICATE_POSITION"),
+                engine().canEnter(entryRequest(atr = BigDecimal("1")).copy(openPositions = listOf(existing))),
+            )
+
+            val other =
+                existing.copy(ticker = "GAZP")
+            assertEquals(
+                RiskVerdict.Rejected("MAX_POSITIONS"),
+                engine(RiskConfig().apply { maxOpenPositions = 1 })
+                    .canEnter(entryRequest(atr = BigDecimal("1")).copy(openPositions = listOf(other))),
+            )
+            assertEquals(
+                RiskVerdict.Rejected("MAX_POSITIONS"),
+                engine(RiskConfig().apply { maxOpenPositions = 5 })
+                    .canEnter(
+                        entryRequest(atr = BigDecimal("1"))
+                            .copy(openPositions = listOf(other), maxOpenPositions = 1),
+                    ),
+            )
+        }
+
+    @Test
+    fun `sector exposure counts the same sector and unknown tickers`() =
+        runBlocking {
+            val config =
+                RiskConfig().apply {
+                    maxSectorExposure = 1
+                    maxOpenPositions = 5
+                    sectors = mapOf("SBER" to "BANKS", "VTBR" to "BANKS")
+                }
+            val sameSector =
+                com.trading.bot.model.entity.Position(
+                    ticker = "VTBR",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("100"),
+                )
+            assertEquals(
+                RiskVerdict.Rejected("SECTOR_EXPOSURE"),
+                engine(config).canEnter(entryRequest(atr = BigDecimal("1")).copy(openPositions = listOf(sameSector))),
+            )
+
+            val unknownSector =
+                com.trading.bot.model.entity.Position(
+                    ticker = "ZZZZ",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("100"),
+                )
+            assertEquals(
+                RiskVerdict.Rejected("SECTOR_EXPOSURE"),
+                engine(
+                    RiskConfig().apply {
+                        maxSectorExposure = 1
+                        maxOpenPositions = 5
+                    },
+                ).canEnter(entryRequest(atr = BigDecimal("1")).copy(ticker = "YYYY", openPositions = listOf(unknownSector))),
+            )
+        }
+
+    @Test
+    fun `volatility check is inert when risk is disabled or fail-closed is off`() =
+        runBlocking {
+            assertEquals(
+                RiskVerdict.Rejected("RISK_DISABLED"),
+                engine(RiskConfig().apply { enabled = false }).canEnter(entryRequest(atr = null)),
+            )
+
+            val lenient = RiskConfig().apply { volatilityFailClosed = false }
+            assertEquals(
+                RiskVerdict.Rejected("INVALID_INPUT"),
+                engine(lenient).canEnter(entryRequest(atr = BigDecimal("1")).copy(entryPrice = BigDecimal.ZERO)),
+            )
         }
 }

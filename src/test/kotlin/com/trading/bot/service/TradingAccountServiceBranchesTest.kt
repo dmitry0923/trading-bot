@@ -202,6 +202,40 @@ class TradingAccountServiceBranchesTest {
     // --------------------------------------------------------------------- create
 
     @Test
+    fun `findByName matches case-insensitively`() {
+        runBlocking {
+            Mockito.`when`(repository.findAll()).thenReturn(listOf(account(1L, name = "Main")))
+
+            assertEquals("Main", service.findByName("main")?.name)
+            assertNull(service.findByName("other"))
+        }
+    }
+
+    @Test
+    fun `portfolioOf falls back to the config for unknown and null accounts`() {
+        runBlocking {
+            Mockito.`when`(repository.findById(1L)).thenReturn(account(1L, portfolio = "PX"))
+
+            assertEquals("PX", service.portfolioOf(1L))
+            assertEquals("D12345", service.portfolioOf(99L))
+            assertEquals("D12345", service.portfolioOf(null))
+        }
+    }
+
+    @Test
+    fun `selectAccount falls back to the global limit and returns null when full`() {
+        runBlocking {
+            Mockito.`when`(repository.findEnabled()).thenReturn(listOf(account(3L, maxOpenPositions = null)))
+            Mockito.`when`(positionRepository.findOpenCountByAccount(3L)).thenReturn(9)
+
+            assertEquals(3L, service.selectAccount(), "персональный лимит null — берётся глобальный 10")
+
+            Mockito.`when`(positionRepository.findOpenCountByAccount(3L)).thenReturn(10)
+            assertNull(service.selectAccount(), "все аккаунты переполнены — входа нет")
+        }
+    }
+
+    @Test
     fun `create rejects a blank portfolio`() {
         val failure = runBlocking { runCatching { service.create(name = "x", alorPortfolio = "   ") }.exceptionOrNull() }
 

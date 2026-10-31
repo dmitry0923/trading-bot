@@ -297,6 +297,50 @@ class FundingSnapshotServiceTest {
             assertEquals(0, BigDecimal("0.5").compareTo(service.latestForVeto("CNYRUBF")))
         }
 
+    @Test
+    fun `latestForVeto live rejects a MOEX snapshot older than the TTL`(): Unit =
+        runBlocking {
+            val clock = Clock.fixed(Instant.parse("2026-09-08T12:00:00Z"), ZoneId.of("Europe/Moscow"))
+            val staleTimestamp = LocalDateTime.now(clock).minusHours(1)
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            Mockito
+                .`when`(moex.currentSnapshot("CNYRUBF"))
+                .thenReturn(
+                    FundingSnapshot(
+                        ticker = "CNYRUBF",
+                        clearingDate = LocalDate.of(2026, 9, 8),
+                        rawValue = BigDecimal("0.00279"),
+                        unit = FundingUnit.RUB_PER_BASE_ASSET_UNIT,
+                        valueRubPerContractPerClearing = BigDecimal("2.79"),
+                        source = FundingSource.MOEX,
+                        timestamp = staleTimestamp,
+                    ),
+                )
+            val service =
+                service(
+                    mode = "LIVE",
+                    moex = moex,
+                    configValue = BigDecimal("0.5"),
+                    registry = SimpleMeterRegistry(),
+                    clock = clock,
+                )
+
+            service.refresh("CNYRUBF")
+
+            assertNull(service.latestForVeto("CNYRUBF"), "просроченный MOEX-снапшот не авторитетен")
+        }
+
+    @Test
+    fun `simulation funding for clearings is zero without a configured rate`() {
+        val moex = Mockito.mock(MoexFundingProvider::class.java)
+        val service = service(mode = "SIMULATION", moex = moex, configValue = BigDecimal.ZERO, registry = SimpleMeterRegistry())
+
+        // У RI fundingRubPerContractPerDay = 0 → сумма за клиринги = 0, не null.
+        val value = service.fundingForClearings("RI", listOf(LocalDate.of(2026, 9, 8)))
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(value), "нулевая ставка — нулевой funding: $value")
+    }
+
     private fun service(
         mode: String,
         moex: MoexFundingProvider,

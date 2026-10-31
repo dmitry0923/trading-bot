@@ -143,4 +143,63 @@ class RiskExposureServiceBranchesTest {
 
         assertEquals(0.5, matrix.getValue("SBER").getValue("GAZP"))
     }
+
+    @Test
+    fun `correlation matrix uses the configured defaults`() {
+        whenever(correlationProvider.correlations(listOf("SBER", "GAZP"), "MINUTE_10", 50))
+            .thenReturn(mapOf("SBER" to mapOf("GAZP" to 0.3)))
+
+        val matrix = service.correlationMatrix(listOf("SBER", "GAZP"))
+
+        assertEquals(0.3, matrix.getValue("SBER").getValue("GAZP"))
+    }
+
+    @Test
+    fun `max pair correlation ignores null and missing pairs`(): Unit =
+        runBlocking {
+            stubPortfolio(listOf(position("SBER"), position("GAZP")))
+            whenever(correlationProvider.correlations(listOf("SBER", "GAZP"), "MINUTE_10", 50))
+                .thenReturn(mapOf("SBER" to mapOf("GAZP" to null), "GAZP" to emptyMap()))
+            whenever(correlationProvider.resolved(listOf("SBER", "GAZP"), "MINUTE_10", 50))
+                .thenReturn(listOf(listOf(1.0, 0.0), listOf(0.0, 1.0)))
+
+            val report = service.buildSnapshot()
+
+            assertEquals(0.0, report.maxPairCorrelation, 1e-9, "отсутствующая пара не считается корреляцией")
+        }
+
+    @Test
+    fun `daily volatility falls back to the maximum available value`(): Unit =
+        runBlocking {
+            stubPortfolio(listOf(position("SBER"), position("GAZP")))
+            whenever(correlationProvider.correlations(listOf("SBER", "GAZP"), "MINUTE_10", 50)).thenReturn(emptyMap())
+            whenever(correlationProvider.resolved(listOf("SBER", "GAZP"), "MINUTE_10", 50))
+                .thenReturn(listOf(listOf(1.0, 0.0), listOf(0.0, 1.0)))
+            whenever(candleCache.calculateRealizedVolatility("SBER", "DAY_1", 20)).thenReturn(2.0)
+            whenever(candleCache.calculateRealizedVolatility("GAZP", "DAY_1", 20)).thenReturn(null)
+            whenever(candleCache.calculateRealizedVolatility("GAZP", "MINUTE_10", 20)).thenReturn(null)
+
+            val report = service.buildSnapshot()
+
+            assertTrue(report.var95Rub > BigDecimal.ZERO, "fallback σ должен дать ненулевой VaR")
+        }
+
+    @Test
+    fun `zero covariance sum yields the maximum effective positions cap`(): Unit =
+        runBlocking {
+            stubPortfolio(listOf(position("SBER"), position("GAZP")))
+            whenever(correlationProvider.correlations(listOf("SBER", "GAZP"), "MINUTE_10", 50))
+                .thenReturn(
+                    mapOf(
+                        "SBER" to mapOf("SBER" to 0.0, "GAZP" to 0.0),
+                        "GAZP" to mapOf("SBER" to 0.0, "GAZP" to 0.0),
+                    ),
+                )
+            whenever(correlationProvider.resolved(listOf("SBER", "GAZP"), "MINUTE_10", 50))
+                .thenReturn(listOf(listOf(0.0, 0.0), listOf(0.0, 0.0)))
+
+            val report = service.buildSnapshot()
+
+            assertEquals(1_000_000.0, report.effectivePositions.toDouble(), 1e-6)
+        }
 }

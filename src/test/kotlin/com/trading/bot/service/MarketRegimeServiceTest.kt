@@ -6,6 +6,7 @@ import com.trading.bot.domain.risk.MarketRegime
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import java.math.BigDecimal
@@ -111,6 +112,39 @@ class MarketRegimeServiceTest {
 
     @Test
     fun `default regime is normal before any refresh`() {
-        assertEquals(MarketRegime.NORMAL, service().currentRegime())
+        val s = service()
+
+        assertEquals(MarketRegime.NORMAL, s.currentRegime())
+        assertEquals(false, s.isStress())
+        assertEquals(1.0, s.sizeMultiplier())
     }
+
+    @Test
+    fun `refresh is cached for the ttl window`() =
+        runBlocking {
+            stubHistory(history)
+            Mockito.`when`(moexClient.getVolatilityIndex("RVI")).thenReturn(BigDecimal("15"))
+            val s = service()
+
+            s.refresh()
+            s.refresh()
+
+            Mockito
+                .verify(moexClient, Mockito.times(1))
+                .getVolatilityIndexDailyCloses("RVI", LocalDate.now().minusDays(RiskConfig().regimeLookbackDays.toLong()))
+        }
+
+    @Test
+    fun `zero rvi with missing implied volatility falls back to normal`() =
+        runBlocking {
+            stubHistory(history)
+            Mockito.`when`(moexClient.getVolatilityIndex("RVI")).thenReturn(BigDecimal.ZERO)
+            Mockito.`when`(ivService.impliedVolatilityPercent()).thenReturn(null)
+            val s = service()
+
+            s.refresh()
+
+            assertEquals(MarketRegime.NORMAL, s.currentRegime())
+            assertFalse(s.isStress())
+        }
 }

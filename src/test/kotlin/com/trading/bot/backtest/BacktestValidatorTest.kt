@@ -509,6 +509,17 @@ class BacktestValidatorTest {
     }
 
     @Test
+    fun `resampled history below the minimum yields an empty validation`() {
+        val result =
+            runBlocking {
+                validator.validate("SBER", List(200) { mockCandle(it) }, folds = 4, timeframe = "DAY_1")
+            }
+
+        assertTrue(result.folds.isEmpty())
+        assertFalse(result.isRobust())
+    }
+
+    @Test
     fun `resample timeframe reduces candles before simulation`() {
         // 1000 MINUTE_10 свечей (10 мин через mockCandle) -> ~167 HOUR_1 баров.
         // WfaConfig.timeframe=HOUR_1 должен передать в engine ресемплированные свечи

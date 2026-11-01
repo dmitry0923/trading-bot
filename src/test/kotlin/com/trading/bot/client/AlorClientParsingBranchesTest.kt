@@ -396,6 +396,47 @@ class AlorClientParsingBranchesTest {
             }
         }
 
+    @Test
+    fun `market order without an id does not meter a placement`() =
+        runBlocking {
+            FakeServer().use { server ->
+                whenever(orderTransport.placeLimit(any(), any(), any(), any(), any(), any(), any()))
+                    .thenReturn(null)
+                val registry = SimpleMeterRegistry()
+
+                assertNull(buildClient(server, registry).placeMarketOrder("SBER", "buy", 1, "idem-null"))
+                assertNull(registry.find("alor.order.placed").counter())
+            }
+        }
+
+    @Test
+    fun `verifyOrder with an expected price but no fill skips slippage`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.orderByIdBody = """{"status":"NEW"}"""
+                val registry = SimpleMeterRegistry()
+
+                val execution = buildClient(server, registry).verifyOrder("ord-1", expectedPrice = BigDecimal("100"))!!
+
+                assertNull(execution.avgPrice)
+                assertTrue(registry.find("trade.slippage.rub").meters().isEmpty())
+            }
+        }
+
+    @Test
+    fun `reconciliation accepts a blank ticker side and falls back to the id`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.ordersBody = """[{"id":"idem-blank","ticker":"","side":"","filledQty":0}]"""
+
+                val found = buildClient(server).reconcileOrderByIdempotencyKey("idem-blank", "SBER", "buy")
+
+                assertTrue(found is AlorClient.OrderReconciliation.Found)
+                assertEquals("idem-blank", (found as AlorClient.OrderReconciliation.Found).orderNumber)
+                assertEquals(0, found.filledQty)
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())

@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 96,43 % (25 065 / 25 994) |
-| BRANCH | 87,10 % (9 255 / 10 626) |
-| Тестов | 3 383 |
+| LINE | 96,70 % (25 137 / 25 994) |
+| BRANCH | 87,94 % (9 345 / 10 626) |
+| Тестов | 3 435 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -62,17 +62,16 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 
 ## 3a. Достижимость 90 % BRANCH: анализ остатка (2026-11-01)
 
-Замер после итерации 2026-11-01 (вечер): **BRANCH 87,10 % (9 255 / 10 626)**, LINE 95,67 %,
-тестов 3 211, падений 0. До цели не хватает **≈544** покрытых ветвей.
+Замер после итерации 2026-11-01 (вечер): **BRANCH 87,94 % (9 345 / 10 626)**, LINE 96,70 %,
+тестов 3 435, падений 0. До цели не хватает **219** покрытых ветвей.
 
 Структура остатка (по данным `build/reports/kover/report.xml`):
 
-- 1 371 непокрытых ветвей; **~430** из них находятся на строках с `?:`.
-- Крупнейшие остатки: `BacktestEngine` 57, `ApiController` 54, `PortfolioMomentumEngine` 40,
-  `ProtectionOrderManager` 28, `PositionRepository` 27, `DrawdownProtectionService` 26,
-  `OrderExecutionEngine` 26, `TradingBotService` 23, `AdaptiveRiskService` 21,
-  `LiveStrategyBacktestSignalGenerator` 21, `ExecutionReconciler` 20, `StrategyService` 19,
-  `MoexClient` 19, `BacktestRiskSimulator` 19, `AlorClient` 18, `OrderOutboxService` 18.
+- 1 281 непокрытая ветвь; **~400** из них находятся на строках с `?:`.
+- Крупнейшие остатки: `BacktestEngine` 53, `PortfolioMomentumEngine` 32, `PositionRepository` 27,
+  `ApiController` 24, `EntryFilters` 22, `LiveStrategyBacktestSignalGenerator` 21,
+  `ProtectionOrderManager` 20, `DrawdownProtectionService` 19, `BacktestRiskSimulator` 14,
+  `ResilientLlmClient` 14, `ExecutionReconciler` 14, `AlorFuturesClient` 14.
 
 **Часть остатка структурно недостижима (DEAD) — подтверждено кодом и схемой БД:**
 

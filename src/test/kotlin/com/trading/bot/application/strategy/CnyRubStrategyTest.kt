@@ -344,6 +344,110 @@ class CnyRubStrategyTest {
         }
 
     @Test
+    fun `one sided book disables the microprice fallback`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.3400"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    bidSize = 100L,
+                    askSize = null,
+                )
+
+            assertEquals(StrategyAction.BUY, strategy.evaluate(ctx).action)
+        }
+
+    @Test
+    fun `overbought rsi away from the upper band stays in hold`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.4000"),
+                    indicators =
+                        indicators(
+                            rsi = 80.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                )
+
+            assertEquals(StrategyAction.HOLD, strategy.evaluate(ctx).action)
+        }
+
+    @Test
+    fun `microprice without obi confirms the technical direction`() =
+        runBlocking {
+            val buy =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.3400"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    micropriceOverride = BigDecimal("12.3450"),
+                )
+            val sell =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.5000"),
+                    indicators =
+                        indicators(
+                            rsi = 75.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    micropriceOverride = BigDecimal("12.4880"),
+                )
+
+            assertEquals(StrategyAction.BUY, strategy.evaluate(buy).action)
+            assertEquals(StrategyAction.SELL, strategy.evaluate(sell).action)
+        }
+
+    @Test
+    fun `microprice without a full quote cannot confirm or block`() =
+        runBlocking {
+            val indicators =
+                indicators(
+                    rsi = 25.0,
+                    bbLower = BigDecimal("12.3400"),
+                    bbUpper = BigDecimal("12.5000"),
+                    bbMiddle = BigDecimal("12.4200"),
+                )
+            val base =
+                MarketSnapshot(
+                    ticker = "CNYRUB_TOM",
+                    currentPrice = BigDecimal("12.3400"),
+                    microprice = BigDecimal("12.3450"),
+                )
+            val bidOnly =
+                StrategyContext(
+                    ticker = "CNYRUB_TOM",
+                    snapshot = base.copy(bid = BigDecimal("12.3300")),
+                    candles = emptyList(),
+                    indicators = indicators,
+                    cycleId = "c1",
+                )
+            val askOnly = bidOnly.copy(snapshot = base.copy(ask = BigDecimal("12.3500")))
+
+            assertEquals(StrategyAction.BUY, strategy.evaluate(bidOnly).action)
+            assertEquals(StrategyAction.BUY, strategy.evaluate(askOnly).action)
+        }
+
+    @Test
     fun `microprice above mid confirms buy without obi pressure`() =
         runBlocking {
             val ctx =

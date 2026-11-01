@@ -51,6 +51,25 @@ class AumProviderTest {
     }
 
     @Test
+    fun `a repeated checked fetch is served from the fresh cache`() {
+        stubMoney(BigDecimal("5000"))
+        stubOverride(null)
+
+        val first = runBlocking { aumProvider.currentAumChecked(7L) }
+        val second = runBlocking { aumProvider.currentAumChecked(7L) }
+
+        assertEquals(
+            (first as AumProvider.AumResult.Available).value,
+            (second as AumProvider.AumResult.Available).value,
+        )
+        assertEquals(0, BigDecimal("5000").compareTo(aumProvider.latestAum(7L)))
+        assertEquals(
+            1,
+            Mockito.mockingDetails(alor).invocations.count { it.method.name == "getPortfolioMoney" },
+        )
+    }
+
+    @Test
     fun `currentAumChecked returns Available in LIVE when balance fetched`() {
         stubMoney(BigDecimal("123456"))
         stubOverride(null)

@@ -28,6 +28,75 @@ class CandleCacheServiceTest {
     private val objectMapper = jacksonObjectMapper()
     private val service = CandleCacheService(redisTemplate, objectMapper)
 
+    @Test
+    fun `sma returns null when fewer candles than the period`() {
+        mockCandles(listOf(candle("10", "9", "9.5", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0))))
+
+        assertNull(service.calculateSma("SBER", "MINUTE_10", 14))
+    }
+
+    @Test
+    fun `realized volatility rejects a lookback below three`() {
+        assertNull(service.calculateRealizedVolatility("SBER", "MINUTE_10", 2))
+    }
+
+    @Test
+    fun `realized volatility skips non positive closes and needs two returns`() {
+        val candles =
+            listOf(
+                candle("10", "9", "0", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 0)),
+                candle("10", "9", "10", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 10)),
+                candle("10", "9", "0", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 20)),
+                candle("10", "9", "12", LocalDateTime.of(2026, Month.AUGUST, 3, 10, 30)),
+            )
+        mockCandles(candles)
+
+        assertNull(service.calculateRealizedVolatility("SBER", "MINUTE_10", 3))
+    }
+
+    @Test
+    fun `recent candles return empty when redis has no zset value`() {
+        Mockito.`when`(redisTemplate.opsForZSet()).thenReturn(zset)
+        Mockito
+            .`when`(
+                zset.reverseRange(
+                    ArgumentMatchers.anyString(),
+                    ArgumentMatchers.anyLong(),
+                    ArgumentMatchers.anyLong(),
+                ),
+            ).thenReturn(null)
+
+        assertEquals(emptyList<Candle>(), service.getRecentCandles("SBER", "MINUTE_10", 5))
+    }
+
+    @Test
+    fun `recent candles swallow a redis failure`() {
+        Mockito.`when`(redisTemplate.opsForZSet()).thenThrow(IllegalStateException("redis down"))
+
+        assertEquals(emptyList<Candle>(), service.getRecentCandles("SBER", "MINUTE_10", 5))
+    }
+
+    @Test
+    fun `clear tolerates missing and empty key sets`() {
+        Mockito.`when`(redisTemplate.keys(Mockito.anyString())).thenReturn(null)
+        service.clear()
+
+        Mockito.`when`(redisTemplate.keys(Mockito.anyString())).thenReturn(emptySet())
+        service.clear()
+
+        Mockito.`when`(redisTemplate.keys(Mockito.anyString())).thenReturn(setOf("k1", "k2"))
+        service.clear()
+
+        Mockito.verify(redisTemplate).delete(setOf("k1", "k2"))
+    }
+
+    @Test
+    fun `clear swallows a redis failure`() {
+        Mockito.`when`(redisTemplate.keys(Mockito.anyString())).thenThrow(IllegalStateException("redis down"))
+
+        service.clear()
+    }
+
     private fun candle(
         high: String,
         low: String,

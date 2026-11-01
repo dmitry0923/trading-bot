@@ -1040,6 +1040,35 @@ class ApiControllerDefaultsTest {
     }
 
     @Test
+    fun `holdout builds the generator from a config only llm veto`() {
+        stubCandles()
+        runBlocking {
+            whenever(
+                candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyLocalDateTime(),
+                    anyLocalDateTime(),
+                ),
+            ).thenReturn(sixtyCandles())
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult))
+            whenever(frozenStrategyStore.current(Mockito.anyString())).thenReturn(null)
+        }
+        backtestConfig.llmVetoEnabled = true
+        backtestConfig.regimeDetectionEnabled = true
+        try {
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/holdout")).status,
+            )
+        } finally {
+            backtestConfig.llmVetoEnabled = false
+            backtestConfig.regimeDetectionEnabled = false
+        }
+    }
+
+    @Test
     fun `holdout and deployment gate accept an ml only override`() {
         stubCandles()
         runBlocking {

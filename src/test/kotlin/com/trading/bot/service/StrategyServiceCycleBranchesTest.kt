@@ -365,6 +365,31 @@ class StrategyServiceCycleBranchesTest {
     }
 
     @Test
+    fun `neutral meta agent feedback keeps the entry and passes its context prompt`() {
+        stubSettings()
+        stubCachedCandles()
+        stubMarketSnapshot(snapshot())
+        stubStrategyPipeline()
+        runBlocking {
+            Mockito
+                .`when`(feedbackAgent.generateFeedback(Mockito.anyString(), Mockito.anyString()))
+                .thenReturn(feedback(pause = false))
+        }
+
+        runCycle()
+
+        assertEquals(1.0, strategySaved())
+        val context =
+            Mockito
+                .mockingDetails(strategyRunner)
+                .invocations
+                .single { it.method.name == "runAll" }
+                .arguments[0] as StrategyContext
+        assertEquals("context", context.contextPrompt)
+        assertEquals(0.0, counter("strategy.pause", "ticker", "SBER"))
+    }
+
+    @Test
     fun `regime gate blocks entry on flat candles`() {
         riskConfig.perTickerRegimeEnabled = true
         stubSettings()

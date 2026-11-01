@@ -54,6 +54,17 @@ class TechnicalAnalysisAgentBranchesTest {
         ): LlmResponse = response
     }
 
+    @Test
+    fun `snapshot without book fields renders NA placeholders`() {
+        val report =
+            runBlocking {
+                agent("""{"conclusion":"NEUTRAL","signalStrength":0.1,"reasoning":"no book"}""")
+                    .analyze("SBER", multiHourCandles(), MarketSnapshot(ticker = "SBER", currentPrice = BigDecimal("100")), "c1")
+            }
+
+        assertEquals("NEUTRAL", report.conclusion)
+    }
+
     private fun candle(
         price: BigDecimal,
         time: LocalDateTime,

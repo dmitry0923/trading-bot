@@ -323,6 +323,96 @@ class MoexClientEdgeCasesTest {
             }
         }
 
+    @Test
+    fun `volatility index tolerates a non array table and a null value`() =
+        runBlocking {
+            FakeServer().use { server ->
+                val client = client(server)
+
+                server.volatilityBody = """{"marketdata":{"columns":["LAST"],"data":{"value":"1"}}}"""
+                assertNull(client.getVolatilityIndex())
+
+                server.volatilityBody = """{"marketdata":{"columns":["LAST"],"data":[[null]]}}"""
+                assertNull(client.getVolatilityIndex())
+            }
+        }
+
+    @Test
+    fun `forts options reject a non array securities table`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.optionsBody =
+                    """
+                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE","UNDERLYINGASSET"],
+                      "data":{"value":"RI"}},
+                     "marketdata":{"columns":["LAST"],"data":[["1"]]}}
+                    """.trimIndent()
+
+                assertTrue(client(server).getFortsOptions().isEmpty())
+            }
+        }
+
+    @Test
+    fun `forts options default a short marketdata row to zero open position`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.optionsBody =
+                    """
+                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE","UNDERLYINGASSET"],
+                      "data":[["A","RI","C","90000","2026-09-03","RI"],
+                              ["B","RI","P","95000","2026-09-03","RI"]]},
+                     "marketdata":{"columns":["LAST","OPENPOSITION"],
+                      "data":[["1200","5"], []]}}
+                    """.trimIndent()
+
+                val options = client(server).getFortsOptions()
+
+                assertEquals(2, options.size)
+                assertEquals(5L, options[0].openPosition)
+                assertEquals(0L, options[1].openPosition)
+            }
+        }
+
+    @Test
+    fun `daily closes skip a short row`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.closesBody =
+                    """
+                    {"candles":{"columns":["begin","close"],
+                      "data":[["2026-07-01","10.5"], []]}}
+                    """.trimIndent()
+
+                assertEquals(
+                    listOf(10.5),
+                    client(server).getVolatilityIndexDailyCloses(from = LocalDate.of(2026, 7, 1)),
+                )
+            }
+        }
+
+    @Test
+    fun `futures resolution skips short rows and a missing expiry column`() =
+        runBlocking {
+            FakeServer().use { server ->
+                val client = client(server)
+                server.futuresSecuritiesBody =
+                    """{"securities":{"columns":["SECID","LASTDELDATE"],"data":[[],["RIU6","2026-09-01"],["RIM6"]]}}"""
+
+                assertTrue(
+                    client
+                        .getFuturesCandlesPaged("RI", LocalDateTime.of(2026, 5, 1, 10, 0), LocalDateTime.of(2026, 5, 2, 10, 0))
+                        .isEmpty(),
+                )
+
+                server.futuresSecuritiesBody = """{"securities":{"columns":["SECID"],"data":[["RIU6"],["RIM6"]]}}"""
+                assertTrue(
+                    client
+                        .getFuturesCandlesPaged("RI", LocalDateTime.of(2026, 5, 1, 10, 0), LocalDateTime.of(2026, 5, 2, 10, 0))
+                        .isEmpty(),
+                )
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
 

@@ -92,6 +92,13 @@ class ObiCalculatorTest {
     }
 
     @Test
+    fun `negative sizes are unknown and an unsupported side never opposes`() {
+        assertNull(ObiCalculator.calculate(-1L, 100L))
+        assertNull(ObiCalculator.calculate(100L, -1L))
+        assertFalse(ObiCalculator.isOpposing(BigDecimal("0.9"), "hold", BigDecimal("0.5")))
+    }
+
+    @Test
     fun `pressure returns double or null`() {
         assertEquals(0.5, ObiCalculator.pressure(750L, 250L)!!, 0.001)
         assertNull(ObiCalculator.pressure(null, 100L))

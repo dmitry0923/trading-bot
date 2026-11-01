@@ -173,6 +173,19 @@ class ProtectionOrderManagerBranchesTest {
     // ─── attach: пропуски и неподтверждённая постановка ─────────────────
 
     @Test
+    fun `sent tp outbox row without an exchange id is ignored`() {
+        val pos = openPosition(tpOrderId = null)
+        runBlocking {
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "tp"))
+                .thenReturn(outbox(OutboxStatus.SENT, orderId = null))
+        }
+
+        runBlocking { manager.reconcileProtectionOrders(pos) }
+
+        assertNull(pos.tpOrderId)
+    }
+
+    @Test
     fun `attach skips a non open position`(): Unit =
         runBlocking {
             val pos = openPosition(status = PositionStatus.CLOSED)

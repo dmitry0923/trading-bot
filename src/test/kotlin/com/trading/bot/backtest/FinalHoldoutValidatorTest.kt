@@ -33,6 +33,71 @@ import java.time.LocalDateTime
 class FinalHoldoutValidatorTest {
     private val capital = BigDecimal("100000")
 
+    @Test
+    fun `fewer than two candles are rejected before the split`() {
+        val validatorUnderTest = FinalHoldoutValidator(mock(), mock(), buildIdentity(), fingerprintProvider())
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { validatorUnderTest.validate("SBER", listOf(mockCandle(0))) }
+        }
+    }
+
+    @Test
+    fun `adaptive threshold without an override builds a generator`() {
+        val analyzer = Mockito.mock(WalkForwardAnalyzer::class.java)
+        val engine = mock<BacktestEngine> {}
+        val aggregate = strongResult(250)
+        val fold =
+            FoldValidation(
+                foldIndex = 0,
+                inSample = aggregate,
+                outOfSample = aggregate.copy(totalReturn = 0.02),
+                chosenSlPercent = 0.02,
+                chosenTpPercent = 0.04,
+            )
+        runBlocking { whenever(analyzer.run(eq("SBER"), any(), any())).thenReturn(ValidationResult(listOf(fold), aggregate)) }
+        runBlocking {
+            whenever(
+                engine.simulate(
+                    anyString(),
+                    any(),
+                    any(),
+                    anyInt(),
+                    anyDouble(),
+                    anyDouble(),
+                    any(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    any(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenReturn(aggregate)
+        }
+
+        val validatorUnderTest = FinalHoldoutValidator(analyzer, engine, buildIdentity(), fingerprintProvider())
+        val result =
+            runBlocking {
+                validatorUnderTest.validate(
+                    "SBER",
+                    List(300) { mockCandle(it) },
+                    holdoutFraction = 0.2,
+                    adaptiveConfidenceThreshold = 0.6,
+                )
+            }
+
+        assertEquals(0.6, result.paramsUsed.confidenceThreshold)
+    }
+
     private fun buildIdentity(): BuildIdentity = mock<BuildIdentity>()
 
     private fun fingerprintProvider(): LiveStrategyFingerprintProvider {

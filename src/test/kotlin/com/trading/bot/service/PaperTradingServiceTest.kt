@@ -321,6 +321,30 @@ class PaperTradingServiceTest {
     }
 
     @Test
+    fun `startup backfill is skipped when the experiment is disabled`() {
+        config.enabled = false
+
+        service.backfillOutcomesOnStartup()
+
+        runBlocking { verify(repository, never()).findUnclosed() }
+    }
+
+    @Test
+    fun `startup backfill runs the recovery in the background`() {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        runBlocking {
+            whenever(repository.findUnclosed()).thenAnswer {
+                latch.countDown()
+                emptyList<ExperimentDecision>()
+            }
+        }
+
+        service.backfillOutcomesOnStartup()
+
+        assertTrue(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
+    @Test
     fun `startup backfill skips cycles without a closed position`() {
         stubMarkResult()
         runBlocking {

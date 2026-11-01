@@ -9,6 +9,7 @@ import java.net.ServerSocket
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
@@ -20,6 +21,84 @@ import kotlin.concurrent.thread
  * [AlorTokenProvider.actualToken].
  */
 class ReactorWsOrderSocketFactoryTest {
+    @Test
+    fun `ws url keeps an existing query string with ampersand`(): Unit =
+        runBlocking {
+            val requestLines = CopyOnWriteArrayList<String>()
+            val connected = CountDownLatch(1)
+            val serverSocket = ServerSocket(0)
+            val acceptor =
+                thread(isDaemon = true) {
+                    try {
+                        serverSocket.accept().use { socket ->
+                            val reader = socket.getInputStream().bufferedReader()
+                            val line = reader.readLine()
+                            if (line != null) requestLines += line
+                        }
+                    } finally {
+                        connected.countDown()
+                    }
+                }
+            try {
+                val alorConfig =
+                    AlorConfig().apply {
+                        wsUrl = "ws://127.0.0.1:${serverSocket.localPort}/ws?x=1"
+                    }
+                val tokenProvider = Mockito.mock(AlorTokenProvider::class.java) { _ -> "tok" }
+                val factory = ReactorWsOrderSocketFactory(alorConfig, tokenProvider)
+
+                runCatching { factory.open() }
+
+                assertTrue(connected.await(10, TimeUnit.SECONDS))
+                assertTrue(
+                    requestLines.any { it.contains("GET /ws?x=1&token=tok") },
+                    "request line: $requestLines",
+                )
+            } finally {
+                serverSocket.close()
+                acceptor.join(1_000)
+            }
+        }
+
+    @Test
+    fun `open returns a sendable connection and closes it`(): Unit =
+        runBlocking {
+            val received = AtomicInteger()
+            val server =
+                reactor.netty.http.server.HttpServer
+                    .create()
+                    .host("127.0.0.1")
+                    .port(0)
+                    .handle { _, response ->
+                        response.sendWebsocket { inbound, outbound ->
+                            inbound
+                                .receive()
+                                .doOnNext { received.incrementAndGet() }
+                                .then()
+                        }
+                    }.bindNow()
+            try {
+                val alorConfig =
+                    AlorConfig().apply {
+                        wsUrl = "ws://127.0.0.1:${server.port()}/ws"
+                    }
+                val tokenProvider = Mockito.mock(AlorTokenProvider::class.java) { _ -> "tok" }
+                val factory = ReactorWsOrderSocketFactory(alorConfig, tokenProvider)
+
+                val connection = factory.open()
+                runCatching { connection.send("""{"opcode":"ping"}""") }
+                val deadline = System.currentTimeMillis() + 5_000
+                while (received.get() == 0 && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(20)
+                }
+                runCatching { connection.close() }
+
+                assertTrue(received.get() >= 1, "received frames=${received.get()}")
+            } finally {
+                server.disposeNow()
+            }
+        }
+
     @Test
     fun `open uses refreshed token from token provider in ws url`(): Unit =
         runBlocking {

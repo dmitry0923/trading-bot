@@ -80,6 +80,43 @@ class ImpliedVolatilityServiceBranchesTest {
         }
 
     @Test
+    fun `expired ttl refetches the option series and exposes the iv`(): Unit =
+        runBlocking {
+            val config = RiskConfig().apply { impliedVolatilityCacheTtlMinutes = 0 }
+            whenever(moexClient.getFortsOptions()).thenReturn(
+                listOf(quote(83_000, 30, 5_000, last = premium(0.20, 30))),
+            )
+            val s = service(config)
+
+            s.refresh()
+            s.refresh()
+
+            Mockito.verify(moexClient, Mockito.times(2)).getFortsOptions()
+            assertNotNull(s.impliedVolatilityPercent())
+        }
+
+    @Test
+    fun `zero last and zero bid prices give no snapshot`(): Unit =
+        runBlocking {
+            whenever(moexClient.getFortsOptions()).thenReturn(
+                listOf(
+                    quote(
+                        83_000,
+                        30,
+                        5_000,
+                        last = BigDecimal.ZERO,
+                        bid = BigDecimal.ZERO,
+                    ),
+                ),
+            )
+            val s = service()
+
+            s.refresh()
+
+            assertNull(s.snapshot())
+        }
+
+    @Test
     fun `disabled service never fetches options`(): Unit =
         runBlocking {
             val config = RiskConfig().apply { impliedVolatilityEnabled = false }

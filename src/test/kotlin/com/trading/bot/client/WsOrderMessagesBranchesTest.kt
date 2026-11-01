@@ -80,6 +80,25 @@ class WsOrderMessagesBranchesTest {
     }
 
     @Test
+    fun `a root request id prevents data unwrapping on place and cancel`() {
+        val place =
+            WsOrderMessages.matchPlace(
+                """{"requestId":"guid-1","data":{"orderNumber":"data-ord"}}""",
+                "idem-1",
+                "guid-1",
+            )
+        assertSame(WsOrderMessages.MatchResult.NotMatch, place)
+
+        val cancel =
+            WsOrderMessages.matchCancel(
+                """{"requestId":"guid-1","data":{"orderNumber":"ord-1","status":"cancelled"}}""",
+                "ord-1",
+                "guid-1",
+            )
+        assertSame(WsOrderMessages.MatchResult.NotMatch, cancel)
+    }
+
+    @Test
     fun `matchCancel unwraps a data envelope and accepts requestStatus cancel`() {
         val nested =
             WsOrderMessages.matchCancel("""{"data":{"orderNumber":"ord-1","status":"cancelled"}}""", "ord-1", "guid")

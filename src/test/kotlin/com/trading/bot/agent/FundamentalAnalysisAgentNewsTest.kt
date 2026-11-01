@@ -65,6 +65,18 @@ class FundamentalAnalysisAgentNewsTest {
         }
     }
 
+    private class InvalidConclusionLlmClient : RecordingLlmClient() {
+        override suspend fun complete(
+            agent: String,
+            ticker: String,
+            prompt: PromptTemplate,
+            variables: Map<String, Any>,
+            fingerprint: String?,
+            temperature: Double,
+            cacheNamespace: String?,
+        ): LlmResponse = LlmResponse(content = """{"conclusion":"BULL","signalStrength":0.5,"reasoning":"x"}""")
+    }
+
     private class RecordingLogRepo : AgentLogRepository(mock()) {
         val saved = mutableListOf<AgentLog>()
 
@@ -171,6 +183,15 @@ class FundamentalAnalysisAgentNewsTest {
             issuerDataProvider = provider,
             instrumentsConfig = instrumentsConfig(),
         )
+
+    @Test
+    fun `unknown llm conclusion is normalised to neutral`() {
+        runBlocking { stubMacro() }
+
+        val report = runBlocking { agent(InvalidConclusionLlmClient(), null).analyze("GAZP", "c1") }
+
+        assertEquals("NEUTRAL", report.conclusion)
+    }
 
     @Test
     fun `currency futures use the FX macro context instead of issuer news`() {

@@ -226,6 +226,26 @@ class PerformanceFeedbackAgentTest {
     }
 
     @Test
+    fun `llm json carries every agent note into the feedback`() {
+        stub.responses +=
+            LlmResponse(
+                content =
+                    """{"contextPrompt":"ctx","techAgentNote":"t","fundAgentNote":"f",""" +
+                        """"strategistNote":"s","contrarianNote":"c","shouldPauseTrading":true}""",
+            )
+        runBlocking { Mockito.`when`(tradeAnalysis.analyzeLastNDays(14)).thenReturn(mapOf("SBER" to stats())) }
+
+        val fb = runBlocking { agent.generateFeedback("SBER") }
+
+        assertEquals("ctx", fb.contextPrompt)
+        assertEquals("t", fb.agentSpecificNotes.getValue("techAgentNote"))
+        assertEquals("f", fb.agentSpecificNotes.getValue("fundAgentNote"))
+        assertEquals("s", fb.agentSpecificNotes.getValue("strategistNote"))
+        assertEquals("c", fb.agentSpecificNotes.getValue("contrarianNote"))
+        assertTrue(fb.shouldPauseTrading)
+    }
+
+    @Test
     fun `prompt shows N A for missing best and worst entry hours`() {
         stub.responses += LlmResponse(content = """{"confidenceAdjustment":0.05}""")
         runBlocking {

@@ -37,6 +37,25 @@ class MlFeatureExtractorTest {
     }
 
     @Test
+    fun `zero last close yields no features`() {
+        val closes = List(40) { 100.0 } + 0.0
+
+        assertNull(MlFeatureExtractor.extract(candles(closes), lookbackBars = 30))
+    }
+
+    @Test
+    fun `zero base and zero volatility closes fall back to zero`() {
+        val closes = MutableList(40) { 100.0 }
+        closes[19] = 0.0
+        closes[39] = 101.0
+
+        val features = requireNotNull(MlFeatureExtractor.extract(candles(closes), lookbackBars = 30))
+
+        assertEquals(0.0, features.return20, 1e-9)
+        assertTrue(features.volatility20Percent.isFinite())
+    }
+
+    @Test
     fun `flat prices give zero volatility, atr and neutral bollinger`() {
         val features = requireNotNull(MlFeatureExtractor.extract(flatCandles(60), lookbackBars = 30))
         assertEquals(0.0, features.volatility20Percent, 1e-9)

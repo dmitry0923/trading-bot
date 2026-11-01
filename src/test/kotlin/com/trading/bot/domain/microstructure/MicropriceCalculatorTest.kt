@@ -89,6 +89,19 @@ class MicropriceCalculatorTest {
     }
 
     @Test
+    fun `non positive prices and a null ask size return null`() {
+        assertNull(MicropriceCalculator.calculate(BigDecimal.ZERO, BigDecimal("100"), 10L, 10L))
+        assertNull(MicropriceCalculator.calculate(BigDecimal("99"), BigDecimal("-100"), 10L, 10L))
+        assertNull(MicropriceCalculator.calculate(BigDecimal("99"), BigDecimal("100"), 10L, null))
+    }
+
+    @Test
+    fun `deviation is null for unusable inputs`() {
+        assertNull(MicropriceCalculator.deviation(null, BigDecimal("100"), 10L, 10L))
+        assertNull(MicropriceCalculator.deviation(BigDecimal("99"), BigDecimal("100"), 10L, null))
+    }
+
+    @Test
     fun `deviation returns positive when more bid liquidity`() {
         val dev =
             MicropriceCalculator.deviation(

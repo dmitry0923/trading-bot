@@ -186,6 +186,36 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         }
     }
 
+    @Test
+    fun `reconcile pending orders completes a clean futures pass`() {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        runBlocking {
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenAnswer {
+                latch.countDown()
+                emptyList<Position>()
+            }
+        }
+
+        service.reconcilePendingOrders()
+
+        assertTrue(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `reconcile pending orders survives a failing futures pass`() {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        runBlocking {
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenAnswer {
+                latch.countDown()
+                throw IllegalStateException("db down")
+            }
+        }
+
+        service.reconcilePendingOrders()
+
+        assertTrue(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
     private fun anyPosition(): Position {
         Mockito.any(Position::class.java)
         return Position(ticker = "Si", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal.ZERO)

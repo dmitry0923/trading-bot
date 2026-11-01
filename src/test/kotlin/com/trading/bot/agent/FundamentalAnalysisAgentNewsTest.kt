@@ -16,6 +16,7 @@ import com.trading.bot.service.MacroContextService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
@@ -244,6 +245,25 @@ class FundamentalAnalysisAgentNewsTest {
         assertTrue(news.contains("рекордные выплаты"), "news='$news'")
         assertTrue(news.contains("2026-09-11"), "news date rendered, news='$news'")
         assertEquals(1, logRepo.saved.size)
+    }
+
+    @Test
+    fun `news without a date or snippet renders placeholders`() {
+        runBlocking { stubMacro() }
+        val llm = RecordingLlmClient()
+        val provider =
+            runBlocking {
+                newsProvider(
+                    NewsItem(title = "Новость без даты", publishedAt = null, snippet = ""),
+                )
+            }
+
+        runBlocking { agent(llm, provider).analyze("GAZP", "c1") }
+
+        val news = llm.lastVariables["issuerNews"] as String
+        assertTrue(news.contains("Новость без даты"), news)
+        assertTrue(news.contains("н/д"), news)
+        assertFalse(news.contains("Новость без даты:"), "пустой snippet не добавляет двоеточие: $news")
     }
 
     @Test

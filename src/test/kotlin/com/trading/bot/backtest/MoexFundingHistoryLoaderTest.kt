@@ -443,6 +443,7 @@ class MoexFundingHistoryLoaderTest {
         assertEquals(0, loader.countRawRows("""{"other": {"columns": ["X"], "data": [["1"]]}}"""))
         assertEquals(2, loader.countRawRows("""{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [["a","1"],["b","2"]]}}"""))
     }
+
     private fun loader(
         fundingConfig: FundingConfig = FundingConfig(),
         repo: FundingHistoryRepository = Mockito.mock(FundingHistoryRepository::class.java),

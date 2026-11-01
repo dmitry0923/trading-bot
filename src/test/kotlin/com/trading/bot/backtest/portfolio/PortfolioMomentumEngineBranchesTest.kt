@@ -388,6 +388,112 @@ class PortfolioMomentumEngineBranchesTest {
     }
 
     @Test
+    fun `vol scaling tolerates a zero close inside the volatility window`() {
+        val withHole =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> exp(2.4 + 0.0008 * i) },
+                        { _: Int -> exp(2.4) },
+                        { i: Int -> if (i == 59) 0.0 else exp(2.4 - 0.0008 * i) },
+                    ),
+            )
+
+        val result =
+            PortfolioMomentumEngine.run(
+                withHole,
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params().copy(volScalingEnabled = true, volLookbackBars = 5),
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "нулевая цена внутри окна не должна ронять расчёт")
+    }
+
+    @Test
+    fun `vol scaling tolerates a NaN close inside the volatility window`() {
+        val withHole =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> exp(2.4 + 0.0008 * i) },
+                        { _: Int -> exp(2.4) },
+                        { i: Int -> if (i == 58) Double.NaN else exp(2.4 - 0.0008 * i) },
+                    ),
+            )
+
+        val result =
+            PortfolioMomentumEngine.run(
+                withHole,
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params().copy(volScalingEnabled = true, volLookbackBars = 5),
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "NaN внутри окна даёт fallback, а не падение")
+    }
+
+    @Test
+    fun `vol targeting tolerates a zero close inside the volatility window`() {
+        val withHole =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> exp(2.4 + 0.0008 * i) },
+                        { _: Int -> exp(2.4) },
+                        { i: Int -> if (i == 59) 0.0 else exp(2.4 - 0.0008 * i) },
+                    ),
+            )
+
+        val result =
+            PortfolioMomentumEngine.run(
+                withHole,
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params().copy(volTargetEnabled = true, volLookbackBars = 5),
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "vol targeting не должен падать на дырке в ряду")
+    }
+
+    @Test
+    fun `vol targeting with a single observation keeps the unit scale`() {
+        val result =
+            PortfolioMomentumEngine.run(
+                trending(200),
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params().copy(volTargetEnabled = true, volLookbackBars = 1),
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "одного наблюдения недостаточно для σ → scale 1.0")
+    }
+
+    @Test
+    fun `zero opening price still opens a single contract`() {
+        val zeroOpens =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> exp(2.4 + 0.0008 * i) },
+                        { _: Int -> exp(2.4) },
+                        { i: Int -> exp(2.4 - 0.0008 * i) },
+                    ),
+                opens = List(3) { { _: Int -> 0.0 } },
+            )
+
+        val result =
+            PortfolioMomentumEngine.run(
+                zeroOpens,
+                listOf(spec("UP"), spec("FLAT"), spec("DOWN")),
+                params(),
+            )
+
+        assertTrue(result.trades.isNotEmpty())
+        assertTrue(result.trades.all { it.qty == 1 }, "нулевой notional не даёт деления на ноль")
+    }
+
+    @Test
     fun `zero price and zero notional tickers are excluded from the cross section`() {
         val withZeroMomentum =
             bars(

@@ -203,10 +203,20 @@ class ResilientLlmClientTest {
             whenever(settingsService.getSettings()).thenReturn(
                 BotSettings().copy(llmProvider = "KIMI", llmBaseUrl = "http://127.0.0.1:1", llmApiKey = "test-key"),
             )
+            val cache = mock<SemanticCache>()
+            whenever(
+                cache.key(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenReturn("cache-key")
             val client =
                 ResilientLlmClient(
                     llmConfig = config,
-                    semanticCache = mock(),
+                    semanticCache = cache,
                     objectMapper = ObjectMapper(),
                     meterRegistry = registry,
                     circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
@@ -234,6 +244,136 @@ class ResilientLlmClientTest {
         }
 
     /** Стаб Lua-скрипта резервирования бюджета (9 ARGV). */
+    @Test
+    fun `semantic cache hit returns the stored response without calling the provider`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val config =
+                LlmConfig().apply {
+                    semanticCacheEnabled = true
+                    retryEnabled = false
+                    circuitBreakerEnabled = false
+                    rateLimiterEnabled = false
+                }
+            val settingsService = mock<SettingsService>()
+            whenever(settingsService.getSettings()).thenReturn(
+                BotSettings().copy(llmProvider = "KIMI", llmBaseUrl = "http://127.0.0.1:1", llmApiKey = "test-key"),
+            )
+            val cache = mock<SemanticCache>()
+            val cached = LlmResponse(content = """{"cached":true}""", fromCache = true)
+            whenever(
+                cache.get(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenReturn(cached)
+            val client =
+                ResilientLlmClient(
+                    llmConfig = config,
+                    semanticCache = cache,
+                    objectMapper = ObjectMapper(),
+                    meterRegistry = registry,
+                    circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+                    rateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
+                    retryRegistry = RetryRegistry.ofDefaults(),
+                    settingsService = settingsService,
+                    traceStorage = mock<TraceStorage>(),
+                    traceStorageConfig = TraceStorageConfig().apply { enabled = false },
+                )
+
+            val response =
+                client.complete(
+                    agent = "technical",
+                    ticker = "SBER",
+                    prompt = PromptTemplate(name = "test", version = "1", system = "sys", userTemplate = "user"),
+                    variables = emptyMap(),
+                    fingerprint = "fp",
+                    temperature = 0.1,
+                )
+
+            assertEquals(cached, response)
+            assertFalse(response.isFallback, "cache response is not a fallback")
+        }
+
+    @Test
+    fun `single-flight unavailable fails closed without calling the provider`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val config =
+                LlmConfig().apply {
+                    singleFlightEnabled = true
+                    retryEnabled = false
+                    circuitBreakerEnabled = false
+                    rateLimiterEnabled = false
+                }
+            val redis: StringRedisTemplate = mock()
+            val ops: ValueOperations<String, String> = mock()
+            Mockito.`when`(redis.opsForValue()).thenReturn(ops)
+            Mockito
+                .`when`(
+                    ops.setIfAbsent(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        ArgumentMatchers.any<Duration>(),
+                    ),
+                ).thenReturn(null)
+            val settingsService = mock<SettingsService>()
+            whenever(settingsService.getSettings()).thenReturn(
+                BotSettings().copy(llmProvider = "KIMI", llmBaseUrl = "http://127.0.0.1:1", llmApiKey = "test-key"),
+            )
+            val cache = mock<SemanticCache>()
+            whenever(
+                cache.key(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenReturn("cache-key")
+            val client =
+                ResilientLlmClient(
+                    llmConfig = config,
+                    semanticCache = cache,
+                    objectMapper = ObjectMapper(),
+                    meterRegistry = registry,
+                    circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+                    rateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
+                    retryRegistry = RetryRegistry.ofDefaults(),
+                    settingsService = settingsService,
+                    traceStorage = mock<TraceStorage>(),
+                    traceStorageConfig = TraceStorageConfig().apply { enabled = false },
+                    llmSingleFlight = LlmSingleFlight(redis, registry, config),
+                )
+
+            val response =
+                client.complete(
+                    agent = "technical",
+                    ticker = "SBER",
+                    prompt = PromptTemplate(name = "test", version = "1", system = "sys", userTemplate = "user"),
+                    variables = emptyMap(),
+                    fingerprint = "fp",
+                    temperature = 0.1,
+                )
+
+            assertTrue(response.isFallback, "redis unavailable means fail-closed")
+            assertEquals("SINGLE_FLIGHT_UNAVAILABLE", response.errorMessage)
+            assertEquals(
+                1.0,
+                registry
+                    .counter(
+                        "llm.fallback.activated",
+                        "agent",
+                        "technical",
+                        "reason",
+                        "SINGLE_FLIGHT_UNAVAILABLE",
+                    ).count(),
+            )
+        }
+
     private fun stubReserve(
         redis: StringRedisTemplate,
         result: List<Any?>,

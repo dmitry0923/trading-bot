@@ -299,6 +299,18 @@ class PortfolioMomentumEngineBranchesTest {
     }
 
     @Test
+    fun `vol targeting with a one bar window keeps the unit scale`() {
+        val result =
+            PortfolioMomentumEngine.run(
+                trending(200),
+                listOf(spec("A"), spec("B"), spec("C")),
+                params().copy(volTargetEnabled = true, volLookbackBars = 1),
+            )
+
+        assertTrue(result.equityCurve.isNotEmpty())
+    }
+
+    @Test
     fun `vol targeting stays inactive without a volatility window`() {
         val result =
             PortfolioMomentumEngine.run(

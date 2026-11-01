@@ -299,10 +299,24 @@ class RestOrderTransportLiveTest {
             assertTrue(error.message!!.contains("uncertain"))
         }
 
+    @Test
+    fun `resilience decorators preserve a successful delivery`() =
+        runBlocking {
+            FakeAlorServer().use { server ->
+                val transport = transport(server, decoratorsEnabled = true)
+
+                val orderNumber = transport.placeLimit("CNYRUBF", "buy", 1, BigDecimal("12.3"), "idem-dec", "P1", OrderPurpose.ENTRY)
+
+                assertEquals("ord-limit-1", orderNumber)
+                assertEquals(1, server.recorded.size)
+            }
+        }
+
     private fun transport(
         server: FakeAlorServer,
         approved: Boolean = true,
         tickerAllowlist: List<String> = listOf("CNYRUBF"),
+        decoratorsEnabled: Boolean = false,
     ): RestOrderTransport {
         registry = SimpleMeterRegistry()
         val tradingConfig =
@@ -316,9 +330,9 @@ class RestOrderTransportLiveTest {
                 token = "test-token"
                 portfolio = "P1"
                 exchange = "MOEX"
-                retryEnabled = false
-                rateLimiterEnabled = false
-                circuitBreakerEnabled = false
+                retryEnabled = decoratorsEnabled
+                rateLimiterEnabled = decoratorsEnabled
+                circuitBreakerEnabled = decoratorsEnabled
             }
         return RestOrderTransport(
             tradingConfig,

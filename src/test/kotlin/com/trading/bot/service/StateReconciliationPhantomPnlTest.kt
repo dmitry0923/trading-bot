@@ -17,6 +17,7 @@ import com.trading.bot.repository.PositionRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -170,6 +171,42 @@ class StateReconciliationPhantomPnlTest {
 
             // (115 - 100) × 10 × lotSize(fallback 1) = 150, комиссия неизвестна → 0
             assertEquals(0, BigDecimal("150").compareTo(pos.pnl))
+        }
+
+    @Test
+    fun `phantom close ignores trades without a side and tolerates a missing time`(): Unit =
+        runBlocking {
+            val pos = position(ticker = "SBER", entryPrice = "100", quantity = 10)
+            whenever(positionRepo.findOpenByAccount(anyOrNull())).thenReturn(listOf(pos))
+            whenever(alorClient.getOpenOrders("D12345")).thenReturn(ReconcileResult.Ok(emptyList()))
+            whenever(alorClient.getPositions("D12345")).thenReturn(ReconcileResult.Ok(emptyList()))
+            val noSide =
+                AlorClient.ExchangeTrade(
+                    id = "t-0",
+                    orderId = null,
+                    ticker = "SBER",
+                    side = null,
+                    quantity = 10,
+                    price = BigDecimal("1"),
+                    time = null,
+                )
+            val noTime =
+                AlorClient.ExchangeTrade(
+                    id = "t-2",
+                    orderId = null,
+                    ticker = "SBER",
+                    side = "sell",
+                    quantity = 10,
+                    price = BigDecimal("110"),
+                    time = null,
+                )
+            whenever(alorClient.getRecentTrades("D12345")).thenReturn(ReconcileResult.Ok(listOf(noSide, noTime)))
+            stubTransition(true)
+
+            service().reconcile()
+
+            assertEquals(PositionStatus.CLOSED, pos.status)
+            assertNotNull(pos.pnl, "цена восстановлена из сделки без времени")
         }
 
     @Test

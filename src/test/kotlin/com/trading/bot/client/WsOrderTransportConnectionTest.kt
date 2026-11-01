@@ -12,6 +12,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -120,6 +122,76 @@ class WsOrderTransportConnectionTest {
         }
 
     @Test
+    fun `rejected place is reported as definitive rejection`(): Unit =
+        runBlocking {
+            connection.autoConfirm = false
+            var rejected = false
+            awaitSent("OrdersGetAndSubscribeV2")
+            val job =
+                scope.launch {
+                    try {
+                        transport.placeLimit("SBER", "buy", 1, BigDecimal("300"), "idem-rej", "P1", OrderPurpose.ENTRY)
+                    } catch (_: OrderRejectedException) {
+                        rejected = true
+                    }
+                }
+            awaitSent("AlorOrders")
+            connection.inbound.send("""{"id":"idem-rej","status":"rejected","error":"no money"}""")
+            job.join()
+
+            assertTrue(rejected, "rejected place must raise OrderRejectedException")
+        }
+
+    @Test
+    fun `rejected cancel returns REJECTED`(): Unit =
+        runBlocking {
+            connection.autoConfirm = false
+            var result: CancelResult? = null
+            awaitSent("OrdersGetAndSubscribeV2")
+            val job = scope.launch { result = transport.cancel("ord-9", "idem-c", "P1") }
+            awaitSent("AlorCancelOrder")
+            connection.inbound.send("""{"orderNumber":"ord-9","status":"rejected"}""")
+            job.join()
+
+            assertEquals(CancelResult.REJECTED, result)
+        }
+
+    @Test
+    fun `connect failure keeps the channel unavailable while retrying`(): Unit =
+        runBlocking {
+            val attempts = AtomicInteger()
+            val failingFactory =
+                object : WsOrderSocketFactory {
+                    override suspend fun open(): WsOrderSocketConnection {
+                        attempts.incrementAndGet()
+                        throw IllegalStateException("dial failed")
+                    }
+                }
+            val failingTransport =
+                WsOrderTransport(
+                    alorConfig,
+                    tradingConfig,
+                    SimpleMeterRegistry(),
+                    failingFactory,
+                    scope,
+                    resolver(),
+                    tokenProvider(),
+                )
+            val deadline = System.currentTimeMillis() + 3_000
+            while (attempts.get() < 1 && System.currentTimeMillis() < deadline) delay(20)
+
+            var unavailable = false
+            try {
+                failingTransport.placeLimit("SBER", "buy", 1, BigDecimal("300"), "idem-down", "P1", OrderPurpose.ENTRY)
+            } catch (_: OrderTransportUnavailableException) {
+                unavailable = true
+            }
+
+            assertTrue(unavailable, "channel must stay unavailable while connect fails")
+            assertTrue(attempts.get() >= 1)
+        }
+
+    @Test
     fun `placeConditional returns orderNumber on confirmed event`() =
         runBlocking {
             val result = transport.placeConditional("take-profit", "SBER", "sell", 1, BigDecimal("310"), "idem-tp", "P1", OrderPurpose.TP)
@@ -178,6 +250,13 @@ class WsOrderTransportConnectionTest {
             assertEquals("refreshed-token", command.path("token").asString())
         }
 
+    private suspend fun awaitSent(marker: String) {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (connection.sent.none { it.contains(marker) } && System.currentTimeMillis() < deadline) {
+            delay(20)
+        }
+    }
+
     private fun resolver(): LiveFrozenStrategyResolver {
         val resolver = mock<LiveFrozenStrategyResolver>()
         runBlocking { whenever(resolver.isOrderAllowed(any(), any())).thenReturn(true) }
@@ -190,6 +269,8 @@ class WsOrderTransportConnectionTest {
         val inbound = Channel<String>(capacity = 100)
         val sent: MutableList<String> = CopyOnWriteArrayList()
         var closeOnSubscribe = false
+        var autoConfirm = true
+        var responseStatus = "working"
         val closeCount = AtomicInteger()
 
         override val messages: Flow<String> = inbound.receiveAsFlow()
@@ -207,11 +288,12 @@ class WsOrderTransportConnectionTest {
                 }
 
                 "AlorOrders" -> {
-                    // Подтверждаем размещение автоматически (correlation по id/guid payload-а).
-                    val id = json.path("id").asString()
-                    val type = json.path("type").asString()
-                    val orderNumber = if (type == "limit") "ord-1" else "ord-tp-1"
-                    inbound.trySend("""{"id":"$id","orderNumber":"$orderNumber","status":"working"}""")
+                    if (autoConfirm) {
+                        val id = json.path("id").asString()
+                        val type = json.path("type").asString()
+                        val orderNumber = if (type == "limit") "ord-1" else "ord-tp-1"
+                        inbound.trySend("""{"id":"$id","orderNumber":"$orderNumber","status":"$responseStatus"}""")
+                    }
                 }
             }
         }

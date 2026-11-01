@@ -257,6 +257,37 @@ class BacktestEngineLifecycleBranchesTest {
         }
 
     @Test
+    fun `risk gate rejection without a reason is metered as unknown`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val simulator = mock<BacktestRiskSimulator>()
+            whenever(
+                simulator.checkEntry(
+                    org.mockito.kotlin.any(),
+                    anyAction(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyCandle(),
+                    anyCandleList(),
+                    anyNullableDouble(),
+                    anyDateTime(),
+                    anyFundingMap(),
+                ),
+            ).thenReturn(BacktestRiskSimulator.GateResult(allowed = false, reason = null))
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = true
+                    futuresLiquidationSimulation = false
+                }
+
+            val result =
+                engine(config = config, meterRegistry = registry, riskSimulator = simulator)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5, maxHoldBars = 1)
+
+            assertEquals(0, result.totalTrades)
+        }
+
+    @Test
     fun `unknown ticker uses a unit lot and zero funding`(): Unit =
         runBlocking {
             val result =

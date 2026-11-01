@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 97,03 % (25 219 / 25 994) |
-| BRANCH | 89,80 % (9 528 / 10 626) |
-| Тестов | 3 577 |
+| LINE | 97,11 % (25 247 / 25 994) |
+| BRANCH | 90,14 % (9 564 / 10 626) |
+| Тестов | 3 604 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -107,32 +107,46 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 правилами запрещено. Без этого потолок оценивается существенно ниже 90 %; точная доля
 DEAD-ветвей требует отдельного пофайлового аудита (реестр C-01…C-12 в §2).
 
-## 3b. Итерация «до 90 %» (2026-11-01, вечер): 88,90 % → 89,80 %
+## 3b. Итерация «до 90 %» (2026-11-01/02): 88,90 % → **90,14 %** (цель достигнута)
 
-Добавлено 41 тест (3 536 → 3 577), +82 покрытые ветви. Что сработало:
+Добавлено 67 тестов (3 536 → 3 603), +114 покрытых ветвей. Что закрыло разрыв:
 
-- **`PositionRepository.toPosition`** (27 → 14): маппер сделан `internal`, добавлен unit-тест
-  на `Row` с `NULL` в nullable-колонках и с заполненными значениями — закрыл дефолт-ветви
-  `?: 0/false/ZERO` без БД.
-- **`ApiController`**: `trading/status` с пустым/заполненным `TradingStatus` (reason/source/
-  detail/blockedAt/ticker), `withdraw`/`deposit` без `amount`, clearing с `date=null` и датой.
-- **`ProtectionOrderManager`**: флаги `slPendingReplace`/`slCancelPending`/`tpPendingReplace`/
-  `tpCancelPending`, активный outbox TP, `reconcile` для не-OPEN позиции.
-- **`BacktestEngine`**: mock-`MeterRegistry` (counter=null) для ML/MTF/funding-window/veto/risk
-  путей, funding-veto с неизвестной датой и SELL.
-- **`IndicatorCalculator`**: BEARISH-ветвь MACD, ADX на падении/коротком окне, Keltner/range-squeeze
-  на плоском диапазоне, `isSqueeze` при нулевых ценах.
-- **`DecisionEngine`**: null-снапшот → targetPrice, gate-блокировки без значения (netEV/fundingRub).
-- **Прочее**: `FundingSnapshotService` (refreshed snapshot, LIVE без снапшота),
-  `ConfiguredFundingProvider`, `DegenerateCaseGuard` (неизвестный тикер), `VolatilityIndexService`
-  (кеш TTL), `MonthlyTuningScheduler` (период уже в `strategy_versions`), `ClearingService`
-  (неизвестный инвестор/аккаунт, пустой пул), `ProfitForecastService` (пустая история, один день,
-  сделки без `closedAt`), `MoexFundingProvider` (пустые/пустые-строки data), `BacktestTradeRecord.toMap`.
+- **P0-находка (не покрытие, а дефект):** самоссылка Resilience4j в `AlorClient.resilient` и
+  `RestOrderTransport.resilient` — `call = registry.decorateSuspendFunction { call() }` захватывал
+  мутабельную переменную по ссылке → `StackOverflowError` на **любом** REST-запросе/заявке при
+  дефолтных `ALOR_RETRY_ENABLED/ALOR_RATE_LIMITER_ENABLED/ALOR_CIRCUIT_BREAKER_ENABLED=true`.
+  Исправлено immutable-цепочкой (`val inner = call`), регресс-тесты `alor client resilience decorators
+  keep market data delivery working` и `rest order transport resilience decorators preserve a successful
+  delivery` (оба проходят только после фикса).
+- **Repository-мапперы без БД:** `PositionRepository` (`toPosition` → `internal`; тест на `Row` с `NULL`
+  в nullable-колонках + перехват mapper'а для `count/EXISTS`-запросов), `DailyRiskSnapshotRepository`
+  (legacy vs account-scoped `findByDate/findRecent/upsert` и suspend-варианты), `OrderOutboxRepository`
+  (`countPendingByAccount`, `findLatestByPositionId` с `purpose`/без, duplicate idempotency key).
+- **WS-транспорт:** rejected place/cancel исходы (`OrderRejectedException`, `CancelResult.REJECTED`),
+  отказ соединения (канал остаётся недоступным, reconnect продолжается) — через существующий
+  `FakeSocketFactory`-стенд.
+- **HTTP-транспорт:** тест с включёнными Resilience4j-декораторами (ловит P0 выше).
+- **Движок/сервисы:** mock-`MeterRegistry` (counter=null) для ML/MTF/funding-window/veto-путей,
+  funding-veto SHORT при неизвестной ставке, risk-gate без reason, `DecisionEngine` (null-снапшот,
+  gate без значения), `DrawdownProtectionService` (кеш/аккумулятор), `PortfolioMomentumEngine`
+  (volLookback=1), `IndicatorCalculator` (BEARISH MACD, ADX/Keltner/squeeze на вырожденных рядах),
+  `ApiController` (`trading/status`, investor/clearing дефолты), `ClearingService` (404-ветви),
+  `ProfitForecastService` (пустая история/один день/без `closedAt`), `MoexFundingProvider` (пустые data).
 
-Остаток (36 ветвей до цели) — это защитные fail-closed ветви (`?:` на NOT NULL-колонках,
-NaN/Infinity-guard'ы) и сетевые пути (WS-reconnect, rate-limit/circuit-breaker декораторы,
-`.7z`-ветка парсера без `org.tukaani:xz`). Их покрытие требует либо удаления DEAD-кода
-(меняет инварианты), либо фейковых WS/HTTP-серверов — отдельный цикл.
+Итог: **BRANCH 90,14 % (9 564 / 10 626)**, LINE 97,11 %, тестов 3 604, падений 0.
+
+## 3c. Итерация «до 90 %»: что не сработало (чтобы не повторять)
+
+- **`SseEmitter.onCompletion/onTimeout/onError`** в `DashboardSseService` не исполняются в unit-тесте:
+  колбэки регистрируются, но без инициализированного MVC-контейнером handler'а `complete()`/
+  `completeWithError()` их не вызывают. Нужен MockMvc/WebTestClient-стенд (не добавлял).
+- **`rowsUpdated() == 1L`** в `PositionRepository` (`claimForClose` и др.): тест подаёт `Mono.just(1L)`
+  и `Mono.just(0L)`, но Kover всё равно показывает `mb=1` — ветвь атрибутируется suspend-адаптеру
+  `awaitSingle`, а не сравнению; не преследовал.
+- **`?: emptyList()`** в репозиториях (`collectList().block()/awaitSingleOrNull()`) — недостижимая
+  ветвь: `collectList()` всегда эмитит список (DEAD).
+- **`Person`/`Investor`-мапперы** используют `require(...)`, а не `?:` — их null-ветви не в этих
+  классах, а в extension `require` (одна на всех), поэтому «дешёвых» ветвей там нет.
 
 ## 4. Релизная сборка (этап 4)
 

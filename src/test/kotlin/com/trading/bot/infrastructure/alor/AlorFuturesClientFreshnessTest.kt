@@ -154,6 +154,23 @@ class AlorFuturesClientFreshnessTest {
     }
 
     @Test
+    fun `live GO without a direction resolves the long side`() {
+        val ctx =
+            liveServer(
+                goBody = """{"long": {"initialMargin": "850"}, "short": {"initialMargin": "900"}}""",
+                summariesBody = """{"moneyAmount": "50000"}""",
+                maxGoAgeMs = 5000,
+            )
+        try {
+            val go = runBlocking { ctx.client.getFuturesGO("CNYRUBF", null) }
+
+            assertEquals(0, BigDecimal("850").compareTo(go!!))
+        } finally {
+            ctx.server.stop(0)
+        }
+    }
+
+    @Test
     fun `live GO with missing requested side returns null fail-closed`() {
         // /risk ответил только long.initialMargin — SHORT-вход не может сайзиться
         // от ГО другой стороны (или от устаревшей пары): null → вход блокируется.

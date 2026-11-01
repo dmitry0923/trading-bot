@@ -293,6 +293,43 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
+    fun `daily pnl update after a cached status keeps the cached aum path`(): Unit =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(emptyList())
+            val s = service()
+            s.computeStatus()
+
+            s.updateDailyPnl(BigDecimal("-1"), null)
+
+            assertFalse(s.isDailyLossLimitReached(null))
+        }
+
+    @Test
+    fun `account accumulator survives a status recompute on the same day`(): Unit =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(emptyList())
+            val s = service()
+
+            s.updateDailyPnl(BigDecimal("-5"), 7L)
+            s.updateDailyPnl(BigDecimal("-3"), 7L)
+
+            assertTrue(s.getDailyPnl(7L) < BigDecimal.ZERO, "накопленный убыток должен сохраняться")
+        }
+
+    @Test
+    fun `daily loss limit is available right after a status read`(): Unit =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(emptyList())
+            val s = service()
+            s.computeStatus()
+
+            assertTrue(s.effectiveDailyLossLimitRub() > BigDecimal.ZERO)
+        }
+
+    @Test
     fun `daily pnl update before the first snapshot falls back to the live aum`(): Unit =
         runBlocking {
             stubNoOpenPositions()

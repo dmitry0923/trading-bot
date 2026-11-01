@@ -688,15 +688,22 @@ class AlorClient(
      * Конфиг — application.yml (resilience4j.circuitbreaker/ratelimiter/retry.instances.alor).
      */
     private suspend fun <T> resilient(block: suspend () -> T): T {
+        // Immutable-цепочка: каждый декоратор захватывает ПРЕДЫДУЩУЮ функцию по значению.
+        // Мутабельная `call` внутри лямбды давала самоссылку и StackOverflowError при
+        // включённых декораторах (дефолт ALOR_*_ENABLED=true) - регресс-тест
+        // `resilience decorators preserve a successful delivery`.
         var call: suspend () -> T = block
         if (alorConfig.circuitBreakerEnabled) {
-            call = circuitBreakerRegistry.circuitBreaker("alor").decorateSuspendFunction { call() }
+            val inner = call
+            call = circuitBreakerRegistry.circuitBreaker("alor").decorateSuspendFunction { inner() }
         }
         if (alorConfig.rateLimiterEnabled) {
-            call = rateLimiterRegistry.rateLimiter("alor").decorateSuspendFunction { call() }
+            val inner = call
+            call = rateLimiterRegistry.rateLimiter("alor").decorateSuspendFunction { inner() }
         }
         if (alorConfig.retryEnabled) {
-            call = retryRegistry.retry("alor").decorateSuspendFunction { call() }
+            val inner = call
+            call = retryRegistry.retry("alor").decorateSuspendFunction { inner() }
         }
         return call()
     }

@@ -180,6 +180,16 @@ class ExecutionReconcilerPathsTest {
         }
 
     @Test
+    fun `close confirm without a current price uses the entry price`(): Unit =
+        runBlocking {
+            val pos = closePosition().also { it.currentPrice = null }
+
+            reconciler.reconcilePosition(pos)
+
+            assertEquals(1, confirmedClose.get())
+        }
+
+    @Test
     fun `reconcilePosition confirms close fill when order id is known`(): Unit =
         runBlocking {
             val pos = closePosition()

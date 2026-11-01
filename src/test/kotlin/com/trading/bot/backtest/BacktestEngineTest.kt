@@ -1123,6 +1123,27 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `funding veto with an unknown rate blocks a short entry`() {
+        val vetoEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoLongThresholdRub = 2.0
+                        fundingVetoShortThresholdRub = 2.0
+                        fundingVetoBlockOnUnknown = true
+                    },
+                signalGenerator = ConstantSignalGenerator(StrategyAction.SELL),
+                fundingHistoryRepository = fundingRepoReturning(),
+            )
+
+        val result = runBlocking { vetoEngine.simulate("SBER", trendingCandles()) }
+
+        assertEquals(0, result.totalTrades, "SHORT при неизвестном funding должен блокироваться")
+    }
+
+    @Test
     fun `funding veto with an unknown date fails closed without a counter registry`() {
         val registryWithoutCounters = Mockito.mock(io.micrometer.core.instrument.MeterRegistry::class.java)
         val vetoEngine =

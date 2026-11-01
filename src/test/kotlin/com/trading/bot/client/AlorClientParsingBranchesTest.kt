@@ -35,6 +35,7 @@ class AlorClientParsingBranchesTest {
     private fun buildClient(
         server: FakeServer,
         registry: SimpleMeterRegistry = SimpleMeterRegistry(),
+        decoratorsEnabled: Boolean = false,
     ): AlorClient {
         val tradingConfig = TradingConfig().apply { mode = "LIVE" }
         val alorConfig =
@@ -42,9 +43,9 @@ class AlorClientParsingBranchesTest {
                 apiUrl = server.baseUrl
                 token = "test-token"
                 portfolio = "P1"
-                retryEnabled = false
-                rateLimiterEnabled = false
-                circuitBreakerEnabled = false
+                retryEnabled = decoratorsEnabled
+                rateLimiterEnabled = decoratorsEnabled
+                circuitBreakerEnabled = decoratorsEnabled
             }
         return AlorClient(
             tradingConfig,
@@ -58,6 +59,18 @@ class AlorClientParsingBranchesTest {
             CircuitBreakerRegistry.ofDefaults(),
         )
     }
+
+    @Test
+    fun `resilience decorators keep market data delivery working`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.quotesBody = """{"bid":"99.9","ask":"100.1","last":"100.0"}"""
+
+                val snapshot = buildClient(server, decoratorsEnabled = true).getMarketSnapshot("SBER")
+
+                assertEquals(0, BigDecimal("100.0").compareTo(snapshot!!.currentPrice))
+            }
+        }
 
     @Test
     fun `zero quote sizes are unknown and missing last price falls back to bid or mid`() =

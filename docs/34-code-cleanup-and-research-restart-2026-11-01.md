@@ -30,6 +30,7 @@
 | 8 | `infrastructure/llm/LlmResponseValidator.kt` | `number.toDouble()` → `number` | предупреждение | `number` уже `Double` |
 | 9 | `service/StrategyService.kt`, `tuning/TuningMetricsProvider.kt` | убраны `?.` на non-null (`regime`, `realizedPnl`) | предупреждения | без изменений |
 | 10 | `repository/FrozenStrategyRepository.kt`, `repository/DeploymentApprovalRepository.kt` | `java.lang.Double/Integer` **оставлены** (R2DBC `row.get`/`bindNull` требует boxed-типы), предупреждение подавлено `@file:Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")` | обоснование | suppression вместо неверного «исправления» |
+| 11 | `client/AlorClient.kt`, `client/RestOrderTransport.kt` | **P0: самоссылка в Resilience4j-цепочке.** `call = registry....decorateSuspendFunction { call() }` захватывал мутабельную переменную по ссылке → каждый декоратор вызывал сам себя → `StackOverflowError`. При дефолтах `ALOR_RETRY_ENABLED/ALOR_RATE_LIMITER_ENABLED/ALOR_CIRCUIT_BREAKER_ENABLED=true` это ломало **любой** REST-запрос `AlorClient` и **любую** заявку `RestOrderTransport` в SIM/LIVE. Исправлено immutable-цепочкой (`val inner = call`), как уже было в `ResilientLlmClient`/`RgRuNewsProvider`; регресс-тесты `alor client resilience decorators keep market data delivery working`, `rest order transport resilience decorators preserve a successful delivery` | **дефект (исправлен)** | транспорт больше не падает при включённых декораторах |
 
 **Итог:** `compileKotlin` — **41 предупреждение → 0**.
 
@@ -69,10 +70,12 @@ Defensive-guards не удалялись: они защищают от выро�
 - `engineVersion` остаётся **`2026-10-26.2`**: все правки семантически нейтральны
   (удалён мёртвый код, сняты предупреждения), P&L-логика не менялась.
 - `test` + `integrationTest` + `ktlintCheck` — зелёные (см. §6).
-- Покрытие: LINE 96,94 %, BRANCH 89,16 % (9 460 / 10 626), тестов 3 536, падений 0.
+- Покрытие: LINE 97,11 %, BRANCH **90,14 %** (9 564 / 10 626) — цель 90 % достигнута,
+  тестов 3 604, падений 0.
 - Артефакт: `build/libs/trading-bot-2.0.0.jar` (имя не менялось, чтобы не ломать
-  research-скрипты, завязанные на путь), размер 126 849 211 байт,
-  SHA-256 `89586879AE3E3673BBA2447F41859D62B3EC5D34F892B76F20826B5E4FE68640`.
+  research-скрипты, завязанные на путь), размер 126 848 786 байт,
+  SHA-256 `9AA0E10402F845E166F03EA5BC28FFEC99B58E9AD70ED4823DC0010E8827DB66`.
+  Сборка пересобрана **после** фикса P0 Resilience4j (см. §2, п. 11).
 
 ## 6. Рестарт исследований: да, начинаем заново
 

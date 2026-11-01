@@ -648,6 +648,21 @@ class EntryFiltersDirectionTest {
     }
 
     @Test
+    fun `orb with a zero window passes when not fail closed`() {
+        val candles = ramp(listOf(100.0, 101.0, 102.0))
+        val loose =
+            filters(
+                EntryFilterOverrides(
+                    orbEnabled = true,
+                    orbWindowBars = 0,
+                    orbBlockOnUnknown = false,
+                ),
+            )
+
+        assertNull(loose.orbDirection(candles, 2))
+    }
+
+    @Test
     fun `orb with a zero window has no range and fails closed`() {
         val candles = ramp(listOf(100.0, 101.0, 102.0))
         val strict =

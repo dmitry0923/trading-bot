@@ -862,6 +862,38 @@ class BacktestEngineLifecycleBranchesTest {
             assertEquals(1.0, registry.counter("bt_pass_total", "result", "REJECT").count())
         }
 
+    @Test
+    fun `futures without a sizer fall back to the generic lot sizing`(): Unit =
+        runBlocking {
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false })
+                    .simulate("CNYRUBF", minuteCandles("CNYRUBF"), minBarsForSignal = 5)
+
+            assertTrue(result.equityCurve.isNotEmpty(), "generic-сайзинг исполняется без PositionSizer")
+        }
+
+    @Test
+    fun `futures sizer without overrides uses the default stop points`(): Unit =
+        runBlocking {
+            val sizer = mock<PositionSizer>()
+            whenever(
+                sizer.calculateContracts(
+                    org.mockito.kotlin.any(),
+                    anyBigDecimal(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyDirection(),
+                ),
+            ).thenReturn(PositionSizeResult(1, BigDecimal("1275"), BigDecimal("500"), null, null))
+
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false }, sizer = sizer)
+                    .simulate("CNYRUBF", minuteCandles("CNYRUBF"), minBarsForSignal = 5)
+
+            assertTrue(result.equityCurve.isNotEmpty())
+        }
+
     private fun anyBigDecimal(): BigDecimal {
         Mockito.any(BigDecimal::class.java)
         return BigDecimal("100")

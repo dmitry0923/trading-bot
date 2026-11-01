@@ -717,6 +717,146 @@ class EntryFiltersDirectionTest {
         assertEquals(StrategyAction.BUY, f.panicReversalDirection(panic, falling))
     }
 
+    @Test
+    fun `panic reversal can skip the session drop and the bullish bar requirement`() {
+        val noDrop =
+            filters(
+                EntryFilterOverrides(
+                    panicReversalEnabled = true,
+                    panicMinBars = 2,
+                    panicRsiPeriod = 2,
+                    panicMaxRsi = 30.0,
+                    panicRequireBullishBar = true,
+                    panicUseSessionDrop = false,
+                    panicBlockOnUnknown = false,
+                ),
+            )
+        val falling = (0 until 10).map { BigDecimal(100 - it * 2) }
+        val flatSession =
+            listOf(
+                candle(100.0, open = 100.0, minutes = 0),
+                candle(100.0, open = 99.5, minutes = 10),
+            )
+        assertEquals(StrategyAction.BUY, noDrop.panicReversalDirection(flatSession, falling))
+
+        val noBullish =
+            filters(
+                EntryFilterOverrides(
+                    panicReversalEnabled = true,
+                    panicMinBars = 2,
+                    panicRsiPeriod = 2,
+                    panicMaxRsi = 30.0,
+                    panicRequireBullishBar = false,
+                    panicUseSessionDrop = true,
+                    panicMinSessionDropPercent = 3.0,
+                    panicBlockOnUnknown = false,
+                ),
+            )
+        val bearishPanic =
+            listOf(
+                candle(100.0, open = 100.0, minutes = 0),
+                candle(90.0, open = 92.0, minutes = 10),
+            )
+        assertEquals(StrategyAction.BUY, noBullish.panicReversalDirection(bearishPanic, falling))
+    }
+
+    @Test
+    fun `macro trend returns null for short history when not fail closed`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    macroTrendEnabled = true,
+                    macroTrendMinHigherBars = 5,
+                    macroTrendPullbackEmaPeriod = 3,
+                    macroTrendBlockOnUnknown = false,
+                ),
+            )
+
+        assertNull(f.macroTrendDirection(List(2) { BigDecimal(100) }, List(3) { BigDecimal(100) }))
+        assertNull(f.macroTrendDirection(List(6) { BigDecimal(100) }, emptyList()))
+    }
+
+    @Test
+    fun `macro trend returns null for a zero base ema when not fail closed`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    macroTrendEnabled = true,
+                    macroTrendMinHigherBars = 4,
+                    macroTrendPullbackEmaPeriod = 3,
+                    macroTrendBlockOnUnknown = false,
+                ),
+            )
+        val rising = (0 until 6).map { BigDecimal(100 + it) }
+
+        assertNull(f.macroTrendDirection(rising, List(3) { BigDecimal.ZERO }))
+    }
+
+    @Test
+    fun `vwap mr returns null on undefined inputs when not fail closed`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    vwapMrEnabled = true,
+                    vwapMrMinSessionBars = 5,
+                    vwapMrBlockOnUnknown = false,
+                ),
+            )
+
+        assertNull(f.vwapMrDirection(ramp(listOf(100.0)), higherCandles()))
+        assertNull(f.vwapMrDirection(ramp(List(8) { 100.0 }), higherCandles(count = 3)))
+    }
+
+    @Test
+    fun `ema cross is inert when disabled`() {
+        val f = filters(EntryFilterOverrides(emaCrossEnabled = false))
+
+        assertNull(f.emaCrossDirection(ramp(listOf(100.0, 101.0, 102.0))))
+    }
+
+    @Test
+    fun `range squeeze without a cached series evaluates the window on the fly`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    rangeSqueezeEnabled = true,
+                    rangeSqueezeRangePeriod = 2,
+                    rangeSqueezeAtrPeriod = 2,
+                    rangeSqueezeLookbackBars = 0,
+                    rangeSqueezeRequireVolume = false,
+                    rangeSqueezeBlockOnUnknown = false,
+                ),
+            )
+        val flat = ramp(List(6) { 100.0 })
+
+        assertNull(f.rangeSqueezeDirection(flat), "плоский ряд: ATR=0, сжатие не доказано")
+    }
+
+    @Test
+    fun `range squeeze with a cached series and zero lookback accepts a breakout`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    rangeSqueezeEnabled = true,
+                    rangeSqueezeRangePeriod = 2,
+                    rangeSqueezeAtrPeriod = 2,
+                    rangeSqueezeLookbackBars = 0,
+                    rangeSqueezeRequireVolume = false,
+                    rangeSqueezeBlockOnUnknown = false,
+                ),
+            )
+        val window =
+            listOf(
+                candle(100.0, minutes = 0),
+                candle(100.0, minutes = 10),
+                candle(100.0, minutes = 20),
+                candle(100.0, minutes = 30),
+                candle(110.0, high = 110.5, minutes = 40),
+            )
+        val states = booleanArrayOf(false, false, false, true, false)
+
+        assertEquals(StrategyAction.BUY, f.rangeSqueezeDirection(window, states))
+    }
     // -------------------------------------------------------------------- macro trend
 
     @Test

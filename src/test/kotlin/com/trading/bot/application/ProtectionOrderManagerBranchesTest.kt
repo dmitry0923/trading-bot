@@ -869,4 +869,100 @@ class ProtectionOrderManagerBranchesTest {
                 verify(positionRepo).save(pos)
             }
         }
+
+    @Test
+    fun `pending SL replacement without an order id clears the flag`(): Unit =
+        runBlocking {
+            val pos = openPosition(slPendingReplace = true, stopLoss = null, takeProfit = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertFalse(pos.slPendingReplace)
+            runBlocking { verify(positionRepo, Mockito.atLeastOnce()).save(pos) }
+        }
+
+    @Test
+    fun `pending TP replacement without an order id clears the flag`(): Unit =
+        runBlocking {
+            val pos = openPosition(tpPendingReplace = true, stopLoss = null, takeProfit = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertFalse(pos.tpPendingReplace)
+            runBlocking { verify(positionRepo, Mockito.atLeastOnce()).save(pos) }
+        }
+
+    @Test
+    fun `TP replacement rejection with a filled old order applies take profit`(): Unit =
+        runBlocking {
+            whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.CancelResult.REJECTED)
+            stubVerifyOrderSequence(execution("FILLED", 10))
+            val pos =
+                openPosition(
+                    stopLoss = null,
+                    takeProfit = "94000",
+                    tpOrderId = "TP-1",
+                    tpOrderPrice = "93000",
+                    tpPendingReplace = true,
+                )
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals(CloseReason.TAKE_PROFIT, appliedClose.get()!!.third)
+        }
+
+    @Test
+    fun `confirmed TP replacement clears the id and resets the fill counter`(): Unit =
+        runBlocking {
+            whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.CancelResult.CONFIRMED)
+            stubPlaceOrder("TP-NEW")
+            val pos =
+                openPosition(
+                    stopLoss = null,
+                    takeProfit = "94000",
+                    tpOrderId = "TP-1",
+                    tpOrderPrice = "93000",
+                    tpPendingReplace = true,
+                )
+            pos.cumulativeTpFillQty = 2
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals("TP-NEW", pos.tpOrderId, "старый TP снят, новый выставлен")
+            assertEquals(0, pos.cumulativeTpFillQty)
+        }
+
+    @Test
+    fun `gone SL with a rejected status is cleared and re-placed`(): Unit =
+        runBlocking {
+            stubVerifyOrderSequence(execution("REJECTED", 0))
+            stubPlaceOrder("SL-NEW")
+            val pos = openPosition(slOrderId = "SL-1", slOrderPrice = "91500", takeProfit = null)
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals("SL-NEW", pos.slOrderId, "терминальный SL снимается и выставляется заново")
+            assertEquals(0, BigDecimal("91500").compareTo(pos.slOrderPrice))
+        }
+
+    @Test
+    fun `expired TP is cleared and re-placed`(): Unit =
+        runBlocking {
+            stubVerifyOrderSequence(execution("EXPIRED", 0))
+            stubPlaceOrder("TP-NEW")
+            val pos =
+                openPosition(
+                    stopLoss = null,
+                    slOrderId = null,
+                    takeProfit = "94000",
+                    tpOrderId = "TP-1",
+                    tpOrderPrice = "93000",
+                )
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertEquals("TP-NEW", pos.tpOrderId, "истёкший TP снимается и выставляется заново")
+        }
 }

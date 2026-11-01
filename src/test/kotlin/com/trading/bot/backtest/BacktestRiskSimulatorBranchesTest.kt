@@ -102,6 +102,7 @@ class BacktestRiskSimulatorBranchesTest {
         candle: Candle = entryCandle(),
         history: List<Candle> = normalHistory(),
         strength: Double? = null,
+        funding: Map<LocalDate, BigDecimal> = emptyMap(),
     ): BacktestRiskSimulator.GateResult =
         sim.checkEntry(
             ticker = ticker,
@@ -111,6 +112,7 @@ class BacktestRiskSimulatorBranchesTest {
             candle = candle,
             history = history,
             signalStrength = strength,
+            fundingHistory = funding,
         )
 
     /** Записывает закрытие сделки с заданным результатом (lotSize 10, qty 1). */
@@ -143,6 +145,38 @@ class BacktestRiskSimulatorBranchesTest {
 
         assertFalse(result.allowed, "нулевой notional не даёт лота: $result")
     }
+
+    @Test
+    fun `funding veto blocks long above and short below the thresholds`() {
+        val day = at(-1, 9).toLocalDate().minusDays(1)
+        val sim = vetoSim()
+
+        val long = runBlocking { check(sim, signal = StrategyAction.BUY, funding = mapOf(day to BigDecimal("3.0"))) }
+        assertEquals("FUNDING_VETO", long.reason)
+
+        val short = runBlocking { check(sim, signal = StrategyAction.SELL, funding = mapOf(day to BigDecimal("-3.0"))) }
+        assertEquals("FUNDING_VETO", short.reason)
+    }
+
+    @Test
+    fun `funding veto blocks unknown funding only in fail closed mode`() {
+        val blocked = runBlocking { check(vetoSim(), funding = emptyMap()) }
+        assertEquals("FUNDING_VETO", blocked.reason, "нет истории funding → fail-closed")
+
+        val loose = runBlocking { check(vetoSim(blockOnUnknown = false), funding = emptyMap()) }
+        assertTrue(loose.allowed, "blockOnUnknown=false пропускает неизвестный funding: $loose")
+    }
+
+    private fun vetoSim(blockOnUnknown: Boolean = true): BacktestRiskSimulator =
+        BacktestRiskSimulator(
+            riskConfig(),
+            instruments(),
+            null,
+            fundingVetoEnabled = true,
+            fundingVetoLongThresholdRub = 2.0,
+            fundingVetoShortThresholdRub = 2.0,
+            fundingVetoBlockOnUnknown = blockOnUnknown,
+        ).apply { initialize(capital) }
 
     private fun close(
         sim: BacktestRiskSimulator,

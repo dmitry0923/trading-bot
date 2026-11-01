@@ -287,6 +287,20 @@ class IndicatorCalculatorEdgeCasesTest {
     }
 
     @Test
+    fun `non finite prices are rejected by keltner`() {
+        val huge = List(60) { candle("1e400", high = "1e400", low = "1e400") }
+
+        assertNull(IndicatorCalculator.keltner(huge), "бесконечная EMA = вырожденный канал")
+    }
+
+    @Test
+    fun `rsi with a zero period keeps the warmup loop empty`() {
+        val value = IndicatorCalculator.rsi(listOf(BigDecimal("100"), BigDecimal("101")), 0)
+
+        assertTrue(value.isNaN(), "нулевой период даёт NaN, а не исключение")
+    }
+
+    @Test
     fun `adx returns zero when the directional window is shorter than the period`() {
         assertEquals(0.0, IndicatorCalculator.adx(flatCandles(5)), 1e-9)
     }

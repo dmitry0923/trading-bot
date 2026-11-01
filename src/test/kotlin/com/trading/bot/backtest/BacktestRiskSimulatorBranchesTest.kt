@@ -114,6 +114,36 @@ class BacktestRiskSimulatorBranchesTest {
         )
 
     /** Записывает закрытие сделки с заданным результатом (lotSize 10, qty 1). */
+    @Test
+    fun `zero absolute daily cap relies on the percent limit only`() {
+        val cfg = riskConfig().apply { maxDailyLossRub = BigDecimal.ZERO }
+        val sim = sim(cfg)
+
+        val result = runBlocking { check(sim) }
+
+        assertTrue(result.allowed, "без абсолютного кэпа лимит остаётся процентным: $result")
+    }
+
+    @Test
+    fun `confidence sizing tolerates a null signal strength`() {
+        val cfg = riskConfig().apply { confidenceSizingEnabled = true }
+        val sim = sim(cfg)
+
+        val result = runBlocking { check(sim, strength = null) }
+
+        assertTrue(result.allowed, "null-уверенность не применяет множитель: $result")
+    }
+
+    @Test
+    fun `zero entry price with the volatility guard disabled skips targeting`() {
+        val cfg = riskConfig().apply { volatilityFailClosed = false }
+        val sim = sim(cfg)
+
+        val result = runBlocking { check(sim, entryPrice = BigDecimal.ZERO) }
+
+        assertFalse(result.allowed, "нулевой notional не даёт лота: $result")
+    }
+
     private fun close(
         sim: BacktestRiskSimulator,
         exitPrice: String,

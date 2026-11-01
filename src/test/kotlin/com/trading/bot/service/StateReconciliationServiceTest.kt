@@ -112,6 +112,64 @@ class StateReconciliationServiceTest {
         }
     }
 
+    @Test
+    fun `orders fetch failure aborts reconciliation and halts`() {
+        stubOpenPositions(openPos("SBER", 10))
+        runBlocking {
+            Mockito.`when`(alorClient.getOpenOrders(Mockito.anyString())).thenReturn(ReconcileResult.Failed)
+            Mockito.`when`(alorClient.getPositions(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(alorClient.getRecentTrades(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+        }
+
+        runBlocking { service.reconcile() }
+
+        runBlocking { verify(positionRepo, never()).save(anyPosition()) }
+        verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
+        assertEquals(1.0, meterRegistry.counter("alor.reconcile.aborted", "reason", "FETCH_FAILED").count())
+    }
+
+    @Test
+    fun `trades fetch failure aborts reconciliation and halts`() {
+        stubOpenPositions(openPos("SBER", 10))
+        runBlocking {
+            Mockito.`when`(alorClient.getOpenOrders(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(alorClient.getPositions(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(alorClient.getRecentTrades(Mockito.anyString())).thenReturn(ReconcileResult.Failed)
+        }
+
+        runBlocking { service.reconcile() }
+
+        runBlocking { verify(positionRepo, never()).save(anyPosition()) }
+        verify(eventPublisher).publishTradingHalted(anyTradingHaltedEvent())
+    }
+
+    @Test
+    fun `one failed portfolio halts the whole reconcile run`() {
+        stubOpenPositions()
+        runBlocking {
+            Mockito.`when`(tradingAccountService.findEnabled()).thenReturn(
+                listOf(
+                    com.trading.bot.model.entity.TradingAccount(
+                        id = 7L,
+                        name = "second",
+                        alorPortfolio = "PORT2",
+                    ),
+                ),
+            )
+            Mockito.`when`(alorClient.getOpenOrders(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(alorClient.getRecentTrades(Mockito.anyString())).thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito
+                .`when`(alorClient.getPositions(Mockito.anyString()))
+                .thenReturn(ReconcileResult.Ok(emptyList()))
+            Mockito.`when`(positionRepo.findOpenByAccount(7L)).thenReturn(emptyList())
+            Mockito.`when`(alorClient.getPositions("PORT2")).thenReturn(ReconcileResult.Failed)
+        }
+
+        runBlocking { service.reconcile() }
+
+        verify(eventPublisher, Mockito.times(1)).publishTradingHalted(anyTradingHaltedEvent())
+    }
+
     private fun stubReconcileOk(
         orders: List<AlorClient.ExchangeOrder> = emptyList(),
         positions: List<AlorClient.ExchangePosition> = emptyList(),

@@ -873,6 +873,127 @@ class ApiControllerDefaultsTest {
         }
     }
 
+    @Test
+    fun `each override source independently enables the research generator`() {
+        stubCandles()
+        runBlocking {
+            whenever(
+                candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyLocalDateTime(),
+                    anyLocalDateTime(),
+                ),
+            ).thenReturn(sixtyCandles())
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult))
+        }
+        val previousSimulations = backtestConfig.monteCarloSimulations
+        backtestConfig.monteCarloSimulations = 20
+        val previousVeto = backtestConfig.llmVetoEnabled
+        backtestConfig.llmVetoEnabled = false
+        try {
+            // /backtest: entry-only, veto-only и полное отсутствие overrides.
+            assertEquals(200, dispatch(get("/api/v1/backtest/SBER").param("sessionFilterEnabled", "true")).status)
+            assertEquals(200, dispatch(get("/api/v1/backtest/SBER").param("llmVetoEnabled", "true")).status)
+            assertEquals(200, dispatch(get("/api/v1/backtest/SBER")).status)
+            // /validate, /robustness: entry-only и veto-only.
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/validate").param("sessionFilterEnabled", "true")).status,
+            )
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/validate").param("llmVetoEnabled", "true")).status,
+            )
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/robustness").param("sessionFilterEnabled", "true")).status,
+            )
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/robustness").param("llmVetoEnabled", "true")).status,
+            )
+            // /holdout: entry-only и veto-only (regen-путь без ML-оверрайдов).
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/holdout").param("sessionFilterEnabled", "true")).status,
+            )
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/holdout").param("llmVetoEnabled", "true")).status,
+            )
+        } finally {
+            backtestConfig.monteCarloSimulations = previousSimulations
+            backtestConfig.llmVetoEnabled = previousVeto
+        }
+    }
+
+    @Test
+    fun `backtest without regime detection passes a null regime config`() {
+        stubCandles()
+        val previous = backtestConfig.regimeDetectionEnabled
+        backtestConfig.regimeDetectionEnabled = false
+        try {
+            val response = dispatch(get("/api/v1/backtest/SBER").param("days", "10"))
+
+            assertEquals(200, response.status)
+        } finally {
+            backtestConfig.regimeDetectionEnabled = previous
+        }
+    }
+
+    @Test
+    fun `analytics health keeps healthy tickers out of the paused list`(): Unit =
+        runBlocking {
+            val healthy =
+                TradeStats(
+                    ticker = "GAZP",
+                    totalTrades = 3,
+                    winningTrades = 2,
+                    losingTrades = 1,
+                    winRate = 2.0 / 3.0,
+                    avgWin = BigDecimal("100"),
+                    avgLoss = BigDecimal("-50"),
+                    profitFactor = 2.0,
+                    maxConsecutiveLosses = 1,
+                    avgHoldTimeMinutes = 30,
+                    slHitRate = 0.3,
+                    tpHitRate = 0.3,
+                    strategyCloseRate = 0.3,
+                    bestEntryHour = null,
+                    worstEntryHour = null,
+                    blindSpots = emptyList(),
+                )
+            whenever(tradeAnalysisService.analyzeLastNDays(7)).thenReturn(mapOf("GAZP" to healthy))
+
+            val health = controller.getAnalyticsHealth()
+
+            assertEquals(emptySet<String>(), health["pausedTickers"])
+            assertEquals("66.67%", health["averageWinRate"])
+        }
+
+    @Test
+    fun `investor payload without an amount defaults to zero`(): Unit =
+        runBlocking {
+            val view = mock<InvestorView>()
+            whenever(
+                investorService.createInvestor(
+                    Mockito.anyString(),
+                    Mockito.nullable(String::class.javaObjectType),
+                    anyBigDecimal(),
+                ),
+            ).thenReturn(view)
+            whenever(investorService.deposit(org.mockito.kotlin.any(), anyBigDecimal())).thenReturn(view)
+            whenever(
+                investorService.withdraw(org.mockito.kotlin.any(), anyBigDecimal(), Mockito.nullable(String::class.javaObjectType)),
+            ).thenReturn(view)
+
+            assertEquals(view, runBlocking { controller.createInvestor(mapOf("name" to "Ivan")) })
+            assertEquals(view, runBlocking { controller.depositInvestor(UUID.randomUUID(), mapOf()) })
+            assertEquals(view, runBlocking { controller.withdrawInvestor(UUID.randomUUID(), mapOf()) })
+        }
+
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {
         val initial = mockMvc.perform(builder).andReturn()
         if (!initial.request.isAsyncStarted) return initial.response

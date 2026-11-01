@@ -517,6 +517,130 @@ class AdaptiveRiskServiceBranchesTest {
     // ------------------------------------------------------- recovery mode
 
     @Test
+    fun `plain correlation filter skips the same ticker and the futures hedge`() {
+        assertFalse(runBlocking { service.exceedsCorrelationLimit("SBER", listOf(position("SBER"), position("Si"))) })
+        assertFalse(runBlocking { service.exceedsCorrelationLimit("Si", listOf(position("SBER"))) })
+    }
+
+    @Test
+    fun `plain correlation filter treats a missing matrix entry as uncorrelated`() {
+        Mockito
+            .`when`(
+                correlationProvider.correlationOf(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                ),
+            ).thenReturn(null)
+
+        assertFalse(runBlocking { service.exceedsCorrelationLimit("SBER", listOf(position("GAZP"))) })
+    }
+
+    @Test
+    fun `plain correlation filter blocks a correlated pair`() {
+        Mockito
+            .`when`(
+                correlationProvider.correlationOf(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                ),
+            ).thenReturn(0.95)
+
+        assertTrue(runBlocking { service.exceedsCorrelationLimit("SBER", listOf(position("GAZP"))) })
+        assertEquals(
+            1.0,
+            meterRegistry.counter("adaptive.correlation.blocked", "ticker", "SBER").count(),
+        )
+    }
+
+    @Test
+    fun `degraded daily volatility inputs fall back to the neutral multiplier`() {
+        Mockito
+            .`when`(candleCache.getRecentCandles("SBER", "MINUTE_10", 1))
+            .thenReturn(listOf(candle(BigDecimal("100"))))
+        Mockito
+            .`when`(candleCache.calculateAtr("SBER", "MINUTE_10", 14))
+            .thenReturn(BigDecimal.ZERO)
+        // ATR = 0 → fallback на intraday vol (null) → нейтральный размер.
+        assertEquals(
+            0,
+            BigDecimal("100000").multiply(BigDecimal(riskConfig.kellyNoDataFraction.toString())).compareTo(
+                runBlocking { service.calculateOptimalPositionSize("SBER") },
+            ),
+        )
+
+        Mockito
+            .`when`(candleCache.calculateAtr("SBER", "MINUTE_10", 14))
+            .thenReturn(BigDecimal("1"))
+        Mockito
+            .`when`(candleCache.getRecentCandles("SBER", "MINUTE_10", 1))
+            .thenReturn(listOf(candle(BigDecimal.ZERO)))
+        // Нулевая цена → деление ATR%/price запрещено, тоже нейтральный размер.
+        assertEquals(
+            0,
+            BigDecimal("100000").multiply(BigDecimal(riskConfig.kellyNoDataFraction.toString())).compareTo(
+                runBlocking { service.calculateOptimalPositionSize("SBER") },
+            ),
+        )
+    }
+
+    @Test
+    fun `low market regime keeps the full position size`() {
+        riskConfig.marketRegimeEnabled = true
+        try {
+            marketRegime = MarketRegime.NORMAL
+            val normal = runBlocking { service.calculateOptimalPositionSize("SBER") }
+            marketRegime = MarketRegime.LOW
+            val low = runBlocking { service.calculateOptimalPositionSize("SBER") }
+
+            assertEquals(0, normal.compareTo(low))
+        } finally {
+            riskConfig.marketRegimeEnabled = false
+        }
+    }
+
+    @Test
+    fun `confidence sizing returns the max factor when the span is degenerate`() {
+        riskConfig.confidenceSizingEnabled = true
+        val previousCeiling = riskConfig.confidenceSizingCeiling
+        riskConfig.confidenceSizingCeiling = 0.0
+        try {
+            val sized = runBlocking { service.calculateOptimalPositionSize("SBER", signalStrength = 0.9) }
+            val plain = runBlocking { service.calculateOptimalPositionSize("SBER", signalStrength = 0.1) }
+
+            assertEquals(
+                0,
+                plain.compareTo(sized),
+                "при вырожденном span уверенность не влияет на размер",
+            )
+            assertEquals(
+                riskConfig.confidenceSizingMaxFactor,
+                meterRegistry
+                    .find("adaptive.confidence_factor")
+                    .tag("ticker", "SBER")
+                    .gauge()!!
+                    .value(),
+                1e-9,
+            )
+        } finally {
+            riskConfig.confidenceSizingCeiling = previousCeiling
+            riskConfig.confidenceSizingEnabled = false
+        }
+    }
+
+    @Test
+    fun `expected net profit tolerates a zero average win with a real average loss`() {
+        stubStats(30, "SBER" to stats(winRate = 0.5, avgWin = "0", avgLoss = "50"))
+
+        val profit = runBlocking { service.expectedNetProfitPerLot("SBER") }
+
+        assertTrue(profit != null, "нулевой avgWin сам по себе не запрещает расчёт")
+    }
+
+    @Test
     fun `drawdown recovery ignores positions without pnl`() {
         runBlocking {
             Mockito

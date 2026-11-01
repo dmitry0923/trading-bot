@@ -30,6 +30,7 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
+import java.time.LocalDateTime
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -550,6 +551,144 @@ class OrderExecutionEnginePathsTest {
         }
 
     // ─── matcher-хелперы ─────────────────────────────────────────────
+
+    @Test
+    fun `non filled report is ignored`(): Unit =
+        runBlocking {
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "ENTRY-9",
+                        status = OrderStatus.NEW,
+                        cumulativeFilledQty = 0,
+                        avgPrice = BigDecimal("100"),
+                    ),
+                )
+
+            assertFalse(handled)
+        }
+
+    @Test
+    fun `fill of a closed position is ignored`(): Unit =
+        runBlocking {
+            val pos = openPosition().copy(status = PositionStatus.CLOSED)
+            whenever(positionRepo.findByAlorOrderId("ENTRY-9")).thenReturn(pos)
+
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "ENTRY-9",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 1,
+                        avgPrice = BigDecimal("100"),
+                    ),
+                )
+
+            assertFalse(handled)
+            assertEquals(0, opened.get())
+        }
+
+    @Test
+    fun `fill of a position with a close timestamp is ignored`(): Unit =
+        runBlocking {
+            val pos = openPosition().copy(closedAt = LocalDateTime.of(2026, 10, 1, 12, 0))
+            whenever(positionRepo.findByAlorOrderId("ENTRY-9")).thenReturn(pos)
+
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "ENTRY-9",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 1,
+                        avgPrice = BigDecimal("100"),
+                    ),
+                )
+
+            assertFalse(handled)
+        }
+
+    @Test
+    fun `fill without an average price is ignored`(): Unit =
+        runBlocking {
+            val pos = openPosition().copy(pendingEntry = true)
+            whenever(positionRepo.findByAlorOrderId("ENTRY-8")).thenReturn(pos)
+
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "ENTRY-8",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 10,
+                        avgPrice = null,
+                    ),
+                )
+
+            assertFalse(handled)
+            assertTrue(pos.pendingEntry)
+        }
+
+    @Test
+    fun `close order id fallback resolves the position`(): Unit =
+        runBlocking {
+            val pos = openPosition().copy(pendingEntry = true)
+            whenever(positionRepo.findByCloseOrderId("CLOSE-2")).thenReturn(pos)
+
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "CLOSE-2",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 10,
+                        avgPrice = BigDecimal("101"),
+                        ticker = "SBER",
+                        side = "buy",
+                    ),
+                )
+
+            assertTrue(handled)
+            assertFalse(pos.pendingEntry)
+            assertEquals(0, BigDecimal("101").compareTo(pos.entryPrice))
+        }
+
+    @Test
+    fun `take profit fill without a position id is acknowledged but not applied`(): Unit =
+        runBlocking {
+            val pos = openPosition().copy(id = null, tpOrderId = "TP-9")
+            whenever(positionRepo.findByTpOrderId("TP-9")).thenReturn(pos)
+
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "TP-9",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 10,
+                        avgPrice = BigDecimal("110"),
+                    ),
+                )
+
+            assertTrue(handled)
+            assertEquals(0, closed.get())
+        }
+
+    @Test
+    fun `stop loss fill without a position id is acknowledged but not applied`(): Unit =
+        runBlocking {
+            val pos = openPosition().copy(id = null, slOrderId = "SL-9")
+            whenever(positionRepo.findBySlOrderId("SL-9")).thenReturn(pos)
+
+            val handled =
+                engine.handleExecutionReport(
+                    ExecutionReport(
+                        orderId = "SL-9",
+                        status = OrderStatus.FILLED,
+                        cumulativeFilledQty = 10,
+                        avgPrice = BigDecimal("90"),
+                    ),
+                )
+
+            assertTrue(handled)
+            assertEquals(0, closed.get())
+        }
 
     private fun anyStatus(): PositionStatus {
         Mockito.any(PositionStatus::class.java)

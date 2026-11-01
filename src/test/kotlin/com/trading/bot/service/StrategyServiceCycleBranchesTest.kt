@@ -925,6 +925,133 @@ class StrategyServiceCycleBranchesTest {
             .getRecentCandles(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt())
     }
 
+    @Test
+    fun `zero bid and ask after the advisor disable only the spread gate`() {
+        stubSettings()
+        stubCachedCandles(freshCandles(rising = true))
+        stubMarketSnapshot(snapshot(bid = "0", ask = "0"))
+        stubStrategyPipeline()
+
+        runCycle()
+
+        // Нулевые котировки выключают проверку спреда, решение всё равно сохраняется.
+        assertEquals(1.0, strategySaved())
+    }
+
+    @Test
+    fun `missing bid and ask after the advisor skip the spread gate`() {
+        stubSettings()
+        stubCachedCandles(freshCandles(rising = true))
+        stubMarketSnapshot(snapshot(bid = null, ask = null))
+        stubStrategyPipeline()
+
+        runCycle()
+
+        assertEquals(1.0, strategySaved())
+    }
+
+    @Test
+    fun `known instrument contributes the tick deviation to the freshness cap`() {
+        val previous = instrumentsConfig.instruments
+        try {
+            val spec = InstrumentsConfig.InstrumentSpec()
+            spec.ticker = "SBER"
+            spec.type = "STOCK"
+            spec.lotSize = 10
+            spec.priceStep = BigDecimal("0.01")
+            spec.priceStepCost = BigDecimal("0.01")
+            spec.go = BigDecimal.ZERO
+            spec.leverage = BigDecimal.ONE
+            spec.baseAsset = "SBER"
+            instrumentsConfig.instruments = mutableListOf(spec)
+            stubSettings()
+            stubCachedCandles(freshCandles(rising = true))
+            stubMarketSnapshot(snapshot())
+            stubStrategyPipeline()
+
+            runCycle()
+
+            assertEquals(1.0, strategySaved(), "tick-порог из spec не должен блокировать свежий сигнал")
+        } finally {
+            instrumentsConfig.instruments = previous
+        }
+    }
+
+    @Test
+    fun `stale database candles fall through to the MOEX loader`(): Unit =
+        runBlocking {
+            stubSettings()
+            val stale =
+                freshCandles(rising = true).map { it.copy(time = it.time.minusDays(10)) }
+            stubCachedCandles(emptyList())
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyLocalDateTime(),
+                        anyLocalDateTime(),
+                    ),
+                ).thenReturn(stale)
+            Mockito.`when`(moexClient.getCandles(Mockito.anyString(), anyLocalDateTime())).thenReturn(stale)
+            stubMarketSnapshot(snapshot())
+            stubStrategyPipeline()
+
+            runCycle()
+
+            Mockito.verify(moexClient).getCandles(Mockito.anyString(), anyLocalDateTime())
+        }
+
+    @Test
+    fun `a short database series goes straight to the MOEX loader`(): Unit =
+        runBlocking {
+            stubSettings()
+            stubCachedCandles(emptyList())
+            Mockito
+                .`when`(
+                    candleRepo.findByTickerAndTimeframeAndTimeBetween(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyLocalDateTime(),
+                        anyLocalDateTime(),
+                    ),
+                ).thenReturn(freshCandles(rising = true).take(10))
+            Mockito.`when`(moexClient.getCandles(Mockito.anyString(), anyLocalDateTime())).thenReturn(emptyList())
+            stubMarketSnapshot(snapshot())
+            stubStrategyPipeline()
+
+            runCycle()
+
+            assertEquals(
+                1.0,
+                counter("strategy.skipped", "ticker", "SBER", "reason", "STALE_CANDLES"),
+                "короткий ряд из БД не считается рабочим",
+            )
+        }
+
+    @Test
+    fun `pair quote with a live price is folded into the strategy context`() {
+        val previousPairs = tradingConfig.pairs
+        try {
+            tradingConfig.pairs = mapOf("SBER" to "USD000UTSTOM")
+            stubSettings()
+            stubCachedCandles(freshCandles(rising = true))
+            stubMarketSnapshot(snapshot())
+            runBlocking {
+                Mockito
+                    .`when`(alorClient.getMarketSnapshot("USD000UTSTOM"))
+                    .thenReturn(MarketSnapshot(ticker = "USD000UTSTOM", currentPrice = BigDecimal("92.5")))
+            }
+            stubStrategyPipeline()
+
+            runCycle()
+
+            assertEquals(1.0, strategySaved())
+        } finally {
+            tradingConfig.pairs = previousPairs
+        }
+    }
+
     /** Helper-паттерн Mockito для suspend-метода с non-null параметром. */
     private fun anyRisk(): com.trading.bot.domain.risk.TradeRiskDecision {
         Mockito.any(com.trading.bot.domain.risk.TradeRiskDecision::class.java)

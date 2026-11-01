@@ -23,10 +23,13 @@ import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.dto.InvestorView
 import com.trading.bot.model.dto.RagAnalysis
 import com.trading.bot.model.dto.RagAnalyzeRequest
 import com.trading.bot.model.dto.RagTraceRequest
+import com.trading.bot.model.dto.TradeStats
 import com.trading.bot.model.entity.BacktestResultEntity
+import com.trading.bot.model.entity.BotSettings
 import com.trading.bot.model.entity.Position
 import com.trading.bot.model.entity.Strategy
 import com.trading.bot.repository.AgentLogRepository
@@ -74,6 +77,9 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.mock.web.MockHttpServletResponse
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.core.authority.SimpleGrantedAuthority
+import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch
@@ -83,6 +89,7 @@ import org.springframework.web.server.ResponseStatusException
 import tools.jackson.databind.ObjectMapper
 import java.math.BigDecimal
 import java.time.LocalDateTime
+import java.util.UUID
 
 /**
  * [ApiController] — ветви default/`?:` на тяжёлых research-эндпоинтах без
@@ -108,6 +115,8 @@ class ApiControllerDefaultsTest {
             monthlyReturns = emptyMap(),
         )
     private val candleRepository = mock<CandleRepository>()
+    private val settingsService = mock<SettingsService>()
+    private val investorService = mock<InvestorService>()
     private val backtestConfig = BacktestConfig()
     private val backtestEngine =
         BacktestEngine(
@@ -151,7 +160,7 @@ class ApiControllerDefaultsTest {
             drawdownProtectionService = drawdownProtectionService,
             strategyService = mock<StrategyService>(),
             tradingBotService = mock<TradingBotService>(),
-            settingsService = mock<SettingsService>(),
+            settingsService = settingsService,
             tradeAnalysisService = tradeAnalysisService,
             adaptiveRiskService = adaptiveRiskService,
             blindSpotRepository = blindSpotRepository,
@@ -172,7 +181,7 @@ class ApiControllerDefaultsTest {
             dailyRiskSnapshotRepository = dailyRiskSnapshotRepository,
             dashboardService = dashboardService,
             dashboardSseService = mock<DashboardSseService>(),
-            investorService = mock<InvestorService>(),
+            investorService = investorService,
             clearingService = mock<ClearingService>(),
             profitForecastService = mock<ProfitForecastService>(),
             tradingAccountService = tradingAccountService,
@@ -691,6 +700,98 @@ class ApiControllerDefaultsTest {
         }
     }
 
+    @Test
+    fun `me endpoint maps authentication and stays empty for anonymous`() {
+        val previous = SecurityContextHolder.getContext().authentication
+        try {
+            SecurityContextHolder.clearContext()
+            assertEquals(emptyMap<String, Any>(), controller.me())
+
+            SecurityContextHolder.getContext().authentication =
+                UsernamePasswordAuthenticationToken(
+                    "alice",
+                    null,
+                    listOf(SimpleGrantedAuthority("ROLE_ADMIN")),
+                )
+            val me = controller.me()
+
+            assertEquals("alice", me["username"])
+            assertEquals(listOf("ROLE_ADMIN"), me["roles"])
+        } finally {
+            SecurityContextHolder.clearContext()
+            if (previous != null) SecurityContextHolder.getContext().authentication = previous
+        }
+    }
+
+    @Test
+    fun `llm providers fall back to ROUTER_AI for a blank configured provider`() {
+        whenever(settingsService.getSettings()).thenReturn(BotSettings(llmProvider = "", llmModel = "m1"))
+
+        val blank = controller.getLlmProviders()
+        assertEquals("ROUTER_AI", blank["active"])
+        assertEquals("m1", blank["model"])
+
+        whenever(settingsService.getSettings()).thenReturn(BotSettings(llmProvider = "OPENAI", llmModel = "m2"))
+        assertEquals("OPENAI", controller.getLlmProviders()["active"])
+    }
+
+    @Test
+    fun `analytics health aggregates stats and lists paused tickers`(): Unit =
+        runBlocking {
+            val paused =
+                TradeStats(
+                    ticker = "SBER",
+                    totalTrades = 5,
+                    winningTrades = 2,
+                    losingTrades = 3,
+                    winRate = 0.4,
+                    avgWin = BigDecimal("100"),
+                    avgLoss = BigDecimal("-50"),
+                    profitFactor = 1.2,
+                    maxConsecutiveLosses = 5,
+                    avgHoldTimeMinutes = 30,
+                    slHitRate = 0.4,
+                    tpHitRate = 0.2,
+                    strategyCloseRate = 0.4,
+                    bestEntryHour = null,
+                    worstEntryHour = null,
+                    blindSpots = emptyList(),
+                )
+            whenever(tradeAnalysisService.analyzeLastNDays(7)).thenReturn(mapOf("SBER" to paused))
+
+            val health = controller.getAnalyticsHealth()
+
+            assertEquals(1, health["totalTickersAnalyzed"])
+            assertEquals(5, health["totalTradesLast7Days"])
+            assertEquals("40.00%", health["averageWinRate"])
+            assertEquals(setOf("SBER"), health["pausedTickers"])
+        }
+
+    @Test
+    fun `investor endpoints validate the name and parse the amounts`() {
+        val view = mock<InvestorView>()
+        runBlocking {
+            whenever(
+                investorService.createInvestor(
+                    Mockito.anyString(),
+                    Mockito.nullable(String::class.javaObjectType),
+                    anyBigDecimal(),
+                ),
+            ).thenReturn(view)
+            whenever(investorService.deposit(org.mockito.kotlin.any(), anyBigDecimal())).thenReturn(view)
+        }
+
+        assertThrows<IllegalArgumentException> { runBlocking { controller.createInvestor(mapOf()) } }
+        assertEquals(
+            view,
+            runBlocking { controller.createInvestor(mapOf("name" to "Ivan", "initialDeposit" to "1000")) },
+        )
+        assertEquals(
+            view,
+            runBlocking { controller.depositInvestor(UUID.randomUUID(), mapOf("amount" to "500")) },
+        )
+    }
+
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {
         val initial = mockMvc.perform(builder).andReturn()
         if (!initial.request.isAsyncStarted) return initial.response
@@ -850,5 +951,10 @@ class ApiControllerDefaultsTest {
     private fun anyLocalDateTime(): LocalDateTime {
         Mockito.any(LocalDateTime::class.java)
         return LocalDateTime.now()
+    }
+
+    private fun anyBigDecimal(): BigDecimal {
+        Mockito.any(BigDecimal::class.java)
+        return BigDecimal("1000")
     }
 }

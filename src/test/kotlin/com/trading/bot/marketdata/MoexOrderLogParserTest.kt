@@ -334,6 +334,32 @@ class MoexOrderLogParserTest {
     }
 
     @Test
+    fun `invalid prices negative volume single sided and crossed buckets are counted`() {
+        val dir =
+            java.nio.file.Files
+                .createTempDirectory("orderlog-book")
+                .toFile()
+        try {
+            File(dir, "20241001_CNYRUBF_fut_tick.csv").writeText(
+                listOf(
+                    "CNYRUBF,1,B,20241001100000000,0,100.0,5",
+                    "CNYRUBF,1,S,20241001100001000,0,99.0,5",
+                    "CNYRUBF,1,B,20241001100000000,0,0,5",
+                    "CNYRUBF,1,B,20241001100000000,0,100.0,-1",
+                ).joinToString("\n"),
+            )
+
+            val result = parse(dir = dir)
+            val stats = requireNotNull(result.stats)
+
+            assertEquals(2L, stats.malformedTick, stats.toString())
+            assertTrue(stats.bboBucketsSingleSided > 0, "bid-only бакет обязан считаться single-sided: $stats")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `first and last timestamps fall inside the fixture trading day`() {
         val result = parse()
 

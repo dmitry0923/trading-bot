@@ -327,4 +327,48 @@ class DrawdownProtectionServiceEdgeBranchesTest {
         assertFalse(drawdown.isDailyLossLimitReached(7L))
         assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl(7L)))
     }
+
+    @Test
+    fun `fresh account without a snapshot starts from a neutral daily state`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            whenever(snapshotRepo.findByDate(anyDate(), Mockito.anyLong())).thenReturn(null)
+            whenever(
+                snapshotRepo.findByDateAwait(anyDate(), Mockito.anyLong()),
+            ).thenReturn(null)
+            val drawdown = service()
+
+            assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl(42L)))
+            assertFalse(drawdown.isDailyLossLimitReached(42L))
+
+            val status = drawdown.computeStatus(accountId = 42L, persist = false)
+
+            assertEquals(0, BigDecimal.ZERO.compareTo(status.dailyPnlRub))
+            assertFalse(status.dailyLimitBreached)
+            assertEquals(0, BigDecimal.ZERO.compareTo(status.rolling7dPnlRub))
+        }
+
+    @Test
+    fun `update daily pnl for a fresh account accumulates from zero`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            whenever(snapshotRepo.findByDate(anyDate(), Mockito.anyLong())).thenReturn(null)
+            val drawdown = service()
+
+            drawdown.updateDailyPnl(BigDecimal("-10"), 42L)
+            drawdown.updateDailyPnl(BigDecimal("-5"), 42L)
+
+            assertEquals(0, BigDecimal("-15").compareTo(drawdown.getDailyPnl(42L)))
+            assertFalse(drawdown.isDailyLossLimitReached(42L))
+        }
+
+    @Test
+    fun `effective daily limit uses the latest aum before the first status`() {
+        val drawdown = service(balance = BigDecimal("100000"))
+
+        assertTrue(
+            drawdown.effectiveDailyLossLimitRub() > BigDecimal.ZERO,
+            "лимит должен считаться от latestAum, пока статус ещё не кэширован",
+        )
+    }
 }

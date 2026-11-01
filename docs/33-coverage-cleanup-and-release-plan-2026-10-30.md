@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 95,67 % (24 869 / 25 994) |
-| BRANCH | 84,89 % (9 020 / 10 626) |
-| Тестов | 3 211 |
+| LINE | 95,74 % (24 886 / 25 994) |
+| BRANCH | 85,06 % (9 038 / 10 626) |
+| Тестов | 3 227 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -62,12 +62,12 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 
 ## 3a. Достижимость 90 % BRANCH: анализ остатка (2026-11-01)
 
-Замер после итерации 2026-11-01: **BRANCH 84,89 % (9 020 / 10 626)**, LINE 95,67 %,
+Замер после итерации 2026-11-01 (вечер): **BRANCH 85,06 % (9 038 / 10 626)**, LINE 95,67 %,
 тестов 3 211, падений 0. До цели не хватает **≈544** покрытых ветвей.
 
 Структура остатка (по данным `build/reports/kover/report.xml`):
 
-- 1 606 непокрытых ветвей в 246 классах; **430** из них находятся на строках с `?:`.
+- 1 588 непокрытых ветвей; **~430** из них находятся на строках с `?:`.
 - Крупнейшие остатки: `BacktestEngine` 57, `ApiController` 54, `PortfolioMomentumEngine` 40,
   `ProtectionOrderManager` 28, `PositionRepository` 27, `DrawdownProtectionService` 26,
   `OrderExecutionEngine` 26, `TradingBotService` 23, `AdaptiveRiskService` 21,
@@ -89,7 +89,11 @@ BRANCH до 90 (ratchet) только когда фактическое покр
    для всех элементов `selection.longs + selection.shorts`, ключ всегда присутствует.
 4. `MoexClient`: `marketdata.path("data").path(0) ?: return null` — Jackson `path()` не
    возвращает `null` (возвращает `MissingNode`), проверка недостижима.
-5. `WsOrderTransport`/`DecisionEngine`: часть ветвей требует одновременного `LEASE_LOST` и
+5. `MoexOrderLogParser`: `bboBucketsCrossed` недостижим — «агрессивные» заявки (ask ниже
+   текущего bid / bid выше текущего ask) отбрасываются ДО аккумулятора, поэтому carried
+   bid/ask не могут пересечься. Подтверждено тестом: строка ask=99 при bid=100 даёт
+   `aggressive=1`, `crossed=0`.
+6. `WsOrderTransport`/`DecisionEngine`: часть ветвей требует одновременного `LEASE_LOST` и
    реального `DistributedLockService`; мок сервиса меняет способ проверки, а не поведение —
    требует отдельного интеграционного сценария.
 

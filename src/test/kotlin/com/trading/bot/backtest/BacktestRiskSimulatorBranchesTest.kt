@@ -389,4 +389,52 @@ class BacktestRiskSimulatorBranchesTest {
         assertEquals(0, BigDecimal("9.5").compareTo(sim.currentDailyPnl()))
         assertEquals(1, sim.closedTradeCount())
     }
+
+    @Test
+    fun `confidence sizing scales the kelly base and still allows the entry`() {
+        val cfg =
+            riskConfig().apply {
+                confidenceSizingEnabled = true
+                confidenceSizingMinFactor = 0.1
+                confidenceSizingMaxFactor = 1.0
+            }
+        val sim = sim(cfg)
+        repeat(20) { close(sim, "101") }
+
+        val strong = runBlocking { check(sim, strength = 0.95) }
+        val weak = runBlocking { check(sim, strength = 0.05) }
+
+        assertTrue(strong.allowed, "сильная уверенность проходит: $strong")
+        assertTrue(
+            strong.kellySizeRub > weak.kellySizeRub,
+            "фактор уверенности уменьшает rub-размер: $strong vs $weak",
+        )
+    }
+
+    @Test
+    fun `flat history produces a zero atr and blocks on the volatility guard`() {
+        val cfg = riskConfig().apply { volatilityFailClosed = true }
+        val flat =
+            normalHistory().map {
+                it.copy(
+                    openPrice = BigDecimal("100"),
+                    highPrice = BigDecimal("100"),
+                    lowPrice = BigDecimal("100"),
+                    closePrice = BigDecimal("100"),
+                )
+            }
+
+        val result = runBlocking { check(sim(cfg), history = flat) }
+
+        assertEquals("VOLATILITY_GUARD", result.reason, "ATR = 0 - fail-closed при включённом guard")
+    }
+
+    @Test
+    fun `zero entry price trips the volatility guard before sizing`() {
+        val cfg = riskConfig().apply { volatilityFailClosed = true }
+
+        val result = runBlocking { check(sim(cfg), entryPrice = BigDecimal.ZERO) }
+
+        assertEquals("VOLATILITY_GUARD", result.reason)
+    }
 }

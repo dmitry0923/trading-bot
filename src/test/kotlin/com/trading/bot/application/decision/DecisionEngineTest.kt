@@ -35,6 +35,7 @@ import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -47,6 +48,7 @@ import org.springframework.data.redis.core.ReactiveValueOperations
 import reactor.core.publisher.Mono
 import java.math.BigDecimal
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Unit-тесты единого оркестратора входа [DecisionEngine].
@@ -131,6 +133,7 @@ class DecisionEngineTest {
         config: TradingConfig = tradingConfig,
         netEv: NetEvGate = netEvGate,
         fundingVeto: FundingVetoGate = fundingVetoGate,
+        lock: DistributedLockService = distributedLockService,
     ): DecisionEngine =
         DecisionEngine(
             marketDataGate,
@@ -141,7 +144,7 @@ class DecisionEngineTest {
             meterRegistry,
             config,
             listOf(profile),
-            distributedLockService,
+            lock,
             distributedLockConfig,
             tradingAccountService,
             mlEntryFilter,
@@ -749,6 +752,66 @@ class DecisionEngineTest {
 
         assertEquals(0, gatewayCalls)
         assertEquals(1.0, meterRegistry.counter("test.risk.scaleReject", Tags.of("ticker", "Si")).count())
+    }
+
+    @Test
+    fun `ticker lease loss degrades the ticker scope and blocks the next entry`() {
+        val lock = Mockito.mock(DistributedLockService::class.java)
+        runBlocking {
+            Mockito
+                .`when`(lock.runExclusiveFenced(Mockito.anyString(), Mockito.anyLong(), Mockito.anyBoolean(), anyFencedBlock()))
+                .thenReturn(DistributedLockService.LockExecutionResult.LEASE_LOST)
+        }
+
+        runBlocking { engine(lock = lock).openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls, "критическая секция не выполнялась — gateway не вызывается")
+        assertTrue(entryLeaseRecoveryGate.isDegraded("ticker:Si"), "ticker-scope должен уйти в DEGRADED")
+    }
+
+    @Test
+    fun `account lease loss degrades the account scope after the ticker section runs`() {
+        val lock = Mockito.mock(DistributedLockService::class.java)
+        val calls = AtomicInteger(0)
+        runBlocking {
+            Mockito
+                .`when`(lock.runExclusiveFenced(Mockito.anyString(), Mockito.anyLong(), Mockito.anyBoolean(), anyFencedBlock()))
+                .thenAnswer { invocation ->
+                    if (calls.getAndIncrement() == 0) {
+                        val block = invocation.getArgument<suspend (DistributedLockService.LeaseFence?) -> Unit>(3)
+                        runBlocking { block(null) }
+                        DistributedLockService.LockExecutionResult.COMPLETED
+                    } else {
+                        DistributedLockService.LockExecutionResult.LEASE_LOST
+                    }
+                }
+        }
+
+        runBlocking { engine(lock = lock).openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertTrue(entryLeaseRecoveryGate.isDegraded("account:legacy"), "account-scope должен уйти в DEGRADED")
+    }
+
+    @Test
+    fun `not acquired lock skips the entry without degrading recovery scope`() {
+        val lock = Mockito.mock(DistributedLockService::class.java)
+        runBlocking {
+            Mockito
+                .`when`(lock.runExclusiveFenced(Mockito.anyString(), Mockito.anyLong(), Mockito.anyBoolean(), anyFencedBlock()))
+                .thenReturn(DistributedLockService.LockExecutionResult.NOT_ACQUIRED)
+        }
+
+        runBlocking { engine(lock = lock).openPosition(signal(), gateway()) }
+
+        assertEquals(0, gatewayCalls)
+        assertFalse(entryLeaseRecoveryGate.isDegraded("ticker:Si"))
+        assertFalse(entryLeaseRecoveryGate.isDegraded("account:legacy"))
+    }
+
+    private fun anyFencedBlock(): suspend (DistributedLockService.LeaseFence?) -> Unit {
+        Mockito.any<suspend (DistributedLockService.LeaseFence?) -> Unit>()
+        return {}
     }
 
     private class FakeEntryProfile(

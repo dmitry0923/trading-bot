@@ -11,6 +11,7 @@ import com.trading.bot.repository.OrderOutboxRepository
 import com.trading.bot.repository.PositionRepository
 import com.trading.bot.service.OrderOutboxService
 import com.trading.bot.service.TradeEventService
+import io.micrometer.core.instrument.Tags
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -177,6 +178,52 @@ class OrderExecutionEngineCloseClaimTest {
                     Mockito.nullable(Long::class.java),
                 )
         }
+    }
+
+    @Test
+    fun `close of a pending entry cancels the entry order and skips the market close`() {
+        val pending = openPos().copy(pendingEntry = true, alorOrderId = "ENTRY-1")
+        runBlocking {
+            Mockito.`when`(positionRepo.claimForClose(1L)).thenReturn(true)
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(pending)
+        }
+        stubSaveReturnsArg()
+
+        runBlocking { engine.closePosition(pending, BigDecimal("90000"), CloseReason.STRATEGY_CLOSE) }
+
+        runBlocking {
+            Mockito
+                .verify(orderOutboxService)
+                .placeCancelOrder(1L, "ENTRY-1", accountId = null)
+            Mockito.verify(positionRepo).releaseCloseClaim(1L)
+        }
+        verifyPlaceOrder(0)
+        assertEquals(
+            1.0,
+            meterRegistry
+                .counter("test.close.pending_entry_skipped", Tags.of("ticker", "Si"))
+                .count(),
+        )
+    }
+
+    @Test
+    fun `close of a pending entry without an order id still releases the claim`() {
+        val pending = openPos().copy(pendingEntry = true, alorOrderId = null)
+        runBlocking {
+            Mockito.`when`(positionRepo.claimForClose(1L)).thenReturn(true)
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(pending)
+        }
+        stubSaveReturnsArg()
+
+        runBlocking { engine.closePosition(pending, BigDecimal("90000"), CloseReason.STRATEGY_CLOSE) }
+
+        runBlocking {
+            Mockito
+                .verify(orderOutboxService, never())
+                .placeCancelOrder(Mockito.anyLong(), anyString(), Mockito.nullable(Long::class.java))
+            Mockito.verify(positionRepo).releaseCloseClaim(1L)
+        }
+        verifyPlaceOrder(0)
     }
 
     @Test

@@ -334,4 +334,13 @@ class MicrostructureRecorderTest {
         runBlocking { verify(repository, atLeastOnce()).saveAll(captor.capture()) }
         return captor.allValues.flatten()
     }
+
+    @Test
+    fun `scheduled flush is a no-op when the recorder is disabled`() {
+        val rec = recorder(enabled = false)
+
+        rec.scheduledFlush()
+
+        assertNull(meterRegistry.find("microstructure.flush.rows").counter())
+    }
 }

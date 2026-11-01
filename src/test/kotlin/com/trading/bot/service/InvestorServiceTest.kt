@@ -49,6 +49,50 @@ class InvestorServiceTest {
             clock = clock,
         )
 
+    @Test
+    fun `create investor without a deposit records no transaction`(): Unit =
+        runBlocking {
+            Mockito.`when`(investorRepo.findAccountByInvestor(anyAccountId())).thenAnswer { invocation ->
+                InvestorAccount(investorId = invocation.getArgument(0), balance = BigDecimal.ZERO)
+            }
+            Mockito.`when`(investorRepo.findAllAccounts()).thenReturn(emptyList())
+            Mockito.`when`(positionRepo.findClosedSince(anyLocalDateTime())).thenReturn(emptyList())
+
+            service.createInvestor("Ivan", initialDeposit = BigDecimal.ZERO)
+
+            Mockito.verify(investorRepo).saveInvestor(anyInvestor())
+            Mockito.verify(investorRepo, Mockito.never()).saveTransaction(anyTransaction())
+            Mockito.verify(investorRepo, Mockito.never()).creditDeposit(anyAccountId(), anyAmount(), anyLocalDateTime())
+        }
+
+    @Test
+    fun `listing investors without an account returns a zero view`(): Unit =
+        runBlocking {
+            val investor = Investor(name = "Petr")
+            Mockito.`when`(investorRepo.findAllInvestors()).thenReturn(listOf(investor))
+            Mockito.`when`(investorRepo.findAllAccounts()).thenReturn(emptyList())
+            Mockito.`when`(positionRepo.findClosedSince(anyLocalDateTime())).thenReturn(emptyList())
+
+            val views = service.listInvestors()
+
+            assertEquals(1, views.size)
+            assertEquals(0, BigDecimal.ZERO.compareTo(views.single().realizedPnL))
+            assertEquals(0.0, views.single().totalReturnPercent, 1e-9)
+        }
+
+    @Test
+    fun `non positive deposit and withdrawal amounts are rejected before any lookup`(): Unit =
+        runBlocking {
+            assertThrows<IllegalArgumentException> { runBlocking { service.deposit(UUID.randomUUID(), BigDecimal.ZERO) } }
+            assertThrows<IllegalArgumentException> { runBlocking { service.withdraw(UUID.randomUUID(), BigDecimal("-1")) } }
+            Mockito.verifyNoInteractions(investorRepo)
+        }
+
+    private fun anyInvestor(): Investor {
+        Mockito.any(Investor::class.java)
+        return Investor(name = "matcher")
+    }
+
     private fun anyMono(): Mono<Unit> {
         Mockito.any(Mono::class.java)
         return Mono.empty()

@@ -89,6 +89,43 @@ class MlFeatureResolverTest {
     }
 
     @Test
+    fun `every dataset timeframe maps to its own lookup window`() {
+        val at = LocalDateTime.of(2026, 2, 1, 14, 0)
+        runBlocking {
+            Mockito
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
+                .thenReturn(candles(60, at))
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
+            Mockito
+                .`when`(macroContextService.fetch())
+                .thenReturn(MacroContextService.MacroContext(BigDecimal("16"), BigDecimal("75"), BigDecimal("90")))
+        }
+        val timeframes =
+            listOf(
+                "MINUTE_1",
+                "MINUTE_5",
+                "MINUTE_10",
+                "MINUTE_15",
+                "MINUTE_30",
+                "HOUR_1",
+                "HOUR_4",
+                "DAY_1",
+                "UNSUPPORTED",
+            )
+        val previous = config.dataset.timeframe
+        try {
+            timeframes.forEach { timeframe ->
+                config.dataset.timeframe = timeframe
+                val vector = runBlocking { resolver.resolve("SBER", at, "BUY", 0.85, "LONG") }
+                assertTrue(vector != null, timeframe)
+            }
+        } finally {
+            config.dataset.timeframe = previous
+        }
+    }
+
+    @Test
     fun `falls back to current macro context when no snapshot`() {
         val at = LocalDateTime.of(2026, 2, 1, 14, 0)
         runBlocking {

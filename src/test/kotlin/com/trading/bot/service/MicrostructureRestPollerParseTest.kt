@@ -85,6 +85,59 @@ class MicrostructureRestPollerParseTest {
     }
 
     @Test
+    fun `unparseable price levels are skipped`() {
+        val node =
+            mapper.readTree(
+                """
+                {
+                  "bids": [{"price": "abc", "volume": 10}, {"price": 95.50, "volume": 4}],
+                  "asks": [{"price": "nope", "volume": 3}, {"price": 95.53, "volume": 5}]
+                }
+                """.trimIndent(),
+            )
+
+        val tick = poller.parse("GAZP", node)
+
+        assertNotNull(tick)
+        assertEquals(95.50.toBigDecimal(), tick.bid)
+        assertEquals(95.53.toBigDecimal(), tick.ask)
+    }
+
+    @Test
+    fun `a side with only unparseable prices returns null`() {
+        val node =
+            mapper.readTree(
+                """
+                {
+                  "bids": [{"price": "abc", "volume": 10}],
+                  "asks": [{"price": 95.53, "volume": 5}]
+                }
+                """.trimIndent(),
+            )
+
+        assertNull(poller.parse("GAZP", node))
+    }
+
+    @Test
+    fun `invalid textual timestamp yields no exchange time`() {
+        val node =
+            mapper.readTree(
+                """
+                {
+                  "bids": [{"price": 95.50, "volume": 10}],
+                  "asks": [{"price": 95.53, "volume": 5}],
+                  "ms_timestamp": "not-a-date"
+                }
+                """.trimIndent(),
+            )
+
+        val tick = poller.parse("GAZP", node)
+
+        assertNotNull(tick)
+        assertNull(tick.exchangeTime, "непарсимое время → null, а не локальные часы")
+    }
+
+    @Test
     fun `returns null when ask side is missing`() {
         val node = mapper.readTree("""{"bids": [{"price": 12.441, "volume": 564}], "asks": []}""")
 

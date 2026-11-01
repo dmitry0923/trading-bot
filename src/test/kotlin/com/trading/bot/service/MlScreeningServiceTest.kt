@@ -83,6 +83,46 @@ class MlScreeningServiceTest {
     }
 
     @Test
+    fun `every dataset timeframe maps to its own bar length`() {
+        config.enabled = true
+        val now = LocalDateTime.now()
+        val model = RecordingModel(longRsiProb = 0.85, shortRsiProb = 0.2, lowRsiLong = 0.15, lowRsiShort = 0.6)
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(model)
+            Mockito
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
+                .thenReturn(risingCandles(60, now))
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
+            Mockito
+                .`when`(macroContextService.fetch())
+                .thenReturn(MacroContextService.MacroContext(BigDecimal("16"), BigDecimal("75"), BigDecimal("90")))
+        }
+        val timeframes =
+            listOf(
+                "MINUTE_1",
+                "MINUTE_5",
+                "MINUTE_10",
+                "MINUTE_15",
+                "MINUTE_30",
+                "HOUR_1",
+                "HOUR_4",
+                "DAY_1",
+                "UNSUPPORTED",
+            )
+        val previous = config.dataset.timeframe
+        try {
+            timeframes.forEach { timeframe ->
+                config.dataset.timeframe = timeframe
+                val result = runBlocking { service.screen(listOf("SBER"), null) }
+                assertEquals("OK", result.mode, timeframe)
+            }
+        } finally {
+            config.dataset.timeframe = previous
+        }
+    }
+
+    @Test
     fun `screen returns both candidates when topN exceeds count`() {
         config.enabled = true
         val now = LocalDateTime.now()

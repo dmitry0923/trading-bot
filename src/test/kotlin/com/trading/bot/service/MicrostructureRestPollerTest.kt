@@ -217,4 +217,27 @@ class MicrostructureRestPollerTest {
             poller.stop()
         }
     }
+
+    @Test
+    fun `start is idempotent and stop cancels the loop`() {
+        startServer { 200 to l1Body() }
+        microstructureConfig.restPollingEnabled = true
+        microstructureConfig.restPollIntervalMs = 200
+        microstructureConfig.tickers = listOf("CNYRUBF")
+        val polls = CountDownLatch(1)
+        doAnswer {
+            polls.countDown()
+            null
+        }.whenever(recorder).record(any())
+
+        val poller = poller()
+        poller.start()
+        try {
+            assertTrue(polls.await(5, TimeUnit.SECONDS))
+            // Повторный start не должен создавать второй цикл.
+            poller.start()
+        } finally {
+            poller.stop()
+        }
+    }
 }

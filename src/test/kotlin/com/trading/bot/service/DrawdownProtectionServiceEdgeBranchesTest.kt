@@ -12,6 +12,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -327,6 +328,87 @@ class DrawdownProtectionServiceEdgeBranchesTest {
         assertFalse(drawdown.isDailyLossLimitReached(7L))
         assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl(7L)))
     }
+
+    @Test
+    fun `account await snapshot restores pnl loss flag and peak once per day`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            val snapshot =
+                com.trading.bot.model.entity.DailyRiskSnapshot(
+                    tradeDate = today,
+                    dailyPnl = BigDecimal("-75"),
+                    limitReached = true,
+                    maxDrawdownToday = BigDecimal("-75"),
+                    peakEquity = BigDecimal("49000"),
+                )
+            whenever(snapshotRepo.findByDateAwait(anyDate(), Mockito.anyLong())).thenReturn(snapshot)
+            val drawdown = service()
+
+            drawdown.computeStatus(accountId = 7L, persist = false)
+            drawdown.computeStatus(accountId = 7L, persist = false)
+
+            assertEquals(0, BigDecimal("-75").compareTo(drawdown.getDailyPnl(7L)))
+            assertTrue(drawdown.isDailyLossLimitReached(7L))
+            Mockito.verify(snapshotRepo, Mockito.times(1)).findByDateAwait(anyDate(), Mockito.anyLong())
+        }
+
+    @Test
+    fun `account await snapshot failure falls back to a neutral state`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            whenever(snapshotRepo.findByDateAwait(anyDate(), Mockito.anyLong()))
+                .thenThrow(IllegalStateException("db down"))
+            val drawdown = service()
+
+            val status = drawdown.computeStatus(accountId = 7L, persist = false)
+
+            assertEquals(0, BigDecimal.ZERO.compareTo(status.dailyPnlRub))
+            assertFalse(status.dailyLimitBreached)
+        }
+
+    @Test
+    fun `effective daily limit reuses the cached status aum after a status`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            val drawdown = service(balance = BigDecimal("80000"))
+
+            drawdown.computeStatus(null, persist = false)
+            val limit = drawdown.effectiveDailyLossLimitRub()
+
+            assertTrue(limit > BigDecimal.ZERO)
+        }
+
+    @Test
+    fun `consecutive losses tolerate a missing close timestamp`() {
+        val drawdown = service()
+        val closedTrades =
+            listOf(
+                closed(BigDecimal("-10"), null),
+                closed(BigDecimal("-10"), LocalDateTime.now(clock)),
+            )
+
+        assertEquals(2, drawdown.consecutiveLosses(closedTrades))
+    }
+
+    @Test
+    fun `disabled shadow mode never stores a cooldown`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            val cfg =
+                baseConfig().apply {
+                    shadowModeEnabled = false
+                    maxConsecutiveLosses = 1
+                }
+            whenever(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenReturn(
+                listOf(closed(BigDecimal("-10"), LocalDateTime.now(clock))),
+            )
+            val drawdown = service(cfg)
+
+            val status = drawdown.computeStatus()
+
+            assertFalse(status.shadowModeActive)
+            assertNull(status.shadowModeUntil)
+        }
 
     @Test
     fun `fresh account without a snapshot starts from a neutral daily state`(): Unit =

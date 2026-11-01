@@ -103,6 +103,17 @@ class OrderOutboxServiceTest {
         }
     }
 
+    private fun awaitUntil(
+        timeoutMs: Long = 5_000,
+        condition: () -> Boolean,
+    ) {
+        runBlocking {
+            kotlinx.coroutines.withTimeout(timeoutMs) {
+                while (!condition()) kotlinx.coroutines.delay(10)
+            }
+        }
+    }
+
     private suspend fun stubMarkSentRecording(sentOrders: MutableList<String>) {
         Mockito.`when`(outboxRepo.markSent(anyUuid(), Mockito.anyString())).thenAnswer { inv ->
             sentOrders += inv.getArgument<String>(1)
@@ -186,6 +197,161 @@ class OrderOutboxServiceTest {
             status = PositionStatus.OPEN,
             pendingClose = true,
         )
+
+    @Test
+    fun `close reconcile tolerates a failed position lookup without re-sending`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-db", type = "market", price = null, positionId = 1L, qty = 6)
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            Mockito.`when`(positionRepo.findById(1L)).thenThrow(IllegalStateException("db down"))
+
+            service.processPending()
+
+            awaitUntil {
+                meterRegistry
+                    .counter("outbox.close_reconcile_db_error")
+                    .count() == 1.0
+            }
+            Mockito.verify(alorClient, Mockito.never()).getPositions(Mockito.anyString())
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                    anyPurpose(),
+                )
+        }
+    }
+
+    @Test
+    fun `close reconcile re-sends when the position is no longer pending close`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-np", type = "market", price = null, positionId = 1L, qty = 6)
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            Mockito
+                .`when`(positionRepo.findById(1L))
+                .thenReturn(openPosition().copy(pendingClose = false))
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyBoolean(),
+                        anyPurpose(),
+                    ),
+                ).thenReturn("ord-np")
+            stubMarkSentRecording(sentOrders)
+
+            service.processPending()
+
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .markSent(anyUuid(), Mockito.anyString())
+            assertEquals(listOf("ord-np"), sentOrders)
+        }
+    }
+
+    @Test
+    fun `close reconcile of a short position confirms by delta`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-short", type = "market", price = null, positionId = 1L, qty = 6, side = "buy")
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            Mockito
+                .`when`(positionRepo.findById(1L))
+                .thenReturn(openPosition().copy(direction = PositionDirection.SHORT))
+            Mockito
+                .`when`(alorClient.getPositions(Mockito.anyString()))
+                .thenReturn(
+                    AlorClient.ReconcileResult.Ok(
+                        listOf(AlorClient.ExchangePosition(ticker = "Si", qty = -4L, avgPrice = BigDecimal("100"))),
+                    ),
+                )
+            stubMarkSentRecording(sentOrders)
+
+            service.processPending()
+
+            Mockito.verify(outboxRepo, Mockito.timeout(3000)).markSent(anyUuid(), Mockito.anyString())
+            Mockito
+                .verify(alorClient, Mockito.never())
+                .placeMarketOrder(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyInt(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyBoolean(),
+                    anyPurpose(),
+                )
+            assertEquals(listOf("idem-short"), sentOrders)
+        }
+    }
+
+    @Test
+    fun `close reconcile treats a missing exchange ticker as a closed position`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-other", type = "market", price = null, positionId = 1L, qty = 6)
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            Mockito.`when`(positionRepo.findById(1L)).thenReturn(openPosition())
+            Mockito
+                .`when`(alorClient.getPositions(Mockito.anyString()))
+                .thenReturn(
+                    AlorClient.ReconcileResult.Ok(
+                        listOf(AlorClient.ExchangePosition(ticker = "OTHER", qty = 5L, avgPrice = BigDecimal("100"))),
+                    ),
+                )
+            stubMarkSentRecording(sentOrders)
+
+            service.processPending()
+
+            Mockito.verify(outboxRepo, Mockito.timeout(3000)).markSent(anyUuid(), Mockito.anyString())
+            assertEquals(listOf("idem-other"), sentOrders, "нет позиции по тикеру = закрыто")
+        }
+    }
+
+    @Test
+    fun `close reconcile re-sends when the exchange position is unchanged`() {
+        val outbox = outboxRow(retryCount = 1, key = "idem-same", type = "market", price = null, positionId = 1L, qty = 6)
+        val sentOrders = mutableListOf<String>()
+        runBlocking {
+            stubRetryable(listOf(outbox))
+            stubReconcile(AlorClient.OrderReconciliation.NotFound)
+            stubCloseReconcilePositions(exchangeQty = 10L)
+            Mockito
+                .`when`(
+                    alorClient.placeMarketOrder(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyInt(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyBoolean(),
+                        anyPurpose(),
+                    ),
+                ).thenReturn("ord-same")
+            stubMarkSentRecording(sentOrders)
+
+            service.processPending()
+
+            Mockito
+                .verify(outboxRepo, Mockito.timeout(3000))
+                .markSent(anyUuid(), Mockito.anyString())
+            assertEquals(listOf("ord-same"), sentOrders)
+        }
+    }
 
     private suspend fun stubCloseReconcilePositions(exchangeQty: Long) {
         Mockito

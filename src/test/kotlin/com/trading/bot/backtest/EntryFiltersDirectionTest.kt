@@ -126,6 +126,58 @@ class EntryFiltersDirectionTest {
     // --------------------------------------------------------------------------- ORB
 
     @Test
+    fun `orb direction handles disabled pre window and loose unknown cases`() {
+        assertNull(
+            filters(EntryFilterOverrides()).orbDirection(ramp(listOf(100.0, 101.0)), 1),
+            "фильтр выключен",
+        )
+        val windowed =
+            filters(
+                EntryFilterOverrides(
+                    orbEnabled = true,
+                    orbWindowBars = 1,
+                    orbStrictBreakout = true,
+                    orbBlockOnUnknown = false,
+                    orbWindowStartMinutes = 600,
+                    orbWindowEndMinutes = 1440,
+                ),
+            )
+        assertNull(
+            windowed.orbDirection(
+                listOf(candle(100.0, minutes = -30), candle(101.0, minutes = -20)),
+                1,
+            ),
+            "бар до открытия окна",
+        )
+
+        val threeBars =
+            filters(
+                EntryFilterOverrides(
+                    orbEnabled = true,
+                    orbWindowBars = 3,
+                    orbStrictBreakout = true,
+                    orbBlockOnUnknown = false,
+                    orbWindowStartMinutes = 0,
+                    orbWindowEndMinutes = 1440,
+                ),
+            )
+        assertNull(threeBars.orbDirection(ramp(listOf(100.0, 101.0)), 1), "диапазон ещё формируется")
+
+        val beforeEnd =
+            filters(
+                EntryFilterOverrides(
+                    orbEnabled = true,
+                    orbWindowBars = 1,
+                    orbStrictBreakout = true,
+                    orbBlockOnUnknown = false,
+                    orbWindowStartMinutes = 0,
+                    orbWindowEndMinutes = 620,
+                ),
+            )
+        assertNull(beforeEnd.orbDirection(ramp(listOf(100.0, 101.0)), 1), "бар до закрытия окна")
+    }
+
+    @Test
     fun `orb range still forming blocks only in fail closed mode`() {
         val candles = ramp(listOf(100.0, 101.0))
         val strict =

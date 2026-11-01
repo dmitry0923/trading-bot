@@ -116,9 +116,9 @@ class FinalHoldoutValidator(
                 ?: adaptiveConfidenceThreshold?.let {
                     LiveStrategyBacktestSignalGenerator(
                         adaptiveConfidenceThreshold = it,
-                        mlDirection = backtestConfig?.let { c -> OnlineMlDirectionStrategy.from(c) },
-                        mlDirectionBlockOnUnknown = backtestConfig?.mlDirectionBlockOnUnknown ?: false,
-                        entryFilters = backtestConfig?.let { c -> EntryFilters.from(c) },
+                        mlDirection = OnlineMlDirectionStrategy.from(backtestConfig),
+                        mlDirectionBlockOnUnknown = backtestConfig.mlDirectionBlockOnUnknown,
+                        entryFilters = EntryFilters.from(backtestConfig),
                     )
                 }
 

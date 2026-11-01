@@ -176,7 +176,7 @@ class DecisionEngine(
         // входа. Fail-closed при недостатке данных (UNKNOWN ≠ SAFE).
         when (val result = degenerateCaseGuard.check(ticker, signal.timeframe)) {
             is DegenerateCaseGuard.GuardResult.Allowed -> {
-                Unit
+                // Allowed: entry is permitted, nothing to do here.
             }
 
             is DegenerateCaseGuard.GuardResult.Blocked -> {

@@ -612,6 +612,42 @@ class EntryFiltersDirectionTest {
     }
 
     @Test
+    fun `pullback filter blocks a non positive ema`() {
+        val f = filters(EntryFilterOverrides(pullbackFilterEnabled = true, pullbackEmaPeriod = 2))
+
+        assertTrue(
+            f.blocksEntry(
+                LocalTime.NOON,
+                BigDecimal.ZERO,
+                listOf(BigDecimal.ZERO, BigDecimal.ZERO),
+            ),
+        )
+    }
+
+    @Test
+    fun `macro trend holds when the pullback ema is not positive`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    macroTrendEnabled = true,
+                    macroTrendFastEma = 1,
+                    macroTrendSlowEma = 2,
+                    macroTrendMinHigherBars = 2,
+                    macroTrendPullbackEmaPeriod = 2,
+                    macroTrendBlockOnUnknown = true,
+                ),
+            )
+
+        assertEquals(
+            StrategyAction.HOLD,
+            f.macroTrendDirection(
+                listOf(BigDecimal("100"), BigDecimal("101")),
+                listOf(BigDecimal.ZERO, BigDecimal.ZERO),
+            ),
+        )
+    }
+
+    @Test
     fun `orb with a zero window has no range and fails closed`() {
         val candles = ramp(listOf(100.0, 101.0, 102.0))
         val strict =

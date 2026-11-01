@@ -350,6 +350,21 @@ class TradingAccountServiceBranchesTest {
     // --------------------------------------------------------------------- delete
 
     @Test
+    fun `cached getters return null when no account id is given`() {
+        assertNull(service.cachedMaxDailyLossRubFor(null))
+        assertNull(service.cachedMaxOpenPositionsFor(null))
+        assertNull(service.cachedAumRubFor(null))
+        assertNull(service.cachedPortfolioFor(null))
+    }
+
+    @Test
+    fun `suspend overrides fall back to config when no account id is given`() =
+        runBlocking {
+            assertNull(service.aumRubOverrideFor(null))
+            assertEquals(10, service.maxOpenPositionsFor(null))
+        }
+
+    @Test
     fun `delete returns false for an unknown account`() {
         runBlocking {
             assertFalse(service.delete(99L))

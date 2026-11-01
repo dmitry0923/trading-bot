@@ -217,7 +217,7 @@ class DefaultJsonSchemaValidator(
             val number = parseNumber(node) ?: return false
             val min = (schema["minimum"] as? Number)?.toDouble()
             val max = (schema["maximum"] as? Number)?.toDouble()
-            val value = number.toDouble()
+            val value = number
             if (!value.isFinite()) return false
             if (min != null && value < min) return false
             if (max != null && value > max) return false

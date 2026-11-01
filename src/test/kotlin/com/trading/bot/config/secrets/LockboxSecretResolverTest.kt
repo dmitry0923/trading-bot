@@ -158,6 +158,24 @@ class LockboxSecretResolverTest {
     }
 
     @Test
+    fun `metadata token is used when no explicit token or service account key is set`() {
+        Mockito
+            .`when`(http.send(Mockito.any(HttpRequest::class.java), Mockito.any<HttpResponse.BodyHandler<String>>()))
+            .thenAnswer { invocation ->
+                val request = invocation.getArgument<HttpRequest>(0)
+                if (request.uri().toString().contains("169.254")) {
+                    httpResponse("""{"access_token":"iam-meta"}""")
+                } else {
+                    httpResponse("""{"entries":[{"key":"K","textValue":"v"}]}""")
+                }
+            }
+
+        val result = resolver(iamToken = "", saKeyJson = "").resolve()
+
+        assertEquals("v", result["K"])
+    }
+
+    @Test
     fun `iam endpoint without a token is rejected`() {
         stubResponse(200, """{"ok":true}""")
 

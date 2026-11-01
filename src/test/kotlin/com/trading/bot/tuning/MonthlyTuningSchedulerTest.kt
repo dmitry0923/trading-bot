@@ -34,7 +34,7 @@ class MonthlyTuningSchedulerTest {
             .invocations
             .count { it.method.name == "runTuningCycle" }
 
-    private fun stubCycle(period: String = MoscowPeriod.current()) {
+    private fun stubCycle(period: String = MoscowPeriod.target()) {
         runBlocking {
             whenever(metricsProvider.collectCurrentMonthlyData())
                 .thenReturn(
@@ -99,14 +99,14 @@ class MonthlyTuningSchedulerTest {
     }
 
     @Test
-    fun `current period is the Moscow business month`() {
-        val period = scheduler().currentPeriod()
+    fun `target period is the previous Moscow business month`() {
+        val period = scheduler().targetPeriod()
 
         assertTrue(Regex("""\d{4}-\d{2}""").matches(period), "period=$period")
-        assertEquals(MoscowPeriod.current(), period)
+        assertEquals(MoscowPeriod.target(), period)
     }
 
     private object MoscowPeriod {
-        fun current(): String = YearMonth.now(ZoneId.of("Europe/Moscow")).toString()
+        fun target(): String = YearMonth.now(ZoneId.of("Europe/Moscow")).minusMonths(1).toString()
     }
 }

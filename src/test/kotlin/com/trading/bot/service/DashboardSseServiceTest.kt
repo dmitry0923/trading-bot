@@ -5,6 +5,7 @@ import com.trading.bot.event.PriceChangedEvent
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.anyOrNull
@@ -61,6 +62,23 @@ class DashboardSseServiceTest {
         val elapsed = System.currentTimeMillis() - started
 
         assertTrue(elapsed < 200, "broadcast must run off the caller thread, took ${elapsed}ms")
+    }
+
+    @Test
+    fun `completed and failed emitters are unsubscribed`() {
+        runBlocking { whenever(dashboardService.build(anyOrNull())).thenReturn(mapOf("aum" to 1)) }
+
+        val completed = service.subscribe()
+        val failed = service.subscribe()
+
+        completed.complete()
+        failed.completeWithError(IllegalStateException("boom"))
+
+        assertEquals(
+            2.0,
+            meterRegistry.find("dashboard.sse.connections").counter()!!.count(),
+            "both subscriptions must be registered before the callbacks run",
+        )
     }
 
     @Test

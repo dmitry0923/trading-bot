@@ -119,7 +119,7 @@ class LlmBudgetService(
             }
         }
         val costEstimate =
-            reserveTokens / MILLION.toDouble() * llmConfig.tokenCostRubPerMillion
+            reserveTokens / MILLION * llmConfig.tokenCostRubPerMillion
         val args =
             listOf(
                 reserveTokens.toString(),
@@ -133,8 +133,7 @@ class LlmBudgetService(
                 "172800", // TTL дневных ключей (день + стоимость): 2 суток
             )
         return try {
-            @Suppress("UNCHECKED_CAST")
-            val result = redisTemplate.execute(RESERVE_SCRIPT, keys, *args.toTypedArray()) as? List<Any?>
+            val result = redisTemplate.execute(RESERVE_SCRIPT, keys, *args.toTypedArray())
             val allowed = result?.firstOrNull()?.toString() == "1"
             if (allowed) {
                 meterRegistry.counter("llm.budget.reserve").increment()

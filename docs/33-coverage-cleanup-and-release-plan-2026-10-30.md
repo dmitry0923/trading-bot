@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 96,93 % (25 195 / 25 994) |
-| BRANCH | 88,90 % (9 446 / 10 626) |
-| Тестов | 3 516 |
+| LINE | 96,94 % (25 196 / 25 994) |
+| BRANCH | 89,16 % (9 460 / 10 626) |
+| Тестов | 3 536 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -42,6 +42,11 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 
 ## 3. Чистка проекта (этап после достижения 90 % BRANCH)
 
+**Статус 2026-11-01:** шаг 2 (мёртвый production-код) выполнен, шаг 3 — частично
+(`println`/`System.out`/`TODO`/`FIXME` в `src/main` отсутствуют); шаги 4–6 (конфиги,
+крупные данные, зависимости) не начинались. Итог чистки и новая research-сборка —
+`docs/34-code-cleanup-and-research-restart-2026-11-01.md`.
+
 Порядок — от безопасного к рискованному, каждый пункт отдельным коммитом:
 
 1. **Тестовый код:** неиспользуемые импорты/хелперы, дублирующиеся фикстуры, «пустые»
@@ -67,11 +72,11 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 
 Структура остатка (по данным `build/reports/kover/report.xml`):
 
-- 1 180 непокрытых ветвей; **~400** из них находятся на строках с `?:`.
-- Крупнейшие остатки: `BacktestEngine` 50, `PortfolioMomentumEngine` 30, `PositionRepository` 27,
-  `ApiController` 23, `EntryFilters` 21, `LiveStrategyBacktestSignalGenerator` 21,
-  `DrawdownProtectionService` 19, `ProtectionOrderManager` 19, `DashboardSseService` 15,
-  `AlorFuturesClient` 14.
+- 1 150 непокрытых ветвей; **~400** из них находятся на строках с `?:`.
+- Крупнейшие остатки: `BacktestEngine` 49, `PortfolioMomentumEngine` 30, `PositionRepository` 27,
+  `ApiController` 23, `LiveStrategyBacktestSignalGenerator` 21, `EntryFilters` 21,
+  `ProtectionOrderManager` 19, `DrawdownProtectionService` 18, `DashboardSseService` 14,
+  `OrderExecutionEngine` 14.
 
 **Часть остатка структурно недостижима (DEAD) — подтверждено кодом и схемой БД:**
 

@@ -98,9 +98,6 @@ class MonthlyTuningScheduler(
      */
     internal fun targetPeriod(): String = YearMonth.now(moscowZone).minusMonths(1).toString()
 
-    /** @deprecated оставлено для совместимости тестов: использовать [targetPeriod]. */
-    internal fun currentPeriod(): String = YearMonth.now(moscowZone).toString()
-
     /** Тюнинг за [period] уже зафиксирован в журнале версий (best-effort: БД может быть недоступна). */
     private suspend fun alreadyTuned(period: String): Boolean =
         runCatching { strategyVersionRepository?.findByVersion(period) != null }.getOrDefault(false)

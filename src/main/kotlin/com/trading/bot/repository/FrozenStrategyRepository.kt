@@ -1,3 +1,5 @@
+@file:Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
+
 package com.trading.bot.repository
 
 import com.trading.bot.infrastructure.db.require

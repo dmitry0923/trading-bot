@@ -326,7 +326,7 @@ class StrategyService(
             }
         if (regime != null) recordRegimeMetrics(ticker, regime)
         if (regime?.blocksEntry == true) {
-            logger.warn { "Skipping $ticker/$timeframe — regime blocks entry: ${regime?.describe()}" }
+            logger.warn { "Skipping $ticker/$timeframe — regime blocks entry: ${regime.describe()}" }
             meterRegistry
                 .counter(
                     "strategy.skipped",

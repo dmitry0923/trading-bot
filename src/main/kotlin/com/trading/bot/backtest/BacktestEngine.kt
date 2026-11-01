@@ -310,10 +310,10 @@ class BacktestEngine(
         var fundingVetoBlockedCount = 0
 
         // Live risk gates: initialize in-memory state machine
-        val useRiskGates = backtestConfig.liveRiskGates && riskSimulator != null
-        if (useRiskGates) {
-            riskSimulator!!.initialize(initialCapital)
-            riskSimulator.cycleId = cycleId
+        val riskGates = if (backtestConfig.liveRiskGates) riskSimulator else null
+        if (riskGates != null) {
+            riskGates.initialize(initialCapital)
+            riskGates.cycleId = cycleId
         }
 
         var position: PositionSim? = null
@@ -387,8 +387,9 @@ class BacktestEngine(
             bar: Candle,
         ) {
             val liqPos = position
-            if (backtestConfig.futuresLiquidationSimulation && liqPos != null && liqPos.liquidationPrice != null) {
-                val liq = liqPos.liquidationPrice!!
+            val liqPrice = liqPos?.liquidationPrice
+            if (backtestConfig.futuresLiquidationSimulation && liqPos != null && liqPrice != null) {
+                val liq = liqPrice
                 val liquidated =
                     when (liqPos.direction) {
                         PositionDirection.LONG -> bar.lowPrice.compareTo(liq) <= 0
@@ -778,9 +779,9 @@ class BacktestEngine(
 
             // Live risk gates: check full chain before entry (DecisionEngine parity)
             var riskBlocked = false
-            if (useRiskGates && entering) {
+            if (riskGates != null && entering) {
                 val gateResult =
-                    riskSimulator!!.checkEntry(
+                    riskGates.checkEntry(
                         ticker = ticker,
                         signal = signal,
                         entryPrice = current.openPrice,
@@ -1365,7 +1366,7 @@ class BacktestEngine(
                 ?: percentSlOverride?.let { BigDecimal.valueOf(it) }
                 ?: riskConfig.defaultStopLossPercent
         val commissionPerLot = instrument?.totalCommissionPerLotSide() ?: BigDecimal.ZERO
-        val effectiveRiskPercent = riskPerTradePercentOverride ?: riskConfig.riskPerTradePercent.toDouble()
+        val effectiveRiskPercent = riskPerTradePercentOverride ?: riskConfig.riskPerTradePercent
         val riskAmount =
             leveragedCash
                 .multiply(BigDecimal(effectiveRiskPercent))
@@ -1495,7 +1496,6 @@ class BacktestEngine(
         commissionMultiplier: Double = 1.0,
         slippageMultiplier: Double = 1.0,
         candle: Candle? = null,
-        applySlippage: Boolean = true,
         passiveEligible: Boolean = true,
         fundingHistory: Map<LocalDate, BigDecimal> = emptyMap(),
         tradeLog: MutableList<BacktestTradeRecord>? = null,
@@ -1503,20 +1503,16 @@ class BacktestEngine(
     ): BigDecimal {
         val instrument = instrumentsConfig.find(ticker)
         val fill =
-            if (applySlippage) {
-                executionFill(
-                    instrument,
-                    ticker,
-                    price,
-                    pos.direction == PositionDirection.SHORT,
-                    slippageMultiplier,
-                    candle,
-                    passiveEligible,
-                    passiveFillEnabled,
-                )
-            } else {
-                SimulatedExecution.Fill(price)
-            }
+            executionFill(
+                instrument,
+                ticker,
+                price,
+                pos.direction == PositionDirection.SHORT,
+                slippageMultiplier,
+                candle,
+                passiveEligible,
+                passiveFillEnabled,
+            )
         val commissionEntry = computeCommission(ticker, pos.entryPrice, pos.quantity, commissionMultiplier)
         val commissionExit = computeCommission(ticker, fill.price, pos.quantity, commissionMultiplier)
         commissionAccumulator[0] = commissionAccumulator[0].add(commissionEntry).add(commissionExit)

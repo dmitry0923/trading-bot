@@ -13,6 +13,7 @@ import com.trading.bot.repository.FundingHistoryRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -808,6 +809,57 @@ class BacktestEngineLifecycleBranchesTest {
                 ).simulate("CUSTOM", candles, minBarsForSignal = 2)
 
             assertTrue(result.trades.isNotEmpty(), "spec.slPercent должен дать ненулевой сайзинг")
+        }
+
+    @Test
+    fun `a losing run with trades is rejected by the metric`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val candles =
+                (0 until 40).map { i ->
+                    val price = 200.0 - i
+                    candle("CNYRUBF", price, start.plusMinutes(10L * i), high = price, low = price)
+                }
+            val sizer = mock<PositionSizer>()
+            whenever(
+                sizer.calculateContracts(
+                    org.mockito.kotlin.any(),
+                    anyBigDecimal(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyDirection(),
+                    anyNullableDouble(),
+                    anyNullableInt(),
+                ),
+            ).thenReturn(PositionSizeResult(1, BigDecimal("1275"), BigDecimal("500"), null, null))
+
+            val result =
+                BacktestEngine(
+                    candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    instrumentsConfig = InstrumentsConfig(),
+                    backtestConfig = BacktestConfig().apply { liveRiskGates = false },
+                    meterRegistry = registry,
+                    signalGenerator = BuyOnlyGenerator(),
+                    positionSizer = sizer,
+                    riskConfig = permissiveRiskConfig(),
+                ).run(
+                    ticker = "CNYRUBF",
+                    days = 10,
+                    minBarsForSignal = 2,
+                    slPercent = 0.005,
+                    tpPercent = 0.01,
+                    capitalSlice = 1.0,
+                    riskPerTradePercent = 100.0,
+                    slPoints = 50_000,
+                    tpPoints = 50_000,
+                    maxHoldBars = 1,
+                    candlesOverride = candles,
+                )
+
+            assertTrue(result.totalTrades >= 1, "trades=${result.totalTrades}")
+            assertFalse(result.isPassable(), "убыточная серия не passable: PF=${result.profitFactor}")
+            assertEquals(1.0, registry.counter("bt_pass_total", "result", "REJECT").count())
         }
 
     private fun anyBigDecimal(): BigDecimal {

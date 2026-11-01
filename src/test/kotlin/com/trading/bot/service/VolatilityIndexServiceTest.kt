@@ -4,6 +4,7 @@ import com.trading.bot.client.MoexClient
 import com.trading.bot.config.RiskConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -19,6 +20,24 @@ class VolatilityIndexServiceTest {
 
     private fun service(config: RiskConfig = RiskConfig()): VolatilityIndexService =
         VolatilityIndexService(config, moexClient, SimpleMeterRegistry())
+
+    @Test
+    fun `refresh within the ttl does not call MOEX again`(): Unit =
+        runBlocking {
+            Mockito.`when`(moexClient.getVolatilityIndex("RVI")).thenReturn(BigDecimal("55"))
+            val s = service()
+
+            s.refresh()
+            s.refresh()
+
+            val calls =
+                Mockito
+                    .mockingDetails(moexClient)
+                    .invocations
+                    .count { it.method.name == "getVolatilityIndex" }
+            assertEquals(1, calls)
+            assertTrue(s.isVolatilityAnomalous())
+        }
 
     @Test
     fun `anomalous when value above threshold`() =

@@ -718,6 +718,41 @@ class DecisionEngineTest {
     }
 
     @Test
+    fun `missing snapshot falls back to the signal target price`(): Unit =
+        runBlocking {
+            Mockito.`when`(alorClient.getMarketSnapshot("Si")).thenReturn(null)
+
+            engine().openPosition(signal(), gateway())
+
+            assertEquals(1, gatewayCalls)
+            assertEquals(0, gatewayPrice!!.compareTo(BigDecimal("101")))
+        }
+
+    @Test
+    fun `net ev rejection without a value is still blocked`(): Unit =
+        runBlocking {
+            engine(netEv = BlockingNetEvGateNullValue()).openPosition(signal(), gateway())
+
+            assertEquals(0, gatewayCalls)
+            assertEquals(1.0, rejectMetric("NET_EV_TOO_LOW"))
+        }
+
+    @Test
+    fun `funding veto without a value is still blocked`(): Unit =
+        runBlocking {
+            fundingVetoGate.blocked = true
+            fundingVetoGate.blockedRub = null
+
+            engine().openPosition(signal(), gateway())
+
+            assertEquals(0, gatewayCalls)
+            assertEquals(1.0, rejectMetric("FUNDING_VETO"))
+
+            fundingVetoGate.blocked = false
+            fundingVetoGate.blockedRub = BigDecimal("2.79")
+        }
+
+    @Test
     fun `net ev gate rejection stops the entry and records the reason`() {
         runBlocking { engine(netEv = BlockingNetEvGate()).openPosition(signal(), gateway()) }
 
@@ -950,14 +985,28 @@ class DecisionEngineTest {
             tradingConfig = TradingConfig(),
         ) {
         var blocked = false
+        var blockedRub: java.math.BigDecimal? = java.math.BigDecimal("2.79")
 
         override fun check(
             ticker: String,
             direction: PositionDirection,
-        ): VetoResult = if (blocked) VetoResult.Blocked(java.math.BigDecimal("2.79")) else VetoResult.Pass
+        ): VetoResult = if (blocked) VetoResult.Blocked(blockedRub) else VetoResult.Pass
     }
 
     /** NetEvGate, который всегда блокирует вход (детерминированный отказ EV). */
+    private class BlockingNetEvGateNullValue :
+        NetEvGate(
+            instrumentsConfig = InstrumentsConfig(),
+            riskConfig = RiskConfig(),
+        ) {
+        override fun check(
+            ticker: String,
+            expectedNet: BigDecimal?,
+            snapshot: MarketSnapshot?,
+        ): GateResult = GateResult.Blocked(netEV = null, expectedNet = expectedNet, executionCost = BigDecimal.ONE)
+    }
+
+    /** NetEvGate, ����� �ᥣ�� �������� �室 (���ନ��஢���� �⪠� EV). */
     private class BlockingNetEvGate :
         NetEvGate(
             instrumentsConfig = InstrumentsConfig(),

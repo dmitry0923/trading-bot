@@ -4,8 +4,10 @@ import com.trading.bot.model.InstrumentType
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.entity.Position
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
+import java.time.LocalDateTime
 
 class PnlCalculatorCommissionTest {
     private val lotBasedNoComm = PnlCalculator.lotBased(lotSize = { 1000L })
@@ -150,6 +152,44 @@ class PnlCalculatorCommissionTest {
             entryPrice = BigDecimal("12.50"),
             instrumentType = InstrumentType.FUTURES,
         )
+
+    @Test
+    fun `futures funding is charged in the sign of the position`() {
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                fundingPerClearing = { _, _ -> BigDecimal("1.5") },
+            )
+        val pos =
+            futuresPos().copy(
+                openedAt = LocalDateTime.of(2026, 1, 5, 10, 0),
+                closedAt = LocalDateTime.of(2026, 1, 7, 10, 0),
+            )
+
+        val pnl = calc.pnl(pos, BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+
+        assertTrue(pnl < BigDecimal("1500"), "funding ������ ������ P&L: $pnl")
+    }
+
+    @Test
+    fun `unknown funding is reported when clearings cross`() {
+        var unknown = 0
+        val calc =
+            PnlCalculator.futures(
+                pointValue = { BigDecimal("1000.0") },
+                fundingPerClearing = { _, _ -> null },
+                onFundingUnknown = { unknown++ },
+            )
+        val pos =
+            futuresPos().copy(
+                openedAt = LocalDateTime.of(2026, 1, 5, 10, 0),
+                closedAt = LocalDateTime.of(2026, 1, 7, 10, 0),
+            )
+
+        calc.pnl(pos, BigDecimal("12.50"), BigDecimal("13.00"), BigDecimal(3))
+
+        assertEquals(1, unknown)
+    }
 
     @Test
     fun `futures without commission is pure price delta times pointValue`() {

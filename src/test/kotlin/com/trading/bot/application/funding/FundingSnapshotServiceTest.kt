@@ -287,6 +287,27 @@ class FundingSnapshotServiceTest {
         }
 
     @Test
+    fun `latestForVeto simulation reads the refreshed snapshot`(): Unit =
+        runBlocking {
+            val moex = Mockito.mock(MoexFundingProvider::class.java)
+            val service =
+                service(mode = "SIMULATION", moex = moex, configValue = BigDecimal("0.5"), registry = SimpleMeterRegistry())
+
+            service.refresh("CNYRUBF")
+            val value = service.latestForVeto("CNYRUBF")
+
+            assertEquals(0, BigDecimal("0.5").compareTo(value))
+        }
+
+    @Test
+    fun `latestForVeto live without any snapshot is null`() {
+        val moex = Mockito.mock(MoexFundingProvider::class.java)
+        val service = service(mode = "LIVE", moex = moex, configValue = BigDecimal("0.5"), registry = SimpleMeterRegistry())
+
+        assertNull(service.latestForVeto("CNYRUBF"))
+    }
+
+    @Test
     fun `latestForVeto simulation uses config value`(): Unit =
         runBlocking {
             val moex = Mockito.mock(MoexFundingProvider::class.java)

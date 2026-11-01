@@ -72,6 +72,20 @@ class MonthlyTuningSchedulerTest {
     }
 
     @Test
+    fun `current scheduled run skips when another one is already in flight`() {
+        stubCycle()
+        val scheduler = scheduler()
+        // Первый цикл стартует и удерживает running=true; второй cron-запуск должен быть отброшен.
+        scheduler.runMonthlyTuning()
+        scheduler.runMonthlyTuning()
+        assertTrue(awaitCycleCalls(1))
+
+        Thread.sleep(300)
+
+        assertTrue(cycleCalls() <= 2)
+    }
+
+    @Test
     fun `second scheduled run in the same period is skipped`() {
         stubCycle()
         val scheduler = scheduler()

@@ -2,7 +2,11 @@ package com.trading.bot.controller
 
 import com.trading.bot.agent.ArbitratorAgent
 import com.trading.bot.agent.ContrarianAgent
+import com.trading.bot.application.TradingBlock
+import com.trading.bot.application.TradingBlockReason
+import com.trading.bot.application.TradingBlockSource
 import com.trading.bot.application.TradingGate
+import com.trading.bot.application.TradingStatus
 import com.trading.bot.backtest.BacktestEngine
 import com.trading.bot.backtest.BacktestResult
 import com.trading.bot.backtest.FinalHoldoutValidator
@@ -23,6 +27,7 @@ import com.trading.bot.model.CloseReason
 import com.trading.bot.model.PositionDirection
 import com.trading.bot.model.PositionStatus
 import com.trading.bot.model.StrategyAction
+import com.trading.bot.model.dto.ClearingQuote
 import com.trading.bot.model.dto.InvestorView
 import com.trading.bot.model.dto.RagAnalysis
 import com.trading.bot.model.dto.RagAnalyzeRequest
@@ -69,6 +74,8 @@ import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -143,6 +150,8 @@ class ApiControllerDefaultsTest {
     private val walkForwardAnalyzer = mock<WalkForwardAnalyzer>()
     private val strategyRepository = mock<StrategyRepository>()
     private val positionRepository = mock<PositionRepository>()
+    private val clearingService = mock<ClearingService>()
+    private val tradingGate = mock<TradingGate>()
     private val redisCacheService = mock<RedisCacheService>()
     private val paperTradingService = mock<PaperTradingService>()
     private val ragErrorAnalyzer = mock<RagErrorAnalyzer>()
@@ -196,12 +205,12 @@ class ApiControllerDefaultsTest {
             dashboardService = dashboardService,
             dashboardSseService = mock<DashboardSseService>(),
             investorService = investorService,
-            clearingService = mock<ClearingService>(),
+            clearingService = clearingService,
             profitForecastService = mock<ProfitForecastService>(),
             tradingAccountService = tradingAccountService,
             tradingControlService = mock<TradingControlService>(),
             emergencyStopService = mock<EmergencyStopService>(),
-            tradingGate = mock<TradingGate>(),
+            tradingGate = tradingGate,
             paperTradingService = paperTradingService,
             lineageService = mock<LineageService>(),
             ragErrorAnalyzer = ragErrorAnalyzer,
@@ -782,6 +791,87 @@ class ApiControllerDefaultsTest {
         }
 
     @Test
+    fun `investor withdraw and clearing endpoints cover default payloads`() {
+        val view = mock<InvestorView>()
+        val quote = mock<ClearingQuote>()
+        runBlocking {
+            whenever(
+                investorService.withdraw(
+                    org.mockito.kotlin.any(),
+                    anyBigDecimal(),
+                    Mockito.nullable(String::class.javaObjectType),
+                ),
+            ).thenReturn(view)
+            whenever(clearingService.calculateWithdrawal(anyUuid(), anyDateTime())).thenReturn(quote)
+            whenever(clearingService.settleWithdrawal(anyUuid(), anyDateTime())).thenReturn(quote)
+        }
+
+        assertEquals(view, runBlocking { controller.withdrawInvestor(UUID.randomUUID(), mapOf()) })
+        assertEquals(
+            view,
+            runBlocking {
+                controller.withdrawInvestor(UUID.randomUUID(), mapOf("amount" to "10", "description" to "x"))
+            },
+        )
+        val investorId = UUID.randomUUID()
+        assertEquals(quote, runBlocking { controller.getClearingQuote(investorId, null) })
+        assertEquals(quote, runBlocking { controller.settleClearing(investorId, null) })
+        runBlocking { controller.getClearingQuote(investorId, LocalDateTime.of(2026, 1, 5, 12, 0)) }
+        runBlocking { controller.settleClearing(investorId, LocalDateTime.of(2026, 1, 5, 12, 0)) }
+    }
+
+    @Test
+    fun `trading status omits null global block fields and ticker`() {
+        runBlocking {
+            whenever(tradingGate.getStatus()).thenReturn(TradingStatus(emptyList()))
+            whenever(settingsService.getSettings()).thenReturn(mock())
+            whenever(positionRepository.findOpenCount()).thenReturn(0)
+        }
+
+        val empty = runBlocking { controller.getTradingStatus() }
+
+        assertTrue(empty.containsKey("blocks"))
+        assertFalse(empty.containsKey("reason"))
+        assertFalse(empty.containsKey("source"))
+        assertFalse(empty.containsKey("detail"))
+        assertFalse(empty.containsKey("blockedAt"))
+
+        runBlocking {
+            whenever(
+                tradingGate.getStatus(),
+            ).thenReturn(
+                TradingStatus(
+                    listOf(
+                        TradingBlock(
+                            reason = TradingBlockReason.MANUAL_DISABLE,
+                            source = TradingBlockSource.MANUAL,
+                            detail = "off",
+                            ticker = null,
+                        ),
+                        TradingBlock(
+                            reason = TradingBlockReason.TICKER_PAUSED,
+                            source = TradingBlockSource.RISK_SYSTEM,
+                            detail = "paused",
+                            ticker = "SBER",
+                        ),
+                    ),
+                ),
+            )
+        }
+
+        val blocked = runBlocking { controller.getTradingStatus() }
+
+        assertEquals("MANUAL_DISABLE", blocked["reason"])
+        assertEquals("MANUAL", blocked["source"])
+        assertEquals("off", blocked["detail"])
+        assertTrue(blocked.containsKey("blockedAt"))
+        @Suppress("UNCHECKED_CAST")
+        val blocks = blocked["blocks"] as List<Map<String, Any?>>
+        assertNull(blocks[0]["ticker"])
+        assertEquals("SBER", blocks[1]["ticker"])
+    }
+
+    @Test
     fun `investor endpoints validate the name and parse the amounts`() {
         val view = mock<InvestorView>()
         runBlocking {
@@ -1283,6 +1373,16 @@ class ApiControllerDefaultsTest {
     private fun anyLocalDateTime(): LocalDateTime {
         Mockito.any(LocalDateTime::class.java)
         return LocalDateTime.now()
+    }
+
+    private fun anyUuid(): UUID {
+        Mockito.any(UUID::class.java)
+        return UUID.randomUUID()
+    }
+
+    private fun anyDateTime(): LocalDateTime {
+        Mockito.any(LocalDateTime::class.java)
+        return LocalDateTime.of(2026, 1, 1, 0, 0)
     }
 
     private fun anyBigDecimal(): BigDecimal {

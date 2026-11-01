@@ -29,7 +29,7 @@ class PositionRepository(
     private val databaseClient: DatabaseClient,
     private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
 ) {
-    private fun toPosition(row: Row): Position =
+    internal fun toPosition(row: Row): Position =
         Position(
             id = row.get("id", Long::class.javaObjectType),
             cumulativeSlFillQty = row.get("cumulative_sl_fill_qty", Int::class.javaObjectType) ?: 0,

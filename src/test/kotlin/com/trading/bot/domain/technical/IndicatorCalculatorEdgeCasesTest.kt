@@ -3,6 +3,7 @@ package com.trading.bot.domain.technical
 import com.trading.bot.model.entity.Candle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -39,6 +40,46 @@ class IndicatorCalculatorEdgeCasesTest {
     private fun risingCandles(count: Int): List<Candle> = List(count) { i -> candle((100 + i).toString()) }
 
     // ─── RSI / ATR / EMA / MACD ─────────────────────────────────────
+
+    @Test
+    fun `is squeeze is null on flat and non positive price ranges`() {
+        assertNull(IndicatorCalculator.isSqueeze(flatCandles(60)))
+        assertNull(IndicatorCalculator.isSqueeze(List(60) { candle("0") }))
+    }
+
+    @Test
+    fun `calculate reports a bearish macd on a steady decline`() {
+        val falling = List(60) { i -> candle((200 - i).toString()) }
+
+        val indicators = IndicatorCalculator.calculate(falling)!!
+
+        assertEquals("DOWN", indicators.trend)
+        assertEquals("BEARISH", indicators.conclusion)
+    }
+
+    @Test
+    fun `adx handles a falling series and a short window`() {
+        val falling = List(40) { i -> candle((200 - i).toString(), high = (201 - i).toString(), low = (199 - i).toString()) }
+
+        assertTrue(IndicatorCalculator.adx(falling) >= 0.0)
+        assertEquals(0.0, IndicatorCalculator.adx(falling.take(5)), 1e-9)
+    }
+
+    @Test
+    fun `keltner is null for a flat range and present for a trend`() {
+        assertNull(IndicatorCalculator.keltner(flatCandles(60)))
+
+        val rising = List(60) { i -> candle((100 + i).toString(), high = (101 + i).toString(), low = (99 + i).toString()) }
+
+        assertNotNull(IndicatorCalculator.keltner(rising))
+    }
+
+    @Test
+    fun `range squeeze series rejects non positive periods`() {
+        assertNull(IndicatorCalculator.rangeSqueezeSeries(flatCandles(60), rangePeriod = 0))
+        assertNull(IndicatorCalculator.rangeSqueezeSeries(flatCandles(60), atrPeriod = 0))
+        assertNull(IndicatorCalculator.rangeSqueezeSeries(flatCandles(10), rangePeriod = 20, atrPeriod = 5))
+    }
 
     @Test
     fun `rsi returns neutral 50 without enough data`() {

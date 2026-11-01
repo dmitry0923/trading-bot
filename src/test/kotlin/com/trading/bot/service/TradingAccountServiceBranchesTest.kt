@@ -69,6 +69,16 @@ class TradingAccountServiceBranchesTest {
     // ------------------------------------------------------------ cache getters
 
     @Test
+    fun `suspend overrides fall back when the account is missing`(): Unit =
+        runBlocking {
+            Mockito.`when`(repository.findById(99L)).thenReturn(null)
+
+            assertNull(service.aumRubOverrideFor(99L))
+            assertEquals(10, service.maxOpenPositionsFor(99L))
+            assertEquals("D12345", service.portfolioOf(99L))
+        }
+
+    @Test
     fun `cached getters return null for an id missing from the warmed cache`() {
         runBlocking {
             Mockito.`when`(repository.findEnabled()).thenReturn(

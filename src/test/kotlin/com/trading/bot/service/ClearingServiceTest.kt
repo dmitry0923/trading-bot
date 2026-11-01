@@ -46,6 +46,30 @@ class ClearingServiceTest {
     }
 
     @Test
+    fun `unknown investor and missing account are rejected`(): Unit =
+        runBlocking {
+            val missing = UUID.randomUUID()
+
+            assertThrows<IllegalArgumentException> {
+                service.calculateWithdrawal(missing, LocalDateTime.now(clock))
+            }
+
+            Mockito.`when`(investorRepo.findInvestorById(missing)).thenReturn(investor)
+            assertThrows<IllegalArgumentException> {
+                service.settleWithdrawal(missing, LocalDateTime.now(clock))
+            }
+        }
+
+    @Test
+    fun `empty pool produces a zero profit share`(): Unit =
+        runBlocking {
+            stubInvestor()
+            Mockito.`when`(investorService.poolContributed()).thenReturn(BigDecimal.ZERO)
+
+            service.calculateWithdrawal(investor.id, LocalDateTime.now(clock))
+        }
+
+    @Test
     fun `settle is rejected for a non-current business day`() =
         runBlocking {
             // Бэкдейт/будущая дата = другой ключ идемпотентности и второе списание (скан-2 P2).

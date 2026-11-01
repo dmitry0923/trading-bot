@@ -216,6 +216,17 @@ class BacktestEngineLifecycleBranchesTest {
         )
 
     @Test
+    fun `simulate without a meter registry still produces a result`(): Unit =
+        runBlocking {
+            val result =
+                engine(config = BacktestConfig(), meterRegistry = null)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+
+            assertTrue(result.totalTrades >= 0)
+            assertTrue(result.equityCurve.isNotEmpty())
+        }
+
+    @Test
     fun `closed trades are reported to the live risk simulator`(): Unit =
         runBlocking {
             val config =

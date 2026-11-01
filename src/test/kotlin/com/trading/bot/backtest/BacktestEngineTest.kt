@@ -1063,6 +1063,88 @@ class BacktestEngineTest {
     }
 
     @Test
+    fun `filter and gate paths tolerate a registry that returns no counters`() {
+        val registryWithoutCounters = Mockito.mock(io.micrometer.core.instrument.MeterRegistry::class.java)
+        val modelProvider = Mockito.mock(MlModelProvider::class.java)
+        val featureResolver = Mockito.mock(MlFeatureResolver::class.java)
+        val mlEntryFilter = MlEntryFilter(MlConfig(), modelProvider, featureResolver, SimpleMeterRegistry())
+        runBlocking {
+            Mockito.`when`(modelProvider.model).thenReturn(BtRecordingModel(0.3))
+            Mockito.`when`(featureResolver.resolve(any(), any(), any(), anyOrNull(), any())).thenReturn(btVector())
+        }
+        val mlEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = registryWithoutCounters,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mlFilterEnabled = true
+                    },
+                mlEntryFilter = mlEntryFilter,
+            )
+
+        val mlResult = runBlocking { mlEngine.simulate("SBER", trendingCandles()) }
+        assertEquals(0, mlResult.totalTrades)
+
+        val mtfFilter =
+            HigherTfTrendFilter(
+                MtfConfig(),
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                SimpleMeterRegistry(),
+            )
+        val mtfEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = registryWithoutCounters,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        mtfFilterEnabled = true
+                    },
+                higherTfTrendFilter = mtfFilter,
+            )
+
+        val mtfResult = runBlocking { mtfEngine.simulate("SBER", trendingCandles()) }
+        assertEquals(0, mtfResult.totalTrades)
+    }
+
+    @Test
+    fun `funding window paths tolerate a registry that returns no counters`() {
+        val registryWithoutCounters = Mockito.mock(io.micrometer.core.instrument.MeterRegistry::class.java)
+        val series = flatCnyCandles()
+        val repo = fundingRepoAcrossSeries(series, BigDecimal("30.0"), LocalDate.of(2026, 1, 9) to BigDecimal("30.0"))
+
+        val entryEngine = fundingWindowEngine(repo, meterRegistry = registryWithoutCounters)
+        val entryResult = runBlocking { entryEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+        assertEquals(1, entryResult.totalTrades)
+
+        val unknownEngine = fundingWindowEngine(fundingRepoReturning(), meterRegistry = registryWithoutCounters)
+        val unknownResult = runBlocking { unknownEngine.simulate("CNYRUBF", series, slPoints = 300, tpPoints = 600, minBarsForSignal = 1) }
+        assertEquals(0, unknownResult.totalTrades)
+    }
+
+    @Test
+    fun `funding veto with an unknown date fails closed without a counter registry`() {
+        val registryWithoutCounters = Mockito.mock(io.micrometer.core.instrument.MeterRegistry::class.java)
+        val vetoEngine =
+            BacktestEngine(
+                CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                meterRegistry = registryWithoutCounters,
+                backtestConfig =
+                    BacktestConfig().apply {
+                        fundingVetoEnabled = true
+                        fundingVetoLongThresholdRub = 2.0
+                        fundingVetoShortThresholdRub = 2.0
+                        fundingVetoBlockOnUnknown = true
+                    },
+                fundingHistoryRepository = fundingRepoReturning(),
+            )
+
+        val result = runBlocking { vetoEngine.simulate("SBER", trendingCandles()) }
+
+        assertEquals(0, result.totalTrades, "��� ��� ᢥ���� funding + block-on-unknown  fail-closed")
+    }
+
+    @Test
     fun `ml filter blocks all entries when enabled and model rejects`() {
         val modelProvider = Mockito.mock(MlModelProvider::class.java)
         val featureResolver = Mockito.mock(MlFeatureResolver::class.java)
@@ -1380,7 +1462,7 @@ class BacktestEngineTest {
     private fun fundingWindowEngine(
         repo: FundingHistoryRepository,
         directionAware: Boolean = true,
-        meterRegistry: SimpleMeterRegistry? = null,
+        meterRegistry: io.micrometer.core.instrument.MeterRegistry? = null,
         generator: BacktestSignalGenerator = ConstantSignalGenerator(StrategyAction.HOLD),
         randomSide: Boolean = false,
     ): BacktestEngine =

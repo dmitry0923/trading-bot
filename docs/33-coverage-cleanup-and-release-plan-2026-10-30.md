@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 96,94 % (25 196 / 25 994) |
-| BRANCH | 89,16 % (9 460 / 10 626) |
-| Тестов | 3 536 |
+| LINE | 97,03 % (25 219 / 25 994) |
+| BRANCH | 89,80 % (9 528 / 10 626) |
+| Тестов | 3 577 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -67,16 +67,16 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 
 ## 3a. Достижимость 90 % BRANCH: анализ остатка (2026-11-01)
 
-Замер после итерации 2026-11-01 (вечер): **BRANCH 88,90 % (9 446 / 10 626)**, LINE 96,93 %,
-тестов 3 516, падений 0. До цели не хватает **118** покрытых ветвей.
+Замер после итерации 2026-11-01 (вечер): **BRANCH 89,80 % (9 528 / 10 626)**, LINE 97,03 %,
+тестов 3 577, падений 0. До цели не хватает **36** покрытых ветвей.
 
 Структура остатка (по данным `build/reports/kover/report.xml`):
 
-- 1 150 непокрытых ветвей; **~400** из них находятся на строках с `?:`.
-- Крупнейшие остатки: `BacktestEngine` 49, `PortfolioMomentumEngine` 30, `PositionRepository` 27,
-  `ApiController` 23, `LiveStrategyBacktestSignalGenerator` 21, `EntryFilters` 21,
-  `ProtectionOrderManager` 19, `DrawdownProtectionService` 18, `DashboardSseService` 14,
-  `OrderExecutionEngine` 14.
+- 1 082 непокрытых ветвей; **~400** из них находятся на строках с `?:`.
+- Крупнейшие остатки: `BacktestEngine` 44, `PortfolioMomentumEngine` 30, `EntryFilters` 21,
+  `LiveStrategyBacktestSignalGenerator` 21, `DrawdownProtectionService` 18, `DashboardSseService` 15,
+  `AlorFuturesClient` 14, `PositionRepository` 14, `BacktestRiskSimulator` 14,
+  `ProtectionOrderManager` 14.
 
 **Часть остатка структурно недостижима (DEAD) — подтверждено кодом и схемой БД:**
 
@@ -106,6 +106,33 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 (б) разрешить фиксировать DEAD-ветви в знаменателе (фильтр/исключение), что текущими
 правилами запрещено. Без этого потолок оценивается существенно ниже 90 %; точная доля
 DEAD-ветвей требует отдельного пофайлового аудита (реестр C-01…C-12 в §2).
+
+## 3b. Итерация «до 90 %» (2026-11-01, вечер): 88,90 % → 89,80 %
+
+Добавлено 41 тест (3 536 → 3 577), +82 покрытые ветви. Что сработало:
+
+- **`PositionRepository.toPosition`** (27 → 14): маппер сделан `internal`, добавлен unit-тест
+  на `Row` с `NULL` в nullable-колонках и с заполненными значениями — закрыл дефолт-ветви
+  `?: 0/false/ZERO` без БД.
+- **`ApiController`**: `trading/status` с пустым/заполненным `TradingStatus` (reason/source/
+  detail/blockedAt/ticker), `withdraw`/`deposit` без `amount`, clearing с `date=null` и датой.
+- **`ProtectionOrderManager`**: флаги `slPendingReplace`/`slCancelPending`/`tpPendingReplace`/
+  `tpCancelPending`, активный outbox TP, `reconcile` для не-OPEN позиции.
+- **`BacktestEngine`**: mock-`MeterRegistry` (counter=null) для ML/MTF/funding-window/veto/risk
+  путей, funding-veto с неизвестной датой и SELL.
+- **`IndicatorCalculator`**: BEARISH-ветвь MACD, ADX на падении/коротком окне, Keltner/range-squeeze
+  на плоском диапазоне, `isSqueeze` при нулевых ценах.
+- **`DecisionEngine`**: null-снапшот → targetPrice, gate-блокировки без значения (netEV/fundingRub).
+- **Прочее**: `FundingSnapshotService` (refreshed snapshot, LIVE без снапшота),
+  `ConfiguredFundingProvider`, `DegenerateCaseGuard` (неизвестный тикер), `VolatilityIndexService`
+  (кеш TTL), `MonthlyTuningScheduler` (период уже в `strategy_versions`), `ClearingService`
+  (неизвестный инвестор/аккаунт, пустой пул), `ProfitForecastService` (пустая история, один день,
+  сделки без `closedAt`), `MoexFundingProvider` (пустые/пустые-строки data), `BacktestTradeRecord.toMap`.
+
+Остаток (36 ветвей до цели) — это защитные fail-closed ветви (`?:` на NOT NULL-колонках,
+NaN/Infinity-guard'ы) и сетевые пути (WS-reconnect, rate-limit/circuit-breaker декораторы,
+`.7z`-ветка парсера без `org.tukaani:xz`). Их покрытие требует либо удаления DEAD-кода
+(меняет инварианты), либо фейковых WS/HTTP-серверов — отдельный цикл.
 
 ## 4. Релизная сборка (этап 4)
 

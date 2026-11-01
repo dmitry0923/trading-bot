@@ -133,6 +133,25 @@ class OnlineMlDirectionStrategyTest {
     }
 
     @Test
+    fun `from applies every explicit override`() {
+        val strategy =
+            OnlineMlDirectionStrategy.from(
+                BacktestConfig(),
+                MlDirectionOverrides(
+                    enabled = true,
+                    horizonBars = 7,
+                    minReturnPercent = 0.2,
+                    learningRate = 0.3,
+                    l2 = 0.4,
+                    signalMargin = 0.5,
+                    blockOnUnknown = true,
+                ),
+            )
+
+        assertTrue(strategy != null)
+    }
+
+    @Test
     fun `disabled config returns no strategy`() {
         val config = BacktestConfig()
         config.mlDirectionEnabled = false

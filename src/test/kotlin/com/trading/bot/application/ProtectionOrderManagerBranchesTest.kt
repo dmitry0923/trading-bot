@@ -314,6 +314,69 @@ class ProtectionOrderManagerBranchesTest {
         }
 
     @Test
+    fun `attach skips legs flagged as pending replace or cancel`(): Unit =
+        runBlocking {
+            stubPlaceOrder("NEW")
+
+            val slPending = openPosition(slPendingReplace = true)
+            manager.attachProtectionOrders(slPending)
+            assertNull(slPending.slOrderId)
+            assertEquals("NEW", slPending.tpOrderId)
+
+            val slCancel = openPosition(slCancelPending = true)
+            manager.attachProtectionOrders(slCancel)
+            assertNull(slCancel.slOrderId)
+
+            val tpPending = openPosition(tpPendingReplace = true)
+            manager.attachProtectionOrders(tpPending)
+            assertNull(tpPending.tpOrderId)
+            assertEquals("NEW", tpPending.slOrderId)
+
+            val tpCancel = openPosition(tpCancelPending = true)
+            manager.attachProtectionOrders(tpCancel)
+            assertNull(tpCancel.tpOrderId)
+        }
+
+    @Test
+    fun `active take profit outbox row suppresses only the take profit leg`(): Unit =
+        runBlocking {
+            stubPlaceOrder("SL-NEW")
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "tp")).thenReturn(outbox(OutboxStatus.PENDING))
+            val pos = openPosition()
+
+            manager.attachProtectionOrders(pos)
+
+            assertEquals("SL-NEW", pos.slOrderId)
+            assertNull(pos.tpOrderId)
+        }
+
+    @Test
+    fun `level change skips legs already pending or missing a stored price`(): Unit =
+        runBlocking {
+            stubPlaceOrder(null)
+
+            val sl = openPosition(slOrderId = "SL-1", slOrderPrice = "90000", slPendingReplace = true)
+            manager.onProtectionLevelsChanged(sl)
+            assertTrue(sl.slPendingReplace)
+
+            val slNoPrice = openPosition(slOrderId = "SL-1", slOrderPrice = null)
+            manager.onProtectionLevelsChanged(slNoPrice)
+            assertFalse(slNoPrice.slPendingReplace)
+
+            val tp = openPosition(tpOrderId = "TP-1", tpOrderPrice = "90000", tpPendingReplace = true)
+            manager.onProtectionLevelsChanged(tp)
+            assertTrue(tp.tpPendingReplace)
+
+            val tpCancel = openPosition(tpOrderId = "TP-1", tpOrderPrice = "90000", tpCancelPending = true)
+            manager.onProtectionLevelsChanged(tpCancel)
+            assertFalse(tpCancel.tpPendingReplace)
+
+            val tpNoPrice = openPosition(tpOrderId = "TP-1", tpOrderPrice = null)
+            manager.onProtectionLevelsChanged(tpNoPrice)
+            assertFalse(tpNoPrice.tpPendingReplace)
+        }
+
+    @Test
     fun `pending outbox row suppresses duplicate placement`(): Unit =
         runBlocking {
             stubPlaceOrder("SL-1")
@@ -355,6 +418,17 @@ class ProtectionOrderManagerBranchesTest {
         }
 
     // ─── onProtectionLevelsChanged ──────────────────────────────────────
+
+    @Test
+    fun `reconcile skips a position that is no longer open`(): Unit =
+        runBlocking {
+            val pos = openPosition(status = PositionStatus.CLOSED, slOrderId = "SL-1", tpOrderId = "TP-1")
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertNull(appliedClose.get(), "�������� ��� OPEN �� ���������� ����������")
+            assertNull(protectionFailed.get())
+        }
 
     @Test
     fun `level change on a non open position is ignored`(): Unit =

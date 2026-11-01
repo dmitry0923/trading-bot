@@ -85,6 +85,15 @@ class MoexFundingProviderTest {
     }
 
     @Test
+    fun `empty data rows and blank cells yield null`() {
+        val provider = provider()
+
+        assertNull(provider.parseFundingValue("""{"marketdata": {"columns": ["SWAPRATE"], "data": []}}""", "SWAPRATE"))
+        assertNull(provider.parseFundingValue("""{"marketdata": {"columns": ["SWAPRATE"], "data": [[""]]}}""", "SWAPRATE"))
+        assertNull(provider.parseFundingValue("""{"marketdata": {"columns": ["SWAPRATE"], "data": [[null]]}}""", "SWAPRATE"))
+    }
+
+    @Test
     fun `non numeric funding yields null`() {
         val provider = provider()
         val body = """{"marketdata": {"columns": ["SWAPRATE"], "data": [["n/a"]]}}"""

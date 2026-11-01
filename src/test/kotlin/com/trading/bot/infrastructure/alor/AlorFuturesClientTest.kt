@@ -129,6 +129,14 @@ class AlorFuturesClientTest {
     }
 
     @Test
+    fun `simulation returns config GO for an unspecified direction`(): Unit =
+        runBlocking {
+            val go = client().getFuturesGO("Si", null)
+
+            assertEquals(0, BigDecimal("15000").compareTo(go!!))
+        }
+
+    @Test
     fun `simulation returns config GO regardless of direction without REST call`() =
         runBlocking {
             val longGo = client().getFuturesGO("Si", PositionDirection.LONG)

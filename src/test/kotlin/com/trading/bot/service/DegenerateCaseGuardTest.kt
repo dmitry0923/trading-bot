@@ -94,6 +94,13 @@ class DegenerateCaseGuardTest {
         }
 
     @Test
+    fun `unknown ticker falls back to the global thresholds`() {
+        val reason = runBlocking { guard.blockReason("ZZZZ", "MINUTE_10") }
+
+        assertNull(reason)
+    }
+
+    @Test
     fun `passes when market is normal`() {
         val reason = runBlocking { guard.blockReason("SBER", "MINUTE_10") }
         assertNull(reason)

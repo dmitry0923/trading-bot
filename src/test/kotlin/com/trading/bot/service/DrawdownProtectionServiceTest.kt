@@ -293,6 +293,22 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
+    fun `daily pnl update before the first snapshot falls back to the live aum`(): Unit =
+        runBlocking {
+            stubNoOpenPositions()
+            stubClosedPositions(emptyList())
+            val s = service()
+
+            s.updateDailyPnl(BigDecimal("-1"), null)
+            val beforeStatus = s.effectiveDailyLossLimitRub()
+            s.computeStatus()
+            val afterStatus = s.effectiveDailyLossLimitRub()
+
+            assertEquals(beforeStatus, afterStatus, "����� ������ ��� ������ ��� �� ���������� �� �����")
+            assertFalse(s.getDailyPnl(null) > BigDecimal.ZERO)
+        }
+
+    @Test
     fun `auto stop publishes again after the cooldown expires`(): Unit =
         runBlocking {
             val zone = ZoneId.of("Europe/Moscow")

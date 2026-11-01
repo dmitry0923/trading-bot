@@ -220,6 +220,72 @@ class TradingBotServiceExecutionReportTest {
      * and closeOrderId/pendingClose are preserved for subsequent fills.
      */
     @Test
+    fun `futures close fill is ignored by the stock fallback`() {
+        val pos = stockPosition(alorOrderId = "ord-entry-1", closeOrderId = "ord-close-1")
+        pos.instrumentType = InstrumentType.FUTURES
+        runBlocking {
+            Mockito.`when`(positionRepo.findByAlorOrderId("ord-close-1")).thenReturn(null)
+            Mockito.`when`(positionRepo.findByCloseOrderId("ord-close-1")).thenReturn(pos)
+        }
+        val report =
+            ExecutionReport(
+                orderId = "ord-close-1",
+                status = OrderStatus.FILLED,
+                cumulativeFilledQty = 10,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        service.onExecutionReport(ExecutionReportEvent(report))
+
+        awaitUntil { Mockito.mockingDetails(positionRepo).invocations.any { it.method.name == "findByCloseOrderId" } }
+        assertEquals(PositionStatus.OPEN, pos.status, "фьючерсы обслуживает FuturesTradingBotService")
+    }
+
+    @Test
+    fun `close fill of a position with a close timestamp is ignored`() {
+        val pos = stockPosition(alorOrderId = "ord-entry-1", closeOrderId = "ord-close-1")
+        pos.closedAt = java.time.LocalDateTime.now()
+        runBlocking {
+            Mockito.`when`(positionRepo.findByAlorOrderId("ord-close-1")).thenReturn(null)
+            Mockito.`when`(positionRepo.findByCloseOrderId("ord-close-1")).thenReturn(pos)
+        }
+        val report =
+            ExecutionReport(
+                orderId = "ord-close-1",
+                status = OrderStatus.FILLED,
+                cumulativeFilledQty = 10,
+                avgPrice = BigDecimal("110"),
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        service.onExecutionReport(ExecutionReportEvent(report))
+
+        awaitUntil { Mockito.mockingDetails(positionRepo).invocations.any { it.method.name == "findByCloseOrderId" } }
+        assertEquals(PositionStatus.OPEN, pos.status, "закрытая позиция не обрабатывается повторно")
+    }
+
+    @Test
+    fun `non filled report never reaches the stock fallback lookup`() {
+        val report =
+            ExecutionReport(
+                orderId = "ord-close-1",
+                status = OrderStatus.NEW,
+                cumulativeFilledQty = 0,
+                avgPrice = null,
+                ticker = "SBER",
+                side = "sell",
+            )
+
+        service.onExecutionReport(ExecutionReportEvent(report))
+
+        runBlocking { kotlinx.coroutines.delay(150) }
+        runBlocking { Mockito.verify(positionRepo, Mockito.never()).findByCloseOrderId(Mockito.anyString()) }
+    }
+
+    @Test
     fun `close order partial fill applies delta via engine fallback`() {
         val pos = stockPosition(alorOrderId = "ord-entry-1", closeOrderId = "ord-close-1")
         runBlocking {

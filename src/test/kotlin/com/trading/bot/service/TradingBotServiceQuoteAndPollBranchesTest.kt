@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.application.MarketDataGate
 import com.trading.bot.application.TradingGate
 import com.trading.bot.application.decision.DecisionEngine
+import com.trading.bot.application.decision.ExecutionGateway
 import com.trading.bot.client.AlorClient
 import com.trading.bot.client.AlorWebSocketClient
 import com.trading.bot.client.QuoteTick
@@ -248,6 +249,50 @@ class TradingBotServiceQuoteAndPollBranchesTest {
         Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(false)
         service.onStrategyGenerated(StrategyGeneratedEvent(signal(StrategyAction.BUY)))
         runBlocking { Mockito.verify(decisionEngine, never()).openPosition(any(), any()) }
+    }
+
+    @Test
+    fun `strategy generated signal reaches the decision engine`() {
+        Mockito.`when`(instrumentsConfig.isFutures("SBER")).thenReturn(false)
+        Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+
+        service.onStrategyGenerated(StrategyGeneratedEvent(signal(StrategyAction.BUY)))
+
+        runBlocking {
+            Mockito
+                .verify(decisionEngine, Mockito.timeout(3000))
+                .openPosition(anySignalArg(), anyGateway())
+        }
+    }
+
+    @Test
+    fun `decision engine failure is isolated by the coroutine`() {
+        Mockito.`when`(instrumentsConfig.isFutures("SBER")).thenReturn(false)
+        Mockito.`when`(tradingGate.isTradingEnabled()).thenReturn(true)
+        runBlocking {
+            Mockito
+                .`when`(decisionEngine.openPosition(anySignalArg(), anyGateway()))
+                .thenThrow(IllegalStateException("engine down"))
+        }
+
+        service.onStrategyGenerated(StrategyGeneratedEvent(signal(StrategyAction.SELL)))
+
+        runBlocking { kotlinx.coroutines.delay(150) }
+        runBlocking {
+            Mockito
+                .verify(decisionEngine, Mockito.timeout(3000))
+                .openPosition(anySignalArg(), anyGateway())
+        }
+    }
+
+    private fun anySignalArg(): Signal {
+        Mockito.any(Signal::class.java)
+        return signal(StrategyAction.BUY)
+    }
+
+    private fun anyGateway(): ExecutionGateway {
+        Mockito.any(ExecutionGateway::class.java)
+        return ExecutionGateway { _, _, _, _, _, _, _ -> null }
     }
 
     private fun signal(action: StrategyAction): Signal =

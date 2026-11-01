@@ -599,6 +599,57 @@ class BacktestValidatorTest {
         assertTrue(slCaptured.all { it == null }, "для акций SL/TP в пунктах не применяются: $slCaptured")
     }
 
+    @Test
+    fun `wfa tpPoints without slPoints keeps the full futures grid`() {
+        val slCaptured = ArrayList<Int?>()
+        val tpCaptured = ArrayList<Int?>()
+        mockSimulateCapturingParams(slCaptured, tpCaptured)
+        runBlocking {
+            BacktestValidator(engine).validate(
+                "CNYRUBF",
+                List(600) { mockCandle(it) },
+                folds = 3,
+                tpPoints = 600,
+            )
+        }
+        assertEquals(
+            listOf<Int?>(25, 50, 100, 150, 300),
+            slCaptured.distinct().sortedBy { it },
+            "без SL-override сетка остаётся полной",
+        )
+    }
+
+    @Test
+    fun `wfa slPoints from the grid inherits tp and an off-grid value doubles`() {
+        val slCaptured = ArrayList<Int?>()
+        val tpCaptured = ArrayList<Int?>()
+        mockSimulateCapturingParams(slCaptured, tpCaptured)
+        runBlocking {
+            BacktestValidator(engine).validate(
+                "CNYRUBF",
+                List(600) { mockCandle(it) },
+                folds = 3,
+                slPoints = 25,
+            )
+        }
+        assertEquals(listOf<Int?>(25), slCaptured.distinct())
+        assertEquals(listOf<Int?>(50), tpCaptured.distinct(), "SL из сетки берёт её TP")
+
+        val slOffGrid = ArrayList<Int?>()
+        val tpOffGrid = ArrayList<Int?>()
+        mockSimulateCapturingParams(slOffGrid, tpOffGrid)
+        runBlocking {
+            BacktestValidator(engine).validate(
+                "CNYRUBF",
+                List(600) { mockCandle(it) },
+                folds = 3,
+                slPoints = 7,
+            )
+        }
+        assertEquals(listOf<Int?>(7), slOffGrid.distinct())
+        assertEquals(listOf<Int?>(14), tpOffGrid.distinct(), "SL вне сетки даёт TP = 2*SL")
+    }
+
     private fun mockSimulateCapturingParams(
         slCaptured: MutableList<Int?>,
         tpCaptured: MutableList<Int?>,

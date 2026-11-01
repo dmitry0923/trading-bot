@@ -717,6 +717,20 @@ class ProtectionOrderManagerBranchesTest {
         }
 
     @Test
+    fun `protection fill without avg or current price falls back to the entry price`(): Unit =
+        runBlocking {
+            val pos = openPosition(slOrderId = "SL-1", stopLoss = "91500").copy(currentPrice = null)
+
+            manager.applyExchangeProtectionClosePublic(pos, execution("FILLED", 10, price = null), CloseReason.STOP_LOSS)
+
+            assertEquals(
+                0,
+                BigDecimal("91600").compareTo(appliedClose.get()!!.second),
+                "close price falls back to the entry price",
+            )
+        }
+
+    @Test
     fun `partial protection fill cancels the live close order before closing`(): Unit =
         runBlocking {
             val pos =

@@ -2,6 +2,7 @@ package com.trading.bot.backtest
 
 import com.trading.bot.application.strategy.OnlineMlDirectionStrategy
 import com.trading.bot.config.BacktestConfig
+import com.trading.bot.domain.risk.RegimeDetectionConfig
 import com.trading.bot.domain.strategy.StrategyContext
 import com.trading.bot.domain.strategy.StrategyDecision
 import com.trading.bot.model.StrategyAction
@@ -66,6 +67,41 @@ class LiveStrategyBacktestSignalGeneratorBranchesTest {
                 generator.signal("SBER", candles, index, minBars, "test-cycle")
             }
         }
+
+    @Test
+    fun `signal before the warmup window returns hold`(): Unit =
+        runBlocking {
+            val generator = LiveStrategyBacktestSignalGenerator()
+
+            assertEquals(
+                StrategyAction.HOLD,
+                generator.signal("SBER", ramp(), 5, minBars, "test-cycle"),
+            )
+        }
+
+    @Test
+    fun `unknown regime blocks every entry`() {
+        val generator =
+            LiveStrategyBacktestSignalGenerator(
+                regimeConfig = RegimeDetectionConfig(minBars = 10_000),
+            )
+
+        val actions = collect(generator)
+
+        assertTrue(actions.all { it == StrategyAction.HOLD }, "UNKNOWN-режим = fail-closed HOLD: $actions")
+    }
+
+    @Test
+    fun `regime aware pipeline scores strategies by regime fit`() {
+        val generator =
+            LiveStrategyBacktestSignalGenerator(
+                regimeConfig = RegimeDetectionConfig(),
+            )
+
+        val actions = collect(generator)
+
+        assertTrue(actions.isNotEmpty())
+    }
 
     /** Helper-паттерн Mockito: матчер для non-null LocalTime + реальный dummy. */
     private fun anyTime(): java.time.LocalTime {

@@ -215,6 +215,94 @@ class MoexClientEdgeCasesTest {
             }
         }
 
+    @Test
+    fun `paged candles stop on a short page`(): Unit =
+        runBlocking {
+            val starts = mutableListOf<Int>()
+            withPagedServer(starts) { start ->
+                if (start == 0) 500 else 3
+            }.use { server ->
+                val client = MoexClient(mapper).apply { setBaseUrl(server.baseUrl) }
+
+                val candles =
+                    client.getCandlesPaged(
+                        "SBER",
+                        LocalDateTime.of(2026, 1, 1, 0, 0),
+                        LocalDateTime.of(2026, 2, 1, 0, 0),
+                    )
+
+                assertEquals(503, candles.size)
+            }
+            assertEquals(listOf(0, 500), starts, "короткая страница завершает пагинацию")
+        }
+
+    @Test
+    fun `paged candles stop on an empty page`(): Unit =
+        runBlocking {
+            val starts = mutableListOf<Int>()
+            withPagedServer(starts) { start ->
+                if (start < 1_000) 500 else 0
+            }.use { server ->
+                val client = MoexClient(mapper).apply { setBaseUrl(server.baseUrl) }
+
+                val candles =
+                    client.getCandlesPaged(
+                        "SBER",
+                        LocalDateTime.of(2026, 1, 1, 0, 0),
+                        LocalDateTime.of(2026, 2, 1, 0, 0),
+                    )
+
+                assertEquals(1_000, candles.size)
+            }
+            assertEquals(listOf(0, 500, 1_000), starts, "пустая страница завершает пагинацию")
+        }
+
+    private fun MoexClient.setBaseUrl(url: String) {
+        val field = MoexClient::class.java.getDeclaredField("baseUrl")
+        field.isAccessible = true
+        field.set(this, url)
+    }
+
+    private fun withPagedServer(
+        starts: MutableList<Int>,
+        pageSize: (Int) -> Int,
+    ): PagedServer {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            val query = exchange.requestURI.query.orEmpty()
+            val match = Regex("start=(\\d+)").find(query)
+            val start = match?.groupValues?.get(1)?.toInt() ?: 0
+            starts += start
+            val count = pageSize(start)
+            val rows =
+                (0 until count).joinToString(",") { i ->
+                    val minute = start + i
+                    val hour = minute / 60
+                    val rest = minute % 60
+                    """["2026-01-01 ${"%02d".format(hour % 24)}:${"%02d".format(rest)}:00","100","101","99","100.5","1000"]"""
+                }
+            val body =
+                """{"candles":{"columns":["begin","open","high","low","close","volume"],"data":[$rows]}}"""
+            val bytes = body.toByteArray()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        return PagedServer(server)
+    }
+
+    private class PagedServer(
+        private val server: HttpServer,
+    ) : AutoCloseable {
+        val baseUrl: String
+            get() = "http://127.0.0.1:${server.address.port}/iss"
+
+        override fun close() {
+            server.stop(0)
+        }
+    }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
 

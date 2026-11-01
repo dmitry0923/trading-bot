@@ -650,6 +650,19 @@ class StrategyServiceCycleBranchesTest {
     }
 
     @Test
+    fun `shadowed result without a decision still executes the deterministic winner`() {
+        stubSettings()
+        stubCachedCandles()
+        stubMarketSnapshot(snapshot())
+        stubStrategyPipeline(resultTransform = { it.copy(shadowed = true, shadowedDecision = null) })
+
+        runCycle()
+
+        assertEquals(1.0, strategySaved())
+        Mockito.verify(eventPublisher).publishStrategyGenerated(anySignal())
+    }
+
+    @Test
     fun `shadowed llm winner is logged while the deterministic decision is executed`() {
         stubSettings()
         stubCachedCandles()

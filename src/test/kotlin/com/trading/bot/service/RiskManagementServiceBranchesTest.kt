@@ -59,6 +59,15 @@ class RiskManagementServiceBranchesTest {
         )
 
     @Test
+    fun `margin utilization rejects non positive inputs and blocks a breach`() {
+        assertFalse(service.exceedsMarginUtilization(BigDecimal.ZERO, BigDecimal("100"), BigDecimal("10")))
+        assertFalse(service.exceedsMarginUtilization(BigDecimal("1000"), BigDecimal("0"), BigDecimal("10")))
+
+        assertTrue(service.exceedsMarginUtilization(BigDecimal("1000"), BigDecimal("700"), BigDecimal("10")))
+        assertFalse(service.exceedsMarginUtilization(BigDecimal("1000"), BigDecimal("100"), BigDecimal("10")))
+    }
+
+    @Test
     fun `volatility blocks missing atr when fail closed and passes when fail open`() {
         assertTrue(service.isVolatilityTooHigh(null, BigDecimal("100")))
         assertTrue(service.isVolatilityTooHigh(BigDecimal.ZERO, BigDecimal("100")))

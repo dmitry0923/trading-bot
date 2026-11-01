@@ -293,6 +293,36 @@ class DrawdownProtectionServiceTest {
         }
 
     @Test
+    fun `auto stop publishes again after the cooldown expires`(): Unit =
+        runBlocking {
+            val zone = ZoneId.of("Europe/Moscow")
+            val base = Instant.now()
+            val clock =
+                object : Clock() {
+                    var shiftMs: Long = 0
+
+                    override fun getZone(): ZoneId = zone
+
+                    override fun withZone(zone: ZoneId?): Clock = this
+
+                    override fun instant(): Instant = base.plusMillis(shiftMs)
+                }
+            stubNoOpenPositions()
+            stubClosedPositions(emptyList())
+            Mockito.`when`(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenAnswer {
+                listOf(closedPosition(BigDecimal("-6000"), LocalDateTime.ofInstant(clock.instant(), zone)))
+            }
+            val publisher = Mockito.mock(ApplicationEventPublisher::class.java)
+            val s = service(clock = clock, publisher = publisher)
+
+            s.computeStatus()
+            clock.shiftMs = 61L * 60 * 1000
+            s.computeStatus()
+
+            Mockito.verify(publisher, Mockito.times(2)).publishEvent(any<AutoStopTriggeredEvent>())
+        }
+
+    @Test
     fun `auto stop publishes once within cooldown window despite repeated scans`() =
         runBlocking {
             stubNoOpenPositions()

@@ -339,6 +339,32 @@ class ExecutionReconcilerPathsTest {
         }
 
     @Test
+    fun `entry delivery failed below the retry limit stays pending`(): Unit =
+        runBlocking {
+            val pos = entryPosition()
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "entry"))
+                .thenReturn(entryOutbox(status = OutboxStatus.FAILED, alorOrderId = null, retryCount = 1))
+
+            reconciler.resolveEntryViaOutbox(pos)
+
+            assertTrue(pos.pendingEntry)
+            assertEquals(10, pos.quantity)
+        }
+
+    @Test
+    fun `close outbox failed below the retry limit keeps the close pending`(): Unit =
+        runBlocking {
+            val pos = closePosition(closeOrderId = null)
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "close"))
+                .thenReturn(entryOutbox(status = OutboxStatus.FAILED, alorOrderId = null, retryCount = 1))
+
+            reconciler.resolveCloseViaOutbox(pos)
+
+            assertTrue(pos.pendingClose)
+            assertEquals(0, confirmedClose.get())
+        }
+
+    @Test
     fun `entry delivery failed at retry limit is abandoned`(): Unit =
         runBlocking {
             val pos = entryPosition()

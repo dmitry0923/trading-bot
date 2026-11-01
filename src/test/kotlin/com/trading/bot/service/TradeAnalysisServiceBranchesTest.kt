@@ -46,6 +46,42 @@ class TradeAnalysisServiceBranchesTest {
         )
 
     @Test
+    fun `all winning trades leave no worst hour`(): Unit =
+        runBlocking {
+            val trades =
+                listOf(
+                    trade(BigDecimal("10"), CloseReason.TAKE_PROFIT, openedHour = 10),
+                    trade(BigDecimal("20"), CloseReason.TAKE_PROFIT, openedHour = 10),
+                )
+            Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(trades)
+            Mockito.`when`(blindSpotRepo.findByTickerAndIsActiveTrue("SBER")).thenReturn(emptyList())
+
+            val stats = service.analyzeLastNDays(7)["SBER"]!!
+
+            assertEquals(10, stats.bestEntryHour)
+            assertNull(stats.worstEntryHour)
+            assertEquals(1.0, stats.winRate, 1e-9)
+        }
+
+    @Test
+    fun `all losing trades leave no best hour`(): Unit =
+        runBlocking {
+            val trades =
+                listOf(
+                    trade(BigDecimal("-10"), CloseReason.STOP_LOSS, openedHour = 15),
+                    trade(BigDecimal("-20"), CloseReason.STOP_LOSS, openedHour = 15),
+                )
+            Mockito.`when`(positionRepo.findClosedSince(any())).thenReturn(trades)
+            Mockito.`when`(blindSpotRepo.findByTickerAndIsActiveTrue("SBER")).thenReturn(emptyList())
+
+            val stats = service.analyzeLastNDays(7)["SBER"]!!
+
+            assertNull(stats.bestEntryHour)
+            assertEquals(15, stats.worstEntryHour)
+            assertEquals(0.0, stats.winRate, 1e-9)
+        }
+
+    @Test
     fun `mixed trade set reports rates, streaks and best and worst hours`(): Unit =
         runBlocking {
             val trades =

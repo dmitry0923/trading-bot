@@ -8,6 +8,7 @@ import com.trading.bot.model.dto.MarketSnapshot
 import com.trading.bot.model.entity.Candle
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -117,6 +118,18 @@ class OnlineMlDirectionStrategyTest {
             }
         }
         assertNotEquals(0, earlyHoldCount, "warmup must re-apply after reset")
+    }
+
+    @Test
+    fun `any override alone marks the override set as provided`() {
+        assertTrue(MlDirectionOverrides(enabled = true).anyProvided)
+        assertTrue(MlDirectionOverrides(horizonBars = 1).anyProvided)
+        assertTrue(MlDirectionOverrides(minReturnPercent = 0.1).anyProvided)
+        assertTrue(MlDirectionOverrides(learningRate = 0.1).anyProvided)
+        assertTrue(MlDirectionOverrides(l2 = 0.1).anyProvided)
+        assertTrue(MlDirectionOverrides(signalMargin = 0.1).anyProvided)
+        assertTrue(MlDirectionOverrides(blockOnUnknown = true).anyProvided)
+        assertFalse(MlDirectionOverrides().anyProvided)
     }
 
     @Test

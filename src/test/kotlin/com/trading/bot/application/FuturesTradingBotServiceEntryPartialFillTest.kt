@@ -216,6 +216,53 @@ class FuturesTradingBotServiceEntryPartialFillTest {
         assertTrue(latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
     }
 
+    @Test
+    fun `strategy and price events ignore non futures tickers and hold actions`() {
+        Mockito.`when`(instrumentsConfig.isFutures("SBER")).thenReturn(false)
+
+        service.onStrategyGenerated(StrategyGeneratedEvent(signal().copy(ticker = "SBER")))
+        service.onStrategyGenerated(StrategyGeneratedEvent(signal().copy(action = StrategyAction.HOLD)))
+        service.onPriceChanged(PriceChangedEvent("SBER", BigDecimal("100")))
+
+        Mockito.verifyNoInteractions(orderBuilder)
+    }
+
+    @Test
+    fun `force close falls back to the entry price without a quote`(): Unit =
+        runBlocking {
+            val pos =
+                Position(
+                    ticker = "Si",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("90000"),
+                    currentPrice = null,
+                    instrumentType = InstrumentType.FUTURES,
+                    status = PositionStatus.OPEN,
+                )
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(listOf(pos))
+            Mockito.`when`(alorClient.getLastPrice("Si")).thenReturn(null)
+
+            assertEquals(1, service.forceCloseAll())
+        }
+
+    @Test
+    fun `force close ignores stock positions`(): Unit =
+        runBlocking {
+            val stock =
+                Position(
+                    ticker = "SBER",
+                    direction = PositionDirection.LONG,
+                    quantity = 1,
+                    entryPrice = BigDecimal("100"),
+                    instrumentType = InstrumentType.STOCK,
+                    status = PositionStatus.OPEN,
+                )
+            Mockito.`when`(positionRepo.findByStatus(PositionStatus.OPEN)).thenReturn(listOf(stock))
+
+            assertEquals(0, service.forceCloseAll())
+        }
+
     private fun anyPosition(): Position {
         Mockito.any(Position::class.java)
         return Position(ticker = "Si", direction = PositionDirection.LONG, quantity = 1, entryPrice = BigDecimal.ZERO)

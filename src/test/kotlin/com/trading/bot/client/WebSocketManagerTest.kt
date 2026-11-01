@@ -30,6 +30,38 @@ class WebSocketManagerTest {
     private val manager = WebSocketManager(alorConfig, meterRegistry)
 
     @Test
+    fun `duplicate connect keeps the connected state`() {
+        manager.onConnected(WsStream.QUOTES, 0)
+        manager.onConnected(WsStream.QUOTES, 1)
+
+        assertTrue(manager.isConnected(WsStream.QUOTES))
+    }
+
+    @Test
+    fun `activity while connected keeps the state`() {
+        manager.onConnected(WsStream.QUOTES, 0)
+        manager.onActivity(WsStream.QUOTES)
+
+        assertTrue(manager.isConnected(WsStream.QUOTES))
+    }
+
+    @Test
+    fun `zero exchange age ceiling disables that gate`() {
+        alorConfig.wsQuoteMaxExchangeAgeMs = 0
+
+        assertFalse(manager.isQuoteStale("SBER", Instant.now(), 1, Instant.now().minusSeconds(120)))
+    }
+
+    @Test
+    fun `watchdog keeps a recently active connection`() {
+        manager.onConnected(WsStream.QUOTES, 0)
+
+        manager.watchdog()
+
+        assertTrue(manager.isConnected(WsStream.QUOTES))
+    }
+
+    @Test
     fun `fresh quote is accepted`() {
         assertFalse(manager.isQuoteStale("SBER", Instant.now(), 1, Instant.now()))
     }

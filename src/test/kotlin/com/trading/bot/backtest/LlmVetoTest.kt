@@ -515,6 +515,17 @@ class LlmVetoTest {
     }
 
     @Test
+    fun `every single veto override marks the set as provided`() {
+        assertTrue(LlmVetoOverrides(enabled = true).anyProvided)
+        assertTrue(LlmVetoOverrides(budgetMs = 1).anyProvided)
+        assertTrue(LlmVetoOverrides(blockOnUnknown = true).anyProvided)
+        assertTrue(LlmVetoOverrides(promptVersion = "veto").anyProvided)
+        assertTrue(LlmVetoOverrides(sampleEvery = 1).anyProvided)
+        assertTrue(LlmVetoOverrides(minScore = 0.1).anyProvided)
+        assertFalse(LlmVetoOverrides().anyProvided)
+    }
+
+    @Test
     fun `settings validate sampling and budget`() {
         org.junit.jupiter.api.Assertions
             .assertThrows(IllegalArgumentException::class.java) { LlmVetoSettings(sampleEvery = -1) }

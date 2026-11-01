@@ -8,9 +8,9 @@
 
 | Метрика | Значение |
 |---|---|
-| LINE | 96,94 % (25 199 / 25 994) |
-| BRANCH | 88,82 % (9 438 / 10 626) |
-| Тестов | 3 509 |
+| LINE | 96,93 % (25 195 / 25 994) |
+| BRANCH | 88,90 % (9 446 / 10 626) |
+| Тестов | 3 516 |
 | `engineVersion` | 2026-10-26.2 |
 
 Порог `koverVerify` в `build.gradle.kts`: LINE 90, **BRANCH 70** — финальный шаг поднимет
@@ -62,15 +62,16 @@ BRANCH до 90 (ratchet) только когда фактическое покр
 
 ## 3a. Достижимость 90 % BRANCH: анализ остатка (2026-11-01)
 
-Замер после итерации 2026-11-01 (вечер): **BRANCH 88,82 % (9 438 / 10 626)**, LINE 96,94 %,
-тестов 3 509, падений 0. До цели не хватает **126** покрытых ветвей.
+Замер после итерации 2026-11-01 (вечер): **BRANCH 88,90 % (9 446 / 10 626)**, LINE 96,93 %,
+тестов 3 516, падений 0. До цели не хватает **118** покрытых ветвей.
 
 Структура остатка (по данным `build/reports/kover/report.xml`):
 
-- 1 188 непокрытых ветвей; **~400** из них находятся на строках с `?:`.
+- 1 180 непокрытых ветвей; **~400** из них находятся на строках с `?:`.
 - Крупнейшие остатки: `BacktestEngine` 50, `PortfolioMomentumEngine` 30, `PositionRepository` 27,
-  `ApiController` 23, `EntryFilters` 22, `LiveStrategyBacktestSignalGenerator` 21,
-  `DrawdownProtectionService` 19, `ProtectionOrderManager` 19.
+  `ApiController` 23, `EntryFilters` 21, `LiveStrategyBacktestSignalGenerator` 21,
+  `DrawdownProtectionService` 19, `ProtectionOrderManager` 19, `DashboardSseService` 15,
+  `AlorFuturesClient` 14.
 
 **Часть остатка структурно недостижима (DEAD) — подтверждено кодом и схемой БД:**
 

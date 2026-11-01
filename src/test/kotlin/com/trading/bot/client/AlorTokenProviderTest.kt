@@ -23,6 +23,53 @@ import java.util.concurrent.atomic.AtomicInteger
  * отозванным токеном). Refresh обязан быть ровно один.
  */
 class AlorTokenProviderTest {
+    private fun runRefresh(
+        body: String,
+        check: suspend (provider: AlorTokenProvider, config: AlorConfig) -> Unit,
+    ): Unit =
+        runBlocking {
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/refresh") { exchange ->
+                val bytes = body.toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+            server.start()
+            try {
+                val config =
+                    AlorConfig().apply {
+                        oauthUrl = "http://127.0.0.1:${server.address.port}/refresh"
+                        token = "cfg-token"
+                        refreshToken = "refresh-token"
+                    }
+                check(AlorTokenProvider(config, jacksonObjectMapper()), config)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `refresh without an access token keeps the configured token`(): Unit =
+        runRefresh("{}") { provider, config ->
+            assertEquals("cfg-token", provider.actualToken())
+            assertEquals("cfg-token", config.token)
+        }
+
+    @Test
+    fun `lowercase access token field is accepted`(): Unit =
+        runRefresh("""{"accessToken":"lower"}""") { provider, config ->
+            assertEquals("lower", provider.actualToken())
+            assertEquals("lower", config.token)
+        }
+
+    @Test
+    fun `opaque token uses the fallback ttl`(): Unit =
+        runRefresh("""{"AccessToken":"opaque"}""") { provider, _ ->
+            assertEquals("opaque", provider.actualToken())
+            assertEquals("opaque", provider.actualToken())
+        }
+
     @Test
     fun `concurrent actualToken when token expired refreshes exactly once`(): Unit =
         runBlocking {

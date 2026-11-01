@@ -60,6 +60,11 @@ class AgentBacktestSignalGenerator(
     private val config: BacktestAgentConfig,
     private val meterRegistry: MeterRegistry,
 ) : BacktestSignalGenerator {
+    private companion object {
+        /** Запас сверх бюджета, чтобы инъекция гарантированно проиграла таймауту. */
+        const val INJECTION_OVERSHOOT_MS = 50L
+    }
+
     /**
      * Конфигурация инъекции читается лениво: `@ConfigurationProperties` связывается
      * после конструктора, поэтому на этапе создания бина значений ещё нет.
@@ -104,9 +109,10 @@ class AgentBacktestSignalGenerator(
         return try {
             withTimeout(budgetMs) {
                 if (injected) {
-                    // Реальная задержка внутри бюджета: срабатывает тот же
-                    // TimeoutCancellationException, что и в live, без отдельной ветки.
-                    delay(budgetMs)
+                    // Реальная задержка дольше бюджета: гарантирует
+                    // TimeoutCancellationException, а не гонку с таймером
+                    // бюджета на одной и той же отметке (флак под нагрузкой).
+                    delay(budgetMs + INJECTION_OVERSHOOT_MS)
                 }
                 runChain(ticker, candles, index, cycleId)
             }

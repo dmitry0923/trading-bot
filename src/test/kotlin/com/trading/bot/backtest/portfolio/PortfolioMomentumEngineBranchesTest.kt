@@ -66,6 +66,30 @@ class PortfolioMomentumEngineBranchesTest {
         )
 
     @Test
+    fun `non finite and zero momentum base prices skip the ticker`() {
+        val prices =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> if (i == 120) Double.NaN else exp(2.4 + 0.0008 * i) },
+                        { i: Int -> if (i == 80) 0.0 else exp(2.4 + 0.0006 * i) },
+                        { i: Int -> exp(2.4 - 0.0008 * i) },
+                        { _: Int -> exp(2.4) },
+                    ),
+            )
+
+        val result =
+            PortfolioMomentumEngine.run(
+                prices,
+                listOf(spec("A"), spec("B"), spec("C"), spec("D")),
+                params(),
+            )
+
+        assertEquals(200, result.equityCurve.size)
+    }
+
+    @Test
     fun `flat cross section has no dispersion and produces no signal`() {
         val flat = bars(200, List(3) { _ -> { _: Int -> exp(2.4) } })
 

@@ -36,6 +36,26 @@ class FuturesPositionSizerTest {
     private val sizer = FuturesPositionSizer(riskConfig, instrumentsConfig)
 
     @Test
+    fun `early guards reject invalid inputs before sizing`() {
+        assertEquals(
+            "NON_POSITIVE_PORTFOLIO",
+            sizer.calculateContracts("Si", BigDecimal.ZERO, 50, BigDecimal("15000")).reason,
+        )
+        assertEquals(
+            "INVALID_GO",
+            sizer.calculateContracts("Si", BigDecimal("50000"), 50, BigDecimal.ZERO).reason,
+        )
+        assertEquals(
+            "INSTRUMENT_NOT_FOUND",
+            sizer.calculateContracts("NOPE", BigDecimal("50000"), 50, BigDecimal("15000")).reason,
+        )
+        assertEquals(
+            "INVALID_STOP_LOSS_POINTS",
+            sizer.calculateContracts("Si", BigDecimal("50000"), 0, BigDecimal("15000")).reason,
+        )
+    }
+
+    @Test
     fun `qty is 1 for 50k deposit stop 50 points go 15000`() {
         val result =
             sizer.calculateContracts(

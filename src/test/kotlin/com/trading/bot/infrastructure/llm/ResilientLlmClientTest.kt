@@ -468,6 +468,166 @@ class ResilientLlmClientTest {
         return LlmResponse(content = "{}")
     }
 
+    @Test
+    fun `single flight returning null falls back to a direct call`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val config =
+                LlmConfig().apply {
+                    retryEnabled = false
+                    circuitBreakerEnabled = false
+                    rateLimiterEnabled = false
+                }
+            val settingsService = mock<SettingsService>()
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/chat/completions") { exchange ->
+                val body = jsonResponse("ok", 1).toByteArray(Charsets.UTF_8)
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            server.start()
+            try {
+                whenever(settingsService.getSettings()).thenReturn(
+                    BotSettings().copy(
+                        llmProvider = "KIMI",
+                        llmBaseUrl = "http://127.0.0.1:${server.address.port}",
+                        llmApiKey = "test-key",
+                    ),
+                )
+                val cache = mock<SemanticCache>()
+                whenever(cache.get(Mockito.anyString(), Mockito.anyString(), Mockito.anyString(), anyOrNull(), anyOrNull()))
+                    .thenReturn(null)
+                val singleFlight = mock<LlmSingleFlight>()
+                whenever(singleFlight.acquire(Mockito.anyString(), anyOrNull())).thenReturn(null)
+                val client =
+                    ResilientLlmClient(
+                        llmConfig = config,
+                        semanticCache = cache,
+                        objectMapper = ObjectMapper(),
+                        meterRegistry = registry,
+                        circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+                        rateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
+                        retryRegistry = RetryRegistry.ofDefaults(),
+                        settingsService = settingsService,
+                        traceStorage = mock<TraceStorage>(),
+                        traceStorageConfig = TraceStorageConfig().apply { enabled = false },
+                        llmSingleFlight = singleFlight,
+                    )
+
+                val response =
+                    client.complete(
+                        agent = "technical",
+                        ticker = "SBER",
+                        prompt = PromptTemplate(name = "test", version = "1", system = "sys", userTemplate = "user"),
+                        variables = emptyMap(),
+                        fingerprint = "fp",
+                        temperature = 0.1,
+                    )
+
+                assertEquals("ok", response.content)
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `budget denial without a reason uses the default code`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val config =
+                LlmConfig().apply {
+                    retryEnabled = false
+                    circuitBreakerEnabled = false
+                    rateLimiterEnabled = false
+                }
+            val settingsService = mock<SettingsService>()
+            whenever(settingsService.getSettings()).thenReturn(
+                BotSettings().copy(llmProvider = "KIMI", llmBaseUrl = "http://127.0.0.1:1", llmApiKey = "test-key"),
+            )
+            val budget = mock<LlmBudgetService>()
+            whenever(budget.estimateTokens(Mockito.anyString(), anyOrNull())).thenReturn(10)
+            whenever(budget.reserve(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+                .thenReturn(LlmBudgetService.BudgetDecision(allowed = false, reason = null))
+            val client =
+                ResilientLlmClient(
+                    llmConfig = config,
+                    semanticCache = mock(),
+                    objectMapper = ObjectMapper(),
+                    meterRegistry = registry,
+                    circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+                    rateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
+                    retryRegistry = RetryRegistry.ofDefaults(),
+                    settingsService = settingsService,
+                    traceStorage = mock<TraceStorage>(),
+                    traceStorageConfig = TraceStorageConfig().apply { enabled = false },
+                    llmBudgetService = budget,
+                )
+
+            val response =
+                client.complete(
+                    agent = "technical",
+                    ticker = "SBER",
+                    prompt = PromptTemplate(name = "test", version = "1", system = "sys", userTemplate = "user"),
+                    variables = emptyMap(),
+                    fingerprint = null,
+                    temperature = 0.1,
+                )
+
+            assertEquals("TOKEN_BUDGET_EXCEEDED", response.errorMessage)
+        }
+
+    @Test
+    fun `call error releases the budget reservation`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val config =
+                LlmConfig().apply {
+                    retryEnabled = false
+                    circuitBreakerEnabled = false
+                    rateLimiterEnabled = false
+                }
+            val settingsService = mock<SettingsService>()
+            whenever(settingsService.getSettings()).thenReturn(
+                BotSettings().copy(llmProvider = "KIMI", llmBaseUrl = "http://127.0.0.1:1", llmApiKey = "test-key"),
+            )
+            val budget = mock<LlmBudgetService>()
+            val reservation = LlmBudgetService.Reservation(tokens = 10, costEstimate = 0.1, keys = emptyList())
+            whenever(budget.estimateTokens(Mockito.anyString(), anyOrNull())).thenReturn(10)
+            whenever(budget.reserve(Mockito.anyString(), Mockito.anyString(), Mockito.anyInt()))
+                .thenReturn(LlmBudgetService.BudgetDecision(allowed = true, reason = null, reservation = reservation))
+            val client =
+                ResilientLlmClient(
+                    llmConfig = config,
+                    semanticCache = mock(),
+                    objectMapper = ObjectMapper(),
+                    meterRegistry = registry,
+                    circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+                    rateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
+                    retryRegistry = RetryRegistry.ofDefaults(),
+                    settingsService = settingsService,
+                    traceStorage = mock<TraceStorage>(),
+                    traceStorageConfig = TraceStorageConfig().apply { enabled = false },
+                    llmBudgetService = budget,
+                )
+
+            val response =
+                client.complete(
+                    agent = "technical",
+                    ticker = "SBER",
+                    prompt = PromptTemplate(name = "test", version = "1", system = "sys", userTemplate = "user"),
+                    variables = emptyMap(),
+                    fingerprint = null,
+                    temperature = 0.1,
+                )
+
+            assertTrue(response.isFallback)
+            assertEquals(
+                true,
+                Mockito.mockingDetails(budget).invocations.any { it.method.name == "release" },
+            )
+        }
+
     private fun stubReserve(
         redis: StringRedisTemplate,
         result: List<Any?>,

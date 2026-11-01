@@ -92,6 +92,7 @@ class StockPositionMonitorTest {
 
     private fun openPosition(
         direction: PositionDirection = PositionDirection.LONG,
+        id: Long? = 1L,
         ticker: String = "SBER",
         quantity: Int = 2,
         entryPrice: String = "100",
@@ -107,7 +108,7 @@ class StockPositionMonitorTest {
         tpOrderPrice: String? = null,
     ): Position =
         Position(
-            id = 1L,
+            id = id,
             ticker = ticker,
             direction = direction,
             quantity = quantity,
@@ -125,6 +126,26 @@ class StockPositionMonitorTest {
             tpOrderPrice = tpOrderPrice?.toBigDecimal(),
             cycleId = "cycle-1",
         )
+
+    @Test
+    fun `position without an id skips mark to market and inert strategy levels`(): Unit =
+        runBlocking {
+            val pos = openPosition(id = null)
+            stubPositions(pos, strategy = strategy(action = StrategyAction.HOLD))
+            riskConfig.trailingStopEnabled = false
+            try {
+                monitor.monitor(PriceChangedEvent("SBER", BigDecimal("100")))
+            } finally {
+                riskConfig.trailingStopEnabled = true
+            }
+
+            assertEquals(
+                0,
+                Mockito.mockingDetails(positionRepo).invocations.count { it.method.name == "updateMarkToMarket" },
+            )
+            assertEquals(null, pos.stopLoss)
+            assertEquals(null, pos.takeProfit)
+        }
 
     private fun strategy(
         action: StrategyAction = StrategyAction.HOLD,

@@ -945,6 +945,30 @@ class StockEntryProfileTest {
         }
 
     @Test
+    fun `frozen null percentages fall back to the runtime configuration`() =
+        runBlocking {
+            Mockito.doReturn(BigDecimal("12500")).`when`(adaptiveRisk).calculateOptimalPositionSize("CNYRUB_TOM", signalStrength = 0.7)
+            val frozen =
+                FrozenStrategy(
+                    ticker = "CNYRUB_TOM",
+                    strategyVersion = "v1",
+                    gitCommitSha = null,
+                    slPercent = null,
+                    tpPercent = null,
+                    slPoints = null,
+                    tpPoints = null,
+                    confidenceThreshold = null,
+                    leverage = 1.0,
+                    riskPerTradePercent = null,
+                    futuresMaxContractsPerPosition = null,
+                )
+
+            val size = profile.sizePosition(makeSignal(), BigDecimal("12.42"), request().copy(frozenStrategy = frozen))
+
+            assertTrue(size.quantity >= 1)
+        }
+
+    @Test
     fun `buildPosition maps a futures instrument spec to FUTURES`() {
         val decision =
             TradeRiskDecision(

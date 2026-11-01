@@ -158,6 +158,7 @@ class MlDatasetServiceTest {
                 .thenReturn(candles(15, openedAt.plusDays(1)))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito
                 .`when`(
                     macroContextService.fetch(),
@@ -186,6 +187,7 @@ class MlDatasetServiceTest {
                 .thenReturn(candles(60, openedAt))
             Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
             Mockito
                 .`when`(
                     macroContextService.fetch(),
@@ -289,6 +291,39 @@ class MlDatasetServiceTest {
         assertEquals(2.0 / 3.0, stats["winRate"] as Double, 1e-9)
         val byTicker = stats["byTicker"] as Map<*, *>
         assertEquals(2, (byTicker["SBER"] as Map<*, *>)["positions"])
+    }
+
+    @Test
+    fun `missing snapshots fetch the current macro once for all rows`() {
+        config.enabled = true
+        config.dataset.maxRows = 10
+        val openedAt = LocalDateTime.of(2026, 2, 1, 14, 0)
+        val p1 = position(1L, "SBER", PositionDirection.LONG, openedAt, pnl = 500.0, cycleId = null)
+        val p2 = position(2L, "SBER", PositionDirection.LONG, openedAt.plusDays(1), pnl = -100.0, cycleId = null)
+        runBlocking {
+            Mockito.`when`(positionRepository.findClosed(null, null)).thenReturn(listOf(p1, p2))
+            Mockito
+                .`when`(candleRepository.findByTickerAndTimeframeAndTimeBefore(any<String>(), any<String>(), any(), any()))
+                .thenReturn(candles(60, openedAt))
+            Mockito.`when`(macroSnapshotRepository.findBetween(any(), any())).thenReturn(emptyList())
+            Mockito.`when`(blindSpotRepository.findByIsActiveTrue()).thenReturn(emptyList())
+            Mockito.`when`(macroContextService.fetch()).thenReturn(
+                MacroContextService.MacroContext(
+                    cbrRate = BigDecimal("14.0"),
+                    brentPrice = BigDecimal("75.0"),
+                    usdRub = BigDecimal("90.0"),
+                ),
+            )
+        }
+
+        val export = runBlocking { service.export() }
+
+        assertEquals(2, export.rows.size)
+        assertEquals(
+            1,
+            Mockito.mockingDetails(macroContextService).invocations.count { it.method.name == "fetch" },
+        )
+        assertEquals("CURRENT", export.rows.first().macroSource)
     }
 
     private fun position(

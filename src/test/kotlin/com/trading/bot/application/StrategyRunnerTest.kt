@@ -147,6 +147,21 @@ class StrategyRunnerTest {
     }
 
     @Test
+    fun `a regime with no compatible strategies yields a hold`() {
+        val runner =
+            runner(
+                listOf(
+                    FakeStrategy("GRID", StrategyDecision(StrategyAction.BUY, BigDecimal("100.0"), 0.9, "grid")),
+                ),
+            )
+
+        val result = runBlocking { runner.runAll(context.copy(regime = regime(RegimeDirection.TREND_UP))) }
+
+        assertEquals("NONE", result.winnerId)
+        assertTrue(result.decision.reasoning.contains("No strategies compatible"))
+    }
+
+    @Test
     fun `fit score weights signalStrength among eligible strategies`() {
         val runner =
             runner(

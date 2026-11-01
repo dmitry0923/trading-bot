@@ -437,6 +437,38 @@ class AlorClientParsingBranchesTest {
             }
         }
 
+    @Test
+    fun `forced market buy with a wide spread uses the ask`(): Unit =
+        runBlocking {
+            FakeServer().use { server ->
+                server.quotesBody = """{"lastPrice":"100","bid":"90","ask":"110"}"""
+                whenever(orderTransport.placeLimit(any(), any(), any(), any(), any(), any(), any()))
+                    .thenReturn("ord-forced")
+
+                buildClient(server).placeMarketOrder("SBER", "buy", 1, "idem-forced", forceMarket = true)
+
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .placeLimit("SBER", "buy", 1, BigDecimal("110"), "idem-forced", "P1", OrderPurpose.ENTRY)
+            }
+        }
+
+    @Test
+    fun `market buy without an ask uses the last price`(): Unit =
+        runBlocking {
+            FakeServer().use { server ->
+                server.quotesBody = """{"lastPrice":"100","bid":"99"}"""
+                whenever(orderTransport.placeLimit(any(), any(), any(), any(), any(), any(), any()))
+                    .thenReturn("ord-buy-nullask")
+
+                buildClient(server).placeMarketOrder("SBER", "buy", 1, "idem-buy-nullask", forceMarket = true)
+
+                org.mockito.kotlin
+                    .verify(orderTransport)
+                    .placeLimit("SBER", "buy", 1, BigDecimal("100"), "idem-buy-nullask", "P1", OrderPurpose.ENTRY)
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val requests: MutableList<String> = Collections.synchronizedList(mutableListOf())

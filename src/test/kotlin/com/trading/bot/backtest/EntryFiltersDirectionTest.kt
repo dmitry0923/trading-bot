@@ -515,7 +515,7 @@ class EntryFiltersDirectionTest {
                     rangeSqueezeRangePeriod = 2,
                     rangeSqueezeAtrPeriod = 2,
                     rangeSqueezeMultiplier = 0.1,
-                    rangeSqueezeLookbackBars = 1,
+                    rangeSqueezeLookbackBars = 100,
                     rangeSqueezeRequireVolume = false,
                     rangeSqueezeBlockOnUnknown = true,
                 ),
@@ -538,7 +538,7 @@ class EntryFiltersDirectionTest {
                     rangeSqueezeRangePeriod = 2,
                     rangeSqueezeAtrPeriod = 2,
                     rangeSqueezeMultiplier = 5.0,
-                    rangeSqueezeLookbackBars = 1,
+                    rangeSqueezeLookbackBars = 100,
                     rangeSqueezeRequireVolume = false,
                     rangeSqueezeBlockOnUnknown = true,
                 ),
@@ -569,7 +569,7 @@ class EntryFiltersDirectionTest {
                     rangeSqueezeRangePeriod = 2,
                     rangeSqueezeAtrPeriod = 2,
                     rangeSqueezeMultiplier = 5.0,
-                    rangeSqueezeLookbackBars = 1,
+                    rangeSqueezeLookbackBars = 100,
                     rangeSqueezeRequireVolume = true,
                     volumeSpikePeriod = 3,
                     volumeSpikeMultiplier = 2.0,
@@ -609,6 +609,78 @@ class EntryFiltersDirectionTest {
         val loose = filters(EntryFilterOverrides(squeezeEnabled = true, squeezeBlockOnUnknown = false))
         assertNull(loose.squeezeDirection(ramp(listOf(100.0, 101.0))))
         assertNull(strict.squeezeDirection(emptyList()))
+    }
+
+    @Test
+    fun `orb with a zero window has no range and fails closed`() {
+        val candles = ramp(listOf(100.0, 101.0, 102.0))
+        val strict =
+            filters(
+                EntryFilterOverrides(
+                    orbEnabled = true,
+                    orbWindowBars = 0,
+                    orbStrictBreakout = true,
+                    orbBlockOnUnknown = true,
+                ),
+            )
+        val loose =
+            filters(
+                EntryFilterOverrides(
+                    orbEnabled = true,
+                    orbWindowBars = 0,
+                    orbStrictBreakout = true,
+                    orbBlockOnUnknown = false,
+                ),
+            )
+
+        assertEquals(StrategyAction.HOLD, strict.orbDirection(candles, 2))
+        assertNull(loose.orbDirection(candles, 2))
+    }
+
+    @Test
+    fun `vwap mr with a single bar session fails closed on degenerate sigma`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    vwapMrEnabled = true,
+                    vwapMrMinSessionBars = 1,
+                    vwapMrDeviationAtr = 0.0,
+                    vwapMrBlockOnUnknown = true,
+                ),
+            )
+
+        assertEquals(
+            StrategyAction.HOLD,
+            f.vwapMrDirection(listOf(candle(100.0)), higherCandles(30, flat = true)),
+        )
+    }
+
+    @Test
+    fun `squeeze filter ignores a series index below the warmup`() {
+        val strict = filters(EntryFilterOverrides(squeezeEnabled = true, squeezeBlockOnUnknown = true))
+        val flat = (0 until 25).map { i -> candle(100.0, high = 100.05, low = 99.95, minutes = 10 * i) }
+
+        assertEquals(StrategyAction.HOLD, strict.squeezeDirection(flat, BooleanArray(flat.size), 0))
+    }
+
+    @Test
+    fun `range squeeze ignores a cached series shorter than the window`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    rangeSqueezeEnabled = true,
+                    rangeSqueezeRangePeriod = 2,
+                    rangeSqueezeAtrPeriod = 1,
+                    rangeSqueezeMultiplier = 1.0,
+                    rangeSqueezeLookbackBars = 100,
+                    rangeSqueezeBlockOnUnknown = true,
+                ),
+            )
+        val window = (0 until 10).map { i -> candle(100.0, high = 100.0, low = 100.0, minutes = 10 * i) }
+
+        val result = f.rangeSqueezeDirection(window, BooleanArray(1) { true })
+
+        assertTrue(result == null || result == StrategyAction.HOLD, "result=$result")
     }
 
     @Test
@@ -758,6 +830,26 @@ class EntryFiltersDirectionTest {
                 candle(90.0, open = 92.0, minutes = 10),
             )
         assertEquals(StrategyAction.BUY, noBullish.panicReversalDirection(bearishPanic, falling))
+    }
+
+    @Test
+    fun `macro trend fails closed with a single higher timeframe bar`() {
+        val f =
+            filters(
+                EntryFilterOverrides(
+                    macroTrendEnabled = true,
+                    macroTrendMinHigherBars = 1,
+                    macroTrendFastEma = 1,
+                    macroTrendSlowEma = 1,
+                    macroTrendPullbackEmaPeriod = 1,
+                    macroTrendBlockOnUnknown = true,
+                ),
+            )
+
+        assertEquals(
+            StrategyAction.HOLD,
+            f.macroTrendDirection(listOf(BigDecimal("100")), listOf(BigDecimal("100"))),
+        )
     }
 
     @Test

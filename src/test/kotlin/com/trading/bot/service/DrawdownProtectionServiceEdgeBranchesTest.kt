@@ -102,6 +102,15 @@ class DrawdownProtectionServiceEdgeBranchesTest {
         )
 
     @Test
+    fun `untouched account getters stay neutral before any state`() {
+        val service = service()
+
+        assertFalse(service.isDailyLossLimitReached(7L))
+        assertEquals(BigDecimal.ZERO, service.getDailyPnl(7L))
+        assertTrue(service.effectiveDailyLossLimitRub() > BigDecimal.ZERO)
+    }
+
+    @Test
     fun `consecutive losses tolerate missing timestamps and pnl`() {
         val now = LocalDateTime.now(clock)
         val drawdown = service()

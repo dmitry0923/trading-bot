@@ -69,6 +69,29 @@ class TradingAccountServiceBranchesTest {
     // ------------------------------------------------------------ cache getters
 
     @Test
+    fun `cached getters return null for an id missing from the warmed cache`() {
+        runBlocking {
+            Mockito.`when`(repository.findEnabled()).thenReturn(
+                listOf(
+                    account(
+                        1L,
+                        portfolio = "P1",
+                        aumRub = BigDecimal("100"),
+                        maxOpenPositions = 2,
+                        maxDailyLossRub = BigDecimal("10"),
+                    ),
+                ),
+            )
+            service.findEnabled()
+        }
+
+        assertNull(service.cachedAumRubFor(99L))
+        assertNull(service.cachedPortfolioFor(99L))
+        assertNull(service.cachedMaxOpenPositionsFor(99L))
+        assertNull(service.cachedMaxDailyLossRubFor(99L))
+    }
+
+    @Test
     fun `cached getters are null before the cache is warmed and for a null id`() {
         assertNull(service.cachedAumRubFor(1L))
         assertNull(service.cachedPortfolioFor(1L))

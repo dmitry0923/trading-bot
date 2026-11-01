@@ -57,6 +57,17 @@ class MarketDataGateTest {
     }
 
     @Test
+    fun `disconnected quotes with a stale ws tick fall back to the ws age`() {
+        wsManager.onConnected(WsStream.QUOTES, 0)
+        wsManager.isQuoteStale("SBER", Instant.now(), 1, Instant.now())
+        wsManager.onDisconnected(WsStream.QUOTES, 0, "STREAM_CLOSED")
+
+        Thread.sleep(80)
+
+        assertFalse(gate.isPriceDataFresh("SBER"))
+    }
+
+    @Test
     fun `quotes disconnected with fresh rest poll allows entry`() {
         wsManager.onDisconnected(WsStream.QUOTES, 0, "STREAM_CLOSED")
         gate.recordRestPollSuccess("SBER")

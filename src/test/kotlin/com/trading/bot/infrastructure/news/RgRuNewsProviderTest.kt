@@ -140,7 +140,7 @@ class RgRuNewsProviderTest {
             val server = jsonServer("", statusCode = 429)
             try {
                 val meter = SimpleMeterRegistry()
-                val provider = provider(server, NewsConfig().apply { enabled = true }, meter, resilience = true)
+                val provider = provider(server, NewsConfig().apply { enabled = true }, meter)
                 val items = provider.newsFor("GAZP", 24)
 
                 assertTrue(items.isEmpty())
@@ -225,6 +225,74 @@ class RgRuNewsProviderTest {
                 server.stop(0)
             }
         }
+
+    @Test
+    fun `blank base url or api key disables the provider without http`(): Unit =
+        runBlocking {
+            val meter = SimpleMeterRegistry()
+            val noBase =
+                NewsConfig().apply {
+                    enabled = true
+                    baseUrl = ""
+                    apiKey = "key"
+                }
+            val noKey =
+                NewsConfig().apply {
+                    enabled = true
+                    baseUrl = "http://127.0.0.1:1/news"
+                    apiKey = ""
+                }
+
+            assertEquals(emptyList<String>(), directProvider(noBase, meter).newsFor("GAZP", 24).map { it.title })
+            assertEquals(emptyList<String>(), directProvider(noKey, meter).newsFor("GAZP", 24).map { it.title })
+            assertEquals(2.0, meter.counter("news.provider.disabled", "ticker", "GAZP").count())
+        }
+
+    @Test
+    fun `403 forbidden is metered like 401`(): Unit =
+        runBlocking {
+            val server = jsonServer("", 403)
+            val meter = SimpleMeterRegistry()
+            try {
+                val items = provider(server, NewsConfig().apply { enabled = true }, meter).newsFor("GAZP", 24)
+
+                assertEquals(emptyList<String>(), items.map { it.title })
+                assertEquals(1.0, meter.counter("news.provider.unauthorized", "ticker", "GAZP").count())
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    @Test
+    fun `item with a blank title is dropped`(): Unit =
+        runBlocking {
+            val body =
+                """[{"title":"","publishedAt":"2026-09-11T09:00:00Z"},""" +
+                    """{"title":"ok","publishedAt":"2026-09-11T09:00:00Z"}]"""
+            val server = jsonServer(body)
+            try {
+                val items = provider(server, NewsConfig().apply { enabled = true }).newsFor("GAZP", 24)
+
+                assertEquals(listOf("ok"), items.map { it.title })
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    private fun directProvider(
+        config: NewsConfig,
+        meter: SimpleMeterRegistry,
+    ): RgRuNewsProvider =
+        RgRuNewsProvider(
+            config,
+            objectMapper,
+            redis,
+            meter,
+            fixedClock,
+            RetryRegistry.ofDefaults(),
+            RateLimiterRegistry.ofDefaults(),
+            CircuitBreakerRegistry.ofDefaults(),
+        )
 
     private fun provider(
         server: HttpServer?,

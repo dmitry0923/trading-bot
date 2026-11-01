@@ -1031,8 +1031,32 @@ class ApiControllerDefaultsTest {
                         .param("timeframe", "MINUTE_10")
                         .param("mlDirectionEnabled", "true"),
                 )
-
             assertEquals(200, response.status)
+
+            runBlocking {
+                whenever(frozenStrategyStore.current("SBER")).thenReturn(
+                    FrozenStrategy(
+                        ticker = "SBER",
+                        strategyVersion = "v1",
+                        gitCommitSha = "sha",
+                        slPercent = 2.0,
+                        tpPercent = 8.0,
+                        slPoints = null,
+                        tpPoints = null,
+                        confidenceThreshold = null,
+                        leverage = 2.0,
+                        riskPerTradePercent = null,
+                        futuresMaxContractsPerPosition = null,
+                    ),
+                )
+            }
+            val fallback =
+                dispatch(
+                    get("/api/v1/backtest/SBER/robustness")
+                        .param("timeframe", "MINUTE_10")
+                        .param("mlDirectionEnabled", "true"),
+                )
+            assertEquals(200, fallback.status)
         } finally {
             backtestConfig.monteCarloSimulations = previousSimulations
             Mockito.reset(frozenStrategyStore)

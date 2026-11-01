@@ -79,6 +79,103 @@ class BacktestEngineLifecycleBranchesTest {
         ): StrategyAction = StrategyAction.BUY
     }
 
+    @Test
+    fun `risk gates are skipped when no new entry is triggered`(): Unit =
+        runBlocking {
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = true
+                    futuresLiquidationSimulation = false
+                }
+            val simulator = mock<BacktestRiskSimulator>()
+            whenever(
+                simulator.checkEntry(
+                    org.mockito.kotlin.any(),
+                    anyAction(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyCandle(),
+                    anyCandleList(),
+                    anyNullableDouble(),
+                    anyDateTime(),
+                    anyFundingMap(),
+                ),
+            ).thenReturn(BacktestRiskSimulator.GateResult(allowed = true))
+
+            engine(config = config, riskSimulator = simulator, generator = BuyOnlyGenerator())
+                .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5, maxHoldBars = 10_000)
+
+            assertEquals(
+                1,
+                Mockito.mockingDetails(simulator).invocations.count { it.method.name == "checkEntry" },
+            )
+        }
+
+    @Test
+    fun `ml filter blocking a reversal closes the open position`(): Unit =
+        runBlocking {
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    mlFilterEnabled = true
+                    futuresLiquidationSimulation = false
+                }
+            val ml = mock<com.trading.bot.service.MlEntryFilter>()
+            var calls = 0
+            whenever(ml.shouldBlock(anyTicker(), anyAction(), anyNullableDouble(), anyDateTime(), anyBooleanArg()))
+                .thenAnswer {
+                    calls += 1
+                    if (calls == 1) null else "ML_BLOCK"
+                }
+
+            val result =
+                engine(config = config, mlEntryFilter = ml)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+
+            assertTrue(
+                result.trades.any { it.closeReason == "ML_FILTER_REVERSAL" },
+                result.trades.map { it.closeReason }.toString(),
+            )
+        }
+
+    @Test
+    fun `mtf filter blocking a reversal closes the open position`(): Unit =
+        runBlocking {
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    mtfFilterEnabled = true
+                    futuresLiquidationSimulation = false
+                }
+            val mtf = mock<com.trading.bot.service.HigherTfTrendFilter>()
+            var calls = 0
+            whenever(
+                mtf.shouldBlock(anyTicker(), anyAction(), Mockito.anyList(), anyDateTime(), anyBooleanArg()),
+            ).thenAnswer {
+                calls += 1
+                if (calls == 1) null else "MTF_BLOCK"
+            }
+
+            val result =
+                engine(config = config, higherTfTrendFilter = mtf)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+
+            assertTrue(
+                result.trades.any { it.closeReason == "MTF_FILTER_REVERSAL" },
+                result.trades.map { it.closeReason }.toString(),
+            )
+        }
+
+    private fun anyTicker(): String {
+        Mockito.anyString()
+        return "SBER"
+    }
+
+    private fun anyBooleanArg(): Boolean {
+        Mockito.anyBoolean()
+        return false
+    }
+
     private fun permissiveRiskConfig(): RiskConfig =
         RiskConfig().apply {
             maxOpenPositions = 5
@@ -102,13 +199,14 @@ class BacktestEngineLifecycleBranchesTest {
         instruments: InstrumentsConfig = InstrumentsConfig(),
         mlEntryFilter: com.trading.bot.service.MlEntryFilter? = null,
         higherTfTrendFilter: com.trading.bot.service.HigherTfTrendFilter? = null,
+        generator: BacktestSignalGenerator = AlternatingGenerator(),
     ): BacktestEngine =
         BacktestEngine(
             candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
             instrumentsConfig = instruments,
             backtestConfig = config,
             meterRegistry = meterRegistry,
-            signalGenerator = AlternatingGenerator(),
+            signalGenerator = generator,
             positionSizer = sizer,
             riskConfig = permissiveRiskConfig(),
             riskSimulator = riskSimulator,
@@ -860,6 +958,23 @@ class BacktestEngineLifecycleBranchesTest {
             assertTrue(result.totalTrades >= 1, "trades=${result.totalTrades}")
             assertFalse(result.isPassable(), "убыточная серия не passable: PF=${result.profitFactor}")
             assertEquals(1.0, registry.counter("bt_pass_total", "result", "REJECT").count())
+        }
+
+    @Test
+    fun `ml and mtf filters enabled without filter beans stay inert`(): Unit =
+        runBlocking {
+            val config =
+                BacktestConfig().apply {
+                    liveRiskGates = false
+                    mlFilterEnabled = true
+                    mtfFilterEnabled = true
+                }
+
+            val result =
+                engine(config = config)
+                    .simulate("SBER", minuteCandles("SBER"), minBarsForSignal = 5)
+
+            assertTrue(result.trades.isNotEmpty())
         }
 
     @Test

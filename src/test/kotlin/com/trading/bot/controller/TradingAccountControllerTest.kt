@@ -300,6 +300,80 @@ class TradingAccountControllerTest {
         }
     }
 
+    @Test
+    fun `create rejects an unsupported exchange and non positive overrides`() {
+        val cases =
+            listOf(
+                TradingAccountRequest(name = "A", alorPortfolio = "PA", exchange = "LSE"),
+                TradingAccountRequest(name = "A", alorPortfolio = "PA", maxOpenPositions = -1),
+                TradingAccountRequest(name = "A", alorPortfolio = "PA", aumRub = BigDecimal.ZERO),
+                TradingAccountRequest(name = "A", alorPortfolio = "PA", maxDailyLossRub = BigDecimal.ZERO),
+            )
+
+        cases.forEach { request ->
+            org.junit.jupiter.api.assertThrows<ResponseStatusException> {
+                runBlocking { controller.create(request) }
+            }
+        }
+    }
+
+    @Test
+    fun `daily pnl history returns 404 for an unknown account`() {
+        runBlocking { Mockito.`when`(tradingAccountService.findById(99L)).thenReturn(null) }
+
+        val failure =
+            org.junit.jupiter.api.assertThrows<ResponseStatusException> {
+                runBlocking { controller.dailyPnlHistory(99L, 30) }
+            }
+
+        assertEquals(404, failure.statusCode.value())
+    }
+
+    @Test
+    fun `dashboard treats positions without pnl as zero`(): Unit =
+        runBlocking {
+            Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
+            Mockito.`when`(positionRepository.findOpenByAccount(1L)).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        pnl = null,
+                    ),
+                ),
+            )
+            Mockito.`when`(positionRepository.findClosedByAccountSince(Mockito.anyLong(), anyLocalDateTime())).thenReturn(
+                listOf(
+                    Position(
+                        ticker = "SBER",
+                        direction = PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        status = PositionStatus.CLOSED,
+                        pnl = null,
+                    ),
+                ),
+            )
+            Mockito.`when`(drawdownProtectionService.getDailyPnl(1L)).thenReturn(BigDecimal.ZERO)
+            Mockito.`when`(drawdownProtectionService.isDailyLossLimitReached(1L)).thenReturn(false)
+            Mockito.`when`(drawdownProtectionService.isEntryBlocked(1L)).thenReturn(false)
+            Mockito.`when`(aumProvider.currentAum(1L)).thenReturn(BigDecimal("100000"))
+
+            val result = controller.accountDashboard(1L)
+
+            assertEquals(BigDecimal("0.00"), result["openPnl"])
+            assertEquals(BigDecimal("0.00"), result["realizedPnlToday"])
+            assertEquals(1, result["closedTodayCount"])
+            assertEquals(false, result["entryBlocked"])
+        }
+
+    private fun anyLocalDateTime(): LocalDateTime {
+        Mockito.any(LocalDateTime::class.java)
+        return LocalDateTime.of(2026, 1, 1, 0, 0)
+    }
+
     private fun account(
         id: Long,
         name: String,

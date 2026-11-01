@@ -67,6 +67,17 @@ class BacktestEngineLifecycleBranchesTest {
         ): StrategyAction = if (index % 2 == 0) StrategyAction.BUY else StrategyAction.SELL
     }
 
+    /** Только LONG: позиция закрывается по maxHold, а не разворотом. */
+    private class BuyOnlyGenerator : BacktestSignalGenerator {
+        override suspend fun signal(
+            ticker: String,
+            candles: List<Candle>,
+            index: Int,
+            minBars: Int,
+            cycleId: String,
+        ): StrategyAction = StrategyAction.BUY
+    }
+
     private fun permissiveRiskConfig(): RiskConfig =
         RiskConfig().apply {
             maxOpenPositions = 5
@@ -710,9 +721,112 @@ class BacktestEngineLifecycleBranchesTest {
             assertTrue(riskResult.trades.isEmpty())
         }
 
+    @Test
+    fun `run persists a passable result and meters a pass`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            // Ровный рост +1 за бар и единственный шаг -0.2: все LONG-сделки (maxHold=1)
+            // прибыльны, но PF остаётся конечным (нужен хотя бы один убыток).
+            val candles =
+                (0 until 40).map { i ->
+                    val price = 100.0 + i - if (i >= 10) 0.2 else 0.0
+                    candle("CNYRUBF", price, start.plusMinutes(10L * i), high = price, low = price)
+                }
+            val sizer = mock<PositionSizer>()
+            whenever(
+                sizer.calculateContracts(
+                    org.mockito.kotlin.any(),
+                    anyBigDecimal(),
+                    Mockito.anyInt(),
+                    anyBigDecimal(),
+                    anyBigDecimal(),
+                    anyDirection(),
+                    anyNullableDouble(),
+                    anyNullableInt(),
+                ),
+            ).thenReturn(PositionSizeResult(1, BigDecimal("1275"), BigDecimal("500"), null, null))
+
+            val result =
+                BacktestEngine(
+                    candleRepo = CandleRepository(Mockito.mock(DatabaseClient::class.java)),
+                    instrumentsConfig = InstrumentsConfig(),
+                    backtestConfig = BacktestConfig().apply { liveRiskGates = false },
+                    meterRegistry = registry,
+                    signalGenerator = BuyOnlyGenerator(),
+                    positionSizer = sizer,
+                    riskConfig = permissiveRiskConfig(),
+                ).run(
+                    ticker = "CNYRUBF",
+                    days = 10,
+                    minBarsForSignal = 2,
+                    slPercent = 0.005,
+                    tpPercent = 0.01,
+                    capitalSlice = 1.0,
+                    riskPerTradePercent = 100.0,
+                    slPoints = 50_000,
+                    tpPoints = 50_000,
+                    maxHoldBars = 1,
+                    candlesOverride = candles,
+                )
+
+            assertTrue(result.totalTrades >= 10, "для PASS нужно >= 10 фьючерсных сделок: ${result.totalTrades}")
+            assertTrue(result.profitFactor.isFinite() && result.profitFactor > 1.3, "PF=${result.profitFactor}")
+            assertTrue(result.isPassable(), "ожидался passable-результат: $result")
+            assertEquals(1.0, registry.counter("bt_pass_total", "result", "PASS").count())
+        }
+
+    @Test
+    fun `zero price candles cannot be sized into a position`(): Unit =
+        runBlocking {
+            val zeros =
+                (0 until 30).map { i ->
+                    candle("SBER", 0.0, start.plusMinutes(10L * i), high = 0.0, low = 0.0)
+                }
+
+            val result =
+                engine(BacktestConfig().apply { liveRiskGates = false })
+                    .simulate("SBER", zeros, minBarsForSignal = 2)
+
+            assertEquals(0, result.totalTrades, "нотионал 0 не даёт лота")
+        }
+
+    @Test
+    fun `instrument level stop percent is honoured for stock sizing`(): Unit =
+        runBlocking {
+            val custom = customSpec()
+            val instruments = InstrumentsConfig().apply { this.instruments = mutableListOf(custom) }
+            val candles =
+                (0 until 40).map { i ->
+                    val price = 100.0 + (i % 3)
+                    candle("CUSTOM", price, start.plusMinutes(10L * i), high = price, low = price)
+                }
+
+            val result =
+                engine(
+                    config = BacktestConfig().apply { liveRiskGates = false },
+                    instruments = instruments,
+                ).simulate("CUSTOM", candles, minBarsForSignal = 2)
+
+            assertTrue(result.trades.isNotEmpty(), "spec.slPercent должен дать ненулевой сайзинг")
+        }
+
     private fun anyBigDecimal(): BigDecimal {
         Mockito.any(BigDecimal::class.java)
         return BigDecimal("100")
+    }
+
+    private fun customSpec(): InstrumentsConfig.InstrumentSpec {
+        val spec = InstrumentsConfig.InstrumentSpec()
+        spec.ticker = "CUSTOM"
+        spec.type = "STOCK"
+        spec.lotSize = 1
+        spec.priceStep = BigDecimal("0.01")
+        spec.priceStepCost = BigDecimal("0.01")
+        spec.go = BigDecimal.ZERO
+        spec.leverage = BigDecimal.ONE
+        spec.baseAsset = "CUSTOM"
+        spec.slPercent = BigDecimal("1.0")
+        return spec
     }
 
     private fun anyInt(): Int {
@@ -749,6 +863,11 @@ class BacktestEngineLifecycleBranchesTest {
     private fun anyCandleList(): List<Candle> {
         Mockito.any(List::class.java)
         return emptyList()
+    }
+
+    private fun anyNullableInt(): Int? {
+        Mockito.nullable(Int::class.javaObjectType)
+        return null
     }
 
     private fun anyNullableDouble(): Double? {

@@ -371,4 +371,48 @@ class PortfolioMomentumEngineBranchesTest {
 
         assertTrue(result.trades.isNotEmpty(), "недостаток истории σ — экспозиция не меняется")
     }
+
+    @Test
+    fun `carry tolerates a funding series shorter than the universe`() {
+        val funding = listOf(mapOf(start.toLocalDate().minusDays(1) to 1.0))
+
+        val result =
+            PortfolioMomentumEngine.run(
+                trending(200),
+                listOf(spec("UP"), spec("FLAT", funding = 0.5), spec("DOWN", funding = 0.5)),
+                params().copy(momentumWeight = 0.0, carryWeight = 1.0),
+                funding = funding,
+            )
+
+        assertTrue(result.trades.isNotEmpty(), "для тикеров без ряда используется spec-fallback")
+    }
+
+    @Test
+    fun `zero price and zero notional tickers are excluded from the cross section`() {
+        val withZeroMomentum =
+            bars(
+                200,
+                closes =
+                    listOf(
+                        { i: Int -> exp(2.4 + 0.0008 * i) },
+                        { _: Int -> 0.0 },
+                        { i: Int -> exp(2.4 - 0.0008 * i) },
+                    ),
+            )
+        val momentum =
+            PortfolioMomentumEngine.run(
+                withZeroMomentum,
+                listOf(spec("UP"), spec("ZERO"), spec("DOWN")),
+                params(),
+            )
+        assertTrue(momentum.trades.isEmpty(), "нулевая цена не проходит фильтр momentum")
+
+        val carry =
+            PortfolioMomentumEngine.run(
+                withZeroMomentum,
+                listOf(spec("UP"), spec("ZERO"), spec("DOWN")),
+                params().copy(momentumWeight = 0.0, carryWeight = 1.0),
+            )
+        assertTrue(carry.trades.isEmpty(), "нулевой нотионал даёт NaN-carry и исключается")
+    }
 }

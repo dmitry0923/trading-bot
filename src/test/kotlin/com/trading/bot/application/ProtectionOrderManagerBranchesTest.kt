@@ -777,4 +777,82 @@ class ProtectionOrderManagerBranchesTest {
             assertTrue(pos.closeCancelPending)
             assertEquals(3, appliedClose.get()!!.first)
         }
+
+    @Test
+    fun `attach skips legs whose replacement is already pending`(): Unit =
+        runBlocking {
+            val pos = openPosition(slPendingReplace = true, tpPendingReplace = true)
+
+            manager.attachProtectionOrders(pos)
+
+            verify(orderOutboxService, never()).placeOrder(
+                anyOrNull(),
+                anyOrNull(),
+                Mockito.anyInt(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+                anyOrNull(),
+            )
+            assertNull(pos.slOrderId)
+            assertNull(pos.tpOrderId)
+        }
+
+    @Test
+    fun `attach places only the missing leg when SL already exists`(): Unit =
+        runBlocking {
+            stubPlaceOrder("TP-NEW")
+            val pos = openPosition(slOrderId = "SL-1", slOrderPrice = "91500", takeProfit = "93000")
+
+            manager.attachProtectionOrders(pos)
+
+            assertEquals("SL-1", pos.slOrderId)
+            assertEquals("TP-NEW", pos.tpOrderId)
+        }
+
+    @Test
+    fun `cancel honours skip and per-leg pending flags`(): Unit =
+        runBlocking {
+            val skipSl = openPosition(slOrderId = "SL-1", tpOrderId = "TP-1")
+            manager.cancelProtectionOrders(skipSl, skip = "SL")
+            runBlocking {
+                verify(orderOutboxService).placeCancelOrder(1L, "TP-1", accountId = null)
+            }
+            assertFalse(skipSl.slCancelPending)
+            assertTrue(skipSl.tpCancelPending)
+
+            Mockito
+                .clearInvocations(orderOutboxService)
+            val pending = openPosition(slOrderId = "SL-1", tpOrderId = "TP-1", slCancelPending = true, tpCancelPending = true)
+            manager.cancelProtectionOrders(pending, skip = "TP")
+            verify(orderOutboxService, never()).placeCancelOrder(anyOrNull(), anyOrNull(), anyOrNull())
+        }
+
+    @Test
+    fun `level changes without a stored price do not schedule replacement`(): Unit =
+        runBlocking {
+            val pos = openPosition(slOrderId = "SL-1", slOrderPrice = null, tpOrderId = "TP-1", tpOrderPrice = null)
+
+            manager.onProtectionLevelsChanged(pos)
+
+            assertFalse(pos.slPendingReplace)
+            assertFalse(pos.tpPendingReplace)
+        }
+
+    @Test
+    fun `orphan protection of a closed position is cancelled and saved`(): Unit =
+        runBlocking {
+            val pos = openPosition(status = PositionStatus.CLOSED, slOrderId = "SL-1", stopLoss = "91500")
+
+            manager.reconcileProtectionOrders(pos)
+
+            assertTrue(pos.slCancelPending)
+            runBlocking {
+                verify(orderOutboxService).placeCancelOrder(1L, "SL-1", accountId = null)
+                verify(positionRepo).save(pos)
+            }
+        }
 }

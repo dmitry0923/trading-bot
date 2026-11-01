@@ -30,6 +30,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -284,6 +285,88 @@ class TradingBotServiceQuoteAndPollBranchesTest {
                 .openPosition(anySignalArg(), anyGateway())
         }
     }
+
+    @Test
+    fun `reconcile pending orders runs a clean pass and releases the latch`() {
+        val done = CountDownLatch(1)
+        runBlocking {
+            Mockito
+                .`when`(
+                    distributedLockService.runExclusive(
+                        Mockito.anyString(),
+                        Mockito.anyLong(),
+                        Mockito.anyBoolean(),
+                        org.mockito.kotlin.any<(suspend () -> Unit)>(),
+                    ),
+                ).thenAnswer { invocation ->
+                    val block = invocation.getArgument<suspend () -> Unit>(3)
+                    runBlocking { block() }
+                    done.countDown()
+                }
+            Mockito
+                .`when`(positionRepo.findByStatus(com.trading.bot.model.PositionStatus.OPEN))
+                .thenReturn(emptyList())
+        }
+
+        service.reconcilePendingOrders()
+
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `reconcile pending orders survives a failed reconciliation pass`() {
+        val done = CountDownLatch(1)
+        runBlocking {
+            Mockito
+                .`when`(
+                    distributedLockService.runExclusive(
+                        Mockito.anyString(),
+                        Mockito.anyLong(),
+                        Mockito.anyBoolean(),
+                        org.mockito.kotlin.any<(suspend () -> Unit)>(),
+                    ),
+                ).thenAnswer { invocation ->
+                    val block = invocation.getArgument<suspend () -> Unit>(3)
+                    runBlocking { block() }
+                    done.countDown()
+                }
+            Mockito
+                .`when`(positionRepo.findByStatus(com.trading.bot.model.PositionStatus.OPEN))
+                .thenThrow(IllegalStateException("db down"))
+        }
+
+        service.reconcilePendingOrders()
+
+        assertTrue(done.await(5, TimeUnit.SECONDS), "ошибка прохода не должна вешать планировщик")
+    }
+
+    @Test
+    fun `force close all returns zero without open stocks`(): Unit =
+        runBlocking {
+            Mockito.`when`(positionRepo.findOpenStocks()).thenReturn(emptyList())
+
+            assertEquals(0, service.forceCloseAll())
+        }
+
+    @Test
+    fun `force close all swallows a quote failure and still reports the count`(): Unit =
+        runBlocking {
+            Mockito.`when`(positionRepo.findOpenStocks()).thenReturn(
+                listOf(
+                    com.trading.bot.model.entity.Position(
+                        id = 1L,
+                        ticker = "SBER",
+                        direction = com.trading.bot.model.PositionDirection.LONG,
+                        quantity = 1,
+                        entryPrice = BigDecimal("100"),
+                        status = com.trading.bot.model.PositionStatus.OPEN,
+                    ),
+                ),
+            )
+            Mockito.`when`(alorClient.getLastPrice("SBER")).thenThrow(IllegalStateException("quote down"))
+
+            assertEquals(1, service.forceCloseAll(), "позиция считается даже при ошибке цены")
+        }
 
     private fun anySignalArg(): Signal {
         Mockito.any(Signal::class.java)

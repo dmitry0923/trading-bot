@@ -302,6 +302,69 @@ class CnyRubStrategyTest {
             assertEquals(StrategyAction.BUY, result.action)
         }
 
+    @Test
+    fun `CNY_RUB alias is accepted like CNYRUB_TOM`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNY_RUB",
+                    price = BigDecimal("12.3400"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                )
+
+            assertEquals(StrategyAction.BUY, strategy.evaluate(ctx).action)
+        }
+
+    @Test
+    fun `microprice above mid blocks sell without obi pressure`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.5000"),
+                    indicators =
+                        indicators(
+                            rsi = 75.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    bidSize = 100L,
+                    askSize = 1000L,
+                    micropriceOverride = BigDecimal("12.5050"),
+                )
+
+            assertEquals(StrategyAction.HOLD, strategy.evaluate(ctx).action)
+        }
+
+    @Test
+    fun `microprice above mid confirms buy without obi pressure`() =
+        runBlocking {
+            val ctx =
+                context(
+                    "CNYRUB_TOM",
+                    price = BigDecimal("12.3400"),
+                    indicators =
+                        indicators(
+                            rsi = 25.0,
+                            bbLower = BigDecimal("12.3400"),
+                            bbUpper = BigDecimal("12.5000"),
+                            bbMiddle = BigDecimal("12.4200"),
+                        ),
+                    bidSize = 1000L,
+                    askSize = 100L,
+                    micropriceOverride = BigDecimal("12.3450"),
+                )
+
+            assertEquals(StrategyAction.BUY, strategy.evaluate(ctx).action)
+        }
+
     private fun context(
         ticker: String,
         price: BigDecimal = BigDecimal("12.42"),

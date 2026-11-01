@@ -420,6 +420,29 @@ class MoexFundingHistoryLoaderTest {
         (from until from + count)
             .joinToString(",") { i -> "[\"${LocalDate.of(2026, 1, 1).plusDays(i.toLong())}\", \"0.00%03d\"]".format(200 + i) }
 
+    @Test
+    fun `parse tolerates non array short blank and unparsable rows`() {
+        val loader = loader(fundingConfig = FundingConfig())
+        val body =
+            """
+            {"history": {"columns": ["TRADEDATE", "SWAPRATE"],
+              "data": [{"not": "array"}, [], ["", "1.0"], ["2026-09-20", ""],
+                       ["bad-date", "1.0"], ["2026-09-21", "bad"], ["2026-09-22", "2.5"]]}}
+            """.trimIndent()
+
+        val parsed = loader.parseHistory(body, "GLDRUBF")
+
+        assertEquals(1, parsed.size)
+        assertEquals("2026-09-22", parsed.single().clearingDate.toString())
+    }
+
+    @Test
+    fun `count raw rows is zero without the funding block`() {
+        val loader = loader(fundingConfig = FundingConfig())
+
+        assertEquals(0, loader.countRawRows("""{"other": {"columns": ["X"], "data": [["1"]]}}"""))
+        assertEquals(2, loader.countRawRows("""{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [["a","1"],["b","2"]]}}"""))
+    }
     private fun loader(
         fundingConfig: FundingConfig = FundingConfig(),
         repo: FundingHistoryRepository = Mockito.mock(FundingHistoryRepository::class.java),

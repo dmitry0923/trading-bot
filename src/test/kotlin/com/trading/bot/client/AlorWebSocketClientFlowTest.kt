@@ -77,7 +77,8 @@ class AlorWebSocketClientFlowTest {
                                 .doOnNext { message -> received += message }
                                 .then()
                         if (frame == null) {
-                            Mono.empty()
+                            subscription.subscribe()
+                            Mono.delay(Duration.ofMillis(200)).then(outbound.sendClose()).then()
                         } else {
                             Mono
                                 .`when`(subscription, outbound.sendString(Flux.just(frame)).then())
@@ -265,6 +266,89 @@ class AlorWebSocketClientFlowTest {
         Mockito.any(java.time.Instant::class.java)
         return java.time.Instant.now()
     }
+
+    @Test
+    fun `invalid frames are skipped before a valid quote`(): Unit =
+        runBlocking {
+            val received = mutableListOf<String>()
+            val server =
+                HttpServer
+                    .create()
+                    .host("127.0.0.1")
+                    .port(0)
+                    .handle { _, response ->
+                        response.sendWebsocket { _, outbound ->
+                            Mono
+                                .`when`(
+                                    outbound.sendString(Flux.just("{not-json", quoteFrame())).then(),
+                                ).then(Mono.delay(Duration.ofMillis(500)).then())
+                        }
+                    }.bindNow()
+            try {
+                val flow = client("ws://127.0.0.1:${server.port()}/ws").subscribeToQuotes(listOf("SBER"))
+
+                val tick = withTimeout(10_000) { flow.first() }
+
+                assertEquals("SBER", tick.ticker)
+                assertEquals(0, BigDecimal("280.5").compareTo(tick.price))
+            } finally {
+                server.disposeNow()
+            }
+            assertTrue(received.isEmpty())
+        }
+
+    @Test
+    fun `heartbeat pings count as websocket activity`(): Unit =
+        runBlocking {
+            val server = wsServer(quoteFrame(), holdMs = 1_500)
+            try {
+                val client =
+                    AlorWebSocketClient(
+                        AlorConfig().apply {
+                            wsUrl = "ws://127.0.0.1:${server.port()}/ws"
+                            wsHeartbeatIntervalMs = 50
+                            wsHeartbeatTimeoutMs = 5_000
+                        },
+                        jacksonObjectMapper(),
+                        registry,
+                        webSocketManager,
+                        tokenProvider,
+                    )
+                val job = launch(Dispatchers.Default) { client.subscribeToQuotes(listOf("SBER")).collect {} }
+                try {
+                    awaitUntil(10_000) {
+                        Mockito
+                            .mockingDetails(webSocketManager)
+                            .invocations
+                            .count { it.method.name == "onActivity" } >= 2
+                    }
+                } finally {
+                    job.cancel()
+                }
+            } finally {
+                server.disposeNow()
+            }
+        }
+
+    @Test
+    fun `reconnect after a close opens a second subscription`(): Unit =
+        runBlocking {
+            val received = mutableListOf<String>()
+            val server = wsServer(frame = null, received = received)
+            try {
+                val client = client("ws://127.0.0.1:${server.port()}/ws")
+                val job = launch(Dispatchers.Default) { client.subscribeToQuotes(listOf("SBER")).collect {} }
+                try {
+                    awaitUntil(15_000) { registry.counter("alor.ws.quotes.reconnect").count() >= 1.0 }
+                    awaitUntil(15_000) { received.count { it.contains("QuotesSubscribe") } >= 2 }
+                } finally {
+                    job.cancel()
+                }
+            } finally {
+                server.disposeNow()
+            }
+        }
+
     private fun anyStream(): WsStream {
         Mockito.any(WsStream::class.java)
         return WsStream.QUOTES

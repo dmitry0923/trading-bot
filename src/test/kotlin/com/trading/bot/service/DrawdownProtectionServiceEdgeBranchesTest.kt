@@ -371,4 +371,72 @@ class DrawdownProtectionServiceEdgeBranchesTest {
             "лимит должен считаться от latestAum, пока статус ещё не кэширован",
         )
     }
+
+    @Test
+    fun `startup restores a persisted snapshot for the current day`(): Unit =
+        runBlocking {
+            val snapshot =
+                com.trading.bot.model.entity.DailyRiskSnapshot(
+                    tradeDate = today,
+                    dailyPnl = BigDecimal("-123"),
+                    limitReached = true,
+                    maxDrawdownToday = BigDecimal("-123"),
+                    peakEquity = BigDecimal("45000"),
+                )
+            whenever(snapshotRepo.findByDate(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
+                .thenReturn(snapshot)
+            whenever(tradingAccountService.findAll()).thenReturn(emptyList())
+            stubNoOpen()
+            val drawdown = service()
+
+            drawdown.init()
+
+            assertEquals(0, BigDecimal("-123").compareTo(drawdown.getDailyPnl(null)))
+            assertTrue(drawdown.isDailyLossLimitReached(null), "limitReached восстанавливается из снапшота")
+        }
+
+    @Test
+    fun `shadow mode activates once and stays active while the cooldown runs`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            val cfg =
+                baseConfig().apply {
+                    shadowModeEnabled = true
+                    maxConsecutiveLosses = 1
+                }
+            whenever(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenReturn(
+                listOf(closed(BigDecimal("-10"), LocalDateTime.now(clock))),
+            )
+            val drawdown = service(cfg)
+
+            val first = drawdown.computeStatus()
+            val second = drawdown.computeStatus()
+
+            assertTrue(first.shadowModeActive, "1 убыток >= maxConsecutiveLosses — shadow включается")
+            assertTrue(second.shadowModeActive, "в пределах cooldown режим сохраняется")
+            assertEquals(first.shadowModeUntil, second.shadowModeUntil)
+        }
+
+    @Test
+    fun `auto stop publishes a single event per window`(): Unit =
+        runBlocking {
+            stubNoOpen()
+            val cfg =
+                baseConfig().apply {
+                    autoStopEnabled = true
+                    autoStopHourlyLossPercent = 0.01
+                    autoStopWindowMinutes = 60
+                }
+            whenever(positionRepo.findClosedByAccountSince(anyOrNull(), any())).thenReturn(
+                listOf(closed(BigDecimal("-1000"), LocalDateTime.now(clock))),
+            )
+            val drawdown = service(cfg)
+
+            drawdown.computeStatus()
+            drawdown.computeStatus()
+
+            Mockito
+                .verify(publisher, Mockito.times(1))
+                .publishEvent(Mockito.any(com.trading.bot.event.AutoStopTriggeredEvent::class.java))
+        }
 }

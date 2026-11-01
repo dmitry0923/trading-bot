@@ -277,6 +277,44 @@ class ExecutionReconcilerOutboxBranchesTest {
         }
 
     @Test
+    fun `unfilled entry without an idempotency key is cancelled and abandoned`(): Unit =
+        runBlocking {
+            val row = outbox(LocalDateTime.now().minusMinutes(5)).copy(idempotencyKey = null)
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "entry")).thenReturn(row)
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("NEW", 0, null))
+            whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.CancelResult.CONFIRMED)
+            val pos = entry()
+
+            reconciler.resolveEntryViaOutbox(pos)
+
+            assertEquals(PositionStatus.CLOSED, pos.status)
+            Mockito.verify(positionRepo).releaseEntry("SBER", null)
+        }
+
+    @Test
+    fun `partial entry without an avg price finalizes after the remainder cancel`(): Unit =
+        runBlocking {
+            val row = outbox(LocalDateTime.now().minusMinutes(5)).copy(idempotencyKey = null)
+            whenever(orderOutboxRepo.findLatestByPositionId(1L, "entry")).thenReturn(row)
+            whenever(positionRepo.save(anyPosition())).thenAnswer { it.getArgument<Position>(0) }
+            whenever(alorClient.verifyOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.OrderExecution("PARTIALLY_FILLED", 4, null))
+                .thenReturn(null)
+            whenever(alorClient.cancelOrder(anyOrNull(), anyOrNull(), anyOrNull()))
+                .thenReturn(AlorClient.CancelResult.CONFIRMED)
+            val pos = entry()
+
+            reconciler.resolveEntryViaOutbox(pos)
+
+            assertFalse(pos.pendingEntry)
+            assertEquals(4, pos.quantity)
+            assertEquals(0, BigDecimal("100").compareTo(pos.entryPrice))
+        }
+
+    @Test
     fun `close cancel without a position id clears the pending flags`(): Unit =
         runBlocking {
             val pos = closing().copy(id = null)

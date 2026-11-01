@@ -43,6 +43,7 @@ import com.trading.bot.repository.StrategyAdjustmentRepository
 import com.trading.bot.repository.StrategyRepository
 import com.trading.bot.repository.TradeEventRepository
 import com.trading.bot.service.AdaptiveRiskService
+import com.trading.bot.service.BuildIdentity
 import com.trading.bot.service.ClearingService
 import com.trading.bot.service.DashboardService
 import com.trading.bot.service.DashboardSseService
@@ -115,6 +116,19 @@ class ApiControllerDefaultsTest {
             monthlyReturns = emptyMap(),
         )
     private val candleRepository = mock<CandleRepository>()
+    private val deploymentApprovalService = mock<DeploymentApprovalService>()
+    private val buildIdentity = BuildIdentity()
+    private val liveStrategyFingerprintProvider = LiveStrategyFingerprintProvider(buildIdentity)
+    private val finalHoldoutValidator: FinalHoldoutValidator by lazy {
+        FinalHoldoutValidator(
+            walkForwardAnalyzer = walkForwardAnalyzer,
+            backtestEngine = backtestEngine,
+            buildIdentity = buildIdentity,
+            fingerprintProvider = liveStrategyFingerprintProvider,
+            instrumentsConfig = InstrumentsConfig(),
+            backtestConfig = backtestConfig,
+        )
+    }
     private val settingsService = mock<SettingsService>()
     private val investorService = mock<InvestorService>()
     private val backtestConfig = BacktestConfig()
@@ -169,7 +183,7 @@ class ApiControllerDefaultsTest {
             backtestEngine = backtestEngine,
             walkForwardAnalyzer = walkForwardAnalyzer,
             monteCarloAnalyzer = monteCarloAnalyzer,
-            finalHoldoutValidator = mock<FinalHoldoutValidator>(),
+            finalHoldoutValidator = finalHoldoutValidator,
             backtestResultRepository = backtestResultRepository,
             panelBacktestService = mock<PanelBacktestService>(),
             portfolioBacktestGuard = mock<PortfolioBacktestGuard>(),
@@ -193,8 +207,8 @@ class ApiControllerDefaultsTest {
             ragErrorAnalyzer = ragErrorAnalyzer,
             traceQueryService = traceQueryService,
             meterRegistry = SimpleMeterRegistry(),
-            deploymentApprovalService = mock<DeploymentApprovalService>(),
-            liveStrategyFingerprintProvider = mock<LiveStrategyFingerprintProvider>(),
+            deploymentApprovalService = deploymentApprovalService,
+            liveStrategyFingerprintProvider = liveStrategyFingerprintProvider,
             frozenStrategyStore = frozenStrategyStore,
             moexFundingHistoryLoader = moexFundingHistoryLoader,
             fundingHistoryRepository = fundingHistoryRepository,
@@ -790,6 +804,73 @@ class ApiControllerDefaultsTest {
             view,
             runBlocking { controller.depositInvestor(UUID.randomUUID(), mapOf("amount" to "500")) },
         )
+    }
+
+    @Test
+    fun `holdout and deployment gate exercise the real validator pipeline`() {
+        stubCandles()
+        runBlocking {
+            whenever(
+                candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyLocalDateTime(),
+                    anyLocalDateTime(),
+                ),
+            ).thenReturn(sixtyCandles())
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult))
+        }
+        val previousSimulations = backtestConfig.monteCarloSimulations
+        val previousSeeds = backtestConfig.mcSeedCount
+        backtestConfig.monteCarloSimulations = 20
+        backtestConfig.mcSeedCount = 1
+        try {
+            val holdout =
+                dispatch(
+                    get("/api/v1/backtest/SBER/holdout")
+                        .param("days", "10")
+                        .param("leverage", "2.0"),
+                )
+            assertEquals(200, holdout.status)
+            assertTrue(holdout.contentAsString.contains("\"holdoutFraction\""), holdout.contentAsString)
+
+            val gate =
+                dispatch(
+                    get("/api/v1/backtest/SBER/deployment-gate")
+                        .param("days", "10")
+                        .param("leverage", "2.0")
+                        .param("researchMode", "false")
+                        .param("confirmedForProduction", "true"),
+                )
+            assertEquals(200, gate.status)
+            assertTrue(gate.contentAsString.contains("\"approvalPersisted\":true"), gate.contentAsString)
+
+            runBlocking {
+                Mockito
+                    .verify(deploymentApprovalService, Mockito.atLeastOnce())
+                    .isLiveAllowed(Mockito.anyString(), Mockito.nullable(String::class.javaObjectType))
+            }
+        } finally {
+            backtestConfig.monteCarloSimulations = previousSimulations
+            backtestConfig.mcSeedCount = previousSeeds
+        }
+    }
+
+    private fun sixtyCandles(): List<com.trading.bot.model.entity.Candle> {
+        val start = LocalDateTime.of(2026, 9, 1, 10, 0)
+        return (0 until 60).map { i ->
+            com.trading.bot.model.entity.Candle(
+                ticker = "SBER",
+                timeframe = "MINUTE_10",
+                openPrice = BigDecimal.valueOf(100.0 + i),
+                highPrice = BigDecimal.valueOf(100.5 + i),
+                lowPrice = BigDecimal.valueOf(99.5 + i),
+                closePrice = BigDecimal.valueOf(100.0 + i),
+                volume = 1_000L,
+                time = start.plusMinutes(10L * i),
+            )
+        }
     }
 
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {

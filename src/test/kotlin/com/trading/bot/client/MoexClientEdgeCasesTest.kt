@@ -303,6 +303,26 @@ class MoexClientEdgeCasesTest {
         }
     }
 
+    @Test
+    fun `forts options skip a null marketdata row`() =
+        runBlocking {
+            FakeServer().use { server ->
+                server.optionsBody =
+                    """
+                    {"securities":{"columns":["SECID","ASSETCODE","OPTIONTYPE","STRIKE","LASTTRADEDATE","UNDERLYINGASSET"],
+                      "data":[["A","RI","C","90000","2026-09-03","RI"],
+                              ["B","RI","P","95000","2026-09-03","RI"]]},
+                     "marketdata":{"columns":["LAST"],
+                      "data":[["1200"], null]}}
+                    """.trimIndent()
+
+                val options = client(server).getFortsOptions()
+
+                assertEquals(1, options.size)
+                assertEquals("A", options.single().secid)
+            }
+        }
+
     private class FakeServer : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
 

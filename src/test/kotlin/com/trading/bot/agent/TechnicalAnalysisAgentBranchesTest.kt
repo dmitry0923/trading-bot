@@ -105,6 +105,22 @@ class TechnicalAnalysisAgentBranchesTest {
     }
 
     @Test
+    fun `daily timeframe data is rendered when history is deep enough`() {
+        val deep =
+            (0 until 4_500).map { i ->
+                candle(BigDecimal("100"), LocalDateTime.of(2026, 1, 5, 10, 0).plusMinutes(10L * i))
+            }
+
+        val report =
+            runBlocking {
+                agent("""{"conclusion":"NEUTRAL","signalStrength":0.1,"reasoning":"d1"}""")
+                    .analyze("SBER", deep, fullBookSnapshot(), "c1")
+            }
+
+        assertEquals("NEUTRAL", report.conclusion)
+    }
+
+    @Test
     fun `full orderbook and multi timeframe data enrich the prompt`() {
         val report =
             runBlocking {

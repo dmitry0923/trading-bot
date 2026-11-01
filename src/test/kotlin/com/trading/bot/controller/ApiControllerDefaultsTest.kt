@@ -994,6 +994,83 @@ class ApiControllerDefaultsTest {
             assertEquals(view, runBlocking { controller.withdrawInvestor(UUID.randomUUID(), mapOf()) })
         }
 
+    @Test
+    fun `robustness accepts an explicit timeframe and a frozen confidence threshold`() {
+        stubCandles()
+        runBlocking {
+            whenever(
+                candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyLocalDateTime(),
+                    anyLocalDateTime(),
+                ),
+            ).thenReturn(sixtyCandles())
+            whenever(frozenStrategyStore.current("SBER")).thenReturn(
+                FrozenStrategy(
+                    ticker = "SBER",
+                    strategyVersion = "v1",
+                    gitCommitSha = "sha",
+                    slPercent = 2.0,
+                    tpPercent = 8.0,
+                    slPoints = null,
+                    tpPoints = null,
+                    confidenceThreshold = 0.72,
+                    leverage = 2.0,
+                    riskPerTradePercent = null,
+                    futuresMaxContractsPerPosition = null,
+                ),
+            )
+        }
+        val previousSimulations = backtestConfig.monteCarloSimulations
+        backtestConfig.monteCarloSimulations = 20
+        try {
+            val response =
+                dispatch(
+                    get("/api/v1/backtest/SBER/robustness")
+                        .param("timeframe", "MINUTE_10")
+                        .param("mlDirectionEnabled", "true"),
+                )
+
+            assertEquals(200, response.status)
+        } finally {
+            backtestConfig.monteCarloSimulations = previousSimulations
+            Mockito.reset(frozenStrategyStore)
+        }
+    }
+
+    @Test
+    fun `holdout and deployment gate accept an ml only override`() {
+        stubCandles()
+        runBlocking {
+            whenever(
+                candleRepository.findByTickerAndTimeframeAndTimeBetween(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyLocalDateTime(),
+                    anyLocalDateTime(),
+                ),
+            ).thenReturn(sixtyCandles())
+            whenever(walkForwardAnalyzer.run(Mockito.anyString(), Mockito.anyList(), anyWfaConfig()))
+                .thenReturn(ValidationResult(folds = emptyList(), aggregateOutOfSample = sampleResult))
+            whenever(frozenStrategyStore.current(Mockito.anyString())).thenReturn(null)
+        }
+        val previousSimulations = backtestConfig.monteCarloSimulations
+        backtestConfig.monteCarloSimulations = 20
+        try {
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/holdout").param("mlDirectionEnabled", "true")).status,
+            )
+            assertEquals(
+                200,
+                dispatch(get("/api/v1/backtest/SBER/deployment-gate").param("mlDirectionEnabled", "true")).status,
+            )
+        } finally {
+            backtestConfig.monteCarloSimulations = previousSimulations
+        }
+    }
+
     private fun dispatch(builder: MockHttpServletRequestBuilder): MockHttpServletResponse {
         val initial = mockMvc.perform(builder).andReturn()
         if (!initial.request.isAsyncStarted) return initial.response

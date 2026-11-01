@@ -374,6 +374,100 @@ class ResilientLlmClientTest {
             )
         }
 
+    @Test
+    fun `successful json response is stored in the semantic cache`(): Unit =
+        runBlocking {
+            val registry = SimpleMeterRegistry()
+            val config =
+                LlmConfig().apply {
+                    semanticCacheEnabled = true
+                    retryEnabled = false
+                    circuitBreakerEnabled = false
+                    rateLimiterEnabled = false
+                }
+            val settingsService = mock<SettingsService>()
+            whenever(settingsService.getSettings()).thenReturn(
+                BotSettings().copy(llmProvider = "KIMI", llmBaseUrl = "http://127.0.0.1:1", llmApiKey = "test-key"),
+            )
+            val cache = mock<SemanticCache>()
+            whenever(
+                cache.key(
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    Mockito.anyString(),
+                    anyOrNull(),
+                    anyOrNull(),
+                ),
+            ).thenReturn("cache-key")
+            val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+            server.createContext("/chat/completions") { exchange ->
+                val body =
+                    """{"choices":[{"message":{"content":"{\"ok\":true}"}}],"usage":{"total_tokens":3}}"""
+                        .toByteArray(Charsets.UTF_8)
+                exchange.responseHeaders.add("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            server.start()
+            try {
+                whenever(settingsService.getSettings()).thenReturn(
+                    BotSettings().copy(
+                        llmProvider = "KIMI",
+                        llmBaseUrl = "http://127.0.0.1:${server.address.port}",
+                        llmApiKey = "test-key",
+                    ),
+                )
+                val client =
+                    ResilientLlmClient(
+                        llmConfig = config,
+                        semanticCache = cache,
+                        objectMapper = ObjectMapper(),
+                        meterRegistry = registry,
+                        circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+                        rateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
+                        retryRegistry = RetryRegistry.ofDefaults(),
+                        settingsService = settingsService,
+                        traceStorage = mock<TraceStorage>(),
+                        traceStorageConfig = TraceStorageConfig().apply { enabled = false },
+                    )
+
+                client.complete(
+                    agent = "technical",
+                    ticker = "SBER",
+                    prompt = PromptTemplate(name = "test", version = "1", system = "sys", userTemplate = "user"),
+                    variables = emptyMap(),
+                    fingerprint = "fp",
+                    temperature = 0.1,
+                )
+
+                Mockito
+                    .verify(cache)
+                    .put(
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        Mockito.anyString(),
+                        anyResponse(),
+                        Mockito.nullable(String::class.javaObjectType),
+                        Mockito.nullable(String::class.javaObjectType),
+                    )
+                val stored =
+                    Mockito
+                        .mockingDetails(cache)
+                        .invocations
+                        .single { it.method.name == "put" }
+                assertEquals("technical", stored.arguments[0])
+                assertEquals("SBER", stored.arguments[1])
+                assertEquals("fp", stored.arguments[2])
+            } finally {
+                server.stop(0)
+            }
+        }
+
+    private fun anyResponse(): LlmResponse {
+        Mockito.any(LlmResponse::class.java)
+        return LlmResponse(content = "{}")
+    }
+
     private fun stubReserve(
         redis: StringRedisTemplate,
         result: List<Any?>,

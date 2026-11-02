@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-02T07:20:56.9881534+03:00",
+  "generatedAt": "2026-11-02T07:25:05.7236475+03:00",
   "tickers": [
     "CNYRUBF",
     "USDRUBF",
@@ -14,78 +14,78 @@
   "riskPerTradePercent": 100.0,
   "maxContracts": 1,
   "devStats": {
-    "trades": 293,
-    "net": 30468.31,
-    "pf": 1.355,
-    "winRate": 48.1,
-    "avgNet": 103.99,
-    "medianNet": -12.46,
-    "mddPct": 17.29
+    "trades": 209,
+    "net": 29119.79,
+    "pf": 1.436,
+    "winRate": 55.0,
+    "avgNet": 139.33,
+    "medianNet": 33.62,
+    "mddPct": 20.2
   },
-  "devBlockP": 0.087,
+  "devBlockP": 0.0605,
   "devBlockCi": [
-    -36.81,
-    263.71
+    -39.91,
+    333.0
   ],
   "oosStats": {
-    "trades": 197,
-    "net": 9159.46,
-    "pf": 1.099,
+    "trades": 135,
+    "net": 12471.74,
+    "pf": 1.183,
     "winRate": 46.7,
-    "avgNet": 46.49,
-    "medianNet": -17.37,
-    "mddPct": 32.18
+    "avgNet": 92.38,
+    "medianNet": -28.4,
+    "mddPct": 26.16
   },
-  "oosBlockP": 0.344,
+  "oosBlockP": 0.2795,
   "oosBlockCi": [
-    -191.54,
-    269.45
+    -203.08,
+    399.19
   ],
   "perInstrument": {
-    "CNYRUBF": {
-      "trades": 67,
-      "net": 1984.47,
-      "pf": 1.503,
-      "winRate": 43.3,
-      "avgNet": 29.62,
-      "medianNet": -11.81,
-      "mddPct": 0.87
-    },
     "GLDRUBF": {
-      "trades": 44,
-      "net": 2960.03,
-      "pf": 1.964,
-      "winRate": 59.1,
-      "avgNet": 67.27,
-      "medianNet": 78.6,
-      "mddPct": 1.24
+      "trades": 31,
+      "net": 1429.44,
+      "pf": 1.531,
+      "winRate": 64.5,
+      "avgNet": 46.11,
+      "medianNet": 52.95,
+      "mddPct": 1.28
     },
     "USDRUBF": {
-      "trades": 62,
-      "net": 16980.53,
-      "pf": 1.743,
-      "winRate": 46.8,
-      "avgNet": 273.88,
-      "medianNet": -92.74,
-      "mddPct": 4.77
+      "trades": 44,
+      "net": 19806.4,
+      "pf": 2.349,
+      "winRate": 52.3,
+      "avgNet": 450.15,
+      "medianNet": 333.35,
+      "mddPct": 2.79
     },
-    "IMOEXF": {
-      "trades": 60,
-      "net": 2829.94,
-      "pf": 1.201,
-      "winRate": 48.3,
-      "avgNet": 47.17,
-      "medianNet": -84.01,
-      "mddPct": 4.06
+    "CNYRUBF": {
+      "trades": 45,
+      "net": 2358.55,
+      "pf": 2.044,
+      "winRate": 55.6,
+      "avgNet": 52.41,
+      "medianNet": 31.78,
+      "mddPct": 1.33
     },
     "EURRUBF": {
-      "trades": 60,
-      "net": 5713.34,
-      "pf": 1.136,
-      "winRate": 46.7,
-      "avgNet": 95.22,
-      "medianNet": -303.45,
-      "mddPct": 17.29
+      "trades": 44,
+      "net": 5384.77,
+      "pf": 1.155,
+      "winRate": 54.5,
+      "avgNet": 122.38,
+      "medianNet": 6.57,
+      "mddPct": 20.2
+    },
+    "IMOEXF": {
+      "trades": 45,
+      "net": 140.63,
+      "pf": 1.011,
+      "winRate": 51.1,
+      "avgNet": 3.13,
+      "medianNet": 0.29,
+      "mddPct": 5.11
     }
   },
   "note": "Engine validation: MomentumBacktestSignalGenerator, maxHold=4 bars, wide SL/TP, 1 contract; aggregate by block bootstrap."

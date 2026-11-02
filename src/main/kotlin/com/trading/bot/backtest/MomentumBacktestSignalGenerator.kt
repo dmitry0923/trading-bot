@@ -2,6 +2,7 @@ package com.trading.bot.backtest
 
 import com.trading.bot.model.StrategyAction
 import com.trading.bot.model.entity.Candle
+import java.time.LocalDateTime
 import kotlin.math.abs
 
 /**
@@ -23,6 +24,18 @@ class MomentumBacktestSignalGenerator(
     private val volLookbackBars: Int = 252,
     private val maxVolPercentile: Double = 0.5,
 ) : BacktestSignalGenerator {
+    /**
+     * Паритет с pre-screen (`docs/42`, §2): одна позиция на инструмент,
+     * сигналы во время удержания игнорируются. Генератор не знает состояние
+     * движка, поэтому ведёт виртуальное удержание: после сигнала на баре `i`
+     * (вход на `i+1`, выход через 4 бара, т.е. на `i+5`) сигналы на барах
+     * `i+1..i+5` не выдаются. Иначе `BacktestEngine` закрывает позицию по
+     * REVERSAL, и A/B с pre-screen некорректен.
+     */
+    private val holdUntil: MutableMap<String, Int> = mutableMapOf()
+
+    private val firstCandleTime: MutableMap<String, LocalDateTime?> = mutableMapOf()
+
     init {
         require(momentumBars > 0) { "momentumBars must be positive" }
         require(atrBars > 0) { "atrBars must be positive" }
@@ -37,6 +50,13 @@ class MomentumBacktestSignalGenerator(
         minBars: Int,
         cycleId: String,
     ): StrategyAction {
+        val firstTime = candles.firstOrNull()?.time
+        if (index == 0 || firstCandleTime[ticker] != firstTime) {
+            holdUntil[ticker] = -1
+            firstCandleTime[ticker] = firstTime
+        }
+        if (index <= (holdUntil[ticker] ?: -1)) return StrategyAction.HOLD
+
         val minIndex = volLookbackBars + atrBars - 2
         if (index < minIndex || index >= candles.size) return StrategyAction.HOLD
 
@@ -78,6 +98,8 @@ class MomentumBacktestSignalGenerator(
         val volPercentile = below.toDouble() / volLookbackBars
         if (volPercentile > maxVolPercentile) return StrategyAction.HOLD
 
-        return if (momentum > 0.0) StrategyAction.BUY else StrategyAction.SELL
+        val action = if (momentum > 0.0) StrategyAction.BUY else StrategyAction.SELL
+        holdUntil[ticker] = index + 5
+        return action
     }
 }

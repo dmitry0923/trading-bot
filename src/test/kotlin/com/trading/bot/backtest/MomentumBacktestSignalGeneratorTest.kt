@@ -79,6 +79,17 @@ class MomentumBacktestSignalGeneratorTest {
             assertEquals(StrategyAction.HOLD, generator.signal("CNYRUBF", candles, candles.size - 1, minBars, "cycle"))
         }
 
+    @Test
+    fun `signals during virtual holding are suppressed`() =
+        runBlocking {
+            val candles = regimeCandles(trendStep = 0.1, lowVolBars = 30)
+            val stateful = MomentumBacktestSignalGenerator()
+            assertEquals(StrategyAction.BUY, stateful.signal("CNYRUBF", candles, 299, minBars, "cycle"))
+            assertEquals(StrategyAction.HOLD, stateful.signal("CNYRUBF", candles, 300, minBars, "cycle"))
+            assertEquals(StrategyAction.HOLD, stateful.signal("CNYRUBF", candles, 304, minBars, "cycle"))
+            assertEquals(StrategyAction.BUY, stateful.signal("CNYRUBF", candles, 305, minBars, "cycle"))
+        }
+
     private companion object {
         private val BASE_TIME: LocalDateTime = LocalDateTime.of(2024, 1, 1, 0, 0)
     }

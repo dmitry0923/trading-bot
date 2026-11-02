@@ -110,15 +110,20 @@
   Дневной edge не переносится на часовой горизонт.
 - **Formal engine-валидация FX-портфеля (шаг A, `docs/45`):** реализован
   `MomentumBacktestSignalGenerator` + query `momentumSignalEnabled`
-  (default off; `/backtest`, `/validate`), тест 5 кейсов. Engine-прогон
-  (5 фьючерсов, `maxHoldBars=4`, SL/TP 5000 пт, `maxC=1`, `days=2000`):
-  dev 293 сделки, PF **1,355**, block p=0,087; OOS 197 сделок, PF **1,099**,
-  block p=0,344, CI95 [−191; +269] → **INCONCLUSIVE / NOT CONFIRMED**.
-  Pre-screen-оптимизм (1,781/1,384) не воспроизведён в движке.
-- **B (forward paper) не обоснован:** запускать вперёд стратегию с OOS
-  PF 1,099/p=0,344 нельзя. B — только после прохождения A другим
-  кандидатом. OOS 2022–2024 израсходован; возврат к momentum+low-vol —
-  только на новом горизонте.
+  (default off; `/backtest`, `/validate`), тест 6 кейсов (включая stateful
+  hold). Engine-прогон (5 фьючерсов, `maxHoldBars=4`, SL/TP 5000 пт,
+  `maxC=1`, `days=2000`): dev 209 сделок, PF **1,436**, block p=0,0605 →
+  **REJECTED** по D3; OOS-диагностика (тот же период): 135 сделок, PF
+  **1,183**, block p=0,2795, CI95 [−203; +399]. Stateful-паритет с pre-screen
+  восстановлен (без него 1,355/1,099); pre-screen-оптимизм (1,781/1,384) не
+  воспроизведён.
+- **WFA folds=3 (post-hoc, `docs/45` §3a):** 75 OOS-сделок, PF **3,01**,
+  block p=**0,002**, CI95 [+217; +1381], MDD 9,86 %. Сильный, но post-hoc:
+  folds=8 дегенеративны (сегмент < warmup 270 → 0 сделок), folds=3 выбраны
+  после этого, период пересекается с dev. Не отменяет fixed-split REJECTED.
+- **B (forward paper) — следующий шаг** как предрегистрированный forward
+  test на новых данных (≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0,
+  MDD ≤ 40 %), не live. LIVE-контур не меняется (maxC=1, Kelly, CNYRUBF).
 - **Следующий шаг:** новый источник edge (pairs/microstructure/news) или
   CNYRUBF-only execution/passive fill.
 - **Дисциплина:** предрегистрация до прогона, OOS один раз, `engineVersion` +

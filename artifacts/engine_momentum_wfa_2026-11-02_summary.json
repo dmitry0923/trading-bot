@@ -1,0 +1,78 @@
+{
+  "generatedAt": "2026-11-02T07:49:26.0306411+03:00",
+  "tickers": [
+    "CNYRUBF",
+    "USDRUBF",
+    "EURRUBF",
+    "GLDRUBF",
+    "IMOEXF"
+  ],
+  "folds": 3,
+  "days": 2000,
+  "maxHoldBars": 4,
+  "slPoints": 5000,
+  "tpPoints": 5000,
+  "perTicker": {
+    "EURRUBF": {
+      "folds": 3,
+      "consistency": 1.0,
+      "oosTrades": 25,
+      "oosPF": 3.0470616815845575,
+      "oosP": 0.0055,
+      "ciLow": 227.50932,
+      "ciHigh": 2344.3066
+    },
+    "CNYRUBF": {
+      "folds": 3,
+      "consistency": 0.6666666666666666,
+      "oosTrades": 22,
+      "oosPF": 1.6291915619989847,
+      "oosP": 0.203,
+      "ciLow": -77.22983181818181,
+      "ciHigh": 194.86064090909088
+    },
+    "USDRUBF": {
+      "folds": 3,
+      "consistency": 1.0,
+      "oosTrades": 23,
+      "oosPF": 3.1953072702817558,
+      "oosP": 0.0175,
+      "ciLow": 76.12930434782615,
+      "ciHigh": 2041.1908695652173
+    },
+    "IMOEXF": {
+      "folds": 3,
+      "consistency": 0.0,
+      "oosTrades": 0,
+      "oosPF": 0.0,
+      "oosP": 1.0,
+      "ciLow": 0.0,
+      "ciHigh": 0.0
+    },
+    "GLDRUBF": {
+      "folds": 3,
+      "consistency": 0.6666666666666666,
+      "oosTrades": 5,
+      "oosPF": 5.562271362865946,
+      "oosP": 0.0745,
+      "ciLow": -44.603744,
+      "ciHigh": 330.25047400000005
+    }
+  },
+  "portfolio": {
+    "trades": 75,
+    "net": 58157.7,
+    "pf": 3.01,
+    "winRate": 61.3,
+    "avgNet": 775.44,
+    "medianNet": 316.03,
+    "mddPct": 9.86
+  },
+  "blockP": 0.002,
+  "blockCi": [
+    217.32,
+    1380.7
+  ],
+  "blocks": 43,
+  "note": "WFA folds=3 (geometry: 1116 DAY_1 bars, warmup 270; folds=8 degenerate). Portfolio = aggregate OOS fold trades."
+}

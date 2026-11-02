@@ -1,0 +1,311 @@
+{
+  "generatedAt": "2026-11-02T10:47:19.8610344+03:00",
+  "tickers": [
+    "GAZP",
+    "LKOH",
+    "MGNT",
+    "NVTK",
+    "PLZL",
+    "ROSN",
+    "SBER",
+    "TATN"
+  ],
+  "timeframe": "DAY_1",
+  "startDate": "2018-01-03",
+  "endDate": "last complete bar < current_date",
+  "notionalPerTrade": 100000.0,
+  "baseCosts": {
+    "commissionPctPerSide": 0.05,
+    "slippageBpsPerSide": 1.0
+  },
+  "stressCosts": {
+    "commissionPctPerSide": 0.1,
+    "slippageBpsPerSide": 3.0
+  },
+  "tradingDays": 2215,
+  "devDays": 1550,
+  "devLast": "2024-03-21",
+  "oosFirst": "2024-03-22",
+  "variants": [
+    "K1_tom_long",
+    "K2_overnight_long",
+    "K3_overnight_after_down",
+    "K4_pre_holiday_long"
+  ],
+  "dev": {
+    "K2_overnight_long": {
+      "trades": 12392,
+      "net": -850203.46,
+      "pf": 0.71,
+      "winRate": 43.7,
+      "avgNet": -68.61,
+      "medianNet": -57.91,
+      "ciLow": -102.18,
+      "ciHigh": -37.31,
+      "pNoEdge": 1.0,
+      "mddRub": 853393.1,
+      "mddPct": 853.39,
+      "avgHoldDays": 1.5
+    },
+    "K3_overnight_after_down": {
+      "trades": 6337,
+      "net": -748232.22,
+      "pf": 0.566,
+      "winRate": 40.2,
+      "avgNet": -118.07,
+      "medianNet": -90.34,
+      "ciLow": -165.6,
+      "ciHigh": -76.23,
+      "pNoEdge": 1.0,
+      "mddRub": 750304.66,
+      "mddPct": 750.3,
+      "avgHoldDays": 1.4
+    },
+    "K4_pre_holiday_long": {
+      "trades": 376,
+      "net": 137822.0,
+      "pf": 1.644,
+      "winRate": 52.7,
+      "avgNet": 366.55,
+      "medianNet": 93.16,
+      "ciLow": -86.24,
+      "ciHigh": 879.65,
+      "pNoEdge": 0.061,
+      "mddRub": 64934.64,
+      "mddPct": 64.93,
+      "avgHoldDays": 1.3
+    },
+    "K1_tom_long": {
+      "trades": 592,
+      "net": 445539.51,
+      "pf": 1.551,
+      "winRate": 58.1,
+      "avgNet": 752.6,
+      "medianNet": 635.35,
+      "ciLow": -120.64,
+      "ciHigh": 1568.16,
+      "pNoEdge": 0.043,
+      "mddRub": 182796.97,
+      "mddPct": 182.8,
+      "avgHoldDays": 7.8
+    }
+  },
+  "devConsistency": {
+    "K2_overnight_long": {
+      "consistency": 0.0,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-01-04..2020-01-23",
+          "trades": 4128,
+          "net": -385306.21
+        },
+        {
+          "fold": 2,
+          "dates": "2020-01-24..2022-02-08",
+          "trades": 4128,
+          "net": -321087.01
+        },
+        {
+          "fold": 3,
+          "dates": "2022-02-09..2024-03-21",
+          "trades": 4136,
+          "net": -143810.24
+        }
+      ]
+    },
+    "K3_overnight_after_down": {
+      "consistency": 0.0,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-01-04..2020-01-03",
+          "trades": 2015,
+          "net": -165220.8
+        },
+        {
+          "fold": 2,
+          "dates": "2020-01-06..2022-01-19",
+          "trades": 2117,
+          "net": -339197.41
+        },
+        {
+          "fold": 3,
+          "dates": "2022-01-21..2024-03-21",
+          "trades": 2205,
+          "net": -243814.01
+        }
+      ]
+    },
+    "K4_pre_holiday_long": {
+      "consistency": 0.667,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-01-05..2019-12-30",
+          "trades": 120,
+          "net": 22630.47
+        },
+        {
+          "fold": 2,
+          "dates": "2020-01-06..2021-12-30",
+          "trades": 128,
+          "net": -13616.35
+        },
+        {
+          "fold": 3,
+          "dates": "2022-01-06..2024-03-07",
+          "trades": 128,
+          "net": 128807.88
+        }
+      ]
+    },
+    "K1_tom_long": {
+      "consistency": 1.0,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-02-05..2020-01-08",
+          "trades": 192,
+          "net": 191624.26
+        },
+        {
+          "fold": 2,
+          "dates": "2020-02-05..2022-02-03",
+          "trades": 200,
+          "net": 225701.53
+        },
+        {
+          "fold": 3,
+          "dates": "2022-03-28..2024-03-05",
+          "trades": 200,
+          "net": 28213.72
+        }
+      ]
+    }
+  },
+  "candidates": [
+    "K1_tom_long"
+  ],
+  "selected": "K1_tom_long",
+  "oosEvaluated": true,
+  "oos": {
+    "trades": 248,
+    "net": -148238.83,
+    "pf": 0.673,
+    "winRate": 43.5,
+    "avgNet": -597.74,
+    "medianNet": -524.46,
+    "ciLow": -1653.81,
+    "ciHigh": 426.8,
+    "pNoEdge": 0.877,
+    "mddRub": 255002.38,
+    "mddPct": 255.0,
+    "avgHoldDays": 7.6
+  },
+  "oosConsistency": {
+    "consistency": 0.333,
+    "folds": [
+      {
+        "fold": 1,
+        "dates": "2024-04-03..2025-01-08",
+        "trades": 80,
+        "net": -38800.95
+      },
+      {
+        "fold": 2,
+        "dates": "2025-02-05..2025-11-06",
+        "trades": 80,
+        "net": -123333.92
+      },
+      {
+        "fold": 3,
+        "dates": "2025-12-03..2026-10-05",
+        "trades": 88,
+        "net": 13896.04
+      }
+    ]
+  },
+  "oosByTicker": [
+    {
+      "ticker": "GAZP",
+      "trades": 31,
+      "pf": 0.516,
+      "net": -31761.9,
+      "avgNet": -1024.58,
+      "winRate": 41.9
+    },
+    {
+      "ticker": "LKOH",
+      "trades": 31,
+      "pf": 0.624,
+      "net": -21914.35,
+      "avgNet": -706.91,
+      "winRate": 38.7
+    },
+    {
+      "ticker": "MGNT",
+      "trades": 31,
+      "pf": 0.406,
+      "net": -51560.19,
+      "avgNet": -1663.23,
+      "winRate": 48.4
+    },
+    {
+      "ticker": "NVTK",
+      "trades": 31,
+      "pf": 0.947,
+      "net": -2460.03,
+      "avgNet": -79.36,
+      "winRate": 45.2
+    },
+    {
+      "ticker": "PLZL",
+      "trades": 31,
+      "pf": 1.304,
+      "net": 11449.58,
+      "avgNet": 369.34,
+      "winRate": 41.9
+    },
+    {
+      "ticker": "ROSN",
+      "trades": 31,
+      "pf": 0.58,
+      "net": -27319.06,
+      "avgNet": -881.26,
+      "winRate": 32.3
+    },
+    {
+      "ticker": "SBER",
+      "trades": 31,
+      "pf": 0.906,
+      "net": -2722.73,
+      "avgNet": -87.83,
+      "winRate": 54.8
+    },
+    {
+      "ticker": "TATN",
+      "trades": 31,
+      "pf": 0.662,
+      "net": -21950.15,
+      "avgNet": -708.07,
+      "winRate": 45.2
+    }
+  ],
+  "stressOos": {
+    "trades": 248,
+    "net": -182899.57,
+    "pf": 0.613,
+    "winRate": 41.5,
+    "avgNet": -737.5,
+    "medianNet": -664.77,
+    "ciLow": -1792.94,
+    "ciHigh": 286.33,
+    "pNoEdge": 0.9185,
+    "mddRub": 284823.19,
+    "mddPct": 284.82,
+    "avgHoldDays": 7.6
+  },
+  "verdict": "REJECTED",
+  "notes": "Standalone pre-screen (docs/52), not a formal engine verdict. PASS only means implement the same variant in BacktestEngine and run docs/30 protocol."
+}

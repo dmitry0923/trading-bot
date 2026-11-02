@@ -1,0 +1,102 @@
+{
+  "generatedAt": "2026-11-02T06:44:01.3316767+03:00",
+  "ticker": "CNYRUBF",
+  "windowDays": 730,
+  "tradingDays": 532,
+  "devDays": 372.0,
+  "devLast": "2026-04-17",
+  "oosFirst": "2026-04-20",
+  "devStats": {
+    "H1_orb30_close": {
+      "trades": 363,
+      "net": 4209.16,
+      "pf": 1.388,
+      "winRate": 52.9,
+      "avgNet": 11.6,
+      "medianNet": 3.87,
+      "ciLow": 1.45,
+      "ciHigh": 22.32,
+      "pNoEdge": 0.0135,
+      "mddPct": 1.15,
+      "avgCapturedPct": 34.41,
+      "avgHoldBars": 71.4
+    },
+    "H2_orb30_sl05_tp10": {
+      "trades": 363,
+      "net": 527.94,
+      "pf": 1.066,
+      "winRate": 40.8,
+      "avgNet": 1.45,
+      "medianNet": -19.74,
+      "ciLow": -4.17,
+      "ciHigh": 6.85,
+      "pNoEdge": 0.3015,
+      "mddPct": 0.92,
+      "avgCapturedPct": 25.56,
+      "avgHoldBars": 20.3
+    },
+    "H5_gap_fade": {
+      "trades": 178,
+      "net": -1094.3,
+      "pf": 0.863,
+      "winRate": 47.8,
+      "avgNet": -6.15,
+      "medianNet": -4.93,
+      "ciLow": -23.73,
+      "ciHigh": 11.71,
+      "pNoEdge": 0.7455,
+      "mddPct": 2.36,
+      "avgCapturedPct": 42.1,
+      "avgHoldBars": 81.0
+    },
+    "H3_orb30_sl10_tp20": {
+      "trades": 363,
+      "net": 3172.22,
+      "pf": 1.35,
+      "winRate": 48.5,
+      "avgNet": 8.74,
+      "medianNet": -2.55,
+      "ciLow": 1.24,
+      "ciHigh": 16.52,
+      "pNoEdge": 0.01,
+      "mddPct": 0.94,
+      "avgCapturedPct": 31.59,
+      "avgHoldBars": 48.2
+    },
+    "H4_prevday_momentum": {
+      "trades": 367,
+      "net": -6480.8,
+      "pf": 0.681,
+      "winRate": 41.7,
+      "avgNet": -17.66,
+      "medianNet": -16.06,
+      "ciLow": -30.74,
+      "ciHigh": -3.92,
+      "pNoEdge": 0.9955,
+      "mddPct": 7.48,
+      "avgCapturedPct": 44.52,
+      "avgHoldBars": 80.9
+    }
+  },
+  "candidates": [
+    "H1_orb30_close",
+    "H3_orb30_sl10_tp20"
+  ],
+  "selected": "H1_orb30_close",
+  "oosStats": {
+    "trades": 156,
+    "net": 134.48,
+    "pf": 1.028,
+    "winRate": 50.6,
+    "avgNet": 0.86,
+    "medianNet": 0.9,
+    "ciLow": -11.83,
+    "ciHigh": 13.18,
+    "pNoEdge": 0.429,
+    "mddPct": 1.34,
+    "avgCapturedPct": 38.87,
+    "avgHoldBars": 71.4
+  },
+  "verdict": "REJECTED",
+  "notes": "Standalone pre-screen, not a formal engine verdict. PASS only means implement in BacktestEngine and run docs/30 protocol."
+}

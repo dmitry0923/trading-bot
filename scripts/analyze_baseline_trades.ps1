@@ -24,8 +24,9 @@ $trades = @($resp.trades)
 if ($trades.Count -eq 0) { throw "No trades in $InJson" }
 
 # Дневные диапазоны для captured range.
-$sql = "select time::date::text || '|' || (max(high_price)-min(low_price))::text " +
-    "from candles where ticker='$Ticker' and timeframe='DAY_1' group by 1;"
+$sql = "select d::text || '|' || r::text from (" +
+    "select time::date d, max(high_price)-min(low_price) r " +
+    "from candles where ticker='$Ticker' and timeframe='DAY_1' group by 1) x;"
 $raw = ($sql | docker exec -i $Container psql -U $DbUser -d $DbName -t -A -v ON_ERROR_STOP=1)
 $dayRange = @{}
 foreach ($line in ($raw -split "`n")) {
@@ -47,7 +48,8 @@ $rows = foreach ($t in $trades) {
     $captured = [math]::Abs(([double]$t.exitPrice - [double]$t.entryPrice)) * $LotSize
     $dayKey = if ($entry) { $entry.ToString('yyyy-MM-dd') } else { $null }
     $range = if ($dayKey -and $dayRange.ContainsKey($dayKey)) { $dayRange[$dayKey] } else { $null }
-    $capturePct = if ($range -and $range -gt 0) { $captured / $range * 100.0 } else { $null }
+    # captured — в рублях (price diff * lotSize), range — в единицах цены.
+    $capturePct = if ($null -ne $range -and $range -gt 0) { $captured / ($range * $LotSize) * 100.0 } else { $null }
     $hours = if ($entry -and $exit) { ($exit - $entry).TotalHours } else { $null }
     [pscustomobject]@{
         direction = $t.direction
@@ -109,7 +111,7 @@ function Stats($items) {
     }
 }
 
-function Group($name, $key) {
+function Group-Stats($name, $key) {
     $groups = $rows | Group-Object -Property $key | Sort-Object Name
     $out = foreach ($g in $groups) {
         $s = Stats $g.Group
@@ -130,10 +132,10 @@ function Group($name, $key) {
 }
 
 $overall = Stats $rows
-$byDirection = Group 'direction' 'direction'
-$byCloseReason = Group 'closeReason' 'closeReason'
-$byHour = Group 'hourOfDay' 'hourOfDay'
-$byDayOfWeek = Group 'dayOfWeek' 'dayOfWeek'
+$byDirection = Group-Stats 'direction' 'direction'
+$byCloseReason = Group-Stats 'closeReason' 'closeReason'
+$byHour = Group-Stats 'hourOfDay' 'hourOfDay'
+$byDayOfWeek = Group-Stats 'dayOfWeek' 'dayOfWeek'
 $byHoldBucket = $rows | Group-Object -Property {
     if ($_.holdBars -le 6) { '1-6 bars' }
     elseif ($_.holdBars -le 30) { '7-30 bars' }

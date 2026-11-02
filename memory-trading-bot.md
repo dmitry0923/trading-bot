@@ -62,6 +62,10 @@
   расширенный dry-run 2024-10-24…2026-10-19 — 232+5 открытых, PF 1,644,
   block p=0,0225 (in-sample parity). Исправлен weekend-funding fail-closed
   (клиринг только в будни; будний gap остаётся fail-closed).
+  **Автоматизация:** планировщик `TradingBotPaperMomentum`, ежедневно 23:55
+  МСК, wrapper `scripts/paper_momentum_cron.ps1`, лог
+  `artifacts/paper_momentum/cron.log`; старт forward 2026-11-05, первый
+  выход ≈2026-11-12; до 30 сделок ≈3 мес (начало февраля 2027), до 60 ≈6 мес.
   Гейты: ≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live.
   LIVE: maxC=1, Kelly, CNYRUBF.
 - **Pairs CNYRUBF/USDRUBF (`docs/47`–`docs/48`):** DAY_1 — 14 сделок,

@@ -45,11 +45,16 @@
   MDD **132 %** → **REJECTED**. Только LKOH (1,57) и NVTK (1,22) в плюс;
   **momentum+low-vol не универсален**, FX-портфель может быть RUB-трендовой
   спецификой 2022–2026.
-- **Следующий шаг:** formal engine-валидация FX-портфеля (time-series
-  momentum в движке + WFA/deployment-gate) либо, если CNYRUBF-only —
-  execution/passive fill, pairs. OOS 2022–2024 для FX-гипотезы израсходован.
+- **HOUR_1 (шаг C, `docs/44`):** 4 271 сделка, PF **0,942**, avg −4,72 ₽,
+  block p=0,8295 → **NO_CANDIDATE**; дневной edge не переносится на час.
+- **Formal engine (шаг A, `docs/45`):** `MomentumBacktestSignalGenerator` +
+  `momentumSignalEnabled`; dev PF **1,355** (block p=0,087), OOS PF **1,099**
+  на 197 сделках (block p=0,344, CI95 [−191; +269]) → **NOT CONFIRMED**.
+  Pre-screen-оптимизм не воспроизведён; **B (forward paper) не обоснован**.
+- **Следующий шаг:** новый источник edge (pairs/microstructure/news) или
+  CNYRUBF-only execution/passive fill. OOS 2022–2024 израсходован.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36`–`docs/43`.
+  `docs/36`–`docs/45`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

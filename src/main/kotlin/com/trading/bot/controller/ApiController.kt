@@ -20,6 +20,7 @@ import com.trading.bot.backtest.LlmVeto
 import com.trading.bot.backtest.LlmVetoOverrides
 import com.trading.bot.backtest.LlmVetoSettings
 import com.trading.bot.backtest.MoexFundingHistoryLoader
+import com.trading.bot.backtest.MomentumBacktestSignalGenerator
 import com.trading.bot.backtest.MonteCarloAnalyzer
 import com.trading.bot.backtest.PanelBacktestRequest
 import com.trading.bot.backtest.PanelBacktestService
@@ -190,7 +191,9 @@ class ApiController(
         overrides: MlDirectionOverrides?,
         entryOverrides: EntryFilterOverrides?,
         vetoOverrides: LlmVetoOverrides? = null,
+        momentumSignalEnabled: Boolean = false,
     ): BacktestSignalGenerator {
+        if (momentumSignalEnabled) return MomentumBacktestSignalGenerator()
         val vetoSettings = LlmVetoSettings.from(backtestConfig, vetoOverrides)
         val veto =
             if (vetoSettings.enabled) {
@@ -635,6 +638,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) momentumSignalEnabled: Boolean?,
         @RequestParam(required = false) executionPassiveFill: Boolean?,
         // Research-оверрайды, которые движок поддерживает, а эндпоинт не объявлял:
         // IS-прескрины слали их и молча получали другую конфигурацию (скан-6 P1).
@@ -755,6 +759,7 @@ class ApiController(
                 timeframe = effectiveTimeframe,
                 signalGeneratorOverride =
                     if (
+                        momentumSignalEnabled == true ||
                         mlOverrides.anyProvided ||
                         entryOverrides.anyProvided ||
                         vetoOverrides.anyProvided ||
@@ -765,6 +770,7 @@ class ApiController(
                             mlOverrides,
                             entryOverrides,
                             vetoOverrides,
+                            momentumSignalEnabled = momentumSignalEnabled == true,
                         )
                     } else {
                         null
@@ -1063,6 +1069,7 @@ class ApiController(
         @RequestParam(required = false) llmVetoSampleEvery: Int?,
         @RequestParam(required = false) llmVetoMinScore: Double?,
         @RequestParam(required = false) maxHoldBars: Int?,
+        @RequestParam(required = false) momentumSignalEnabled: Boolean?,
         @RequestParam(required = false) wfaSlPoints: Int?,
         @RequestParam(required = false) wfaTpPoints: Int?,
         @RequestParam(required = false) executionPassiveFill: Boolean?,
@@ -1180,15 +1187,27 @@ class ApiController(
                 minScore = llmVetoMinScore,
             )
         val signalGeneratorOverride =
-            if (adaptiveConfidenceThreshold != null) {
-                buildSignalGenerator(adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
+            if (momentumSignalEnabled == true || adaptiveConfidenceThreshold != null) {
+                buildSignalGenerator(
+                    adaptiveConfidenceThreshold ?: backtestConfig.adaptiveConfidenceThreshold,
+                    mlOverrides,
+                    entryOverrides,
+                    vetoOverrides,
+                    momentumSignalEnabled = momentumSignalEnabled == true,
+                )
             } else if (
                 mlOverrides.anyProvided ||
                 entryOverrides.anyProvided ||
                 vetoOverrides.anyProvided ||
                 backtestConfig.llmVetoEnabled
             ) {
-                buildSignalGenerator(backtestConfig.adaptiveConfidenceThreshold, mlOverrides, entryOverrides, vetoOverrides)
+                buildSignalGenerator(
+                    backtestConfig.adaptiveConfidenceThreshold,
+                    mlOverrides,
+                    entryOverrides,
+                    vetoOverrides,
+                    momentumSignalEnabled = false,
+                )
             } else {
                 null
             }

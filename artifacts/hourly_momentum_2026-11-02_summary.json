@@ -1,0 +1,87 @@
+{
+  "generatedAt": "2026-11-02T07:15:06.3058617+03:00",
+  "tickers": [
+    "CNYRUBF",
+    "USDRUBF",
+    "EURRUBF",
+    "GLDRUBF",
+    "IMOEXF"
+  ],
+  "devStart": "2024-10-24 00:00:00",
+  "oosStart": "2022-12-05 00:00:00",
+  "oosEnd": "2024-10-23 23:59:59",
+  "devStats": {
+    "trades": 4271,
+    "net": -20144.88,
+    "pf": 0.942,
+    "winRate": 48.7,
+    "avgNet": -4.72,
+    "medianNet": -2.97,
+    "pNoEdge": 0.8505,
+    "mddPct": 32.37
+  },
+  "devBlockP": 0.8295,
+  "devBlockCi": [
+    -15.07,
+    4.9
+  ],
+  "devBlocks": 576,
+  "perInstrument": {
+    "EURRUBF": {
+      "trades": 805,
+      "net": -6052.22,
+      "pf": 0.956,
+      "winRate": 49.4,
+      "avgNet": -7.52,
+      "medianNet": -3.21,
+      "pNoEdge": 0.6925,
+      "mddPct": 18.45
+    },
+    "USDRUBF": {
+      "trades": 827,
+      "net": -11227.35,
+      "pf": 0.905,
+      "winRate": 49.1,
+      "avgNet": -13.58,
+      "medianNet": -8.98,
+      "pNoEdge": 0.8265,
+      "mddPct": 19.73
+    },
+    "IMOEXF": {
+      "trades": 909,
+      "net": -1858.5,
+      "pf": 0.967,
+      "winRate": 50.1,
+      "avgNet": -2.04,
+      "medianNet": 0.65,
+      "pNoEdge": 0.63,
+      "mddPct": 6.0
+    },
+    "GLDRUBF": {
+      "trades": 902,
+      "net": 1674.84,
+      "pf": 1.08,
+      "winRate": 49.1,
+      "avgNet": 1.86,
+      "medianNet": -1.52,
+      "pNoEdge": 0.2165,
+      "mddPct": 2.06
+    },
+    "CNYRUBF": {
+      "trades": 828,
+      "net": -2681.65,
+      "pf": 0.841,
+      "winRate": 45.9,
+      "avgNet": -3.24,
+      "medianNet": -4.25,
+      "pNoEdge": 0.961,
+      "mddPct": 3.23
+    }
+  },
+  "selected": null,
+  "oosStats": null,
+  "oosBlockP": null,
+  "oosBlockCi": null,
+  "verdict": "NO_CANDIDATE",
+  "notes": "HOUR_1 portfolio pre-screen: 1 contract per instrument; block bootstrap by exit date. PASS only means formal engine validation (step A)."
+}

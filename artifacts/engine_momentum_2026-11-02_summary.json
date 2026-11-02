@@ -1,0 +1,92 @@
+{
+  "generatedAt": "2026-11-02T07:20:56.9881534+03:00",
+  "tickers": [
+    "CNYRUBF",
+    "USDRUBF",
+    "EURRUBF",
+    "GLDRUBF",
+    "IMOEXF"
+  ],
+  "days": 2000,
+  "maxHoldBars": 4,
+  "slPoints": 5000,
+  "tpPoints": 5000,
+  "riskPerTradePercent": 100.0,
+  "maxContracts": 1,
+  "devStats": {
+    "trades": 293,
+    "net": 30468.31,
+    "pf": 1.355,
+    "winRate": 48.1,
+    "avgNet": 103.99,
+    "medianNet": -12.46,
+    "mddPct": 17.29
+  },
+  "devBlockP": 0.087,
+  "devBlockCi": [
+    -36.81,
+    263.71
+  ],
+  "oosStats": {
+    "trades": 197,
+    "net": 9159.46,
+    "pf": 1.099,
+    "winRate": 46.7,
+    "avgNet": 46.49,
+    "medianNet": -17.37,
+    "mddPct": 32.18
+  },
+  "oosBlockP": 0.344,
+  "oosBlockCi": [
+    -191.54,
+    269.45
+  ],
+  "perInstrument": {
+    "CNYRUBF": {
+      "trades": 67,
+      "net": 1984.47,
+      "pf": 1.503,
+      "winRate": 43.3,
+      "avgNet": 29.62,
+      "medianNet": -11.81,
+      "mddPct": 0.87
+    },
+    "GLDRUBF": {
+      "trades": 44,
+      "net": 2960.03,
+      "pf": 1.964,
+      "winRate": 59.1,
+      "avgNet": 67.27,
+      "medianNet": 78.6,
+      "mddPct": 1.24
+    },
+    "USDRUBF": {
+      "trades": 62,
+      "net": 16980.53,
+      "pf": 1.743,
+      "winRate": 46.8,
+      "avgNet": 273.88,
+      "medianNet": -92.74,
+      "mddPct": 4.77
+    },
+    "IMOEXF": {
+      "trades": 60,
+      "net": 2829.94,
+      "pf": 1.201,
+      "winRate": 48.3,
+      "avgNet": 47.17,
+      "medianNet": -84.01,
+      "mddPct": 4.06
+    },
+    "EURRUBF": {
+      "trades": 60,
+      "net": 5713.34,
+      "pf": 1.136,
+      "winRate": 46.7,
+      "avgNet": 95.22,
+      "medianNet": -303.45,
+      "mddPct": 17.29
+    }
+  },
+  "note": "Engine validation: MomentumBacktestSignalGenerator, maxHold=4 bars, wide SL/TP, 1 contract; aggregate by block bootstrap."
+}

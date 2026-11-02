@@ -105,10 +105,22 @@
   MDD **132 %** → **REJECTED**. Только LKOH (PF 1,57) и NVTK (1,22) в плюс;
   6 из 8 — около нуля/минус. **Momentum+low-vol не универсален**;
   FX-портфель может быть RUB-трендовой спецификой 2022–2026.
-- **Следующий шаг:** formal engine-валидация FX-портфеля (time-series
-  momentum в движке + WFA/deployment-gate) либо, если оставаться
-  CNYRUBF-only — #7 execution/passive fill, затем pairs/microstructure.
-  OOS 2022–2024 для FX-гипотезы израсходован.
+- **HOUR_1 momentum+low-vol (шаг C, `docs/44`):** 4 271 сделка, PF **0,942**,
+  avg −4,72 ₽, block p=0,8295; только GLDRUBF PF 1,08 → **NO_CANDIDATE**.
+  Дневной edge не переносится на часовой горизонт.
+- **Formal engine-валидация FX-портфеля (шаг A, `docs/45`):** реализован
+  `MomentumBacktestSignalGenerator` + query `momentumSignalEnabled`
+  (default off; `/backtest`, `/validate`), тест 5 кейсов. Engine-прогон
+  (5 фьючерсов, `maxHoldBars=4`, SL/TP 5000 пт, `maxC=1`, `days=2000`):
+  dev 293 сделки, PF **1,355**, block p=0,087; OOS 197 сделок, PF **1,099**,
+  block p=0,344, CI95 [−191; +269] → **INCONCLUSIVE / NOT CONFIRMED**.
+  Pre-screen-оптимизм (1,781/1,384) не воспроизведён в движке.
+- **B (forward paper) не обоснован:** запускать вперёд стратегию с OOS
+  PF 1,099/p=0,344 нельзя. B — только после прохождения A другим
+  кандидатом. OOS 2022–2024 израсходован; возврат к momentum+low-vol —
+  только на новом горизонте.
+- **Следующий шаг:** новый источник edge (pairs/microstructure/news) или
+  CNYRUBF-only execution/passive fill.
 - **Дисциплина:** предрегистрация до прогона, OOS один раз, `engineVersion` +
   commit SHA в каждом артефакте; старые числа не сравниваются.
 

@@ -1,0 +1,55 @@
+{
+  "generatedAt": "2026-11-02T07:07:34.0850234+03:00",
+  "ticker": "CNYRUBF",
+  "bars": 1148,
+  "fundingRows": 986,
+  "devStart": "2024-10-24",
+  "oosStart": "2022-12-05",
+  "oosEnd": "2024-10-23",
+  "devStats": {
+    "V3_all": {
+      "trades": 102,
+      "net": 3955.58,
+      "pf": 1.457,
+      "winRate": 57.8,
+      "avgNet": 38.78,
+      "medianNet": 53.09,
+      "ciLow": -18.26,
+      "ciHigh": 90.01,
+      "pNoEdge": 0.0845,
+      "mddPct": 1.47,
+      "avgFunding": -9.5
+    },
+    "V1_lowvol": {
+      "trades": 52,
+      "net": 2791.67,
+      "pf": 1.789,
+      "winRate": 53.8,
+      "avgNet": 53.69,
+      "medianNet": 13.35,
+      "ciLow": -13.47,
+      "ciHigh": 122.36,
+      "pNoEdge": 0.062,
+      "mddPct": 1.04,
+      "avgFunding": 0.41
+    },
+    "V2_highvol": {
+      "trades": 61,
+      "net": 2060.92,
+      "pf": 1.365,
+      "winRate": 55.7,
+      "avgNet": 33.79,
+      "medianNet": 37.73,
+      "ciLow": -36.1,
+      "ciHigh": 104.43,
+      "pNoEdge": 0.179,
+      "mddPct": 1.49,
+      "avgFunding": -18.1
+    }
+  },
+  "candidates": [],
+  "selected": null,
+  "oosStats": null,
+  "verdict": "NO_CANDIDATE",
+  "notes": "Standalone volatility-regime pre-screen; PASS only means implement in BacktestEngine and run formal WFA. OOS is the new 2022-2024 horizon."
+}

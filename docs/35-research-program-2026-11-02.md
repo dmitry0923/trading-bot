@@ -175,12 +175,18 @@ DAY_1 = 2026-11-02 (текущий день) неполный; в прогона
 > 1–2 обязательны до любого поиска edge: без них нельзя ни поставить цель,
 > ни понять, какой рычаг вообще способен её приблизить.
 
-**Статус на 2026-11-02 (после первого дня):** #1 — ждёт решения по `maxC`;
-#2 — выполнено (атрибуция, §4.1); #3 — выполнено, **REJECTED** на OOS
-(`docs/36`); #4 — выполнено, **NO_CANDIDATE** на dev, OOS 2022–2024 сохранён
-(`docs/37`); #6 — данные готовы (глубина 2018+/2022+ загружена); следующий
-по очереди — **#5 volatility/regime** (или #6 календарь, если приоритет —
-независимый класс).
+**Статус на 2026-11-02 (после первого дня):** #1 — решение принято
+(`maxC 2–4`/`6–8` разрешён); #2 — выполнено (атрибуция, §4.1); #3 —
+выполнено, **REJECTED** на OOS (`docs/36`); #4 — выполнено,
+**NO_CANDIDATE** (`docs/37`); #5 — выполнено, **NO_CANDIDATE**, но
+**V1 lowvol PF 1,79 / +53,69 ₽ / p=0,060** (`docs/41`); #6 — выполнено,
+**REJECTED** (`docs/40`); портфельное расширение V1 на 5 фьючерсов
+(`docs/42`) — **INCONCLUSIVE**: dev PF **1,781** (block p=0,0135), OOS PF
+**1,384** на 161 сделке (block p=0,0875, CI95 [−94; +445]). Первый кандидат,
+прошедший dev+OOS по PF/MDD/сделкам; блокер — мощность OOS, а не знак edge.
+Следующий шаг — **новый независимый горизонт** (акции 2018+ или другой класс
+активов) для той же гипотезы; OOS 2022–2024 для неё израсходован. Если
+оставаться CNYRUBF-only — #7 execution/passive fill, затем pairs/microstructure.
 
 ### 3.1 Что именно делать в каждом направлении
 
@@ -334,3 +340,8 @@ DAY_1 = 2026-11-02 (текущий день) неполный; в прогона
 | 2026-11-02 | Дневные стратегии (ORB/момент/гэп), pre-registered | `scripts/research_daily_strategies.ps1`, `artifacts/daily_strategies_2026-11-02_{summary.json,dev.csv,oos.csv}` | Dev H1 `orb30_close`: 363 сделки, PF **1,388**, p=0,0135, захват 34,4 %; OOS H1: 156 сделок, PF **1,028**, p=0,429, CI95 [−11,83; +13,18] → **REJECTED** (режимный бет, не edge) |
 | 2026-11-02 | Carry/funding на новом горизонте 2022–2024, pre-registered | `scripts/research_carry.ps1`, `artifacts/carry_2026-11-02_{summary.json,dev.csv,oos.csv}` | H1 `carry_follow_1d`: 488 сделок, PF **1,213**, p=0,0545; H3 `carry_extreme_5d`: 42 сделки, PF 1,803, p=0,059, CI95 [−13; +131]; H2 убыточен → **NO_CANDIDATE / REJECTED**, OOS 2022–2024 не запускался. Carry-follow зарабатывает funding (−7,20 ₽), цена +1,28 ₽ |
 | 2026-11-02 | Донакачка глубоких DAY_1/HOUR_1 | `scripts/load_candles_deep.ps1`, `data/candles/deep_20261102/` | Акции 2018+ (2 346–2 353 бара DAY_1), CNYRUBF/USDRUBF/EURRUBF 2022+ (1 149), GLDRUBF 848, IMOEXF 758, SBERF/GAZPF 534; открыт новый горизонт 2022–2024 |
+| 2026-11-02 | Сессионные стратегии (pre-registered, `docs/38`) | `scripts/research_sessions.ps1`, `artifacts/sessions_2026-11-02_summary.json` | S1 evening long PF 0,53; S2 short 0,93; S3 momentum 1,13 (p=0,20); S4 0,43; S5 1,03 → **NO_CANDIDATE**, OOS не запускался |
+| 2026-11-02 | Дневной momentum/reversal (pre-registered, `docs/39`) | `scripts/research_daily_momentum.ps1`, `artifacts/daily_momentum_2026-11-02_summary.json` | M1 `mom20_5`: 102 сделки, PF **1,46**, avg **+38,78 ₽**, p=0,080; M2 PF 1,09 (25); M3/M4 убыточны → **NO_CANDIDATE**, OOS сохранён |
+| 2026-11-02 | Календарь/налоговый поток (pre-registered, `docs/40`) | `scripts/research_calendar.ps1`, `artifacts/calendar_2026-11-02_summary.json` | C1 tax_short PF 0,85; C2 1,00; C3 0,86; C4 0,91; C5 1,05 → **NO_CANDIDATE**, OOS сохранён |
+| 2026-11-02 | Volatility-regime фильтр momentum (pre-registered, `docs/41`) | `scripts/research_volregime.ps1`, `artifacts/volregime_2026-11-02_summary.json` | V1 lowvol: 52 сделки, PF **1,79**, avg **+53,69 ₽**, p=0,060; V2 PF 1,36; V3 PF 1,46 (p=0,08) → **NO_CANDIDATE**, но лучший по качеству; блокер — мощность выборки, не знак edge |
+| 2026-11-02 | Портфель momentum+low-vol на 5 фьючерсах (pre-registered, `docs/42`) | `scripts/research_multi_momentum.ps1`, `artifacts/multi_momentum_2026-11-02_summary.json` | Dev: 241 сделка, PF **1,781**, avg +233,32 ₽, block p=**0,0135**; OOS 2022–2024: 161 сделка, PF **1,384**, avg +191,69 ₽, block p=**0,0875**, CI95 [−94; +445] → **INCONCLUSIVE** (O3/O4 не пройдены; O1/O2/O5 пройдены). Первый кандидат, прошедший dev+OOS по PF/MDD/сделкам; OOS израсходован |

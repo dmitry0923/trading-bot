@@ -30,11 +30,21 @@
   H2 fade — PF 0,645 → **NO_CANDIDATE / REJECTED**, OOS 2022–2024 не
   запускался. Carry-follow зарабатывает почти только funding (−7,20 ₽ из
   +8,48 ₽ net), цена +1,28 ₽ → ставка уже в цене фьючерса.
-- **Следующий шаг:** решение пользователя по `maxC`/цели; затем macro/rates/carry
-  (`docs/35` §3.1 п.4) на новом горизонте. Глубокие DAY_1/HOUR_1 (2018+)
-  донакачиваются `scripts/load_candles_deep.ps1` — для календаря/пар/`12−1`.
+- **maxC разрешён (2026-11-02):** `maxC 2–4` (50k) / `6–8` (100k) для
+  research/paper; LIVE остаётся `maxC=1` до deployment-gate.
+- **Пост-`maxC` скрининг:** сессии (`docs/38`) — NO_CANDIDATE; дневной
+  momentum (`docs/39`) — M1 PF 1,46 / +38,78 ₽ / p=0,080; календарь
+  (`docs/40`) — NO_CANDIDATE; volatility-regime (`docs/41`) — V1 lowvol
+  PF 1,79 / +53,69 ₽ / p=0,060; **портфель momentum+low-vol на 5 фьючерсах
+  (`docs/42`)** — dev PF **1,781** (block p=0,0135), OOS 2022–2024 PF
+  **1,384** на 161 сделке (block p=0,0875, CI95 [−94; +445], MDD 23,46 %) →
+  **INCONCLUSIVE**. Первый кандидат, прошедший dev+OOS по PF/MDD/сделкам;
+  блокер — мощность OOS; OOS израсходован.
+- **Следующий шаг:** новый независимый горизонт — акции TQBR 2018+
+  (8 инструментов, 8,8 года) для той же гипотезы; требует решения по
+  research/live allowlist. Если CNYRUBF-only — execution/passive fill, pairs.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36-daily-strategies-preregistration-2026-11-02.md`.
+  `docs/36`–`docs/42`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

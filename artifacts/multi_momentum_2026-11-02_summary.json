@@ -1,0 +1,99 @@
+{
+  "generatedAt": "2026-11-02T07:09:17.7011941+03:00",
+  "tickers": [
+    "CNYRUBF",
+    "USDRUBF",
+    "EURRUBF",
+    "GLDRUBF",
+    "IMOEXF"
+  ],
+  "devStart": "2024-10-24",
+  "oosStart": "2022-12-05",
+  "oosEnd": "2024-10-23",
+  "devStats": {
+    "trades": 241,
+    "net": 56230.8,
+    "pf": 1.781,
+    "winRate": 58.1,
+    "avgNet": 233.32,
+    "medianNet": 102.72,
+    "pNoEdge": 0.0045,
+    "mddPct": 13.72
+  },
+  "devBlockP": 0.0135,
+  "devBlockCi": [
+    24.77,
+    436.22
+  ],
+  "devBlocks": 163,
+  "perInstrument": {
+    "IMOEXF": {
+      "trades": 51,
+      "net": 4690.11,
+      "pf": 1.359,
+      "winRate": 52.9,
+      "avgNet": 91.96,
+      "medianNet": 22.65,
+      "pNoEdge": 0.213,
+      "mddPct": 3.76
+    },
+    "CNYRUBF": {
+      "trades": 52,
+      "net": 2791.67,
+      "pf": 1.789,
+      "winRate": 53.8,
+      "avgNet": 53.69,
+      "medianNet": 13.35,
+      "pNoEdge": 0.062,
+      "mddPct": 1.04
+    },
+    "USDRUBF": {
+      "trades": 49,
+      "net": 27739.24,
+      "pf": 2.394,
+      "winRate": 65.3,
+      "avgNet": 566.11,
+      "medianNet": 427.88,
+      "pNoEdge": 0.0085,
+      "mddPct": 7.02
+    },
+    "GLDRUBF": {
+      "trades": 38,
+      "net": 2919.58,
+      "pf": 2.047,
+      "winRate": 57.9,
+      "avgNet": 76.83,
+      "medianNet": 48.61,
+      "pNoEdge": 0.057,
+      "mddPct": 1.11
+    },
+    "EURRUBF": {
+      "trades": 51,
+      "net": 18090.2,
+      "pf": 1.553,
+      "winRate": 60.8,
+      "avgNet": 354.71,
+      "medianNet": 212.51,
+      "pNoEdge": 0.127,
+      "mddPct": 13.72
+    }
+  },
+  "selected": "PORTFOLIO",
+  "oosStats": {
+    "trades": 161,
+    "net": 30862.33,
+    "pf": 1.384,
+    "winRate": 55.9,
+    "avgNet": 191.69,
+    "medianNet": 72.17,
+    "pNoEdge": 0.083,
+    "mddPct": 23.46
+  },
+  "oosBlockP": 0.0875,
+  "oosBlockCi": [
+    -94.48,
+    444.72
+  ],
+  "verdict": "INCONCLUSIVE",
+  "notes": "Portfolio pre-screen: 1 contract per instrument, no risk parity; block bootstrap by exit date. PASS only means implement in BacktestEngine and run formal WFA."
+}

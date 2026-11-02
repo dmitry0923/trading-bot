@@ -1,0 +1,81 @@
+{
+  "generatedAt": "2026-11-02T07:06:56.3961458+03:00",
+  "ticker": "CNYRUBF",
+  "bars": 1148,
+  "fundingRows": 986,
+  "devStart": "2024-10-24",
+  "oosStart": "2022-12-05",
+  "oosEnd": "2024-10-23",
+  "devStats": {
+    "C3_tom_long": {
+      "trades": 97,
+      "net": -632.91,
+      "pf": 0.857,
+      "winRate": 51.5,
+      "avgNet": -6.52,
+      "medianNet": 3.27,
+      "ciLow": -28.09,
+      "ciHigh": 14.42,
+      "pNoEdge": 0.7205,
+      "mddPct": 1.34,
+      "avgFunding": 5.52
+    },
+    "C4_tom_short": {
+      "trades": 97,
+      "net": -407.71,
+      "pf": 0.906,
+      "winRate": 42.3,
+      "avgNet": -4.2,
+      "medianNet": -14.73,
+      "ciLow": -25.16,
+      "ciHigh": 17.31,
+      "pNoEdge": 0.657,
+      "mddPct": 1.26,
+      "avgFunding": -5.52
+    },
+    "C5_friday_short": {
+      "trades": 102,
+      "net": 188.47,
+      "pf": 1.046,
+      "winRate": 49.0,
+      "avgNet": 1.85,
+      "medianNet": -5.36,
+      "ciLow": -19.45,
+      "ciHigh": 23.85,
+      "pNoEdge": 0.437,
+      "mddPct": 1.06,
+      "avgFunding": -5.59
+    },
+    "C2_tax_long": {
+      "trades": 25,
+      "net": 2.31,
+      "pf": 1.001,
+      "winRate": 48.0,
+      "avgNet": 0.09,
+      "medianNet": -17.42,
+      "ciLow": -68.03,
+      "ciHigh": 83.93,
+      "pNoEdge": 0.509,
+      "mddPct": 1.15,
+      "avgFunding": 29.43
+    },
+    "C1_tax_short": {
+      "trades": 25,
+      "net": -270.29,
+      "pf": 0.855,
+      "winRate": 52.0,
+      "avgNet": -10.81,
+      "medianNet": 6.58,
+      "ciLow": -95.3,
+      "ciHigh": 56.92,
+      "pNoEdge": 0.602,
+      "mddPct": 1.09,
+      "avgFunding": -29.43
+    }
+  },
+  "candidates": [],
+  "selected": null,
+  "oosStats": null,
+  "verdict": "NO_CANDIDATE",
+  "notes": "Standalone calendar pre-screen; PASS only means implement in BacktestEngine and run formal WFA. OOS is the new 2022-2024 horizon."
+}

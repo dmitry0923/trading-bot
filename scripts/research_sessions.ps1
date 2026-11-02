@@ -68,7 +68,7 @@ Write-Host ("Funding rows: {0}" -f $funding.Count)
 function Get-FundingCost([string]$date, [int]$dir) {
     if (-not $funding.ContainsKey($date)) { return 0.0 }
     $r = $funding[$date]
-    return if ($dir -gt 0) { $r } else { -$r }
+    if ($dir -gt 0) { return $r } else { return -$r }
 }
 
 function New-SessionTrade {

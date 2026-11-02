@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-11-02T07:06:01.6916424+03:00",
+  "ticker": "CNYRUBF",
+  "bars": 1148,
+  "fundingRows": 986,
+  "devStart": "2024-10-24",
+  "oosStart": "2022-12-05",
+  "oosEnd": "2024-10-23",
+  "devStats": {
+    "M3_mom120_20": {
+      "trades": 25,
+      "net": -2367.65,
+      "pf": 0.665,
+      "winRate": 40.0,
+      "avgNet": -94.71,
+      "medianNet": -89.27,
+      "ciLow": -333.34,
+      "ciHigh": 117.61,
+      "pNoEdge": 0.7795,
+      "mddPct": 4.47,
+      "avgFunding": 7.44
+    },
+    "M2_mom60_20": {
+      "trades": 25,
+      "net": 532.52,
+      "pf": 1.095,
+      "winRate": 48.0,
+      "avgNet": 21.3,
+      "medianNet": -70.32,
+      "ciLow": -223.81,
+      "ciHigh": 263.29,
+      "pNoEdge": 0.4285,
+      "mddPct": 2.52,
+      "avgFunding": -6.97
+    },
+    "M1_mom20_5": {
+      "trades": 102,
+      "net": 3955.58,
+      "pf": 1.457,
+      "winRate": 57.8,
+      "avgNet": 38.78,
+      "medianNet": 53.09,
+      "ciLow": -18.26,
+      "ciHigh": 90.01,
+      "pNoEdge": 0.0845,
+      "mddPct": 1.47,
+      "avgFunding": -9.5
+    },
+    "M4_rev20_5": {
+      "trades": 102,
+      "net": -5047.13,
+      "pf": 0.619,
+      "winRate": 42.2,
+      "avgNet": -49.48,
+      "medianNet": -64.42,
+      "ciLow": -100.87,
+      "ciHigh": 7.27,
+      "pNoEdge": 0.9625,
+      "mddPct": 6.47,
+      "avgFunding": 9.5
+    }
+  },
+  "candidates": [],
+  "selected": null,
+  "oosStats": null,
+  "verdict": "NO_CANDIDATE",
+  "notes": "Standalone daily momentum pre-screen; PASS only means implement in BacktestEngine and run formal WFA. OOS is the new 2022-2024 horizon."
+}

@@ -73,10 +73,15 @@
   Sharpe 0,458 (83 сделки). Улучшение +0,103 PF, но PF < 1,30 → **REJECTED**;
   execution-слой сам по себе недостаточен. WFA 730д/8 фолдов — таймаут,
   full-period A/B — экран.
+- **Cross-sectional momentum/carry U5 (`docs/50`):** X1/X2 (`L2S4` = 6 ног)
+  на U5 (5 инструментов) → 0 сделок, **INVALID config** (ошибка
+  pre-registration, не edge); X3 carry-only — 63 OOS-сделки, PF **1,068**,
+  P=0,4215, CI95 [−397; +499], dev cons 0,75 → **REJECTED**. Класс закрыт;
+  урок: `longCount+shortCount ≤ universe`.
 - **Следующий шаг:** microstructure/news (нужны новые данные) или новый
-  горизонт для momentum+low-vol; forward paper продолжает сбор.
+  горизонт/U6+ для momentum; forward paper продолжает сбор.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36`–`docs/49`.
+  `docs/36`–`docs/50`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

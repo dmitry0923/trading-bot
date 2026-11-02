@@ -1,0 +1,58 @@
+{
+  "generatedAt": "2026-11-02T09:22:02.8579989+03:00",
+  "tickers": [
+    "CNYRUBF",
+    "USDRUBF",
+    "EURRUBF",
+    "GLDRUBF",
+    "IMOEXF"
+  ],
+  "timeframe": "MINUTE_10",
+  "days": 730,
+  "folds": 8,
+  "holdoutFraction": 0.3,
+  "results": [
+    {
+      "config": "X1_mom_L2S4_rb300_vs210_vt30",
+      "oosTrades": 0,
+      "oosPF": 0.0,
+      "oosReturn": 0.0,
+      "oosSharpe": 0.0,
+      "oosP": 1.0,
+      "oosCiLow": 0.0,
+      "oosCiHigh": 0.0,
+      "oosMdd": 0.0,
+      "devConsistency": 0.0,
+      "wfaRobust": false,
+      "verdict": "REJECTED"
+    },
+    {
+      "config": "X2_mom_carry_L2S4_rb300_cw1_vs210_vt30",
+      "oosTrades": 0,
+      "oosPF": 0.0,
+      "oosReturn": 0.0,
+      "oosSharpe": 0.0,
+      "oosP": 1.0,
+      "oosCiLow": 0.0,
+      "oosCiHigh": 0.0,
+      "oosMdd": 0.0,
+      "devConsistency": 0.0,
+      "wfaRobust": false,
+      "verdict": "REJECTED"
+    },
+    {
+      "config": "X3_carry_L0S3_rb630_cl5",
+      "oosTrades": 63,
+      "oosPF": 1.0681564755239614,
+      "oosReturn": 0.019921,
+      "oosSharpe": 0.2554760104537684,
+      "oosP": 0.4215,
+      "oosCiLow": -397.32436857142693,
+      "oosCiHigh": 499.0619382539699,
+      "oosMdd": 0.133276,
+      "devConsistency": 0.75,
+      "wfaRobust": false,
+      "verdict": "REJECTED"
+    }
+  ]
+}

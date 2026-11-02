@@ -142,8 +142,14 @@
   Sharpe 0,458 (83 сделки). Пассив улучшает (+0,103 PF), но **PF < 1,30** →
   **REJECTED**; execution-слой сам по себе недостаточен. WFA 730д/8 фолдов
   превысил клиентский таймаут и не сохранён; full-period A/B — экран.
+- **Cross-sectional momentum/carry U5 (`docs/50`):** X1/X2 (`L2S4` = 6 ног)
+  на U5 (5 инструментов) → **0 сделок, INVALID config** — ошибка
+  pre-registration (перенесена из U13), **не** отсутствие edge. X3
+  carry-only: 63 OOS-сделки, PF **1,068**, P=0,4215, CI95 [−397; +499],
+  dev cons 0,75 → **REJECTED**. Класс закрыт; урок: проверять
+  `longCount+shortCount ≤ universe` до прогона.
 - **Следующий шаг:** microstructure/news (нужны новые данные) или новый
-  горизонт для momentum+low-vol; forward paper (`docs/46`) продолжает сбор.
+  горизонт/U6+ для momentum; forward paper (`docs/46`) продолжает сбор.
 - **Дисциплина:** предрегистрация до прогона, OOS один раз, `engineVersion` +
   commit SHA в каждом артефакте; старые числа не сравниваются.
 

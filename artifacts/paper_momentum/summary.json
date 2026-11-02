@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-11-02T07:51:12.6416160+03:00",
+  "closedTrades": 0,
+  "openPositions": 0,
+  "pendingEntries": 3,
+  "net": 0,
+  "note": "Forward paper only; no live orders. Verdict after >= 30 closed trades (docs/46)."
+}

@@ -1,0 +1,25 @@
+{
+  "trades": [],
+  "pending": {
+    "GLDRUBF": {
+      "signalDate": "2026-10-30",
+      "direction": -1
+    },
+    "CNYRUBF": {
+      "signalDate": "2026-10-30",
+      "direction": -1
+    },
+    "USDRUBF": {
+      "signalDate": "2026-10-30",
+      "direction": -1
+    }
+  },
+  "lastProcessed": {
+    "EURRUBF": "2026-10-30",
+    "GLDRUBF": "2026-10-30",
+    "CNYRUBF": "2026-10-30",
+    "IMOEXF": "2026-10-30",
+    "USDRUBF": "2026-10-30"
+  },
+  "positions": {}
+}

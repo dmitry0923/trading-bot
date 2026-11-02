@@ -1,0 +1,55 @@
+{
+  "generatedAt": "2026-11-02T06:51:15.6276628+03:00",
+  "ticker": "CNYRUBF",
+  "bars": 1148,
+  "fundingRows": 986,
+  "devStart": "2024-10-24",
+  "oosStart": "2022-12-05",
+  "oosEnd": "2024-10-23",
+  "devStats": {
+    "H2_carry_fade_1d": {
+      "trades": 488,
+      "net": -9352.67,
+      "pf": 0.645,
+      "winRate": 44.7,
+      "avgNet": -19.17,
+      "medianNet": -12.6,
+      "ciLow": -29.7,
+      "ciHigh": -8.54,
+      "pNoEdge": 1.0,
+      "mddPct": 10.09,
+      "avgFunding": 7.2
+    },
+    "H1_carry_follow_1d": {
+      "trades": 488,
+      "net": 4136.57,
+      "pf": 1.213,
+      "winRate": 51.2,
+      "avgNet": 8.48,
+      "medianNet": 2.16,
+      "ciLow": -2.14,
+      "ciHigh": 18.83,
+      "pNoEdge": 0.0545,
+      "mddPct": 2.39,
+      "avgFunding": -7.2
+    },
+    "H3_carry_extreme_5d": {
+      "trades": 42,
+      "net": 2364.86,
+      "pf": 1.803,
+      "winRate": 50.0,
+      "avgNet": 56.31,
+      "medianNet": -14.32,
+      "ciLow": -13.0,
+      "ciHigh": 130.97,
+      "pNoEdge": 0.059,
+      "mddPct": 0.83,
+      "avgFunding": -20.61
+    }
+  },
+  "candidates": [],
+  "selected": null,
+  "oosStats": null,
+  "verdict": "NO_CANDIDATE",
+  "notes": "Standalone pre-screen; PASS only means implement in BacktestEngine and run formal WFA. OOS is the new 2022-2024 horizon."
+}

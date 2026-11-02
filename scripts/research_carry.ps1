@@ -254,7 +254,11 @@ $summary = [pscustomobject]@{
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutDir 'carry_2026-11-02_summary.json') -Encoding utf8
 $trades | Where-Object { $_.period -eq 'DEV' } | Export-Csv -LiteralPath (Join-Path $OutDir 'carry_2026-11-02_dev.csv') -NoTypeInformation -Encoding utf8
-$trades | Where-Object { $_.period -eq 'OOS' } | Export-Csv -LiteralPath (Join-Path $OutDir 'carry_2026-11-02_oos.csv') -NoTypeInformation -Encoding utf8
+# OOS-сделки сохраняются ТОЛЬКО если dev-гейт пройден и OOS реально оценивался.
+# Иначе сырой OOS-лог провоцирует post-hoc анализ сгоревшего горизонта.
+if ($null -ne $selected) {
+    $trades | Where-Object { $_.period -eq 'OOS' } | Export-Csv -LiteralPath (Join-Path $OutDir 'carry_2026-11-02_oos.csv') -NoTypeInformation -Encoding utf8
+}
 
 Write-Host "=== DEV ==="
 $variants | ForEach-Object { [pscustomobject]@{ variant = $_; trades = $devStats[$_].trades; pf = $devStats[$_].pf; net = $devStats[$_].net; avgNet = $devStats[$_].avgNet; pNoEdge = $devStats[$_].pNoEdge; funding = $devStats[$_].avgFunding } } | Format-Table -AutoSize

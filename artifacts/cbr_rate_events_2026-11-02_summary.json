@@ -1,0 +1,199 @@
+{
+  "generatedAt": "2026-11-02T10:53:20.0037062+03:00",
+  "tickers": [
+    "GAZP",
+    "LKOH",
+    "MGNT",
+    "NVTK",
+    "PLZL",
+    "ROSN",
+    "SBER",
+    "TATN"
+  ],
+  "timeframe": "DAY_1",
+  "startDate": "2018-01-03",
+  "notionalPerTrade": 100000.0,
+  "baseCosts": {
+    "commissionPctPerSide": 0.05,
+    "slippageBpsPerSide": 1.0
+  },
+  "stressCosts": {
+    "commissionPctPerSide": 0.1,
+    "slippageBpsPerSide": 3.0
+  },
+  "rateEvents": 46,
+  "rateCuts": 27,
+  "rateHikes": 19,
+  "eventDatesWithTrades": 46,
+  "devEvents": 32,
+  "devLastEvent": "2023-10-30",
+  "oosFirstEvent": "2023-12-18",
+  "variants": [
+    "R1_cut_long_5d",
+    "R2_cut_long_10d",
+    "R3_hike_short_5d",
+    "R4_hike_short_10d"
+  ],
+  "dev": {
+    "R2_cut_long_10d": {
+      "trades": 136,
+      "net": -180564.84,
+      "pf": 0.625,
+      "winRate": 45.6,
+      "avgNet": -1327.68,
+      "medianNet": -502.68,
+      "ciLow": -4234.71,
+      "ciHigh": 1048.73,
+      "pNoEdge": 0.834,
+      "mddRub": 247481.98,
+      "mddPct": 247.48,
+      "avgHoldDays": 10.0
+    },
+    "R1_cut_long_5d": {
+      "trades": 136,
+      "net": -182292.87,
+      "pf": 0.57,
+      "winRate": 47.8,
+      "avgNet": -1340.39,
+      "medianNet": -158.35,
+      "ciLow": -4755.08,
+      "ciHigh": 1225.38,
+      "pNoEdge": 0.8015,
+      "mddRub": 271600.77,
+      "mddPct": 271.6,
+      "avgHoldDays": 5.0
+    },
+    "R4_hike_short_10d": {
+      "trades": 120,
+      "net": -83011.04,
+      "pf": 0.793,
+      "winRate": 37.5,
+      "avgNet": -691.76,
+      "medianNet": -1515.56,
+      "ciLow": -3879.32,
+      "ciHigh": 3548.3,
+      "pNoEdge": 0.672,
+      "mddRub": 160543.54,
+      "mddPct": 160.54,
+      "avgHoldDays": 10.0
+    },
+    "R3_hike_short_5d": {
+      "trades": 120,
+      "net": 16781.13,
+      "pf": 1.071,
+      "winRate": 45.0,
+      "avgNet": 139.84,
+      "medianNet": -408.92,
+      "ciLow": -2193.26,
+      "ciHigh": 2998.47,
+      "pNoEdge": 0.4845,
+      "mddRub": 117373.98,
+      "mddPct": 117.37,
+      "avgHoldDays": 5.0
+    }
+  },
+  "devConsistency": {
+    "R2_cut_long_10d": {
+      "consistency": 0.333,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-02-12..2019-09-09",
+          "trades": 40,
+          "net": -2969.36
+        },
+        {
+          "fold": 2,
+          "dates": "2019-10-28..2020-07-27",
+          "trades": 48,
+          "net": 66796.96
+        },
+        {
+          "fold": 3,
+          "dates": "2022-04-11..2022-09-19",
+          "trades": 48,
+          "net": -244392.44
+        }
+      ]
+    },
+    "R1_cut_long_5d": {
+      "consistency": 0.667,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-02-12..2019-09-09",
+          "trades": 40,
+          "net": 4045.72
+        },
+        {
+          "fold": 2,
+          "dates": "2019-10-28..2020-07-27",
+          "trades": 48,
+          "net": 61798.77
+        },
+        {
+          "fold": 3,
+          "dates": "2022-04-11..2022-09-19",
+          "trades": 48,
+          "net": -248137.36
+        }
+      ]
+    },
+    "R4_hike_short_10d": {
+      "consistency": 0.333,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-09-17..2021-06-15",
+          "trades": 40,
+          "net": -45390.24
+        },
+        {
+          "fold": 2,
+          "dates": "2021-07-26..2022-02-14",
+          "trades": 40,
+          "net": 119704.09
+        },
+        {
+          "fold": 3,
+          "dates": "2022-02-28..2023-10-30",
+          "trades": 40,
+          "net": -157324.89
+        }
+      ]
+    },
+    "R3_hike_short_5d": {
+      "consistency": 0.333,
+      "folds": [
+        {
+          "fold": 1,
+          "dates": "2018-09-17..2021-06-15",
+          "trades": 40,
+          "net": -21562.74
+        },
+        {
+          "fold": 2,
+          "dates": "2021-07-26..2022-02-14",
+          "trades": 40,
+          "net": 124506.99
+        },
+        {
+          "fold": 3,
+          "dates": "2022-02-28..2023-10-30",
+          "trades": 40,
+          "net": -86163.12
+        }
+      ]
+    }
+  },
+  "candidates": [],
+  "selected": null,
+  "oosEvaluated": false,
+  "oos": null,
+  "oosConsistency": null,
+  "oosByTicker": [],
+  "stressOos": null,
+  "oosExcluding2022_02_28": null,
+  "verdict": "REJECTED_DEV",
+  "notes": "Standalone pre-screen (docs/53), not a formal engine verdict. PASS only means implement the same variant in BacktestEngine and run docs/30 protocol."
+}

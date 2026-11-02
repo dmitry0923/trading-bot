@@ -212,9 +212,12 @@ REJECTED_DEV:** 3 257 сделок, PF **0,780**, avg **−150,89 ₽**, P=0,999
 592 сделки, PF 1,551, avg +752,60 ₽, p=0,043; OOS 248 сделок, PF **0,673**,
 avg −597,74 ₽, p=0,877, MDD 255 % → O2/O5/O7 провалены. K2/K3 overnight
 PF 0,71/0,57; K4 pre-holiday PF 1,64, но p=0,060 (не кандидат). Класс
-закрыт. OOS 2024–2026 израсходован для календарной гипотезы; остались
-пары на акциях и расширение вселенной фьючерсов. Платные данные
-(microstructure/news) не покупать. Forward paper B продолжает сбор.
+закрыт. OOS 2024–2026 израсходован для календарной гипотезы. **Event study
+решений ЦБ (`docs/53`) — REJECTED_DEV:** 46 событий, dev 32; R1 cut→long
+PF 0,570, R2 0,620, R3 hike→short 5d PF 1,070 (p=0,48), R4 0,790; OOS не
+оценивался. Остались пары на акциях и расширение вселенной фьючерсов.
+Платные данные (microstructure/news) не покупать. Forward paper B
+продолжает сбор.
 
 ### 3.1 Что именно делать в каждом направлении
 
@@ -383,3 +386,4 @@ PF 0,71/0,57; K4 pre-holiday PF 1,64, но p=0,060 (не кандидат). Кл
 | 2026-11-02 | Forward paper B: предрегистрация + раннер (`docs/46`) | `scripts/paper_momentum_daily.ps1`, `artifacts/paper_momentum/{state,summary}.json`, `artifacts/paper_momentum/trades.csv` | Заморожены правила pre-screen; state machine с `AsOf`-cutoff, frozen params, funding fail-closed, авто-гейтами F1–F5. Старт — первый торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05); production-состояние 0 сделок / 0 pending. Исторический dry-run: 33/33 сделки совпали с pre-screen (±0,02 ₽), повторный запуск без дублей. LIVE не затронут |
 | 2026-11-02 | Intraday ORB на акциях TQBR (`docs/51`) | `scripts/research_equity_intraday_orb.ps1`, `artifacts/equity_intraday_orb_2026-11-02_{summary.json,dev.csv}` | 9 акций, 646 будних дней, dev 3 257 сделок: PF **0,780**, avg **−150,89 ₽** (100k notional), P(noEdge)=0,999, CI95 [−245,85; −55,86], 0/3 фолдов → **REJECTED_DEV**; OOS не оценивался. Только LKOH PF 1,09, 8 из 9 — минус. ORB-класс закрыт на CNYRUBF и акциях |
 | 2026-11-02 | Календарь/overnight на акциях TQBR 2018–2026 (`docs/52`) | `scripts/research_equity_calendar_overnight.ps1`, `artifacts/equity_calendar_overnight_2026-11-02_{summary.json,dev.csv,oos.csv}` | Dev 1 550 дней: K1 TOM 592 сделки, PF **1,551**, avg +752,60 ₽, p=0,043; K2/K3 overnight PF 0,710/0,570; K4 pre-holiday PF 1,640, p=0,060 (не кандидат). OOS 2024-03…2026-10: K1 248 сделок, PF **0,673**, avg −597,74 ₽, p=0,877, MDD 255 % → **REJECTED**. Класс закрыт; OOS израсходован |
+| 2026-11-02 | Event study решений ЦБ РФ на акциях 2018–2026 (`docs/53`) | `scripts/research_cbr_rate_events.ps1`, `artifacts/cbr_rate_events_2026-11-02_{summary.json,dev.csv}` | Ряд ставки донакачан до 2 277 дней; 46 событий (27 cut/19 hike), dev 32. R1 cut→long 5d PF **0,570**, R2 10d 0,620; R3 hike→short 5d PF **1,070** (p=0,48), R4 10d 0,790. Кандидатов нет → **REJECTED_DEV**, OOS не оценивался |

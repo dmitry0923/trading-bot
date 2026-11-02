@@ -40,11 +40,16 @@
   **1,384** на 161 сделке (block p=0,0875, CI95 [−94; +445], MDD 23,46 %) →
   **INCONCLUSIVE**. Первый кандидат, прошедший dev+OOS по PF/MDD/сделкам;
   блокер — мощность OOS; OOS израсходован.
-- **Следующий шаг:** новый независимый горизонт — акции TQBR 2018+
-  (8 инструментов, 8,8 года) для той же гипотезы; требует решения по
-  research/live allowlist. Если CNYRUBF-only — execution/passive fill, pairs.
+- **Confirmation на акциях TQBR 2019–2026 (`docs/43`):** 1 859 сделок,
+  PF **1,044**, avg +57,89 ₽, block p=0,2875, CI95 [−141; +251],
+  MDD **132 %** → **REJECTED**. Только LKOH (1,57) и NVTK (1,22) в плюс;
+  **momentum+low-vol не универсален**, FX-портфель может быть RUB-трендовой
+  спецификой 2022–2026.
+- **Следующий шаг:** formal engine-валидация FX-портфеля (time-series
+  momentum в движке + WFA/deployment-gate) либо, если CNYRUBF-only —
+  execution/passive fill, pairs. OOS 2022–2024 для FX-гипотезы израсходован.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36`–`docs/42`.
+  `docs/36`–`docs/43`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

@@ -182,11 +182,14 @@ DAY_1 = 2026-11-02 (текущий день) неполный; в прогона
 **V1 lowvol PF 1,79 / +53,69 ₽ / p=0,060** (`docs/41`); #6 — выполнено,
 **REJECTED** (`docs/40`); портфельное расширение V1 на 5 фьючерсов
 (`docs/42`) — **INCONCLUSIVE**: dev PF **1,781** (block p=0,0135), OOS PF
-**1,384** на 161 сделке (block p=0,0875, CI95 [−94; +445]). Первый кандидат,
-прошедший dev+OOS по PF/MDD/сделкам; блокер — мощность OOS, а не знак edge.
-Следующий шаг — **новый независимый горизонт** (акции 2018+ или другой класс
-активов) для той же гипотезы; OOS 2022–2024 для неё израсходован. Если
+**1,384** на 161 сделке (block p=0,0875, CI95 [−94; +445]).
+**Confirmation на акциях TQBR 2019–2026 (`docs/43`) — REJECTED**: PF 1,044,
+block p=0,2875, MDD 132 %, только LKOH/NVTK в плюс. Momentum+low-vol
+**не универсален**; FX-портфель может быть RUB-трендовой спецификой.
+Следующий шаг — **formal engine-валидация FX-портфеля** (реализовать
+time-series momentum в движке, прогнать WFA/deployment-gate) либо, если
 оставаться CNYRUBF-only — #7 execution/passive fill, затем pairs/microstructure.
+OOS 2022–2024 для FX-гипотезы израсходован; новые пороги на нём запрещены.
 
 ### 3.1 Что именно делать в каждом направлении
 
@@ -345,3 +348,4 @@ DAY_1 = 2026-11-02 (текущий день) неполный; в прогона
 | 2026-11-02 | Календарь/налоговый поток (pre-registered, `docs/40`) | `scripts/research_calendar.ps1`, `artifacts/calendar_2026-11-02_summary.json` | C1 tax_short PF 0,85; C2 1,00; C3 0,86; C4 0,91; C5 1,05 → **NO_CANDIDATE**, OOS сохранён |
 | 2026-11-02 | Volatility-regime фильтр momentum (pre-registered, `docs/41`) | `scripts/research_volregime.ps1`, `artifacts/volregime_2026-11-02_summary.json` | V1 lowvol: 52 сделки, PF **1,79**, avg **+53,69 ₽**, p=0,060; V2 PF 1,36; V3 PF 1,46 (p=0,08) → **NO_CANDIDATE**, но лучший по качеству; блокер — мощность выборки, не знак edge |
 | 2026-11-02 | Портфель momentum+low-vol на 5 фьючерсах (pre-registered, `docs/42`) | `scripts/research_multi_momentum.ps1`, `artifacts/multi_momentum_2026-11-02_summary.json` | Dev: 241 сделка, PF **1,781**, avg +233,32 ₽, block p=**0,0135**; OOS 2022–2024: 161 сделка, PF **1,384**, avg +191,69 ₽, block p=**0,0875**, CI95 [−94; +445] → **INCONCLUSIVE** (O3/O4 не пройдены; O1/O2/O5 пройдены). Первый кандидат, прошедший dev+OOS по PF/MDD/сделкам; OOS израсходован |
+| 2026-11-02 | Confirmation momentum+low-vol на акциях TQBR 2019–2026 (pre-registered, `docs/43`) | `scripts/research_equity_momentum.ps1`, `artifacts/equity_momentum_2026-11-02_summary.json` | 1 859 сделок, PF **1,044**, avg +57,89 ₽, block p=0,2875, CI95 [−141; +251], MDD **132 %** → **REJECTED**. Только LKOH PF 1,57 / NVTK 1,22; 6 из 8 — около нуля/минус. Momentum+low-vol не универсален; FX-портфель может быть RUB-трендовой спецификой |

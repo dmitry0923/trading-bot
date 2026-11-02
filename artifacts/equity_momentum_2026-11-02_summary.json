@@ -1,0 +1,109 @@
+{
+  "generatedAt": "2026-11-02T07:10:38.8508166+03:00",
+  "tickers": [
+    "GAZP",
+    "LKOH",
+    "MGNT",
+    "NVTK",
+    "PLZL",
+    "ROSN",
+    "SBER",
+    "TATN"
+  ],
+  "startDate": "2019-01-01",
+  "endDate": "2026-10-30",
+  "targetNotionalRub": 100000.0,
+  "commissionPctPerSide": 0.05,
+  "slippageBps": 1.0,
+  "stats": {
+    "trades": 1859,
+    "net": 107615.12,
+    "pf": 1.044,
+    "winRate": 50.2,
+    "avgNet": 57.89,
+    "medianNet": 8.54,
+    "mddPct": 132.44
+  },
+  "blockP": 0.2875,
+  "blockCi": [
+    -140.77,
+    250.95
+  ],
+  "blocks": 1041,
+  "perInstrument": {
+    "MGNT": {
+      "trades": 232,
+      "net": -9080.49,
+      "pf": 0.972,
+      "winRate": 46.1,
+      "avgNet": -39.14,
+      "medianNet": -325.55,
+      "mddPct": 50.54
+    },
+    "SBER": {
+      "trades": 256,
+      "net": -5318.51,
+      "pf": 0.981,
+      "winRate": 48.8,
+      "avgNet": -20.78,
+      "medianNet": -109.37,
+      "mddPct": 67.06
+    },
+    "TATN": {
+      "trades": 228,
+      "net": -16900.14,
+      "pf": 0.948,
+      "winRate": 45.6,
+      "avgNet": -74.12,
+      "medianNet": -414.12,
+      "mddPct": 62.09
+    },
+    "PLZL": {
+      "trades": 231,
+      "net": -6396.9,
+      "pf": 0.982,
+      "winRate": 51.5,
+      "avgNet": -27.69,
+      "medianNet": 155.8,
+      "mddPct": 66.69
+    },
+    "NVTK": {
+      "trades": 226,
+      "net": 65156.88,
+      "pf": 1.224,
+      "winRate": 54.4,
+      "avgNet": 288.3,
+      "medianNet": 383.74,
+      "mddPct": 34.08
+    },
+    "LKOH": {
+      "trades": 218,
+      "net": 125987.56,
+      "pf": 1.571,
+      "winRate": 59.6,
+      "avgNet": 577.92,
+      "medianNet": 488.19,
+      "mddPct": 20.54
+    },
+    "GAZP": {
+      "trades": 239,
+      "net": 1126.4,
+      "pf": 1.003,
+      "winRate": 48.1,
+      "avgNet": 4.71,
+      "medianNet": -52.97,
+      "mddPct": 99.84
+    },
+    "ROSN": {
+      "trades": 229,
+      "net": -46959.68,
+      "pf": 0.855,
+      "winRate": 48.0,
+      "avgNet": -205.06,
+      "medianNet": -353.36,
+      "mddPct": 83.37
+    }
+  },
+  "verdict": "REJECTED",
+  "notes": "Confirmation test on equities; fixed signal from docs/41/42. Fractional qty; dividends/funding not modeled. PASS only means implement in BacktestEngine and run formal WFA."
+}

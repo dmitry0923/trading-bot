@@ -54,9 +54,13 @@
   75 OOS-сделок, PF **3,01**, block p=**0,002**, CI95 [+217; +1381],
   MDD 9,86 % — сильный, но post-hoc (folds=8 дегенеративны; folds=3 выбраны
   после; период пересекается с dev). Не отменяет fixed-split REJECTED.
-- **B (forward paper) — следующий шаг:** предрегистрированный forward test
-  на новых данных (≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0,
-  MDD ≤ 40 %), не live. LIVE: maxC=1, Kelly, CNYRUBF.
+- **B (forward paper) — запущен (`docs/46`):** предрегистрация + раннер
+  `scripts/paper_momentum_daily.ps1` (state machine, frozen params, `AsOf`
+  cutoff, funding fail-closed, авто-гейты в `summary.json`). Старт — первый
+  торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05);
+  production-состояние 0 сделок / 0 pending; dry-run 33/33 совпал с pre-screen.
+  Гейты: ≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live.
+  LIVE: maxC=1, Kelly, CNYRUBF.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
   `docs/36`–`docs/45`.
 

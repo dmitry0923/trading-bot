@@ -145,8 +145,10 @@ Forward paper — единственный способ получить нов�
 - `src/main/kotlin/com/trading/bot/backtest/MomentumBacktestSignalGenerator.kt`
 - `src/test/kotlin/com/trading/bot/backtest/MomentumBacktestSignalGeneratorTest.kt`
 - `scripts/research_engine_momentum.ps1`
+- `scripts/research_engine_momentum_wfa.ps1`
 - `artifacts/engine_momentum_2026-11-02_{CNYRUBF,USDRUBF,EURRUBF,GLDRUBF,IMOEXF}.json`
 - `artifacts/engine_momentum_2026-11-02_{summary.json,dev.csv,oos.csv}`
+- `artifacts/engine_momentum_wfa_2026-11-02_{summary.json,trades.csv}`
 
 **Оговорка:** 1 контракт на инструмент, общий капитал 100k не проверялся на
 маржинальную достаточность (GO пяти инструментов ≈ 41,5k). Для live нужен

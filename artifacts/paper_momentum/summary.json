@@ -1,8 +1,53 @@
 {
-  "generatedAt": "2026-11-02T07:51:12.6416160+03:00",
+  "generatedAt": "2026-11-02T07:57:38.9038589+03:00",
+  "asOf": "2026-11-01",
+  "startAfter": "2026-11-03",
+  "params": {
+    "tickers": [
+      "CNYRUBF",
+      "USDRUBF",
+      "EURRUBF",
+      "GLDRUBF",
+      "IMOEXF"
+    ],
+    "momentumBars": 20,
+    "atrBars": 20,
+    "volLookbackBars": 252,
+    "maxVolPercentile": 0.5,
+    "holdBars": 5,
+    "commissionPerSide": 1.5,
+    "slippageBps": 1.0
+  },
   "closedTrades": 0,
   "openPositions": 0,
-  "pendingEntries": 3,
-  "net": 0,
+  "pendingEntries": 0,
+  "firstSignalDate": null,
+  "lastExitDate": null,
+  "stats": {
+    "trades": 0,
+    "net": 0.0,
+    "pf": 0.0,
+    "winRate": 0.0,
+    "avgNet": 0.0,
+    "medianNet": 0.0,
+    "mddPct": 0.0
+  },
+  "blockBootstrap": {
+    "iterations": 2000,
+    "seed": 42,
+    "pValue": 1.0,
+    "ci95Low": 0.0,
+    "ci95High": 0.0,
+    "blocks": 0
+  },
+  "gates": {
+    "F1_closedTrades_ge_30": false,
+    "F2_profitFactor_ge_1_30": false,
+    "F3_blockP_lt_0_05": false,
+    "F4_ci95Low_gt_0": false,
+    "F5_mdd_le_40": false
+  },
+  "evaluated": false,
+  "verdict": "COLLECTING",
   "note": "Forward paper only; no live orders. Verdict after >= 30 closed trades (docs/46)."
 }

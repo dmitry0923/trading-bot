@@ -1,25 +1,50 @@
 {
-  "trades": [],
-  "pending": {
-    "GLDRUBF": {
-      "signalDate": "2026-10-30",
-      "direction": -1
+  "version": 1,
+  "createdAt": "2026-11-02T07:57:36.5621657+03:00",
+  "updatedAt": "2026-11-02T07:57:38.8525418+03:00",
+  "startAfter": "2026-11-03",
+  "params": {
+    "tickers": [
+      "CNYRUBF",
+      "USDRUBF",
+      "EURRUBF",
+      "GLDRUBF",
+      "IMOEXF"
+    ],
+    "momentumBars": 20,
+    "atrBars": 20,
+    "volLookbackBars": 252,
+    "maxVolPercentile": 0.5,
+    "holdBars": 5,
+    "commissionPerSide": 1.5,
+    "slippageBps": 1.0
+  },
+  "tickers": {
+    "USDRUBF": {
+      "position": null,
+      "lastProcessedDate": "2026-11-03",
+      "pending": null
     },
     "CNYRUBF": {
-      "signalDate": "2026-10-30",
-      "direction": -1
+      "position": null,
+      "lastProcessedDate": "2026-11-03",
+      "pending": null
     },
-    "USDRUBF": {
-      "signalDate": "2026-10-30",
-      "direction": -1
+    "EURRUBF": {
+      "position": null,
+      "lastProcessedDate": "2026-11-03",
+      "pending": null
+    },
+    "GLDRUBF": {
+      "position": null,
+      "lastProcessedDate": "2026-11-03",
+      "pending": null
+    },
+    "IMOEXF": {
+      "position": null,
+      "lastProcessedDate": "2026-11-03",
+      "pending": null
     }
   },
-  "lastProcessed": {
-    "EURRUBF": "2026-10-30",
-    "GLDRUBF": "2026-10-30",
-    "CNYRUBF": "2026-10-30",
-    "IMOEXF": "2026-10-30",
-    "USDRUBF": "2026-10-30"
-  },
-  "positions": {}
+  "trades": []
 }

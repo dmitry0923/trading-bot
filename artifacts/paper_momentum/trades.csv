@@ -1,1 +1,1 @@
-ticker,signalDate,direction,entryDate,exitDate,entryPrice,exitPrice,gross,commission,slippage,funding,net
+ticker,signalDate,direction,entryDate,exitDate,entryPrice,exitPrice,gross,commission,slippage,funding,net,holdBars,recordedAt

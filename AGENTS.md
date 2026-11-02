@@ -121,9 +121,14 @@
   block p=**0,002**, CI95 [+217; +1381], MDD 9,86 %. Сильный, но post-hoc:
   folds=8 дегенеративны (сегмент < warmup 270 → 0 сделок), folds=3 выбраны
   после этого, период пересекается с dev. Не отменяет fixed-split REJECTED.
-- **B (forward paper) — следующий шаг** как предрегистрированный forward
-  test на новых данных (≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0,
-  MDD ≤ 40 %), не live. LIVE-контур не меняется (maxC=1, Kelly, CNYRUBF).
+- **B (forward paper) — запущен (`docs/46`):** предрегистрация + раннер
+  `scripts/paper_momentum_daily.ps1` (state machine, frozen params, `AsOf`
+  cutoff без неполного бара, funding fail-closed, авто-гейты в `summary.json`).
+  Старт — первый торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05),
+  production-состояние: 0 сделок / 0 pending. Гейты: ≥ 30 forward-сделок,
+  PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live. Исторический dry-run
+  раннера: 33/33 сделки совпали с pre-screen. LIVE-контур не меняется
+  (maxC=1, Kelly, CNYRUBF).
 - **Следующий шаг:** новый источник edge (pairs/microstructure/news) или
   CNYRUBF-only execution/passive fill.
 - **Дисциплина:** предрегистрация до прогона, OOS один раз, `engineVersion` +

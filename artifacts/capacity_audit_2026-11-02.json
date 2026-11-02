@@ -1,0 +1,356 @@
+{
+  "generatedAt": "2026-11-02T06:40:39.9178007+03:00",
+  "ticker": "CNYRUBF",
+  "timeframe": "DAY_1",
+  "windowDays": 730,
+  "tradingDays": 498,
+  "lotSize": 1000,
+  "avgDailyRangeRubPerUnit": 0.1736,
+  "sumDailyRangeRubPerUnit": 86.447,
+  "maxProfitPerContractRub": 86447.0,
+  "annualMaxProfitPerContractRub": 43253.11,
+  "targetAnnualPct": 100.0,
+  "tradeCounts": [
+    82,
+    200,
+    500,
+    1000
+  ],
+  "priceRange": {
+    "minLow": 10.251,
+    "maxHigh": 15.166
+  },
+  "deposits": [
+    {
+      "depositRub": 50000.0,
+      "ceilingPeriodPct": 172.89,
+      "ceilingAnnualPctAt1Contract": 86.51,
+      "scenarios": [
+        {
+          "maxContracts": 1,
+          "maxAnnualPctAtPerfectTiming": 86.51,
+          "requiredCapturePctFor100": 115.6
+        },
+        {
+          "maxContracts": 2,
+          "maxAnnualPctAtPerfectTiming": 173.01,
+          "requiredCapturePctFor100": 57.8
+        },
+        {
+          "maxContracts": 3,
+          "maxAnnualPctAtPerfectTiming": 259.52,
+          "requiredCapturePctFor100": 38.53
+        },
+        {
+          "maxContracts": 4,
+          "maxAnnualPctAtPerfectTiming": 346.02,
+          "requiredCapturePctFor100": 28.9
+        },
+        {
+          "maxContracts": 6,
+          "maxAnnualPctAtPerfectTiming": 519.04,
+          "requiredCapturePctFor100": 19.27
+        },
+        {
+          "maxContracts": 8,
+          "maxAnnualPctAtPerfectTiming": 692.05,
+          "requiredCapturePctFor100": 14.45
+        }
+      ],
+      "requiredPerTradeByMaxC": [
+        {
+          "maxContracts": 1,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 1218.68
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 499.66
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 199.86
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 99.93
+            }
+          ]
+        },
+        {
+          "maxContracts": 2,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 609.34
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 249.83
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 99.93
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 49.97
+            }
+          ]
+        },
+        {
+          "maxContracts": 3,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 406.23
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 166.55
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 66.62
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 33.31
+            }
+          ]
+        },
+        {
+          "maxContracts": 4,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 304.67
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 124.91
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 49.97
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 24.98
+            }
+          ]
+        },
+        {
+          "maxContracts": 6,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 203.11
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 83.28
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 33.31
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 16.66
+            }
+          ]
+        },
+        {
+          "maxContracts": 8,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 152.33
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 62.46
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 24.98
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 12.49
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "depositRub": 100000.0,
+      "ceilingPeriodPct": 86.45,
+      "ceilingAnnualPctAt1Contract": 43.25,
+      "scenarios": [
+        {
+          "maxContracts": 1,
+          "maxAnnualPctAtPerfectTiming": 43.25,
+          "requiredCapturePctFor100": 231.2
+        },
+        {
+          "maxContracts": 2,
+          "maxAnnualPctAtPerfectTiming": 86.51,
+          "requiredCapturePctFor100": 115.6
+        },
+        {
+          "maxContracts": 3,
+          "maxAnnualPctAtPerfectTiming": 129.76,
+          "requiredCapturePctFor100": 77.07
+        },
+        {
+          "maxContracts": 4,
+          "maxAnnualPctAtPerfectTiming": 173.01,
+          "requiredCapturePctFor100": 57.8
+        },
+        {
+          "maxContracts": 6,
+          "maxAnnualPctAtPerfectTiming": 259.52,
+          "requiredCapturePctFor100": 38.53
+        },
+        {
+          "maxContracts": 8,
+          "maxAnnualPctAtPerfectTiming": 346.02,
+          "requiredCapturePctFor100": 28.9
+        }
+      ],
+      "requiredPerTradeByMaxC": [
+        {
+          "maxContracts": 1,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 2437.35
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 999.32
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 399.73
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 199.86
+            }
+          ]
+        },
+        {
+          "maxContracts": 2,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 1218.68
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 499.66
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 199.86
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 99.93
+            }
+          ]
+        },
+        {
+          "maxContracts": 3,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 812.45
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 333.11
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 133.24
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 66.62
+            }
+          ]
+        },
+        {
+          "maxContracts": 4,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 609.34
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 249.83
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 99.93
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 49.97
+            }
+          ]
+        },
+        {
+          "maxContracts": 6,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 406.23
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 166.55
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 66.62
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 33.31
+            }
+          ]
+        },
+        {
+          "maxContracts": 8,
+          "byTradeCount": [
+            {
+              "tradesInWindow": 82,
+              "requiredNetRubPerTrade": 304.67
+            },
+            {
+              "tradesInWindow": 200,
+              "requiredNetRubPerTrade": 124.91
+            },
+            {
+              "tradesInWindow": 500,
+              "requiredNetRubPerTrade": 49.97
+            },
+            {
+              "tradesInWindow": 1000,
+              "requiredNetRubPerTrade": 24.98
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "note": "Ceiling = perfect daily buy-low/sell-high timing, one round trip per day, one contract. No strategy can exceed it; real capture is a fraction."
+}

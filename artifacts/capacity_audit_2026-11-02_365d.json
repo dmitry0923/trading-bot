@@ -1,0 +1,93 @@
+{
+  "generatedAt": "2026-11-02T06:40:10.7246549+03:00",
+  "ticker": "CNYRUBF",
+  "timeframe": "DAY_1",
+  "windowDays": 365,
+  "tradingDays": 244,
+  "lotSize": 1000,
+  "avgDailyRangeRubPerUnit": 0.16,
+  "sumDailyRangeRubPerUnit": 39.036,
+  "maxProfitPerContractRub": 39036.0,
+  "annualMaxProfitPerContractRub": 39062.74,
+  "priceRange": {
+    "minLow": 10.251,
+    "maxHigh": 13.009
+  },
+  "deposits": [
+    {
+      "depositRub": 50000.0,
+      "ceilingPeriodPct": 78.07,
+      "ceilingAnnualPctAt1Contract": 78.13,
+      "scenarios": [
+        {
+          "maxContracts": 1,
+          "maxAnnualPctAtPerfectTiming": 78.13,
+          "requiredCapturePctFor100": 128.0
+        },
+        {
+          "maxContracts": 2,
+          "maxAnnualPctAtPerfectTiming": 156.25,
+          "requiredCapturePctFor100": 64.0
+        },
+        {
+          "maxContracts": 3,
+          "maxAnnualPctAtPerfectTiming": 234.38,
+          "requiredCapturePctFor100": 42.67
+        },
+        {
+          "maxContracts": 4,
+          "maxAnnualPctAtPerfectTiming": 312.5,
+          "requiredCapturePctFor100": 32.0
+        },
+        {
+          "maxContracts": 6,
+          "maxAnnualPctAtPerfectTiming": 468.75,
+          "requiredCapturePctFor100": 21.33
+        },
+        {
+          "maxContracts": 8,
+          "maxAnnualPctAtPerfectTiming": 625.0,
+          "requiredCapturePctFor100": 16.0
+        }
+      ]
+    },
+    {
+      "depositRub": 100000.0,
+      "ceilingPeriodPct": 39.04,
+      "ceilingAnnualPctAt1Contract": 39.06,
+      "scenarios": [
+        {
+          "maxContracts": 1,
+          "maxAnnualPctAtPerfectTiming": 39.06,
+          "requiredCapturePctFor100": 256.0
+        },
+        {
+          "maxContracts": 2,
+          "maxAnnualPctAtPerfectTiming": 78.13,
+          "requiredCapturePctFor100": 128.0
+        },
+        {
+          "maxContracts": 3,
+          "maxAnnualPctAtPerfectTiming": 117.19,
+          "requiredCapturePctFor100": 85.33
+        },
+        {
+          "maxContracts": 4,
+          "maxAnnualPctAtPerfectTiming": 156.25,
+          "requiredCapturePctFor100": 64.0
+        },
+        {
+          "maxContracts": 6,
+          "maxAnnualPctAtPerfectTiming": 234.38,
+          "requiredCapturePctFor100": 42.67
+        },
+        {
+          "maxContracts": 8,
+          "maxAnnualPctAtPerfectTiming": 312.5,
+          "requiredCapturePctFor100": 32.0
+        }
+      ]
+    }
+  ],
+  "note": "Ceiling = perfect daily buy-low/sell-high timing, one round trip per day, one contract. No strategy can exceed it; real capture is a fraction."
+}

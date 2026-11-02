@@ -65,10 +65,15 @@
   OOS 4, PF 0,323 → **INCONCLUSIVE** (тонкая выборка); MINUTE_10 — 546
   сделок, OOS **149**, PF **0,505**, P=0,9865, CI95 [−50,13; −2,86] ₽,
   WFA PF 0,625/consistency 0,167 → **REJECTED**. Класс пары закрыт.
-- **Следующий шаг:** microstructure/news или CNYRUBF-only execution/passive
-  fill; momentum+low-vol — forward paper.
+- **Passive fill A/B (`docs/49`):** full 730д CNYRUBF, maxC=1, conf 0.60:
+  taker PF 1,014 / +0,028 % / Sharpe 0,059; passive PF **1,117** / +0,227 % /
+  Sharpe 0,458 (83 сделки). Улучшение +0,103 PF, но PF < 1,30 → **REJECTED**;
+  execution-слой сам по себе недостаточен. WFA 730д/8 фолдов — таймаут,
+  full-period A/B — экран.
+- **Следующий шаг:** microstructure/news (нужны новые данные) или новый
+  горизонт для momentum+low-vol; forward paper продолжает сбор.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36`–`docs/48`.
+  `docs/36`–`docs/49`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

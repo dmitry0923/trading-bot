@@ -134,8 +134,13 @@
   выборка); MINUTE_10 — 546 сделок, OOS **149**, PF **0,505**, P=0,9865,
   CI95 [−50,13; −2,86] ₽ (отрицательный), WFA PF 0,625/consistency 0,167 →
   **REJECTED**. Класс пары закрыт; OOS 2024–2026 израсходован.
-- **Следующий шаг:** microstructure/news или CNYRUBF-only execution/passive
-  fill; momentum+low-vol продолжает forward paper (`docs/46`).
+- **Passive fill A/B (`docs/49`):** full 730д CNYRUBF, maxC=1, conf 0.60:
+  taker PF 1,014 / +0,028 % / Sharpe 0,059; passive PF **1,117** / +0,227 % /
+  Sharpe 0,458 (83 сделки). Пассив улучшает (+0,103 PF), но **PF < 1,30** →
+  **REJECTED**; execution-слой сам по себе недостаточен. WFA 730д/8 фолдов
+  превысил клиентский таймаут и не сохранён; full-period A/B — экран.
+- **Следующий шаг:** microstructure/news (нужны новые данные) или новый
+  горизонт для momentum+low-vol; forward paper (`docs/46`) продолжает сбор.
 - **Дисциплина:** предрегистрация до прогона, OOS один раз, `engineVersion` +
   commit SHA в каждом артефакте; старые числа не сравниваются.
 

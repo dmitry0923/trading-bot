@@ -58,7 +58,10 @@
   `scripts/paper_momentum_daily.ps1` (state machine, frozen params, `AsOf`
   cutoff, funding fail-closed, авто-гейты в `summary.json`). Старт — первый
   торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05);
-  production-состояние 0 сделок / 0 pending; dry-run 33/33 совпал с pre-screen.
+  production-состояние 0 сделок / 0 pending; dry-run 33/33 совпал с pre-screen;
+  расширенный dry-run 2024-10-24…2026-10-19 — 232+5 открытых, PF 1,644,
+  block p=0,0225 (in-sample parity). Исправлен weekend-funding fail-closed
+  (клиринг только в будни; будний gap остаётся fail-closed).
   Гейты: ≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live.
   LIVE: maxC=1, Kelly, CNYRUBF.
 - **Pairs CNYRUBF/USDRUBF (`docs/47`–`docs/48`):** DAY_1 — 14 сделок,

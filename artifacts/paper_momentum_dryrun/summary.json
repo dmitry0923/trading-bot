@@ -1,0 +1,53 @@
+{
+  "generatedAt": "2026-11-02T09:07:21.0415003+03:00",
+  "asOf": "2026-10-19",
+  "startAfter": "2024-10-24",
+  "params": {
+    "tickers": [
+      "CNYRUBF",
+      "USDRUBF",
+      "EURRUBF",
+      "GLDRUBF",
+      "IMOEXF"
+    ],
+    "momentumBars": 20,
+    "atrBars": 20,
+    "volLookbackBars": 252,
+    "maxVolPercentile": 0.5,
+    "holdBars": 5,
+    "commissionPerSide": 1.5,
+    "slippageBps": 1.0
+  },
+  "closedTrades": 232,
+  "openPositions": 5,
+  "pendingEntries": 0,
+  "firstSignalDate": "2024-10-25",
+  "lastExitDate": "2026-10-16",
+  "stats": {
+    "trades": 232,
+    "net": 45807.32,
+    "pf": 1.644,
+    "winRate": 58.2,
+    "avgNet": 197.45,
+    "medianNet": 99.62,
+    "mddPct": 13.71
+  },
+  "blockBootstrap": {
+    "iterations": 2000,
+    "seed": 42,
+    "pValue": 0.0225,
+    "ci95Low": 4.61,
+    "ci95High": 403.31,
+    "blocks": 147
+  },
+  "gates": {
+    "F1_closedTrades_ge_30": true,
+    "F2_profitFactor_ge_1_30": true,
+    "F3_blockP_lt_0_05": true,
+    "F4_ci95Low_gt_0": true,
+    "F5_mdd_le_40": true
+  },
+  "evaluated": true,
+  "verdict": "PASS",
+  "note": "Forward paper only; no live orders. Verdict after >= 30 closed trades (docs/46)."
+}

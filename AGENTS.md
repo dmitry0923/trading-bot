@@ -126,9 +126,12 @@
   cutoff без неполного бара, funding fail-closed, авто-гейты в `summary.json`).
   Старт — первый торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05),
   production-состояние: 0 сделок / 0 pending. Гейты: ≥ 30 forward-сделок,
-  PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live. Исторический dry-run
-  раннера: 33/33 сделки совпали с pre-screen. LIVE-контур не меняется
-  (maxC=1, Kelly, CNYRUBF).
+  PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live. Исторический
+  dry-run: короткое окно 33/33 совпало с pre-screen; расширенный
+  2024-10-24…2026-10-19 — 232 закрытые + 5 открытых, PF 1,644, block
+  p=0,0225 (in-sample parity, не forward). Исправлен weekend-funding
+  fail-closed (клиринг только в будни; будний gap остаётся fail-closed).
+  LIVE-контур не меняется (maxC=1, Kelly, CNYRUBF).
 - **Pairs CNYRUBF/USDRUBF (`docs/47`–`docs/48`, 2026-11-02):** DAY_1 —
   14 сделок за 4,5 года, OOS 4 сделки PF 0,323 → **INCONCLUSIVE** (тонкая
   выборка); MINUTE_10 — 546 сделок, OOS **149**, PF **0,505**, P=0,9865,

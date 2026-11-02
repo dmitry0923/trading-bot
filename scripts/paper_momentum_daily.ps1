@@ -158,8 +158,11 @@ function Get-FundingCost(
     while ($d -le $end) {
         $key = $d.ToString('yyyy-MM-dd')
         $clearing = $d.AddHours(18).AddMinutes(45)
-        # Клиринг есть только в торговый день (в календаре есть DAY_1-бар).
-        if ($entryDt -lt $clearing -and $clearing -lt $exitDt -and $TradingDates.Contains($key)) {
+        # Клиринг — только рабочий день: в выходные MOEX-бар может быть
+        # (weekend session), но funding_history за выходные не публикуется.
+        # Иначе fail-closed ложно останавливает paper-раннер на субботе.
+        $isWeekend = $d.DayOfWeek -eq [DayOfWeek]::Saturday -or $d.DayOfWeek -eq [DayOfWeek]::Sunday
+        if (-not $isWeekend -and $entryDt -lt $clearing -and $clearing -lt $exitDt -and $TradingDates.Contains($key)) {
             if ($FundingMap.ContainsKey($key)) {
                 $r = [double]$FundingMap[$key]
                 $cost += if ($Direction -gt 0) { $r } else { -$r }

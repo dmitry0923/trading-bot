@@ -82,10 +82,14 @@
   pre-registration, не edge); X3 carry-only — 63 OOS-сделки, PF **1,068**,
   P=0,4215, CI95 [−397; +499], dev cons 0,75 → **REJECTED**. Класс закрыт;
   урок: `longCount+shortCount ≤ universe`.
-- **Следующий шаг:** microstructure/news (нужны новые данные) или новый
-  горизонт/U6+ для momentum; forward paper продолжает сбор.
+- **Intraday ORB на акциях TQBR (`docs/51`):** 9 акций, MINUTE_10 2024–2026,
+  dev 3 257 сделок: PF **0,780**, avg **−150,89 ₽** на 100k, P=0,999,
+  0/3 фолдов → **REJECTED_DEV**; OOS не оценивался. LKOH PF 1,09, 8 из 9 —
+  минус. ORB-класс закрыт на CNYRUBF и акциях.
+- **Следующий шаг:** календарь/overnight на акциях 2018+ или пары на
+  акциях; microstructure/news не покупать; forward paper продолжает сбор.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36`–`docs/50`.
+  `docs/36`–`docs/51`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

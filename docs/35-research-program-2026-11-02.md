@@ -205,11 +205,12 @@ taker PF 1,014 → passive PF **1,117** (+0,103), return +0,028 % → +0,227 %,
 (`L2S4` = 6 ног > U5 = 5 → 0 сделок; ошибка pre-registration, не edge);
 X3 carry-only — 63 OOS-сделки, PF 1,068, P=0,4215, CI95 [−397; +499],
 dev cons 0,75 → **REJECTED**. Урок: проверять `longCount+shortCount ≤
-universe` до прогона. Следующий источник — microstructure/news (нужны новые
-данные) или новый горизонт/U6+ для momentum; forward paper B продолжает сбор. OOS 2022–2024 для FX-гипотезы израсходован; новые пороги на нём
-запрещены. Следующий шаг — новый источник edge (pairs/microstructure/news)
-или CNYRUBF-only execution/passive fill; возврат к momentum+low-vol — только
-на новом независимом горизонте.
+universe` до прогона. **Intraday ORB на акциях TQBR (`docs/51`) —
+REJECTED_DEV:** 3 257 сделок, PF **0,780**, avg **−150,89 ₽**, P=0,999,
+0/3 фолдов; OOS не оценивался. Класс ORB закрыт на CNYRUBF и акциях.
+OOS 2022–2024 для FX-гипотезы израсходован; новые пороги на нём запрещены.
+Остались: календарь/overnight на акциях 2018+ и пары на акциях; платные
+данные (microstructure/news) не покупать. Forward paper B продолжает сбор.
 
 ### 3.1 Что именно делать в каждом направлении
 
@@ -376,3 +377,4 @@ universe` до прогона. Следующий источник — microstru
 | 2026-11-02 | Passive fill A/B (`docs/49`) | `scripts/research_passive_fill.ps1`, `artifacts/passive_fill_2026-11-02_{taker,passive}_full.json` | Full 730д: taker PF 1,014 / +0,028 % / Sharpe 0,059; passive PF **1,117** / +0,227 % / Sharpe 0,458 (83 сделки). Пассив улучшает, но PF < 1,30 → **REJECTED**; WFA 730д/8 фолдов превысил таймаут и не сохранён |
 | 2026-11-02 | Cross-sectional momentum/carry U5 (`docs/50`) | `scripts/research_portfolio_xs.ps1`, `artifacts/portfolio_xs_2026-11-02_*` | X1/X2 (`L2S4` = 6 ног) на U5 (5 инструментов) → **0 сделок, INVALID config** (ошибка pre-registration, не edge). X3 carry-only: 63 OOS сделки, PF **1,068**, P=0,4215, CI95 [−397; +499], dev cons 0,75 → **REJECTED**. Класс закрыт; урок: проверять `long+short ≤ universe` |
 | 2026-11-02 | Forward paper B: предрегистрация + раннер (`docs/46`) | `scripts/paper_momentum_daily.ps1`, `artifacts/paper_momentum/{state,summary}.json`, `artifacts/paper_momentum/trades.csv` | Заморожены правила pre-screen; state machine с `AsOf`-cutoff, frozen params, funding fail-closed, авто-гейтами F1–F5. Старт — первый торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05); production-состояние 0 сделок / 0 pending. Исторический dry-run: 33/33 сделки совпали с pre-screen (±0,02 ₽), повторный запуск без дублей. LIVE не затронут |
+| 2026-11-02 | Intraday ORB на акциях TQBR (`docs/51`) | `scripts/research_equity_intraday_orb.ps1`, `artifacts/equity_intraday_orb_2026-11-02_{summary.json,dev.csv}` | 9 акций, 646 будних дней, dev 3 257 сделок: PF **0,780**, avg **−150,89 ₽** (100k notional), P(noEdge)=0,999, CI95 [−245,85; −55,86], 0/3 фолдов → **REJECTED_DEV**; OOS не оценивался. Только LKOH PF 1,09, 8 из 9 — минус. ORB-класс закрыт на CNYRUBF и акциях |

@@ -1,0 +1,151 @@
+{
+  "generatedAt": "2026-11-02T10:41:39.4302381+03:00",
+  "tickers": [
+    "GAZP",
+    "LKOH",
+    "MGNT",
+    "NVTK",
+    "PLZL",
+    "ROSN",
+    "SBER",
+    "TATN",
+    "VTBR"
+  ],
+  "timeframe": "MINUTE_10",
+  "startDate": "2024-10-24",
+  "endDate": "last complete bar < current_date",
+  "notionalPerTrade": 100000.0,
+  "baseCosts": {
+    "commissionPctPerSide": 0.05,
+    "slippageBpsPerSide": 1.0
+  },
+  "stressCosts": {
+    "commissionPctPerSide": 0.1,
+    "slippageBpsPerSide": 3.0
+  },
+  "tradingDays": 646,
+  "devDays": 452,
+  "devLast": "2026-04-08",
+  "oosFirst": "2026-04-09",
+  "dev": {
+    "trades": 3257,
+    "net": -491442.12,
+    "pf": 0.78,
+    "winRate": 45.4,
+    "avgNet": -150.89,
+    "medianNet": -135.57,
+    "ciLow": -245.85,
+    "ciHigh": -55.86,
+    "pNoEdge": 0.999,
+    "mddRub": 497781.96,
+    "mddPct": 497.78,
+    "avgCapturedPct": 38.92,
+    "avgDirectionalEdgePct": -45.99,
+    "avgHoldBars": 74.1
+  },
+  "devConsistency": {
+    "consistency": 0.0,
+    "folds": [
+      {
+        "fold": 1,
+        "dates": "2024-10-24..2025-04-21",
+        "trades": 1083,
+        "net": -264002.48
+      },
+      {
+        "fold": 2,
+        "dates": "2025-04-22..2025-10-13",
+        "trades": 1094,
+        "net": -108016.19
+      },
+      {
+        "fold": 3,
+        "dates": "2025-10-14..2026-04-08",
+        "trades": 1080,
+        "net": -119423.45
+      }
+    ]
+  },
+  "devByTicker": [
+    {
+      "ticker": "GAZP",
+      "trades": 362,
+      "pf": 0.752,
+      "net": -70767.27,
+      "avgNet": -195.49,
+      "winRate": 47.0
+    },
+    {
+      "ticker": "LKOH",
+      "trades": 360,
+      "pf": 1.087,
+      "net": 14000.31,
+      "avgNet": 38.89,
+      "winRate": 49.4
+    },
+    {
+      "ticker": "MGNT",
+      "trades": 363,
+      "pf": 0.582,
+      "net": -121077.5,
+      "avgNet": -333.55,
+      "winRate": 40.8
+    },
+    {
+      "ticker": "NVTK",
+      "trades": 363,
+      "pf": 0.849,
+      "net": -47935.14,
+      "avgNet": -132.05,
+      "winRate": 46.3
+    },
+    {
+      "ticker": "PLZL",
+      "trades": 357,
+      "pf": 0.849,
+      "net": -32793.39,
+      "avgNet": -91.86,
+      "winRate": 46.2
+    },
+    {
+      "ticker": "ROSN",
+      "trades": 363,
+      "pf": 0.862,
+      "net": -31825.21,
+      "avgNet": -87.67,
+      "winRate": 45.2
+    },
+    {
+      "ticker": "SBER",
+      "trades": 363,
+      "pf": 0.743,
+      "net": -46167.7,
+      "avgNet": -127.18,
+      "winRate": 43.3
+    },
+    {
+      "ticker": "TATN",
+      "trades": 363,
+      "pf": 0.713,
+      "net": -78952.11,
+      "avgNet": -217.5,
+      "winRate": 45.2
+    },
+    {
+      "ticker": "VTBR",
+      "trades": 363,
+      "pf": 0.732,
+      "net": -75924.11,
+      "avgNet": -209.16,
+      "winRate": 45.2
+    }
+  ],
+  "devPassed": false,
+  "oosEvaluated": false,
+  "oos": null,
+  "oosConsistency": null,
+  "oosByTicker": [],
+  "stressOos": null,
+  "verdict": "REJECTED_DEV",
+  "notes": "Standalone pre-screen (docs/51), not a formal engine verdict. PASS only means implement the same variant in BacktestEngine and run docs/30 protocol."
+}

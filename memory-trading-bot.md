@@ -61,8 +61,14 @@
   production-состояние 0 сделок / 0 pending; dry-run 33/33 совпал с pre-screen.
   Гейты: ≥ 30 сделок, PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live.
   LIVE: maxC=1, Kelly, CNYRUBF.
+- **Pairs CNYRUBF/USDRUBF (`docs/47`–`docs/48`):** DAY_1 — 14 сделок,
+  OOS 4, PF 0,323 → **INCONCLUSIVE** (тонкая выборка); MINUTE_10 — 546
+  сделок, OOS **149**, PF **0,505**, P=0,9865, CI95 [−50,13; −2,86] ₽,
+  WFA PF 0,625/consistency 0,167 → **REJECTED**. Класс пары закрыт.
+- **Следующий шаг:** microstructure/news или CNYRUBF-only execution/passive
+  fill; momentum+low-vol — forward paper.
 - Полные детали: `docs/35-research-program-2026-11-02.md`,
-  `docs/36`–`docs/45`.
+  `docs/36`–`docs/48`.
 
 ## Архив (2026-10-25, P3 forward-пилот микроструктуры)
 - **Найден и исправлен дефект данных пилота:** `MicrostructureRestPoller` опрашивал Alor 24/7,

@@ -194,8 +194,12 @@ p=0,0605 (D3 не пройден); OOS-диагностика (тот же пе�
 **3,01**, block p=**0,002**, CI95 [+217; +1381], MDD 9,86 % — сильный
 hypothesis-generating сигнал, но folds=3 выбраны после дегенерации folds=8,
 период пересекается с dev, и это не отменяет fixed-split REJECTED.
-**B (forward paper) — следующий шаг** как предрегистрированный forward test
-на новых данных, не live; live-контур не меняется. OOS 2022–2024 для FX-гипотезы израсходован; новые пороги на нём
+**B (forward paper) — запущен** (`docs/46`) как предрегистрированный forward
+test на новых данных, не live; live-контур не меняется.
+**Pairs CNYRUBF/USDRUBF закрыт:** DAY_1 — `INCONCLUSIVE` (14 сделок, OOS 4,
+PF 0,323), MINUTE_10 — `REJECTED` (546 сделок, OOS 149, PF **0,505**,
+P=0,9865, CI95 [−50; −3] ₽; WFA PF 0,625). Следующий источник —
+microstructure/news или CNYRUBF-only execution/passive fill. OOS 2022–2024 для FX-гипотезы израсходован; новые пороги на нём
 запрещены. Следующий шаг — новый источник edge (pairs/microstructure/news)
 или CNYRUBF-only execution/passive fill; возврат к momentum+low-vol — только
 на новом независимом горизонте.
@@ -360,4 +364,6 @@ hypothesis-generating сигнал, но folds=3 выбраны после де�
 | 2026-11-02 | Confirmation momentum+low-vol на акциях TQBR 2019–2026 (pre-registered, `docs/43`) | `scripts/research_equity_momentum.ps1`, `artifacts/equity_momentum_2026-11-02_summary.json` | 1 859 сделок, PF **1,044**, avg +57,89 ₽, block p=0,2875, CI95 [−141; +251], MDD **132 %** → **REJECTED**. Только LKOH PF 1,57 / NVTK 1,22; 6 из 8 — около нуля/минус. Momentum+low-vol не универсален; FX-портфель может быть RUB-трендовой спецификой |
 | 2026-11-02 | HOUR_1 momentum+low-vol на 5 фьючерсах (шаг C, `docs/44`) | `scripts/research_hourly_momentum.ps1`, `artifacts/hourly_momentum_2026-11-02_summary.json` | Dev: 4 271 сделка, PF **0,942**, avg −4,72 ₽, block p=0,8295; только GLDRUBF PF 1,08 → **NO_CANDIDATE**, OOS не запускался. Дневной edge не переносится на час |
 | 2026-11-02 | Formal engine-валидация FX-портфеля (шаг A, `docs/45`) | `MomentumBacktestSignalGenerator` + `momentumSignalEnabled`, `scripts/research_engine_momentum.ps1`, `scripts/research_engine_momentum_wfa.ps1`, `artifacts/engine_momentum_2026-11-02_*`, `artifacts/engine_momentum_wfa_2026-11-02_*` | Fixed-split: dev 209 сделок, PF **1,436**, block p=0,0605 → **REJECTED** по D3; OOS-диагностика: 135 сделок, PF 1,183, block p=0,2795. **WFA folds=3 (post-hoc):** 75 OOS-сделок, PF **3,01**, block p=**0,002**, CI95 [+217; +1381], MDD 9,86 % — сильный, но post-hoc; folds=8 дегенеративны (0 сделок). B — следующий шаг как pre-registered forward paper, не live |
+| 2026-11-02 | Pairs CNYRUBF/USDRUBF DAY_1 (`docs/47`) | `scripts/research_pairs_cnyusd.ps1`, `artifacts/pairs_cnyusd_2026-11-02_*` | 14 сделок за 4,5 года; OOS 4 сделки, PF 0,323, p=0,786; WFA 3 сделки PF 0,430 → **INCONCLUSIVE** (тонкая выборка); проверка мощности — MINUTE_10 |
+| 2026-11-02 | Pairs CNYRUBF/USDRUBF MINUTE_10 (`docs/48`) | `scripts/research_pairs_cnyusd.ps1 -Timeframe MINUTE_10`, `artifacts/pairs_cnyusd_minute_2026-11-02_*` | 546 сделок; OOS 149 сделок, PF **0,505**, P=0,9865, CI95 [−50,13; −2,86] (отрицательный); WFA PF 0,625, consistency 0,167 → **REJECTED**. Класс пары закрыт |
 | 2026-11-02 | Forward paper B: предрегистрация + раннер (`docs/46`) | `scripts/paper_momentum_daily.ps1`, `artifacts/paper_momentum/{state,summary}.json`, `artifacts/paper_momentum/trades.csv` | Заморожены правила pre-screen; state machine с `AsOf`-cutoff, frozen params, funding fail-closed, авто-гейтами F1–F5. Старт — первый торговый день после 2026-11-03 (2026-11-04 праздник → 2026-11-05); production-состояние 0 сделок / 0 pending. Исторический dry-run: 33/33 сделки совпали с pre-screen (±0,02 ₽), повторный запуск без дублей. LIVE не затронут |

@@ -129,8 +129,13 @@
   PF ≥ 1,30, block p < 0,05, CI > 0, MDD ≤ 40 %; не live. Исторический dry-run
   раннера: 33/33 сделки совпали с pre-screen. LIVE-контур не меняется
   (maxC=1, Kelly, CNYRUBF).
-- **Следующий шаг:** новый источник edge (pairs/microstructure/news) или
-  CNYRUBF-only execution/passive fill.
+- **Pairs CNYRUBF/USDRUBF (`docs/47`–`docs/48`, 2026-11-02):** DAY_1 —
+  14 сделок за 4,5 года, OOS 4 сделки PF 0,323 → **INCONCLUSIVE** (тонкая
+  выборка); MINUTE_10 — 546 сделок, OOS **149**, PF **0,505**, P=0,9865,
+  CI95 [−50,13; −2,86] ₽ (отрицательный), WFA PF 0,625/consistency 0,167 →
+  **REJECTED**. Класс пары закрыт; OOS 2024–2026 израсходован.
+- **Следующий шаг:** microstructure/news или CNYRUBF-only execution/passive
+  fill; momentum+low-vol продолжает forward paper (`docs/46`).
 - **Дисциплина:** предрегистрация до прогона, OOS один раз, `engineVersion` +
   commit SHA в каждом артефакте; старые числа не сравниваются.
 

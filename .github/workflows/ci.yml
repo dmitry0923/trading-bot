@@ -149,6 +149,9 @@ jobs:
       # LIVE-guard: на автопушке в main бот всегда SIMULATION. Значение нигде
       # не переопределяется (из секрета TRADING_MODE не читается).
       DEPLOY_MODE: SIMULATION
+      # true → docker-compose.managed.yml + внешние DB_HOST/REDIS_HOST
+      # (Managed PostgreSQL/Redis); false/пусто → локальные контейнеры.
+      USE_MANAGED_DB: ${{ vars.USE_MANAGED_DB }}
     steps:
       - uses: actions/checkout@v4
 
@@ -195,7 +198,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
           # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
-          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
+          source: "docker-compose.yml,docker-compose.prod.yml,docker-compose.managed.yml,alertmanager.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
           # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
@@ -205,7 +208,7 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          envs: REGISTRY,TAG,DEPLOY_MODE
+          envs: REGISTRY,TAG,DEPLOY_MODE,USE_MANAGED_DB
           script: |
             set -e
             cd /opt/trading-bot
@@ -243,9 +246,17 @@ jobs:
             bash "$BACKUP_SCRIPT"
 
             COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
+            # Managed PostgreSQL/Redis: убираем локальные контейнеры; DB_HOST/REDIS_HOST
+            # в .env должны указывать на managed-хосты (см. docs/55).
+            REMOVE_ORPHANS=""
+            if [ "${USE_MANAGED_DB:-false}" = "true" ]; then
+              COMPOSE="$COMPOSE -f docker-compose.managed.yml"
+              # Первое переключение на Managed DB: убрать старые postgres/redis.
+              REMOVE_ORPHANS="--remove-orphans"
+            fi
             $COMPOSE pull
             # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.
-            $COMPOSE up -d --wait --wait-timeout 240
+            $COMPOSE up -d --wait --wait-timeout 240 $REMOVE_ORPHANS
             docker image prune -f
             $COMPOSE ps
 
@@ -276,6 +287,7 @@ jobs:
       DEPLOY_MODE: LIVE
       DEPLOY_TICKERS: CNYRUBF
       DEPLOY_ALLOWLIST: CNYRUBF
+      USE_MANAGED_DB: ${{ vars.USE_MANAGED_DB }}
     steps:
       - uses: actions/checkout@v4
 
@@ -300,7 +312,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
           # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
-          source: "docker-compose.yml,docker-compose.prod.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
+          source: "docker-compose.yml,docker-compose.prod.yml,docker-compose.managed.yml,alertmanager.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
           # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
@@ -321,7 +333,7 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          envs: REGISTRY,TAG,DEPLOY_MODE,DEPLOY_TICKERS,DEPLOY_ALLOWLIST
+          envs: REGISTRY,TAG,DEPLOY_MODE,DEPLOY_TICKERS,DEPLOY_ALLOWLIST,USE_MANAGED_DB
           script: |
             set -e
             cd /opt/trading-bot
@@ -359,8 +371,16 @@ jobs:
             bash "$BACKUP_SCRIPT"
 
             COMPOSE="docker compose --env-file .env --env-file .env.deploy -f docker-compose.yml -f docker-compose.prod.yml"
+            # Managed PostgreSQL/Redis: убираем локальные контейнеры; DB_HOST/REDIS_HOST
+            # в .env должны указывать на managed-хосты (см. docs/55).
+            REMOVE_ORPHANS=""
+            if [ "${USE_MANAGED_DB:-false}" = "true" ]; then
+              COMPOSE="$COMPOSE -f docker-compose.managed.yml"
+              # Первое переключение на Managed DB: убрать старые postgres/redis.
+              REMOVE_ORPHANS="--remove-orphans"
+            fi
             $COMPOSE pull
             # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.
-            $COMPOSE up -d --wait --wait-timeout 240
+            $COMPOSE up -d --wait --wait-timeout 240 $REMOVE_ORPHANS
             docker image prune -f
             $COMPOSE ps

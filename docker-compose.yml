@@ -136,8 +136,10 @@ services:
       DB_NAME: ${DB_NAME:-trading_bot}
       DB_USER: ${DB_USER:-trader}
       DB_PASS: ${DB_PASS:?DB_PASS is required}
+      DB_SSL_MODE: ${DB_SSL_MODE:-disable}
       REDIS_HOST: ${REDIS_HOST:-redis}
       REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_SSL_ENABLED: ${REDIS_SSL_ENABLED:-false}
       RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
       RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}

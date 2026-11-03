@@ -41,12 +41,14 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
+    # DB_SSL_MODE: disable (local/testcontainers) | require (Yandex Managed PG).
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}?sslmode=${DB_SSL_MODE:disable}
     username: ${DB_USER:trader}
     password: ${DB_PASS:}
     driver-class-name: org.postgresql.Driver
   r2dbc:
-    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}
+    # R2DBC использует camelCase-параметр sslMode (значения те же).
+    url: r2dbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:trading_bot}?sslMode=${DB_SSL_MODE:disable}
     username: ${DB_USER:trader}
     password: ${DB_PASS:}
     pool:
@@ -65,6 +67,9 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 5s
+      # Yandex Managed Redis: 6379 без TLS внутри VPC; 6380 + REDIS_SSL_ENABLED=true.
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}

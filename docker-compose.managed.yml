@@ -1,0 +1,21 @@
+# Override для Yandex Managed PostgreSQL/Redis (docs/55-sim-deploy-yandex-cloud.md).
+#
+# Использование:
+#   docker compose --env-file .env --env-file .env.deploy \
+#     -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.managed.yml up -d --wait
+#
+# Требования:
+# - DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASS указывают на Managed PostgreSQL;
+# - REDIS_HOST/REDIS_PORT — на Managed Redis;
+# - в Managed PostgreSQL включено расширение timescaledb (иначе candles
+#   создадутся обычной таблицей — деградация, не отказ; см. миграцию 012).
+#
+# Локальные postgres/redis удаляются из проекта, чтобы не занимать память и
+# не путать healthcheck'и. Приложение стартует без depends_on: готовность БД
+# проверяется Liquibase/health, контейнер перезапускается при недоступности.
+services:
+  postgres: !reset null
+  redis: !reset null
+  app:
+    depends_on: !reset null

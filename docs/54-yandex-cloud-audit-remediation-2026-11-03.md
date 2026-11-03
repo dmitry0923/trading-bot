@@ -272,10 +272,25 @@ E2E с реальным SA-ключом на этой машине не выпо
 отдельного риск-ревью. Live-параметры не меняются: `maxC=1`, Kelly,
 `CNYRUBF`.
 
+### Подготовка SIM-деплоя
+
+Runbook: `docs/55-sim-deploy-yandex-cloud.md`. Добавлены:
+
+- `docker-compose.managed.yml` — убирает локальные `postgres`/`redis`
+  (`!reset`) для Managed PostgreSQL/Redis; включается repo-переменной
+  `USE_MANAGED_DB=true`, CI добавляет `--remove-orphans` при переключении.
+- `DB_SSL_MODE` (`disable` → local/testcontainers, `require` → Managed PG) в
+  JDBC/R2DBC URL; `REDIS_SSL_ENABLED` для TLS-порта Managed Redis.
+- CI `deploy-sim`/`deploy-live` копируют `alertmanager.yml` (иначе сервис
+  Alertmanager не стартовал на VM) и `docker-compose.managed.yml`.
+- `scripts/cloud/vm_bootstrap.sh` — Docker + compose plugin, swap, каталог.
+- `scripts/cloud/smoke_sim.ps1` — probes, login, `trading/status`,
+  `dashboard`.
+
 ## 11. Верификация
 
 - `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
-  **BUILD SUCCESSFUL in 21m 50s**; unit **3 394** (0 падений, 1 skipped),
+  **BUILD SUCCESSFUL in 27m 8s**; unit **3 394** (0 падений, 1 skipped),
   integration **225** (0 падений, 1 skipped), ktlint — чисто.
 - Lockbox: 15 unit-тестов, включая проверку PS256-подписи публичным ключом и
   отсечение префикса PEM.
@@ -295,6 +310,15 @@ E2E с реальным SA-ключом на этой машине не выпо
 - `docker stats` — **1.10 GiB / 1.5 GiB**.
 - `docker compose config` с `GIT_COMMIT` в env — `build.args.GIT_COMMIT`
   подставлен (exit 0).
+- `docker compose -f docker-compose.yml -f docker-compose.prod.yml
+  -f docker-compose.managed.yml config` — exit 0; сервисы `postgres`/`redis`
+  отсутствуют, `DB_HOST`/`REDIS_HOST` берутся из env, `DB_SSL_MODE`/
+  `REDIS_SSL_ENABLED` пробрасываются в app.
+- `actionlint .github/workflows/ci.yml` — новых замечаний нет (остались
+  pre-existing SC2086 и `secrets` в `environment.url`); `shellcheck`
+  `vm_bootstrap.sh` — чисто.
+- `scripts/cloud/smoke_sim.ps1` против живого SIM-контейнера — **6/6 PASS**
+  (liveness/readiness/health, login, `trading/status`, `dashboard`).
 - `docker compose -f docker-compose.yml -f docker-compose.prod.yml config`
   — exit 0; healthcheck указывает на `/actuator/health/liveness`;
   `alertmanager`/`alert-sink` присутствуют в конфиге.

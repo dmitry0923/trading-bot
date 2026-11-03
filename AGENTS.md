@@ -402,7 +402,7 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   (WARN в логе, `macro.cbr.rates.refresh{status=EMPTY}`), ставка устаревает до `status=STALE`,
   а при пустой БД торговый контур уходит на статичную `macro.cbr-rate`.
 
-## Production hardening 2026-11-03 (аудит Yandex Cloud, пакет 1.1+1.2)
+## Production hardening 2026-11-03 (аудит Yandex Cloud, P0/P1 + SIM-подготовка)
 
 - **P0-1 исправлен:** `management.endpoint.health.probes.enabled=true`,
   Docker healthcheck → `/actuator/health/liveness` (публичный),
@@ -451,6 +451,12 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
   входы через `TradingGate`; force-close — только
   `TradingControlService` при `forceCloseEnabled && forceCloseTime`.
+- **SIM-деплой подготовлен:** runbook `docs/55-sim-deploy-yandex-cloud.md`
+  (+ `scripts/cloud/vm_bootstrap.sh`, `scripts/cloud/smoke_sim.ps1`,
+  `docker-compose.managed.yml`). Managed PostgreSQL/Redis включаются
+  repo-переменной `USE_MANAGED_DB=true`; `DB_SSL_MODE=require` для Managed PG,
+  `REDIS_SSL_ENABLED` для TLS-порта Redis. CI копирует `alertmanager.yml` —
+  без него Alertmanager на VM не стартовал бы.
 - **LIVE остаётся NO-GO** несмотря на закрытые код-блокеры P0-1/P0-2/P0-3:
   до B forward paper F1–F5, deployment-gate и отдельного риск-ревью.
   Параметры live не менялись: `maxC=1`, Kelly, `CNYRUBF`.

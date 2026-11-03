@@ -1,6 +1,7 @@
 package com.trading.bot.integration
 
 import com.trading.bot.repository.DailyRiskSnapshotRepository
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -77,6 +78,20 @@ class DailyRiskSnapshotRepositoryIntegrationTest : AbstractTestContainerTest() {
 
         assertEquals(listOf(today), recent.map { it.tradeDate })
     }
+
+    @Test
+    fun `findRecentAwait returns the same window without blocking the caller`(): Unit =
+        runBlocking {
+            val today = LocalDate.now()
+            repo.upsert(today.minusDays(2), BigDecimal("-500"), true, BigDecimal("-500"))
+            repo.upsert(today, BigDecimal("300"), false, BigDecimal.ZERO)
+
+            val recent = repo.findRecentAwait(30)
+
+            assertEquals(2, recent.size)
+            assertEquals(listOf(today.minusDays(2), today), recent.map { it.tradeDate })
+            assertEquals(0, BigDecimal("300").compareTo(recent.last().dailyPnl))
+        }
 
     @Test
     fun `upsert on the same date updates the row instead of inserting a duplicate`() {

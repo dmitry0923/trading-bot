@@ -247,16 +247,19 @@ class TradingAccountControllerTest {
         runBlocking {
             Mockito.`when`(tradingAccountService.findById(1L)).thenReturn(account(1L, "A", "PA"))
             Mockito
-                .`when`(dailyRiskSnapshotRepository.findRecent(Mockito.anyInt(), Mockito.eq(1L)))
+                .`when`(dailyRiskSnapshotRepository.findRecentAwait(Mockito.anyInt(), Mockito.eq(1L)))
                 .thenReturn(listOf(snapshot))
         }
 
         val result = runBlocking { controller.dailyPnlHistory(1L, 30) }
         assertEquals(1L, result["accountId"])
         assertEquals(1, (result["points"] as List<*>).size)
-        runBlocking {
-            Mockito.verify(dailyRiskSnapshotRepository).findRecent(30, 1L)
-        }
+        val calls =
+            Mockito
+                .mockingDetails(dailyRiskSnapshotRepository)
+                .invocations
+                .count { it.method.name == "findRecentAwait" }
+        assertEquals(1, calls)
     }
 
     @Test

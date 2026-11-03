@@ -83,9 +83,8 @@ import com.trading.bot.service.TradingBotService
 import com.trading.bot.service.TradingControlService
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.web.bind.annotation.GetMapping
@@ -385,7 +384,11 @@ class ApiController(
     }
 
     private fun requireAccountBlocking(accountId: Long?) {
-        if (accountId != null && runBlocking { tradingAccountService.findById(accountId) } == null) {
+        if (accountId == null) return
+        // SSE-эндпоинт не suspend (нужен SseEmitter); ограничиваем ожидание,
+        // чтобы недоступность БД не вешала servlet-поток бессрочно.
+        val account = runBlocking { withTimeoutOrNull(2_000) { tradingAccountService.findById(accountId) } }
+        if (account == null) {
             throw ResponseStatusException(
                 HttpStatus.NOT_FOUND,
                 "account not found: $accountId",
@@ -504,17 +507,13 @@ class ApiController(
         @RequestParam(defaultValue = "30") days: Int,
     ): Map<String, Any> {
         val clamped = days.coerceIn(1, 365)
-        // DailyRiskSnapshotRepository — блокирующий (Mono.block): offload на IO,
-        // suspend-контроллер выполняется на event loop (иначе IllegalStateException).
         val points =
-            withContext(Dispatchers.IO) {
-                dailyRiskSnapshotRepository.findRecent(clamped).map { snapshot ->
-                    mapOf(
-                        "tradeDate" to snapshot.tradeDate.toString(),
-                        "pnl" to snapshot.dailyPnl,
-                        "limitReached" to snapshot.limitReached,
-                    )
-                }
+            dailyRiskSnapshotRepository.findRecentAwait(clamped).map { snapshot ->
+                mapOf(
+                    "tradeDate" to snapshot.tradeDate.toString(),
+                    "pnl" to snapshot.dailyPnl,
+                    "limitReached" to snapshot.limitReached,
+                )
             }
         return mapOf("points" to points)
     }

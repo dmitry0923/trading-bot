@@ -17,6 +17,8 @@
 | **P1-1** CBR TLS + funding URL | **исправлено** | HARICA-сертификаты в образе, `-Djavax.net.ssl.trustStore`, дефолтные FORTS-URL в `FundingConfig` |
 | **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
+| **P1-5** blocking DB/пулы | **исправлено частично** | HTTP-путь переведён на suspend (`findRecentAwait`), блокирующие event-path вызовы ограничены 5 с, R2DBC/Hikari лимиты; полный suspend-рефактор `updateDailyPnl` — отдельная задача |
+| **P1-6** память/Managed DB | **исправлено** | `MaxRAMPercentage=50`, убран `AlwaysPreTouch`, `mem_limit` всем сервисам, `DB_HOST`/`REDIS_HOST` из env, `TRACE_STORAGE_ENABLED=false` |
 
 ## 2. P0-1: health/liveness
 
@@ -122,13 +124,52 @@
 нет). Добавлять защиту от несуществующего цикла не стали; при следующем
 аудите этот пункт нужно проверять по фактическому коду, а не по отчёту.
 
-## 6. Что осталось из аудита
+## 6. P1-5/P1-6: пулы БД и память
+
+### P1-5 — блокирующие вызовы и лимиты
+
+- `DailyRiskSnapshotRepository`: добавлены `findRecentAwait` и
+  `deleteAllAwait`; `ApiController.getDailyPnlHistory` и
+  `TradingAccountController.dailyPnlHistory` используют suspend-версию без
+  `withContext(Dispatchers.IO)`.
+- Оставшиеся блокирующие `findByDate`/`findRecent`/`upsert`/`deleteAll`
+  (event/scheduler-пути `DrawdownProtectionService`, тесты) получили
+  **`block(5s)`** вместо бессрочного `.block()`: при исчерпании пула вызов
+  падает по таймауту, а не вешает поток навсегда.
+- `ApiController.requireAccountBlocking` (SSE-эндпоинт, не может быть suspend)
+  ограничен `withTimeoutOrNull(2s)`.
+- R2DBC pool: `max-acquire-time=5s`, `max-idle-time=10m`,
+  `max-life-time=30m`, `validation-query=SELECT 1`.
+- Liquibase JDBC/Hikari: `maximum-pool-size=2`, `minimum-idle=0`,
+  `idle-timeout=30s`, `max-lifetime=30m`, `connection-timeout=5s` — на
+  Managed PostgreSQL не держим 10 лишних коннектов.
+- **Остаток:** `DrawdownProtectionService.updateDailyPnl` остаётся
+  не-suspend (вызывается из `DailyLossCircuitBreaker`/`RiskManagementService`);
+  его запись ограничена 5 с, но полный перевод на `suspend` —
+  отдельный рефакторинг с проверкой порядка halt/закрытия.
+
+### P1-6 — память и инфраструктура
+
+- `Dockerfile`: `-XX:MaxRAMPercentage=50.0`, убран `-XX:+AlwaysPreTouch`
+  (на 4 ГБ VM pre-touch физически занимал ~3 ГБ heap до старта).
+- `docker-compose.yml`: явные `mem_limit` — app 1536m, postgres 768m,
+  redis/minio/rabbitmq 192m, prometheus 384m, grafana 192m, frontend 64m
+  (сумма ≈3.5 ГБ, остаётся запас ОС).
+- `DB_HOST`/`DB_PORT`/`REDIS_HOST`/`REDIS_PORT` берутся из env с local-дефолтами
+  (`${DB_HOST:-postgres}` и т.д.) — можно подключить Managed PostgreSQL/Redis.
+- `TRACE_STORAGE_ENABLED` по умолчанию **false** (MinIO-трейсы не пишутся без
+  явного включения).
+- `.env.example` документирует лимиты и внешние хосты.
+- **Оговорка:** при `APP_MEM_LIMIT=1536m` JVM heap ≈768 МБ; для тяжёлых
+  backtest/WFA на той же VM этого мало. Research-прогоны лучше выносить на
+  отдельную VM/профиль, а не поднимать лимит на 4 ГБ инстансе.
+
+## 7. Что осталось из аудита
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
 | P1-4 имена метрик/алерты/Alertmanager | высокий | следующий пакет |
-| P1-5 `.block()`/пулы БД | средний | следующий пакет |
-| P1-6 память 4 ГБ/Managed DB | высокий для 4 ГБ VM | перед SIM-деплоем |
+| Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после P1-4 |
 | P0-2 `GIT_COMMIT` в образе | блокер LIVE | перед LIVE |
 | P0-3 Lockbox IAM (`kid`/PS256) | блокер LIVE | перед LIVE |
 | P2-1…P2-5 | security/гигиена | перед публичным деплоем |
@@ -137,11 +178,11 @@
 P0-2/P0-3 и прохождения B (forward paper) + deployment-gate + риск-ревью.
 Live-параметры не меняются: `maxC=1`, Kelly, `CNYRUBF`.
 
-## 7. Верификация
+## 8. Верификация
 
 - `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
-  **BUILD SUCCESSFUL in 21m 42s**; unit **3 391** (0 падений, 1 skipped),
-  integration **224** (0 падений, 1 skipped), ktlint — чисто.
+  **BUILD SUCCESSFUL in 22m 6s**; unit **3 391** (0 падений, 1 skipped),
+  integration **225** (0 падений, 1 skipped), ktlint — чисто.
 - `docker build` — успешно; оба HARICA-сертификата импортированы в
   `/app/cacerts`.
 - Контейнер на `trading-bot_default` (SIMULATION):

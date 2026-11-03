@@ -3,11 +3,13 @@ package com.trading.bot.repository
 import com.trading.bot.infrastructure.db.require
 import com.trading.bot.model.entity.DailyRiskSnapshot
 import io.r2dbc.spi.Row
+import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.reactor.awaitSingleOrNull
 import org.springframework.r2dbc.core.DatabaseClient
 import org.springframework.stereotype.Repository
 import java.math.BigDecimal
 import java.time.Clock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -23,6 +25,14 @@ import java.time.ZoneId
 class DailyRiskSnapshotRepository(
     private val databaseClient: DatabaseClient,
 ) {
+    private companion object {
+        /**
+         * Блокирующие вызовы остаются только на event/scheduler-путях; без
+         * таймаута `.block()` зависал бы бессрочно при исчерпании R2DBC-пула.
+         */
+        val BLOCK_TIMEOUT: Duration = Duration.ofSeconds(5)
+    }
+
     private fun toDailyRiskSnapshot(row: Row): DailyRiskSnapshot =
         DailyRiskSnapshot(
             id = row.get("id", Long::class.javaObjectType),
@@ -48,7 +58,7 @@ class DailyRiskSnapshotRepository(
         return finalSpec
             .map { row, _ -> toDailyRiskSnapshot(row) }
             .one()
-            .block()
+            .block(BLOCK_TIMEOUT)
     }
 
     /**
@@ -83,12 +93,39 @@ class DailyRiskSnapshotRepository(
             .map { row, _ -> toDailyRiskSnapshot(row) }
             .all()
             .collectList()
-            .block()
+            .block(BLOCK_TIMEOUT)
             ?: emptyList()
     }
 
+    /** Suspend-версия [findRecent]: HTTP-путь без `.block()`/IO-обхода. */
+    suspend fun findRecentAwait(
+        days: Int,
+        accountId: Long? = null,
+    ): List<DailyRiskSnapshot> {
+        val today = LocalDate.now(Clock.system(ZoneId.of("Europe/Moscow")))
+        val sinceDate = today.minusDays((days - 1).coerceAtLeast(0).toLong())
+        val sql =
+            if (accountId == null) {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate AND account_id IS NULL ORDER BY trade_date ASC"
+            } else {
+                "SELECT * FROM daily_risk_snapshot WHERE trade_date >= :sinceDate AND account_id = :accountId ORDER BY trade_date ASC"
+            }
+        val spec = databaseClient.sql(sql).bind("sinceDate", sinceDate)
+        val finalSpec = if (accountId != null) spec.bind("accountId", accountId) else spec
+        return finalSpec
+            .map { row, _ -> toDailyRiskSnapshot(row) }
+            .all()
+            .collectList()
+            .awaitSingle()
+    }
+
     fun deleteAll() {
-        databaseClient.sql("DELETE FROM daily_risk_snapshot").then().block()
+        databaseClient.sql("DELETE FROM daily_risk_snapshot").then().block(BLOCK_TIMEOUT)
+    }
+
+    /** Suspend-версия [deleteAll] для тестов/сервисных путей. */
+    suspend fun deleteAllAwait() {
+        databaseClient.sql("DELETE FROM daily_risk_snapshot").then().awaitSingleOrNull()
     }
 
     /**
@@ -137,7 +174,7 @@ class DailyRiskSnapshotRepository(
         val finalSpec = if (accountId != null) withPeak.bind("accountId", accountId) else withPeak
         finalSpec
             .then()
-            .block()
+            .block(BLOCK_TIMEOUT)
     }
 
     /**

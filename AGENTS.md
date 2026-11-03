@@ -420,6 +420,15 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   reconnect. Метрика `alor.ws.heartbeat_timeout_close{stream}`. Watcher стартует
   до `connect(0)` (`UNDISPATCHED`), replay старого события не убивает новую
   сессию.
+- **P1-5/P1-6 исправлены (частично P1-5):** HTTP-путь
+  `DailyRiskSnapshotRepository` переведён на `findRecentAwait`; оставшиеся
+  event-path `.block()` ограничены 5 с; R2DBC pool (`max-acquire-time=5s`,
+  `max-idle-time=10m`, `max-life-time=30m`, `validation-query`); Hikari для
+  Liquibase — 2 соединения/idle 0. `Dockerfile`: `MaxRAMPercentage=50`, без
+  `AlwaysPreTouch`; compose `mem_limit` (app 1536m, db 768m, redis/minio/rabbit
+  192m, prometheus 384m, grafana 192m, frontend 64m), `DB_HOST`/`REDIS_HOST`
+  из env, `TRACE_STORAGE_ENABLED=false`. Остаток: полный suspend-рефактор
+  `DrawdownProtectionService.updateDailyPnl`.
 - **P1-3 (ночной цикл закрытий) — ложное срабатывание аудита:** в коде нет
   `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
   входы через `TradingGate`; force-close — только

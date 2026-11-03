@@ -136,14 +136,12 @@ class TradingAccountController(
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "account not found: $id")
         val clamped = days.coerceIn(1, 365)
         val points =
-            withContext(Dispatchers.IO) {
-                dailyRiskSnapshotRepository.findRecent(clamped, id).map { snapshot ->
-                    mapOf(
-                        "tradeDate" to snapshot.tradeDate.toString(),
-                        "pnl" to snapshot.dailyPnl,
-                        "limitReached" to snapshot.limitReached,
-                    )
-                }
+            dailyRiskSnapshotRepository.findRecentAwait(clamped, id).map { snapshot ->
+                mapOf(
+                    "tradeDate" to snapshot.tradeDate.toString(),
+                    "pnl" to snapshot.dailyPnl,
+                    "limitReached" to snapshot.limitReached,
+                )
             }
         return mapOf("accountId" to id, "points" to points)
     }

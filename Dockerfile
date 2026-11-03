@@ -31,8 +31,7 @@ STOPSIGNAL SIGTERM
 ENTRYPOINT ["java", \
     "-XX:+UseZGC", \
     "-XX:+ZGenerational", \
-    "-XX:MaxRAMPercentage=75.0", \
-    "-XX:+AlwaysPreTouch", \
+    "-XX:MaxRAMPercentage=50.0", \
     "-Djava.security.egd=file:/dev/./urandom", \
     "-Djavax.net.ssl.trustStore=/app/cacerts", \
     "-Djavax.net.ssl.trustStorePassword=changeit", \

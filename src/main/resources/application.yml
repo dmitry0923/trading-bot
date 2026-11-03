@@ -53,6 +53,10 @@ spring:
       enabled: true
       initial-size: 5
       max-size: 20
+      max-acquire-time: 5s
+      max-idle-time: 10m
+      max-life-time: 30m
+      validation-query: SELECT 1
   liquibase:
     enabled: true
     change-log: classpath:db/changelog/db.changelog-master.yaml

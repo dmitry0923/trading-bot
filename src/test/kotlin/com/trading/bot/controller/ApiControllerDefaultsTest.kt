@@ -603,16 +603,18 @@ class ApiControllerDefaultsTest {
 
     @Test
     fun `daily pnl history maps persisted snapshots`() {
-        whenever(dailyRiskSnapshotRepository.findRecent(30)).thenReturn(
-            listOf(
-                com.trading.bot.model.entity.DailyRiskSnapshot(
-                    tradeDate = java.time.LocalDate.of(2026, 10, 31),
-                    dailyPnl = BigDecimal("-100"),
-                    limitReached = false,
-                    maxDrawdownToday = BigDecimal("100"),
+        runBlocking {
+            whenever(dailyRiskSnapshotRepository.findRecentAwait(30, null)).thenReturn(
+                listOf(
+                    com.trading.bot.model.entity.DailyRiskSnapshot(
+                        tradeDate = java.time.LocalDate.of(2026, 10, 31),
+                        dailyPnl = BigDecimal("-100"),
+                        limitReached = false,
+                        maxDrawdownToday = BigDecimal("100"),
+                    ),
                 ),
-            ),
-        )
+            )
+        }
 
         val history = runBlocking { controller.getDailyPnlHistory(30) }
         val points = history["points"] as List<*>
@@ -1347,7 +1349,9 @@ class ApiControllerDefaultsTest {
         runBlocking { whenever(paperTradingService.recentDecisions(Mockito.anyInt())).thenReturn(emptyList()) }
         assertEquals(emptyList<Any>(), runBlocking { controller.experimentDecisions(10) })
 
-        whenever(dailyRiskSnapshotRepository.findRecent(Mockito.anyInt())).thenReturn(emptyList())
+        runBlocking {
+            whenever(dailyRiskSnapshotRepository.findRecentAwait(365, null)).thenReturn(emptyList())
+        }
         assertEquals(emptyList<Any>(), runBlocking { controller.getDailyPnlHistory(500) }["points"])
     }
 

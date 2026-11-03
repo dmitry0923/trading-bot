@@ -1,10 +1,10 @@
 package com.trading.bot.config
 
+import com.zaxxer.hikari.HikariDataSource
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.jdbc.autoconfigure.DataSourceProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import javax.sql.DataSource
 
 /**
  * Явный JDBC [DataSource] только для Liquibase-миграций.
@@ -16,8 +16,27 @@ import javax.sql.DataSource
  */
 @Configuration
 class DatabaseConfig {
+    /**
+     * JDBC-пул нужен только Liquibase на старте. Держим его минимальным
+     * (2 соединения, idle=0), чтобы на Managed PostgreSQL не занимать лишние
+     * коннекты после миграций.
+     */
     @Bean
-    fun liquibaseDataSource(): DataSource = liquibaseDataSourceProperties().initializeDataSourceBuilder().build()
+    fun liquibaseDataSource(): HikariDataSource {
+        val dataSource =
+            liquibaseDataSourceProperties()
+                .initializeDataSourceBuilder()
+                .type(HikariDataSource::class.java)
+                .build()
+        return dataSource.apply {
+            poolName = "liquibase-pool"
+            maximumPoolSize = 2
+            minimumIdle = 0
+            idleTimeout = 30_000L
+            maxLifetime = 1_800_000L
+            connectionTimeout = 5_000L
+        }
+    }
 
     @Bean
     @ConfigurationProperties(prefix = "spring.datasource")

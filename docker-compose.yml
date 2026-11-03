@@ -9,6 +9,7 @@ services:
   postgres:
     image: timescale/timescaledb:2.17.2-pg15
     container_name: trading-bot-db
+    mem_limit: ${POSTGRES_MEM_LIMIT:-768m}
     restart: unless-stopped
     # Логи не должны заполнять диск VM (docker json-file растёт без лимита).
     logging:
@@ -36,6 +37,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: trading-bot-redis
+    mem_limit: ${REDIS_MEM_LIMIT:-192m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -55,6 +57,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-01-16T16-07-38Z
     container_name: trading-bot-minio
+    mem_limit: ${MINIO_MEM_LIMIT:-192m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -80,6 +83,7 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: trading-bot-rabbitmq
+    mem_limit: ${RABBITMQ_MEM_LIMIT:-192m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -104,6 +108,7 @@ services:
   app:
     build: .
     container_name: trading-bot-app
+    mem_limit: ${APP_MEM_LIMIT:-1536m}
     # Graceful shutdown: Spring ждёт до 30 с на слив HTTP (spring.lifecycle.timeout-per-shutdown-phase),
     # а Docker по умолчанию убивает контейнер через 10 с → @PreDestroy (финальный flush
     # микроструктуры/трейсов) не выполнялся (скан-12 P2).
@@ -120,13 +125,14 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
+      # Managed PostgreSQL/Redis: переопределяются через env; дефолт — local compose.
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
       DB_NAME: ${DB_NAME:-trading_bot}
       DB_USER: ${DB_USER:-trader}
       DB_PASS: ${DB_PASS:?DB_PASS is required}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
       RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
       RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
@@ -185,7 +191,7 @@ services:
       STRATEGY_INTERVAL_MS: ${STRATEGY_INTERVAL_MS:-600000}
       MONITOR_INTERVAL_MS: ${MONITOR_INTERVAL_MS:-10000}
       MAX_OPEN_POS: ${MAX_OPEN_POS:-3}
-      TRACE_STORAGE_ENABLED: ${TRACE_STORAGE_ENABLED:-true}
+      TRACE_STORAGE_ENABLED: ${TRACE_STORAGE_ENABLED:-false}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
@@ -202,6 +208,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.1
     container_name: trading-bot-prometheus
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-384m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -225,6 +232,7 @@ services:
   grafana:
     image: grafana/grafana:10.4.2
     container_name: trading-bot-grafana
+    mem_limit: ${GRAFANA_MEM_LIMIT:-192m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -248,6 +256,7 @@ services:
     build:
       context: ./frontend
     container_name: trading-bot-frontend
+    mem_limit: ${FRONTEND_MEM_LIMIT:-64m}
     restart: unless-stopped
     logging:
       driver: json-file

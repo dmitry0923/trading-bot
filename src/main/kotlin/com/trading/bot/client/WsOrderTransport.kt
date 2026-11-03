@@ -3,6 +3,7 @@ package com.trading.bot.client
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.TradingConfig
 import com.trading.bot.infrastructure.UuidV7
+import com.trading.bot.infrastructure.logging.TokenRedactor
 import com.trading.bot.service.LiveFrozenStrategyResolver
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
@@ -158,9 +159,9 @@ class WsOrderTransport(
         } catch (e: OrderTransportException) {
             throw e
         } catch (e: Exception) {
-            logger.error(e) { "WS order send failed for $ticker (idem=$idempotencyKey) — delivery UNCERTAIN" }
+            logger.error { "WS order send failed for $ticker (idem=$idempotencyKey) — delivery UNCERTAIN: ${TokenRedactor.describe(e)}" }
             meterRegistry.counter("alor.ws.orders.uncertain", Tags.of("type", "limit", "reason", "SEND_FAILED")).increment()
-            throw OrderDeliveryUncertainException("WS order send failed: ${e.message}", e)
+            throw OrderDeliveryUncertainException("WS order send failed: ${TokenRedactor.redact(e.message)}", e)
         } finally {
             pending.remove(idempotencyKey, request)
         }
@@ -205,9 +206,12 @@ class WsOrderTransport(
         } catch (e: OrderTransportException) {
             throw e
         } catch (e: Exception) {
-            logger.error(e) { "WS conditional order send failed for $ticker (type=$type, idem=$idempotencyKey) — UNCERTAIN" }
+            logger.error {
+                "WS conditional order send failed for $ticker (type=$type, idem=$idempotencyKey) — UNCERTAIN: " +
+                    TokenRedactor.describe(e)
+            }
             meterRegistry.counter("alor.ws.orders.uncertain", Tags.of("type", type, "reason", "SEND_FAILED")).increment()
-            throw OrderDeliveryUncertainException("WS conditional order send failed: ${e.message}", e)
+            throw OrderDeliveryUncertainException("WS conditional order send failed: ${TokenRedactor.redact(e.message)}", e)
         } finally {
             pending.remove(idempotencyKey, request)
         }
@@ -240,9 +244,9 @@ class WsOrderTransport(
         } catch (e: OrderTransportException) {
             throw e
         } catch (e: Exception) {
-            logger.error(e) { "WS cancel send failed for order $orderId (idem=$idempotencyKey) — UNCERTAIN" }
+            logger.error { "WS cancel send failed for order $orderId (idem=$idempotencyKey) — UNCERTAIN: ${TokenRedactor.describe(e)}" }
             meterRegistry.counter("alor.ws.orders.uncertain", Tags.of("type", "cancel", "reason", "SEND_FAILED")).increment()
-            throw OrderDeliveryUncertainException("WS cancel send failed: ${e.message}", e)
+            throw OrderDeliveryUncertainException("WS cancel send failed: ${TokenRedactor.redact(e.message)}", e)
         } finally {
             pending.remove(idempotencyKey, request)
         }
@@ -366,7 +370,7 @@ class WsOrderTransport(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logger.warn(e) { "WS order channel connection lost" }
+                logger.warn { "WS order channel connection lost: ${TokenRedactor.describe(e)}" }
             } finally {
                 if (session.getAndSet(null) != null) {
                     meterRegistry.counter("alor.ws.orders.disconnected").increment()

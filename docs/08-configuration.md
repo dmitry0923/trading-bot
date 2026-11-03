@@ -5,6 +5,8 @@
 ```yaml
 server:
   port: 8080
+  # P2-4: за TLS-прокси (Caddy/nginx) учитывать X-Forwarded-Proto/Host
+  forward-headers-strategy: framework
 
 management:
   endpoints:

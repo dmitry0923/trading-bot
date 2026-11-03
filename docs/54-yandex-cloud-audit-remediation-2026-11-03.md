@@ -1,4 +1,4 @@
-# Аудит перед Yandex Cloud: закрытие P0/P1 (2026-11-03)
+# Аудит перед Yandex Cloud: закрытие P0/P1/P2 (2026-11-03)
 
 **Источник:** сессия `ses_e64686768ffejWU4rRI2KbWrCk` («Аудит торгового робота
 на Kotlin»), ревизия `196afd3`. Выводы аудита актуальны; все пункты P0/P1
@@ -18,6 +18,10 @@ deployment-gate и риск-ревью (код-блокеры P0-2/P0-3 закр
 | **P0-2** build-identity | **исправлено** | `ARG/ENV GIT_COMMIT` в образе, CI передаёт `GITHUB_SHA`, compose build-arg; `BuildIdentity` резолвит SHA |
 | **P2-3** non-root | **исправлено** | runtime-стадия под пользователем `app` (uid 100), `/app` передан ему |
 | **P0-3** Lockbox IAM | **исправлено** | JWT `PS256` + `kid`, отсечение префикса PEM; подпись проверяется публичным ключом |
+| **P2-1** токен в логах | **исправлено** | `TokenRedactor` маскирует `token/access_token/refresh_token/api_key` и `Bearer`; exception-логи Alor без секретов |
+| **P2-2** фронтенд-секреты | **исправлено** | CI не передаёт `VITE_AUTH_*` в build, `npm ci`, sourcemap off |
+| **P2-4** TLS/forwarded headers | **исправлено** | `forward-headers-strategy=framework`, nginx `X-Forwarded-*`, Caddy override + `USE_TLS` |
+| **P2-5** общий HTTP-пул | **исправлено** | единый `WebClient.Builder`/`ConnectionProvider` для всех 8 клиентов |
 | **P1-1** CBR TLS + funding URL | **исправлено** | HARICA-сертификаты в образе, `-Djavax.net.ssl.trustStore`, дефолтные FORTS-URL в `FundingConfig` |
 | **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
@@ -259,13 +263,62 @@ E2E с реальным SA-ключом на этой машине не выпо
 отсутствует в `.env`. Проверка на VM: включить `LOCKBOX_ENABLED=true`,
 убедиться, что контекст стартует и секреты подставлены.
 
-## 10. Что осталось из аудита
+## 10. P2: секреты, фронтенд, TLS и HTTP-пул
+
+### P2-1 — токен Alor в логах
+
+Alor требует токен в query (`oauth.alor.ru/refresh?token=…`) и в URL WebSocket
+(`wss://…?token=…`) — убрать его из URL нельзя. Утечка была в логах исключений:
+WebClient/Netty печатают полный URI.
+
+- `TokenRedactor` маскирует `token`, `access_token`, `refresh_token`,
+  `api_key` и `Bearer <token>`; `describe(error)` → `Class: sanitized message`.
+- Очищены логи исключений: `AlorTokenProvider` (refresh), `AlorWebSocketClient`
+  (connect/stream/heartbeat), `WsOrderTransport` (send/connection lost).
+- `ReactorWsOrderSocketFactory` больше не пробрасывает raw handshake-ошибку:
+  `OrderTransportUnavailableException` с очищенным текстом (иначе URL с токеном
+  попадал в outbox-логи выше по стеку).
+- Тесты: `TokenRedactorTest` (6 кейсов).
+
+### P2-2 — секреты фронтенда
+
+- CI больше не передаёт `VITE_AUTH_USER/PASSWORD` в `docker build` (Vite
+  инлайнит `VITE_*` в бандл — это была мина). Логин — только runtime через
+  `/api/v1/auth/login`.
+- `frontend/Dockerfile`: `npm ci` по `package-lock.json` (воспроизводимая сборка).
+- `vite.config.ts`: `sourcemap: false` (исходники не публикуются).
+- Проверено: `npm ci && npm run build` — успешно, `.map` в `dist` нет.
+
+### P2-4 — TLS и forwarded headers
+
+- `server.forward-headers-strategy: framework` — приложение видит исходные
+  схему/хост за прокси (Secure-cookie, редиректы).
+- `frontend/nginx.conf`: `X-Forwarded-Proto` (с fallback на `$scheme`) и
+  `X-Forwarded-Host` для `/api` и `/actuator`.
+- `docker-compose.tls.yml` + `Caddyfile`: Caddy слушает 80/443, получает
+  Let's Encrypt-сертификат на `DOMAIN`, проксирует `frontend:80`; публикация
+  frontend:80 снимается (`!reset`). Включается repo-переменной `USE_TLS=true`.
+- `app:8080` наружу не публикуется (только `expose`) — доступ через nginx/Caddy.
+- В `.env`: `DOMAIN`, `JWT_COOKIE_SECURE=true`; security group 80/443.
+
+### P2-5 — единый HTTP-пул
+
+- `HttpClientConfig` + `SharedHttpClient`: один Reactor Netty
+  `ConnectionProvider("bot-http")` (`maxIdleTime=45s`,
+  `evictInBackground=15s`, `CONNECT_TIMEOUT_MILLIS=3000`); прототипный
+  `WebClient.Builder` bean.
+- Все 8 точек `WebClient.create()` заменены: Alor REST/token/orders/WS-futures,
+  MOEX funding, ЦБ, новости, микроструктура. Response-timeout остаётся на
+  конкретных вызовах (разные SLA).
+- Тест `MacroContextServiceFetchTest` переведён со static-мока
+  `WebClient.create()` на мок `WebClient.Builder`.
+
+## 11. Что осталось из аудита
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
 | Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после SIM-деплоя |
-| P2-4 TLS/forwarded headers | высокий | перед публичным деплоем |
-| P2-1/P2-2/P2-5 security | высокий | перед публичным деплоем |
+| TLS-сертификат и DNS для реального домена | инфра | при публичном доступе |
 
 **LIVE по-прежнему NO-GO:** код-блокеры P0-1/P0-2/P0-3 закрыты, но LIVE
 не включается до прохождения B (forward paper, F1–F5), deployment-gate и
@@ -287,10 +340,10 @@ Runbook: `docs/55-sim-deploy-yandex-cloud.md`. Добавлены:
 - `scripts/cloud/smoke_sim.ps1` — probes, login, `trading/status`,
   `dashboard`.
 
-## 11. Верификация
+## 12. Верификация
 
-- `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
-  **BUILD SUCCESSFUL in 27m 8s**; unit **3 394** (0 падений, 1 skipped),
+- `./gradlew test integrationTest ktlintCheck` (финальный код):
+  **BUILD SUCCESSFUL in 20m 29s**; unit **3 400** (0 падений, 1 skipped),
   integration **225** (0 падений, 1 skipped), ktlint — чисто.
 - Lockbox: 15 unit-тестов, включая проверку PS256-подписи публичным ключом и
   отсечение префикса PEM.
@@ -317,6 +370,12 @@ Runbook: `docs/55-sim-deploy-yandex-cloud.md`. Добавлены:
 - `actionlint .github/workflows/ci.yml` — новых замечаний нет (остались
   pre-existing SC2086 и `secrets` в `environment.url`); `shellcheck`
   `vm_bootstrap.sh` — чисто.
+- P2-2: `npm ci && npm run build` — успешно, `dist/*.map` отсутствуют;
+  frontend-образ собирается, nginx отдаёт `index.html` (200).
+- P2-4: `docker compose ... -f docker-compose.tls.yml config` — exit 0;
+  `caddy` слушает 80/443, у `frontend` порты сняты (`!reset`).
+- P2-1/P2-5: `TokenRedactorTest` 6/6; целевые Alor/MOEX/микроструктура
+  тесты (68) — PASSED; Spring-контекст с новым `WebClient.Builder` — PASSED.
 - `scripts/cloud/smoke_sim.ps1` против живого SIM-контейнера — **6/6 PASS**
   (liveness/readiness/health, login, `trading/status`, `dashboard`).
 - `docker compose -f docker-compose.yml -f docker-compose.prod.yml config`

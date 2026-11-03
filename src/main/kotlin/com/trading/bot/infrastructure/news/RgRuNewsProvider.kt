@@ -1,6 +1,7 @@
 package com.trading.bot.infrastructure.news
 
 import com.trading.bot.config.NewsConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import com.trading.bot.model.dto.NewsItem
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
@@ -50,10 +51,11 @@ class RgRuNewsProvider(
     private val retryRegistry: RetryRegistry = RetryRegistry.ofDefaults(),
     private val rateLimiterRegistry: RateLimiterRegistry = RateLimiterRegistry.ofDefaults(),
     private val circuitBreakerRegistry: CircuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults(),
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) : IssuerDataProvider {
     private val logger = KotlinLogging.logger {}
     private val cachePrefix = "news:rgru:"
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     override suspend fun newsFor(
         ticker: String,

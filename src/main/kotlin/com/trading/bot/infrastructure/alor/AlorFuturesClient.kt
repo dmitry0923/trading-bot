@@ -5,6 +5,7 @@ import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.model.PositionDirection
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -46,6 +47,7 @@ class AlorFuturesClient(
     private val meterRegistry: MeterRegistry,
     private val riskConfig: RiskConfig,
     private val tokenProvider: AlorTokenProvider,
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) {
     private val logger = KotlinLogging.logger {}
 
@@ -81,7 +83,7 @@ class AlorFuturesClient(
         )
     }
 
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
     private val defaultPortfolioMoney: BigDecimal = BigDecimal("50000")

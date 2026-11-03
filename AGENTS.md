@@ -451,6 +451,18 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
   входы через `TradingGate`; force-close — только
   `TradingControlService` при `forceCloseEnabled && forceCloseTime`.
+- **P2-1/P2-2/P2-4/P2-5 исправлены:**
+  - P2-1: `TokenRedactor` маскирует `token/access_token/refresh_token/api_key`
+    и `Bearer`; логи исключений Alor (refresh/WS/ордерный канал) пишутся без
+    токена, `OrderTransportUnavailableException` из WS-handshake очищен.
+  - P2-2: CI не передаёт `VITE_AUTH_*` в build, `npm ci`, `sourcemap: false`.
+  - P2-4: `server.forward-headers-strategy=framework`, nginx прокидывает
+    `X-Forwarded-Proto/Host`; `docker-compose.tls.yml` + `Caddyfile` (Caddy
+    80/443, Let's Encrypt), включается `USE_TLS=true`; `app:8080` наружу не
+    публикуется.
+  - P2-5: единый `WebClient.Builder` (`HttpClientConfig`/`SharedHttpClient`,
+    `ConnectionProvider("bot-http")`, maxIdle 45s, connect 3s) для всех 8
+    клиентов.
 - **SIM-деплой подготовлен:** runbook `docs/55-sim-deploy-yandex-cloud.md`
   (+ `scripts/cloud/vm_bootstrap.sh`, `scripts/cloud/smoke_sim.ps1`,
   `docker-compose.managed.yml`). Managed PostgreSQL/Redis включаются

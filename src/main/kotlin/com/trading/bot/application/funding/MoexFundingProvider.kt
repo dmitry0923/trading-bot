@@ -2,6 +2,7 @@ package com.trading.bot.application.funding
 
 import com.trading.bot.config.FundingConfig
 import com.trading.bot.config.InstrumentsConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
 import org.springframework.stereotype.Component
@@ -45,9 +46,10 @@ class MoexFundingProvider(
     private val instrumentsConfig: InstrumentsConfig,
     private val objectMapper: ObjectMapper,
     private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) : FundingProvider {
     private val logger = KotlinLogging.logger {}
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     override suspend fun currentSnapshot(ticker: String): FundingSnapshot? {
         val template = fundingConfig.moexUrl

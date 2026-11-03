@@ -1,0 +1,42 @@
+# TLS-терминация Caddy (P2-4). Включается repo-переменной USE_TLS=true.
+#
+#   docker compose --env-file .env --env-file .env.deploy \
+#     -f docker-compose.yml -f docker-compose.prod.yml \
+#     [-f docker-compose.managed.yml] -f docker-compose.tls.yml up -d --wait
+#
+# Что меняется:
+# - Caddy слушает 80/443 и проксирует frontend:80 (nginx → app:8080);
+# - публикация frontend:80 и app:8080 на хост отключается: весь трафик идёт
+#   только через TLS-прокси;
+# - в .env должны быть DOMAIN=<FQDN> и JWT_COOKIE_SECURE=true.
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: trading-bot-caddy
+    mem_limit: ${CADDY_MEM_LIMIT:-48m}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required for TLS}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+  # app не публикует порт на хост (только expose: 8080) — доступен лишь
+  # через frontend/nginx и Caddy.
+  frontend:
+    ports: !reset []
+
+volumes:
+  caddy_data:
+  caddy_config:

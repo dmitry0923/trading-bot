@@ -4,12 +4,10 @@ import com.trading.bot.config.MacroConfig
 import com.trading.bot.repository.CbrRatesHistoryRepository
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.runBlocking
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.mockito.MockedStatic
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
@@ -25,34 +23,27 @@ import java.time.ZoneId
 /**
  * [MacroContextService.fetch] — сборка макро-контекста и живой курс USD/RUB с MOEX.
  *
- * Сеть не используется: `WebClient.create()` подменяется статическим моком
- * (inline mock maker), а цепочка `get().uri(..).retrieve().bodyToMono(..)` собирается
- * из моков Spring. Проверяются: успешный разбор `marketdata.data[0][1]`, деградация
- * на конфиг при пустом/нечисловом ответе и при ошибке транспорта, а также
- * публикация macro-метрик.
+ * Сеть не используется: `WebClient.Builder` подменяется моком (P2-5: общий пул),
+ * а цепочка `get().uri(..).retrieve().bodyToMono(..)` собирается из моков Spring.
+ * Проверяются: успешный разбор `marketdata.data[0][1]`, деградация на конфиг при
+ * пустом/нечисловом ответе и при ошибке транспорта, а также публикация macro-метрик.
  */
 class MacroContextServiceFetchTest {
     private val clock = Clock.fixed(Instant.parse("2026-10-25T09:00:00Z"), ZoneId.of("Europe/Moscow"))
     private val meterRegistry = SimpleMeterRegistry()
-    private lateinit var webClientStatic: MockedStatic<WebClient>
 
     private val responseSpec: WebClient.ResponseSpec = mock()
     private val headersSpec: WebClient.RequestHeadersSpec<*> = mock()
     private val uriSpec: WebClient.RequestHeadersUriSpec<*> = mock()
     private val webClient: WebClient = mock()
+    private val builder: WebClient.Builder = mock()
 
     @BeforeEach
     fun setUp() {
-        webClientStatic = Mockito.mockStatic(WebClient::class.java)
-        webClientStatic.`when`<WebClient> { WebClient.create() }.thenReturn(webClient)
+        whenever(builder.build()).thenReturn(webClient)
         whenever(webClient.get()).thenReturn(uriSpec)
         whenever(uriSpec.uri(any<String>())).thenReturn(headersSpec)
         whenever(headersSpec.retrieve()).thenReturn(responseSpec)
-    }
-
-    @AfterEach
-    fun tearDown() {
-        webClientStatic.close()
     }
 
     private fun config(): MacroConfig =
@@ -67,7 +58,7 @@ class MacroContextServiceFetchTest {
     private fun service(
         config: MacroConfig = config(),
         repository: CbrRatesHistoryRepository? = null,
-    ): MacroContextService = MacroContextService(config, ObjectMapper(), meterRegistry, repository, clock)
+    ): MacroContextService = MacroContextService(config, ObjectMapper(), meterRegistry, repository, clock, builder)
 
     private fun stubBody(body: String) {
         whenever(responseSpec.bodyToMono(String::class.java)).thenReturn(Mono.just(body))

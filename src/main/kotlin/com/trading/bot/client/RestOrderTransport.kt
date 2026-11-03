@@ -3,6 +3,7 @@ package com.trading.bot.client
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.SlaTimers
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import com.trading.bot.service.LiveFrozenStrategyResolver
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException
@@ -56,10 +57,11 @@ class RestOrderTransport(
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
     private val liveFrozenStrategyResolver: LiveFrozenStrategyResolver,
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) : OrderTransport {
     private val logger = KotlinLogging.logger {}
 
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     private val isLive: Boolean get() = tradingConfig.mode == "LIVE"
 

@@ -2,6 +2,7 @@ package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.infrastructure.UuidV7
+import com.trading.bot.infrastructure.logging.TokenRedactor
 import com.trading.bot.model.dto.ExecutionReport
 import com.trading.bot.model.dto.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -177,7 +178,7 @@ class AlorWebSocketClient(
                             }.subscribe(
                                 { /* connection closed normally */ },
                                 { err ->
-                                    logger.warn(err) { "Alor WS stream error" }
+                                    logger.warn { "Alor WS stream error: ${TokenRedactor.describe(err)}" }
                                     meterRegistry.counter("alor.ws.error").increment()
                                     webSocketManager.onDisconnected(WsStream.ORDERS, currentAttempt + 1, "STREAM_ERROR")
                                     if (!cancelled) scheduleReconnect(currentAttempt + 1)
@@ -190,7 +191,7 @@ class AlorWebSocketClient(
                                 },
                             )
                     } catch (e: Exception) {
-                        logger.warn(e) { "Alor WS connect failed" }
+                        logger.warn { "Alor WS connect failed: ${TokenRedactor.describe(e)}" }
                         webSocketManager.onDisconnected(WsStream.ORDERS, currentAttempt + 1, "CONNECT_FAILED")
                         if (!cancelled) scheduleReconnect(currentAttempt + 1)
                     }
@@ -316,7 +317,7 @@ class AlorWebSocketClient(
                             }.subscribe(
                                 { /* connection closed normally */ },
                                 { err ->
-                                    logger.warn(err) { "Alor WS quotes stream error" }
+                                    logger.warn { "Alor WS quotes stream error: ${TokenRedactor.describe(err)}" }
                                     meterRegistry.counter("alor.ws.quotes.error").increment()
                                     webSocketManager.onDisconnected(WsStream.QUOTES, currentAttempt + 1, "STREAM_ERROR")
                                     if (!cancelled) scheduleReconnect(currentAttempt + 1)
@@ -329,7 +330,7 @@ class AlorWebSocketClient(
                                 },
                             )
                     } catch (e: Exception) {
-                        logger.warn(e) { "Alor WS quotes connect failed" }
+                        logger.warn { "Alor WS quotes connect failed: ${TokenRedactor.describe(e)}" }
                         webSocketManager.onDisconnected(WsStream.QUOTES, currentAttempt + 1, "CONNECT_FAILED")
                         if (!cancelled) scheduleReconnect(currentAttempt + 1)
                     }
@@ -373,7 +374,10 @@ class AlorWebSocketClient(
                         session
                             .close()
                             .onErrorResume { err ->
-                                logger.warn(err) { "Alor WS ${stream.name}: close after heartbeat timeout failed" }
+                                logger.warn {
+                                    "Alor WS ${stream.name}: close after heartbeat timeout failed: " +
+                                        TokenRedactor.describe(err)
+                                }
                                 Mono.empty()
                             }.subscribe()
                     }
@@ -427,13 +431,13 @@ class AlorWebSocketClient(
                 session
                     .send(Mono.just(session.pingMessage { it.allocateBuffer(1) }))
                     .onErrorResume { err ->
-                        logger.warn(err) { "$metricPrefix heartbeat ping FAILED — closing session to force reconnect" }
+                        logger.warn { "$metricPrefix heartbeat ping FAILED — closing session: ${TokenRedactor.describe(err)}" }
                         meterRegistry.counter("$metricPrefix.heartbeat_failed").increment()
                         session.close().onErrorResume { Mono.empty() }
                     }
             }.subscribe(
                 { /* ping sent */ },
-                { err -> logger.warn(err) { "$metricPrefix heartbeat stopped" } },
+                { err -> logger.warn { "$metricPrefix heartbeat stopped: ${TokenRedactor.describe(err)}" } },
             )
 
     /**

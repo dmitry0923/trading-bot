@@ -1,6 +1,9 @@
 server:
   port: 8080
   shutdown: graceful
+  # P2-4: за TLS-терминатором (Caddy/nginx) приложение должно видеть исходную
+  # схему/хост из X-Forwarded-* — иначе Secure-cookie и редиректы считают http.
+  forward-headers-strategy: framework
 
 management:
   endpoint:

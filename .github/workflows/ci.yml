@@ -152,6 +152,8 @@ jobs:
       # true → docker-compose.managed.yml + внешние DB_HOST/REDIS_HOST
       # (Managed PostgreSQL/Redis); false/пусто → локальные контейнеры.
       USE_MANAGED_DB: ${{ vars.USE_MANAGED_DB }}
+      # true → docker-compose.tls.yml + Caddy (443, Let's Encrypt).
+      USE_TLS: ${{ vars.USE_TLS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -181,9 +183,9 @@ jobs:
 
       - name: Build and push frontend image
         run: |
+          # P2-2: учётные данные НЕ передаются в build (Vite инлайнит VITE_* в бандл).
+          # Аутентификация — только runtime-логин через /api/v1/auth/login.
           docker build \
-            --build-arg VITE_AUTH_USER="${{ secrets.AUTH_USER }}" \
-            --build-arg VITE_AUTH_PASSWORD="${{ secrets.AUTH_PASSWORD }}" \
             -t "$REGISTRY/trading-bot-frontend:$TAG" \
             -t "$REGISTRY/trading-bot-frontend:latest" \
             ./frontend
@@ -198,7 +200,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
           # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
-          source: "docker-compose.yml,docker-compose.prod.yml,docker-compose.managed.yml,alertmanager.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
+          source: "docker-compose.yml,docker-compose.prod.yml,docker-compose.managed.yml,docker-compose.tls.yml,Caddyfile,alertmanager.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
           # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
@@ -208,7 +210,7 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          envs: REGISTRY,TAG,DEPLOY_MODE,USE_MANAGED_DB
+          envs: REGISTRY,TAG,DEPLOY_MODE,USE_MANAGED_DB,USE_TLS
           script: |
             set -e
             cd /opt/trading-bot
@@ -254,6 +256,11 @@ jobs:
               # Первое переключение на Managed DB: убрать старые postgres/redis.
               REMOVE_ORPHANS="--remove-orphans"
             fi
+            if [ "${USE_TLS:-false}" = "true" ]; then
+              COMPOSE="$COMPOSE -f docker-compose.tls.yml"
+              # Caddy появляется/исчезает вместе с флагом.
+              REMOVE_ORPHANS="--remove-orphans"
+            fi
             $COMPOSE pull
             # --wait: деплой не «успешен», пока healthcheck приложения не станет healthy.
             $COMPOSE up -d --wait --wait-timeout 240 $REMOVE_ORPHANS
@@ -288,6 +295,7 @@ jobs:
       DEPLOY_TICKERS: CNYRUBF
       DEPLOY_ALLOWLIST: CNYRUBF
       USE_MANAGED_DB: ${{ vars.USE_MANAGED_DB }}
+      USE_TLS: ${{ vars.USE_TLS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -312,7 +320,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           # prometheus-alerting-rules.yml и grafana-провижининг нужны контейнерам:
           # без правил Prometheus не стартует, и все алерты мертвы (скан-8 P1).
-          source: "docker-compose.yml,docker-compose.prod.yml,docker-compose.managed.yml,alertmanager.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
+          source: "docker-compose.yml,docker-compose.prod.yml,docker-compose.managed.yml,docker-compose.tls.yml,Caddyfile,alertmanager.yml,prometheus.yml,prometheus-alerting-rules.yml,grafana,scripts/db_backup.sh"
           # strip_components=0 сохраняет структуру каталога grafana/.
           target: /opt/trading-bot
 
@@ -333,7 +341,7 @@ jobs:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
-          envs: REGISTRY,TAG,DEPLOY_MODE,DEPLOY_TICKERS,DEPLOY_ALLOWLIST,USE_MANAGED_DB
+          envs: REGISTRY,TAG,DEPLOY_MODE,DEPLOY_TICKERS,DEPLOY_ALLOWLIST,USE_MANAGED_DB,USE_TLS
           script: |
             set -e
             cd /opt/trading-bot
@@ -377,6 +385,11 @@ jobs:
             if [ "${USE_MANAGED_DB:-false}" = "true" ]; then
               COMPOSE="$COMPOSE -f docker-compose.managed.yml"
               # Первое переключение на Managed DB: убрать старые postgres/redis.
+              REMOVE_ORPHANS="--remove-orphans"
+            fi
+            if [ "${USE_TLS:-false}" = "true" ]; then
+              COMPOSE="$COMPOSE -f docker-compose.tls.yml"
+              # Caddy появляется/исчезает вместе с флагом.
               REMOVE_ORPHANS="--remove-orphans"
             fi
             $COMPOSE pull

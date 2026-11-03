@@ -1,6 +1,7 @@
 package com.trading.bot.service
 
 import com.trading.bot.config.MacroConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import com.trading.bot.infrastructure.metrics.MutableGauges
 import com.trading.bot.repository.CbrRatesHistoryRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
@@ -36,9 +37,10 @@ class MacroContextService(
     private val meterRegistry: MeterRegistry,
     private val cbrRatesHistoryRepository: CbrRatesHistoryRepository? = null,
     private val clock: Clock = Clock.system(ZoneId.of("Europe/Moscow")),
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) {
     private val logger = KotlinLogging.logger {}
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     data class MacroContext(
         val cbrRate: BigDecimal,

@@ -1,8 +1,8 @@
 # Build stage: сборка Vite-дашборда (TypeScript)
 FROM node:22-alpine AS builder
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY vite.config.ts tsconfig.json index.html ./
 COPY src src
 RUN npm run build

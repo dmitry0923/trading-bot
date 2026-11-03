@@ -1,0 +1,7 @@
+# TLS-терминация для SIM/LIVE (P2-4). Включается docker-compose.tls.yml.
+# Caddy сам получает сертификат Let's Encrypt: DOMAIN должен указывать A-записью
+# на публичный IP VM, порты 80/443 — открыты в security group.
+{$DOMAIN} {
+    encode zstd gzip
+    reverse_proxy frontend:80
+}

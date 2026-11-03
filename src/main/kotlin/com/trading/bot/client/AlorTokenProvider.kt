@@ -1,6 +1,8 @@
 package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
+import com.trading.bot.infrastructure.logging.TokenRedactor
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.sync.Mutex
@@ -47,9 +49,10 @@ import java.util.Base64
 class AlorTokenProvider(
     private val alorConfig: AlorConfig,
     private val objectMapper: ObjectMapper,
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) {
     private val logger = KotlinLogging.logger {}
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     private val refreshMutex = Mutex()
 
@@ -137,7 +140,9 @@ class AlorTokenProvider(
             logger.info { "Alor access token refreshed (expires at $tokenExpiresAt)" }
             accessToken
         } catch (e: Exception) {
-            logger.warn(e) { "Token refresh failed, using existing token" }
+            // URL refresh-запроса содержит refresh-токен; exception-сообщение
+            // WebClient печатает полный URI — в лог только очищенный текст (P2-1).
+            logger.warn { "Token refresh failed (${TokenRedactor.describe(e)}), using existing token" }
             onRefreshFailure()
             accessToken
         }
@@ -170,7 +175,8 @@ class AlorTokenProvider(
                 val exp = objectMapper.readTree(payload).path("exp").asLong(0L)
                 if (exp > 0L) return Instant.ofEpochSecond(exp)
             } catch (e: Exception) {
-                logger.debug(e) { "Cannot read exp claim from access token, using fallback TTL" }
+                // Не логируем exception: парсер может включить часть токена в сообщение.
+                logger.debug { "Cannot read exp claim from access token (${e::class.simpleName}), using fallback TTL" }
             }
         }
         return Instant.now().plusSeconds(FALLBACK_TTL_SECONDS)

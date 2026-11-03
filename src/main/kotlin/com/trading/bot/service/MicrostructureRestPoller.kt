@@ -5,6 +5,7 @@ import com.trading.bot.client.QuoteTick
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.config.MicrostructureConfig
 import com.trading.bot.config.TradingConfig
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
@@ -68,9 +69,10 @@ class MicrostructureRestPoller(
     private val recorder: MicrostructureRecorder,
     private val meterRegistry: MeterRegistry,
     private val objectMapper: ObjectMapper,
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) {
     private val logger = KotlinLogging.logger {}
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
 

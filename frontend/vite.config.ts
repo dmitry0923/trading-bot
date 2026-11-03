@@ -12,7 +12,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true
+    // P2-2: source maps не публикуем — они раскрывают исходники фронтенда.
+    sourcemap: false
   },
   test: {
     globals: true,

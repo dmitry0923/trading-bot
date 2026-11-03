@@ -6,6 +6,7 @@ import com.trading.bot.config.TradingConfig
 import com.trading.bot.domain.microstructure.MicropriceCalculator
 import com.trading.bot.domain.microstructure.ObiCalculator
 import com.trading.bot.domain.risk.DegenerateCaseDetector
+import com.trading.bot.infrastructure.http.SharedHttpClient
 import com.trading.bot.model.dto.MarketSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
@@ -55,9 +56,10 @@ class AlorClient(
     private val retryRegistry: RetryRegistry,
     private val rateLimiterRegistry: RateLimiterRegistry,
     private val circuitBreakerRegistry: CircuitBreakerRegistry,
+    webClientBuilder: WebClient.Builder = SharedHttpClient.builder(),
 ) {
     private val logger = KotlinLogging.logger {}
-    private val webClient = WebClient.create()
+    private val webClient = webClientBuilder.build()
 
     data class OrderExecution(
         val status: String,

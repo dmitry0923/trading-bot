@@ -11,11 +11,12 @@ gate после B и риск-ревью.
 ## 0. Архитектура
 
 ```
-Internet (22/80/8080 только с admin IP; TLS — после P2-4)
+Internet (22 + 80/443; 80/443 — только с admin IP, пока нет TLS)
         │
    ┌────▼──────────────────────────── VM (Ubuntu 24.04, 4 vCPU / 4 GB) ───┐
    │  docker compose:                                                      │
-   │   app :8080 (healthcheck liveness)  ← Prometheus scraper              │
+   │   caddy :443 (опционально, USE_TLS) → frontend :80 (nginx)            │
+   │   app :8080 (expose, наружу НЕ публикуется) ← Prometheus scraper      │
    │   prometheus :9090 (127.0.0.1)  →  alertmanager :9093 → alert-sink    │
    │   grafana :3000 (127.0.0.1)     minio :9000 (traces, off by default)  │
    └──────────────┬───────────────────────────────┬───────────────────────┘
@@ -81,10 +82,11 @@ yc vpc subnet create --name trading-bot-subnet \
   --network-name trading-bot-net --range 10.10.0.0/24 --zone ru-central1-a
 
 # SSH и веб — только с вашего IP (ADMIN_IP), не 0.0.0.0/0.
+# app:8080 наружу не публикуется: доступ только через frontend (80) / Caddy (443).
 yc vpc security-group create --name trading-bot-vm-sg --network-name trading-bot-net \
   --rule "direction=ingress,port=22,protocol=tcp,v4-cidrs=[$ADMIN_IP/32]" \
   --rule "direction=ingress,port=80,protocol=tcp,v4-cidrs=[$ADMIN_IP/32]" \
-  --rule "direction=ingress,port=8080,protocol=tcp,v4-cidrs=[$ADMIN_IP/32]" \
+  --rule "direction=ingress,port=443,protocol=tcp,v4-cidrs=[$ADMIN_IP/32]" \
   --rule "direction=egress,port=any,protocol=any,v4-cidrs=[0.0.0.0/0]"
 
 # PostgreSQL/Redis — только из VM-sg (по id).
@@ -206,8 +208,9 @@ REDIS_PORT=6379
 REDIS_SSL_ENABLED=false
 
 # прочее
+# DOMAIN=trading.example.com   # TLS (USE_TLS=true): A-запись на IP VM
 TRACE_STORAGE_ENABLED=false
-JWT_COOKIE_SECURE=false   # true только после TLS/прокси (P2-4)
+JWT_COOKIE_SECURE=false        # true при TLS (USE_TLS=true)
 TZ=Europe/Moscow
 ```
 
@@ -237,6 +240,7 @@ Repository variable:
 | Variable | Значение |
 |---|---|
 | `USE_MANAGED_DB` | `true` (Managed PG/Redis) |
+| `USE_TLS` | `true` после настройки `DOMAIN` (Caddy + Let's Encrypt) |
 
 Environment `live` с required reviewers — только перед LIVE, сейчас не нужен.
 
@@ -260,12 +264,45 @@ $COMPOSE logs --tail=100 app
 4. Smoke с локальной машины:
 
 ```powershell
+# без TLS — через nginx (порт 80); app:8080 наружу не публикуется
 pwsh -File scripts/cloud/smoke_sim.ps1 `
-  -BaseUrl http://<VM_HOST>:8080 -AuthUser admin -Password '<AUTH_PASSWORD>'
+  -BaseUrl http://<VM_HOST> -AuthUser admin -Password '<AUTH_PASSWORD>'
+
+# с TLS (USE_TLS=true)
+pwsh -File scripts/cloud/smoke_sim.ps1 `
+  -BaseUrl https://<DOMAIN> -AuthUser admin -Password '<AUTH_PASSWORD>'
 ```
 
 Ожидаемо: liveness/readiness/health 200, login, `trading/status`,
 `dashboard` — 200.
+
+Readiness может отдавать 503 первые ~30–60 с после старта (Spring поднимает
+контекст, Liquibase применяет миграции) — это нормально; Docker healthcheck
+имеет `start_period: 60s`, `deploy-sim` ждёт до 240 с. Если через 2 минуты
+всё ещё 503 — смотрите `$COMPOSE logs app`.
+
+### 6.1 TLS (P2-4, опционально)
+
+Порядок:
+
+1. A-запись `DOMAIN` → публичный IP VM.
+2. В `/opt/trading-bot/.env`: `DOMAIN=<FQDN>`, `JWT_COOKIE_SECURE=true`.
+3. Repo-переменная `USE_TLS=true` → CI добавляет `docker-compose.tls.yml`:
+   Caddy слушает 80/443, публикация frontend:80 снимается, весь трафик идёт
+   через TLS; приложение получает `X-Forwarded-*`
+   (`server.forward-headers-strategy=framework`).
+4. Security group: для Let's Encrypt HTTP-01 порт **80** должен быть доступен
+   из интернета (`0.0.0.0/0`), порт 443 — тоже (клиенты). 8080 не публикуется.
+   Caddy сам перенаправляет 80→443 и продлевает сертификат.
+5. Проверка: `curl -I https://<DOMAIN>/actuator/health/liveness` → 200,
+   `http://` → 308 на https. Сертификат — `docker logs trading-bot-caddy`.
+
+Без TLS (первый запуск/отладка): `USE_TLS` не задан, доступ по `http://VM_IP`,
+`JWT_COOKIE_SECURE=false`, порты 80/443 — только с admin IP.
+
+Отключение TLS: `USE_TLS=false` сам по себе оставит контейнер Caddy
+(orphan) и конфликт порта 80. Перед деплоем без TLS удалите его:
+`docker rm -f trading-bot-caddy` (или `docker compose ... down --remove-orphans`).
 
 ## 7. Что проверить после первого запуска
 
@@ -326,8 +363,8 @@ psql/R2DBC + state в volume).
 
 ## 10. Чего не делать
 
-- Не открывать `8080` в интернет без TLS/прокси и белого списка (P2-4 ещё не
-  закрыт).
+- Не публиковать `8080` на хост: он доступен только внутри compose-сети,
+  снаружи — через nginx (80) или Caddy (443).
 - Не включать `TRADING_MODE=LIVE`: LIVE запрещён до B (F1–F5),
   deployment-gate и риск-ревью.
 - Не коммитить `.env`, `sa-key.json`, `prometheus-token`.
@@ -339,15 +376,16 @@ psql/R2DBC + state в volume).
 
 - [ ] Каталог, SA `trading-bot-deploy`, `sa-key.json`
 - [ ] Registry `trading-bot`
-- [ ] Сеть/подсеть/security groups (22/80/8080 только с admin IP)
+- [ ] Сеть/подсеть/security groups (22/80/443; 8080 не публикуется)
 - [ ] VM 4/4, Ubuntu 24.04, Docker + compose >=2.24
 - [ ] Managed PostgreSQL 16, БД `trading_bot`, пользователь `trader`,
       extension `timescaledb`, порт 6432
 - [ ] Managed Redis 7
 - [ ] `/opt/trading-bot/.env` (chmod 600) с DB/Redis/JWT/metrics
-- [ ] GitHub secrets + `USE_MANAGED_DB=true`
+- [ ] GitHub secrets + `USE_MANAGED_DB=true` (+ `USE_TLS=true` при домене)
+- [ ] DNS A-запись `DOMAIN` → IP VM (для TLS)
 - [ ] `deploy-sim` зелёный, `$COMPOSE ps` — все healthy
-- [ ] `smoke_sim.ps1` — SMOKE OK
+- [ ] `smoke_sim.ps1` — SMOKE OK (http://IP или https://DOMAIN)
 - [ ] Prometheus target UP, Alertmanager UI доступен
 - [ ] `GIT_COMMIT` в контейнере == коммит
 - [ ] B продолжает работать локально (0 сделок / cron 23:55)

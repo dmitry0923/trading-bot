@@ -1,6 +1,7 @@
 package com.trading.bot.client
 
 import com.trading.bot.config.AlorConfig
+import com.trading.bot.infrastructure.logging.TokenRedactor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -57,7 +58,11 @@ class ReactorWsOrderSocketFactory(
                 }.subscribe(
                     { channel.close() },
                     { err ->
-                        sessionReady.completeExceptionally(err)
+                        // Ошибка handshake содержит WS-URL с access-токеном; выше по
+                        // стеку она попадает в логи/outbox — отдаём только очищенный текст.
+                        sessionReady.completeExceptionally(
+                            OrderTransportUnavailableException("WS order socket error: ${TokenRedactor.describe(err)}"),
+                        )
                         channel.close()
                     },
                 )

@@ -106,7 +106,12 @@ services:
       retries: 5
 
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # Build identity (P0-2): `GIT_COMMIT=<sha> docker compose build app`.
+        # Пустое значение допустимо для SIM: BuildIdentity вернёт null, LIVE fail-closed.
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: trading-bot-app
     mem_limit: ${APP_MEM_LIMIT:-1536m}
     # Graceful shutdown: Spring ждёт до 30 с на слив HTTP (spring.lifecycle.timeout-per-shutdown-phase),

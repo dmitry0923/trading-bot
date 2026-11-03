@@ -14,6 +14,8 @@
 | Пункт | Статус | Что сделано |
 |---|---|---|
 | **P0-1** healthcheck/503 | **исправлено** | liveness/readiness probes, Docker healthcheck на `/actuator/health/liveness`, бизнес-семантика `TradingHealthIndicator`, публичный доступ к probes |
+| **P0-2** build-identity | **исправлено** | `ARG/ENV GIT_COMMIT` в образе, CI передаёт `GITHUB_SHA`, compose build-arg; `BuildIdentity` резолвит SHA |
+| **P2-3** non-root | **исправлено** | runtime-стадия под пользователем `app` (uid 100), `/app` передан ему |
 | **P1-1** CBR TLS + funding URL | **исправлено** | HARICA-сертификаты в образе, `-Djavax.net.ssl.trustStore`, дефолтные FORTS-URL в `FundingConfig` |
 | **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
@@ -196,33 +198,63 @@
   `amtool check-config` (Docker-образы тех же версий, что в compose).
 - Локально: `scripts/check_alerting.ps1`.
 
-## 8. Что осталось из аудита
+## 8. P0-2 + P2-3: build-identity и non-root
+
+### P0-2 — `GIT_COMMIT` в образе
+
+- `Dockerfile` (runtime stage): `ARG GIT_COMMIT=""` + `ENV GIT_COMMIT`,
+  `LABEL org.opencontainers.image.revision`.
+- CI (`deploy-sim`): `docker build --build-arg GIT_COMMIT="$GITHUB_SHA"` —
+  SHA в образе совпадает с `TAG` (= `github.sha`), по которому образ
+  собирается и деплоится.
+- `docker-compose.yml`: `build.args.GIT_COMMIT: ${GIT_COMMIT:-}` — локальная
+  сборка передаёт SHA через env; пустое значение допустимо (SIM), при этом
+  `BuildIdentity` вернёт null и LIVE останется fail-closed.
+- `.env.example` документирует переменную.
+- `BuildIdentity` уже умеет читать env и имеет приоритет над
+  `git.properties`; код не менялся.
+
+### P2-3 — non-root
+
+- `Dockerfile`: `addgroup -S app`, `adduser -S -G app -H -h /app app`,
+  `chown -R app:app /app`, `USER app`.
+- Приложение не пишет на диск (логи — stdout, трейсы — MinIO, модель —
+  classpath), поэтому смена пользователя не требует writable-каталогов.
+- Truststore `/app/cacerts` читается пользователем `app` (проверено живым
+  запросом к ЦБ).
+
+## 9. Что осталось из аудита
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
 | Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после SIM-деплоя |
-| P0-2 `GIT_COMMIT` в образе | блокер LIVE | перед LIVE |
 | P0-3 Lockbox IAM (`kid`/PS256) | блокер LIVE | перед LIVE |
-| P2-1…P2-5 | security/гигиена | перед публичным деплоем |
+| P2-4 TLS/forwarded headers | высокий | перед публичным деплоем |
+| P2-1/P2-2/P2-5 security | высокий | перед публичным деплоем |
 
 **LIVE по-прежнему NO-GO:** не включать `TRADING_MODE=LIVE` до закрытия
-P0-2/P0-3 и прохождения B (forward paper) + deployment-gate + риск-ревью.
+P0-3 и прохождения B (forward paper) + deployment-gate + риск-ревью.
 Live-параметры не меняются: `maxC=1`, Kelly, `CNYRUBF`.
 
-## 9. Верификация
+## 10. Верификация
 
 - `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
   **BUILD SUCCESSFUL in 22m 6s**; unit **3 391** (0 падений, 1 skipped),
   integration **225** (0 падений, 1 skipped), ktlint — чисто.
-- `docker build` — успешно; оба HARICA-сертификата импортированы в
-  `/app/cacerts`.
-- Контейнер на `trading-bot_default` (SIMULATION):
+- `docker build --build-arg GIT_COMMIT=<sha>` — успешно; оба
+  HARICA-сертификата импортированы в `/app/cacerts`.
+- Образ: `Config.User=app`, `uid=100(app)`, `GIT_COMMIT` == переданный SHA,
+  label `org.opencontainers.image.revision` == SHA.
+- Контейнер на `trading-bot_default` (SIMULATION, `--memory=1536m`):
   `/actuator/health/liveness` → **200**,
   `/actuator/health/readiness` → **200**,
   `/actuator/health` → **200 UP**.
-- Из контейнера `GET /api/v1/macro/rates-history?days=1` → `loaded=2`,
-  `keyRates=2` — TLS-цепочка ЦБ работает через образ (P1-1 подтверждён
-  end-to-end).
+- Из контейнера под non-root `GET /api/v1/macro/rates-history?days=1` →
+  `loaded=2`, `keyRates=2` — TLS-цепочка ЦБ и truststore доступны
+  пользователю `app` (P1-1/P2-3 подтверждены end-to-end).
+- `docker stats` — **1.10 GiB / 1.5 GiB**.
+- `docker compose config` с `GIT_COMMIT` в env — `build.args.GIT_COMMIT`
+  подставлен (exit 0).
 - `docker compose -f docker-compose.yml -f docker-compose.prod.yml config`
   — exit 0; healthcheck указывает на `/actuator/health/liveness`;
   `alertmanager`/`alert-sink` присутствуют в конфиге.

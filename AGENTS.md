@@ -436,13 +436,19 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   grafana 192m, frontend 32m), `DB_HOST`/`REDIS_HOST`
   из env, `TRACE_STORAGE_ENABLED=false`. Остаток: полный suspend-рефактор
   `DrawdownProtectionService.updateDailyPnl`.
+- **P0-2 исправлен:** `Dockerfile` объявляет `ARG/ENV GIT_COMMIT` (+ label
+  `org.opencontainers.image.revision`), CI (`deploy-sim`) передаёт
+  `--build-arg GIT_COMMIT="$GITHUB_SHA"`, compose — `build.args.GIT_COMMIT`.
+  `BuildIdentity` резолвит SHA из env; без него LIVE остаётся fail-closed.
+- **P2-3 исправлен:** runtime-стадия работает под `app` (uid 100), `/app`
+  передан пользователю; truststore читается, приложение на диск не пишет.
 - **P1-3 (ночной цикл закрытий) — ложное срабатывание аудита:** в коде нет
   `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
   входы через `TradingGate`; force-close — только
   `TradingControlService` при `forceCloseEnabled && forceCloseTime`.
-- **LIVE остаётся NO-GO** до P0-2 (`GIT_COMMIT`), P0-3 (Lockbox IAM),
-  B forward paper F1–F5, deployment-gate и риск-ревью. Параметры live не
-  менялись: `maxC=1`, Kelly, `CNYRUBF`.
+- **LIVE остаётся NO-GO** до P0-3 (Lockbox IAM), B forward paper F1–F5,
+  deployment-gate и риск-ревью. Параметры live не менялись: `maxC=1`, Kelly,
+  `CNYRUBF`.
 - Детали и остаток аудита: `docs/54-yandex-cloud-audit-remediation-2026-11-03.md`.
 
 ## Калибровки (research-референс; НЕ production-настройки)

@@ -21,11 +21,22 @@ RUN cp "$JAVA_HOME/lib/security/cacerts" /tmp/cacerts \
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine
+# Build identity (P0-2): CI передаёт полный git SHA, `BuildIdentity` читает его
+# из env и разрешает LIVE только при совпадении с SHA frozen-стратегии.
+# ARG нужно объявить повторно в этом stage — ARG предыдущего не наследуется.
+ARG GIT_COMMIT=""
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
 ENV TZ=Europe/Moscow
+ENV GIT_COMMIT="${GIT_COMMIT}"
 WORKDIR /app
 # Имя конкретное: `*.jar` копирует и plain-jar, и bootJar → сборка образа падала.
 COPY --from=builder /app/build/libs/trading-bot-*.jar app.jar
 COPY --from=builder /tmp/cacerts /app/cacerts
+# Non-root (P2-3): процесс не должен иметь прав root внутри контейнера.
+RUN addgroup -S app \
+    && adduser -S -G app -H -h /app app \
+    && chown -R app:app /app
+USER app
 EXPOSE 8080
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["java", \

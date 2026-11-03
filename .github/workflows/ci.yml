@@ -167,7 +167,12 @@ jobs:
 
       - name: Build and push backend image
         run: |
-          docker build -t "$REGISTRY/trading-bot-app:$TAG" -t "$REGISTRY/trading-bot-app:latest" .
+          # GIT_COMMIT (P0-2) — единственный источник build-identity для BuildIdentity:
+          # без него LiveFrozenStrategyResolver в LIVE отказывает всем входам.
+          docker build \
+            --build-arg GIT_COMMIT="$GITHUB_SHA" \
+            -t "$REGISTRY/trading-bot-app:$TAG" \
+            -t "$REGISTRY/trading-bot-app:latest" .
           docker push "$REGISTRY/trading-bot-app:$TAG"
           docker push "$REGISTRY/trading-bot-app:latest"
 

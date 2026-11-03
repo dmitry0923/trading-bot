@@ -170,6 +170,8 @@ services:
       LIVE_TICKERS_ALLOWLIST: ${LIVE_TICKERS_ALLOWLIST:-CNYRUBF}
       # WS-ордера — primary транспорт; без флага LIVE остаётся на REST (скан-8 P2).
       ALOR_WS_ORDERS_ENABLED: ${ALOR_WS_ORDERS_ENABLED:-false}
+      # Quotes WS: true = real-time; false = REST fallback (например, SIM без токена).
+      WS_QUOTES_ENABLED: ${WS_QUOTES_ENABLED:-true}
       # Бизнес-зона контейнера: без TZ JVM живёт в UTC и окна дат/таймстемпы уезжают.
       TZ: ${TZ:-Europe/Moscow}
       TRADING_FUNDING_VETO_ENABLED: ${TRADING_FUNDING_VETO_ENABLED:-false}

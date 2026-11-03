@@ -55,6 +55,16 @@ if ! docker compose version >/dev/null 2>&1; then
   echo "[bootstrap] ERROR: docker compose plugin is missing" >&2
   exit 1
 fi
+compose_version="$(docker compose version --short 2>/dev/null | sed 's/^v//')"
+compose_major="${compose_version%%.*}"
+compose_rest="${compose_version#*.}"
+compose_minor="${compose_rest%%.*}"
+if [ -z "$compose_version" ] || [ "$compose_major" -lt 2 ] ||
+  { [ "$compose_major" -eq 2 ] && [ "$compose_minor" -lt 24 ]; }; then
+  echo "[bootstrap] ERROR: docker compose $compose_version < 2.24 (needs !reset); update docker-compose-plugin" >&2
+  exit 1
+fi
+echo "[bootstrap] docker compose $compose_version OK"
 
 # Пользователь CI (VM_USER) должен управлять docker без sudo.
 if id "$TARGET_USER" >/dev/null 2>&1; then

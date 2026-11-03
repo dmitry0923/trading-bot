@@ -470,8 +470,10 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
     `ConnectionProvider("bot-http")`, maxIdle 45s, connect 3s) для всех 8
     клиентов.
 - **SIM-деплой подготовлен:** runbook `docs/55-sim-deploy-yandex-cloud.md`
-  (+ `scripts/cloud/vm_bootstrap.sh`, `scripts/cloud/smoke_sim.ps1`,
-  `docker-compose.managed.yml`). Managed PostgreSQL/Redis включаются
+  и ревью готовности `docs/56-sim-deploy-readiness-review-2026-11-03.md`
+  (`CONDITIONAL GO`; блокеров в коде/конфигах нет). Скрипты:
+  `scripts/cloud/vm_bootstrap.sh`, `scripts/cloud/smoke_sim.ps1`,
+  `docker-compose.managed.yml`. Managed PostgreSQL/Redis включаются
   repo-переменной `USE_MANAGED_DB=true`; `DB_SSL_MODE=require` для Managed PG,
   `REDIS_SSL_ENABLED` для TLS-порта Redis. CI копирует `alertmanager.yml` —
   без него Alertmanager на VM не стартовал бы.

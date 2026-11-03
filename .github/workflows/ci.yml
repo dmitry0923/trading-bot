@@ -110,7 +110,7 @@ jobs:
         run: npm run build
 
   # Автодеплой SIM-сборки (P0, LIVE-guard): запускается ТОЛЬКО после успешного
-  # backend+frontend (needs) и только при push (мерже) в main/master.
+  # backend+frontend+alerting (needs) и только при push (мерже) в main/master.
   # Жёстко форсирует SIMULATION: даже если в GitHub-секретах лежит TRADING_MODE=LIVE,
   # на автопушке в main бот НЕ поедет в LIVE (live-флаг переопределяется).
   # LIVE-деплой — отдельный job deploy-live (вручную, с required reviewers).
@@ -140,7 +140,7 @@ jobs:
 
   deploy-sim:
     name: Deploy SIM to Yandex Cloud
-    needs: [backend, frontend]
+    needs: [backend, frontend, alerting]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     runs-on: ubuntu-latest
     env:
@@ -276,7 +276,7 @@ jobs:
   # Настройка репозитория: Settings → Environments → "live" → Required reviewers.
   deploy-live:
     name: Deploy LIVE (manual approval)
-    needs: [backend, frontend]
+    needs: [backend, frontend, alerting]
     if: >
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.deploy_live == 'true' &&

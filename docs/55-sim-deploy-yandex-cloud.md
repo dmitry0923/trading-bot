@@ -8,6 +8,9 @@ gate после B и риск-ревью.
 
 **Что уже готово в коде:** P0-1/P0-2/P0-3/P1-1…P1-6 (см. `docs/54`).
 
+**Ревью готовности:** `docs/56-sim-deploy-readiness-review-2026-11-03.md` —
+`CONDITIONAL GO` для SIM, блокеров в коде/конфигах нет.
+
 ## 0. Архитектура
 
 ```
@@ -209,6 +212,7 @@ REDIS_SSL_ENABLED=false
 
 # прочее
 # DOMAIN=trading.example.com   # TLS (USE_TLS=true): A-запись на IP VM
+# WS_QUOTES_ENABLED=true       # false = REST-fallback котировок (SIM без ALOR-токена)
 TRACE_STORAGE_ENABLED=false
 JWT_COOKIE_SECURE=false        # true при TLS (USE_TLS=true)
 TZ=Europe/Moscow

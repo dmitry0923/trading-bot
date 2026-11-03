@@ -3,7 +3,6 @@ package com.trading.bot.service
 import com.trading.bot.model.entity.DeploymentApprovalRecord
 import com.trading.bot.repository.DeploymentApprovalRepository
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.springframework.boot.context.event.ApplicationReadyEvent
@@ -51,12 +50,13 @@ class DeploymentApprovalService(
     private var ready: Boolean = false
 
     @EventListener(ApplicationReadyEvent::class)
-    fun init() {
+    suspend fun init() {
         ready = false
         approved = emptyMap()
         try {
             approved =
-                runBlocking { repository.latest() }
+                repository
+                    .latest()
                     .filter { it.status == LIVE_ALLOWED }
                     .associateBy { it.ticker }
             ready = true

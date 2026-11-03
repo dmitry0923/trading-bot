@@ -480,6 +480,17 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
 - **LIVE остаётся NO-GO** несмотря на закрытые код-блокеры P0-1/P0-2/P0-3:
   до B forward paper F1–F5, deployment-gate и отдельного риск-ревью.
   Параметры live не менялись: `maxC=1`, Kelly, `CNYRUBF`.
+- **LIVE риск-ревью выполнено (2026-11-03, `docs/57-live-risk-review-2026-11-03.md`),
+  вердикт `NO-GO`.** Главный блокер — отсутствие подтверждённого edge у
+  фактической LIVE-стратегии (baseline PF 1,012 / P(noEdge) 0,486 / 82 сделки,
+  `passable=false`), а не код-контроли исполнения. B проверяет другую гипотезу
+  и другой юниверс, поэтому LIVE CNYRUBF-only не легитимизирует. Прочие
+  блокеры: алерты идут в заглушку `alert-sink`, kill-switch учения не проведены,
+  Lockbox E2E на VM не проверен, ёмкость `maxC=1` ≈ 43 253 ₽/год, один
+  инструмент. При ревью найдены и исправлены два `runBlocking` в event-path:
+  `DeploymentApprovalService.init` → `suspend fun init()`,
+  `TradingGate.onTradingHalted` → suspend `@EventListener` (halt персистится
+  без блокировки потока). Условия допуска и runbook включения — §7–§9 docs/57.
 - Детали и остаток аудита: `docs/54-yandex-cloud-audit-remediation-2026-11-03.md`.
 
 ## Калибровки (research-референс; НЕ production-настройки)

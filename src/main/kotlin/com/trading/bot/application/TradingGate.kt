@@ -12,7 +12,6 @@ import com.trading.bot.service.RiskManagementService
 import com.trading.bot.service.SettingsService
 import com.trading.bot.service.TradingHaltService
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
 import org.springframework.context.event.EventListener
 import org.springframework.stereotype.Component
 
@@ -158,15 +157,14 @@ class TradingGate(
      * TradingHaltedEvent → персистируем последнюю остановку (reason/source/timestamp).
      */
     @EventListener
-    fun onTradingHalted(event: TradingHaltedEvent) {
+    suspend fun onTradingHalted(event: TradingHaltedEvent) {
         logger.warn { "Trading gate: halt event received reason=${event.reason}" }
-        runBlocking {
-            tradingHaltService.record(
-                reason = event.reason,
-                source = sourceOf(event.reason),
-                haltedAt = event.timestamp,
-            )
-        }
+        // Suspend-запись (P1-5): halt не должен блокировать поток события на R2DBC.
+        tradingHaltService.record(
+            reason = event.reason,
+            source = sourceOf(event.reason),
+            haltedAt = event.timestamp,
+        )
     }
 
     /**

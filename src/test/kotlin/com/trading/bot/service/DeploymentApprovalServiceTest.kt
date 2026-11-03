@@ -26,9 +26,11 @@ class DeploymentApprovalServiceTest {
 
     @BeforeEach
     fun setUp() {
-        runBlocking { whenever(repository.latest()).thenReturn(emptyList()) }
-        service = DeploymentApprovalService(repository)
-        service.init()
+        runBlocking {
+            whenever(repository.latest()).thenReturn(emptyList())
+            service = DeploymentApprovalService(repository)
+            service.init()
+        }
     }
 
     @Test

@@ -191,9 +191,8 @@ class TradingGateTest {
     @Test
     fun `halt event records reason and source through halt service`() {
         val g = gate()
-        g.onTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT", timestamp = Instant.parse("2026-01-01T10:00:00Z")))
-
         runBlocking {
+            g.onTradingHalted(TradingHaltedEvent(reason = "DAILY_LOSS_LIMIT", timestamp = Instant.parse("2026-01-01T10:00:00Z")))
             verify(tradingHaltService).record(
                 eq("DAILY_LOSS_LIMIT"),
                 eq("RISK_SYSTEM"),
@@ -309,9 +308,10 @@ class TradingGateTest {
             )
         for ((reason, source) in expected) {
             val g = gate()
-            g.onTradingHalted(TradingHaltedEvent(reason = reason, timestamp = Instant.parse("2026-01-01T10:00:00Z")))
-
-            runBlocking { verify(tradingHaltService).record(eq(reason), eq(source), eq(""), eq(Instant.parse("2026-01-01T10:00:00Z"))) }
+            runBlocking {
+                g.onTradingHalted(TradingHaltedEvent(reason = reason, timestamp = Instant.parse("2026-01-01T10:00:00Z")))
+                verify(tradingHaltService).record(eq(reason), eq(source), eq(""), eq(Instant.parse("2026-01-01T10:00:00Z")))
+            }
         }
     }
 }

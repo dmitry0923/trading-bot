@@ -413,6 +413,13 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   (`docker/certs/`, JVM `trustStore=/app/cacerts`); `FundingConfig` по
   умолчанию использует FORTS live/history URL, env `FUNDING_MOEX_*`
   перекрывает.
+- **P1-2 исправлен:** `AlorWebSocketClient.startHeartbeat` больше не
+  обновляет `onActivity` при отправке ping (активность — только входящие
+  кадры/PONG); клиент подписан на `WebSocketManager.events` и закрывает
+  Netty-сессию по `HEARTBEAT_TIMEOUT` → `execute()` завершается и срабатывает
+  reconnect. Метрика `alor.ws.heartbeat_timeout_close{stream}`. Watcher стартует
+  до `connect(0)` (`UNDISPATCHED`), replay старого события не убивает новую
+  сессию.
 - **P1-3 (ночной цикл закрытий) — ложное срабатывание аудита:** в коде нет
   `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
   входы через `TradingGate`; force-close — только

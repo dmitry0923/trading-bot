@@ -5,6 +5,7 @@ import com.trading.bot.model.dto.OrderStatus
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -22,6 +23,7 @@ import reactor.netty.http.server.HttpServer
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 import java.time.Duration
+import java.time.Instant
 
 /**
  * [AlorWebSocketClient] — реальные потоки `subscribeToQuotes`/`subscribeToOrders`
@@ -31,6 +33,12 @@ import java.time.Duration
 class AlorWebSocketClientFlowTest {
     private val registry = SimpleMeterRegistry()
     private val webSocketManager = mock<WebSocketManager>()
+    private val wsEvents = MutableSharedFlow<WsConnectionEvent>(replay = 1, extraBufferCapacity = 16)
+
+    init {
+        Mockito.`when`(webSocketManager.events).thenReturn(wsEvents)
+    }
+
     private val tokenProvider =
         Mockito.mock(AlorTokenProvider::class.java) { invocation ->
             if (invocation.method.name == "actualToken") "token" else Mockito.RETURNS_DEFAULTS.answer(invocation)
@@ -298,30 +306,62 @@ class AlorWebSocketClientFlowTest {
         }
 
     @Test
-    fun `heartbeat pings count as websocket activity`(): Unit =
+    fun `heartbeat timeout event closes the active session and triggers reconnect`(): Unit =
         runBlocking {
-            val server = wsServer(quoteFrame(), holdMs = 1_500)
+            val server = wsServer(quoteFrame(), holdMs = 5_000)
             try {
-                val client =
-                    AlorWebSocketClient(
-                        AlorConfig().apply {
-                            wsUrl = "ws://127.0.0.1:${server.port()}/ws"
-                            wsHeartbeatIntervalMs = 50
-                            wsHeartbeatTimeoutMs = 5_000
-                        },
-                        jacksonObjectMapper(),
-                        registry,
-                        webSocketManager,
-                        tokenProvider,
-                    )
+                val client = client("ws://127.0.0.1:${server.port()}/ws")
                 val job = launch(Dispatchers.Default) { client.subscribeToQuotes(listOf("SBER")).collect {} }
                 try {
                     awaitUntil(10_000) {
-                        Mockito
-                            .mockingDetails(webSocketManager)
-                            .invocations
-                            .count { it.method.name == "onActivity" } >= 2
+                        registry.counter("alor.ws.quote_received", "ticker", "SBER").count() >= 1.0
                     }
+                    wsEvents.emit(
+                        WsConnectionEvent(
+                            stream = WsStream.QUOTES,
+                            status = WsConnectionStatus.DISCONNECTED,
+                            reason = "HEARTBEAT_TIMEOUT",
+                            timestamp = Instant.now(),
+                        ),
+                    )
+                    awaitUntil(10_000) {
+                        registry.counter("alor.ws.quotes.reconnect").count() >= 1.0
+                    }
+                    assertTrue(
+                        registry.counter("alor.ws.heartbeat_timeout_close", "stream", "QUOTES").count() >= 1.0,
+                        "heartbeat timeout must close the Netty session",
+                    )
+                } finally {
+                    job.cancel()
+                }
+            } finally {
+                server.disposeNow()
+            }
+        }
+
+    @Test
+    fun `replayed heartbeat timeout does not close a fresh session`(): Unit =
+        runBlocking {
+            // SharedFlow.replay=1: событие прошлой сессии не должно закрыть
+            // новую сессию. Watcher стартует до connect(0), видит active=null.
+            wsEvents.tryEmit(
+                WsConnectionEvent(
+                    stream = WsStream.QUOTES,
+                    status = WsConnectionStatus.DISCONNECTED,
+                    reason = "HEARTBEAT_TIMEOUT",
+                    timestamp = Instant.now().minusSeconds(60),
+                ),
+            )
+            val server = wsServer(quoteFrame(), holdMs = 2_000)
+            try {
+                val client = client("ws://127.0.0.1:${server.port()}/ws")
+                val job = launch(Dispatchers.Default) { client.subscribeToQuotes(listOf("SBER")).collect {} }
+                try {
+                    awaitUntil(10_000) {
+                        registry.counter("alor.ws.quote_received", "ticker", "SBER").count() >= 1.0
+                    }
+                    delay(500)
+                    assertEquals(0.0, registry.counter("alor.ws.quotes.reconnect").count())
                 } finally {
                     job.cancel()
                 }

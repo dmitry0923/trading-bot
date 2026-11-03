@@ -3,12 +3,18 @@ package com.trading.bot.client
 import com.trading.bot.config.AlorConfig
 import com.trading.bot.model.dto.OrderStatus
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.mockito.kotlin.mock
+import org.springframework.web.reactive.socket.WebSocketMessage
+import org.springframework.web.reactive.socket.WebSocketSession
+import reactor.core.publisher.Mono
 import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigDecimal
 
@@ -19,12 +25,14 @@ import java.math.BigDecimal
  * служебные сообщения (null), время в сек/мс.
  */
 class AlorWebSocketClientTest {
+    private val webSocketManager = mock<WebSocketManager>()
+
     private val client =
         AlorWebSocketClient(
             AlorConfig(),
             jacksonObjectMapper(),
             SimpleMeterRegistry(),
-            mock<WebSocketManager>(),
+            webSocketManager,
             mock<AlorTokenProvider>(),
         )
 
@@ -274,4 +282,30 @@ class AlorWebSocketClientTest {
             assertTrue(delay in 1..60, "attempt=$attempt delay=$delay")
         }
     }
+
+    @Test
+    fun `heartbeat ping success does not count as inbound activity`(): Unit =
+        runBlocking {
+            val session = mock<WebSocketSession>()
+            val ping = mock<WebSocketMessage>()
+            Mockito.`when`(session.pingMessage(Mockito.any())).thenReturn(ping)
+            Mockito.`when`(session.send(Mockito.any())).thenReturn(Mono.empty())
+
+            val heartbeatClient =
+                AlorWebSocketClient(
+                    AlorConfig().apply {
+                        wsHeartbeatIntervalMs = 20
+                        wsHeartbeatTimeoutMs = 1_000
+                    },
+                    jacksonObjectMapper(),
+                    SimpleMeterRegistry(),
+                    webSocketManager,
+                    mock<AlorTokenProvider>(),
+                )
+            val disposable = heartbeatClient.startHeartbeat(session, "test")
+            delay(100)
+            disposable.dispose()
+
+            Mockito.verify(webSocketManager, Mockito.never()).onActivity(WsStream.QUOTES)
+        }
 }

@@ -54,8 +54,8 @@
 - метрики: `alor.ws.reconnect`, `alor.ws.error`, `alor.ws.closed`, `alor.ws.execution_received`.
 
 **Heartbeat / stale data discard** (`WebSocketManager`):
-- ping каждые `alor.ws-heartbeat-interval-ms` (30 c); успешная отправка фиксируется как активность потока;
-- если данные/ping не проходят дольше `alor.ws-heartbeat-timeout-ms` (45 c) — watchdog `WebSocketManager.watchdog()` (каждые 10 c) помечает поток DISCONNECTED (метрика `alor.ws.stale_connection`) и триггерит State Reconciliation **до** того, как транспорт обнаружит обрыв;
+- ping каждые `alor.ws-heartbeat-interval-ms` (30 c); успешная отправка ping **не** считается активностью — активность фиксируют только входящие кадры (данные/PONG);
+- если входящих кадров нет дольше `alor.ws-heartbeat-timeout-ms` (45 c) — watchdog `WebSocketManager.watchdog()` (каждые 10 c) помечает поток DISCONNECTED (метрика `alor.ws.stale_connection`), клиент закрывает Netty-сессию (`alor.ws.heartbeat_timeout_close`) и запускает reconnect; State Reconciliation срабатывает **до** того, как транспорт обнаружит обрыв;
 - каждое сообщение котировки помечается временем приёма **до** буфера очереди; сообщения, задержанные дольше `alor.ws-stale-message-age-ms` (5 c), и сообщения с нарушенным порядком (старее последнего принятого по тикеру) отбрасываются (`alor.ws.quotes.stale_discarded`, `alor.ws.quotes.out_of_order`).
 
 **State Reconciliation при реконнекте** (`StateReconciliationService`):
@@ -247,7 +247,7 @@ sequenceDiagram
 | Alor REST quotes | 5xx / timeout (10 c) | возвращается fallback-цена (100.0 в SIMULATION), конвейер продолжает | `alor.error` |
 | Alor REST ордер | network | outbox остаётся PENDING, worker переотправляет через 30 c | `outbox.failed` |
 | Alor REST ордер | отказ брокера (reject) | `markFailed`, лог WARN, позиция не открывается | `alor.order.blocked` |
-| Alor WS | обрыв | heartbeat (30 c) + watchdog (45 c), reconnect до 10 попыток (1–60 c backoff); на каждый reconnect — полная State Reconciliation через REST (заявки/позиции/сделки), устаревшие сообщения из очереди отбрасываются | `alor.ws.disconnected`, `alor.ws.stale_connection`, `alor.reconcile.run` |
+| Alor WS | обрыв | heartbeat (30 c) + watchdog (45 c), reconnect до 10 попыток (1–60 c backoff); на каждый reconnect — полная State Reconciliation через REST (заявки/позиции/сделки), устаревшие сообщения из очереди отбрасываются | `alor.ws.disconnected`, `alor.ws.stale_connection`, `alor.ws.heartbeat_timeout_close`, `alor.reconcile.run` |
 | MOEX ISS candles | timeout / 5xx | `emptyList()`, индикаторы не считаются, агенты получают NEUTRAL | `moex.error` |
 | Kimi LLM | network / 5xx | retry (3, exp backoff) → circuit breaker → fallback baseline | `llm.fallback` |
 | Kimi LLM | 429 | rate limiter (20/мин) + retry по `TooManyRequests` | `llm.ratelimited` |

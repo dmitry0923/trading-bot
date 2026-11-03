@@ -7,6 +7,9 @@ import com.trading.bot.model.dto.OrderStatus
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Tags
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -27,6 +30,7 @@ import java.math.RoundingMode
 import java.net.URI
 import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Тик котировки из WebSocket Alor.
@@ -59,12 +63,15 @@ data class QuoteTick(
  * и backpressure с семантикой DROP_OLDEST на входящих сообщениях.
  *
  * Heartbeat-мониторинг (через [WebSocketManager]):
- * - ping каждые [AlorConfig.wsHeartbeatIntervalMs]; успешная отправка фиксируется
- *   как активность потока. Ошибка отправки закрывает сессию → переподключение.
- * - Watchdog менеджера: если данные/ping не проходят дольше
- *   [AlorConfig.wsHeartbeatTimeoutMs] — поток помечается DISCONNECTED, что
- *   триггерит полную State Reconciliation (REST-портфель) ещё до того, как
- *   транспорт обнаружит обрыв.
+ * - ping каждые [AlorConfig.wsHeartbeatIntervalMs]; успешная отправка ping
+ *   НЕ считается активностью — иначе «тихий» обрыв маскируется записью в
+ *   локальный сокет. Активность фиксируется только по входящим кадрам
+ *   (данные/PONG). Ошибка отправки закрывает сессию → переподключение.
+ * - Watchdog менеджера: если входящих кадров нет дольше
+ *   [AlorConfig.wsHeartbeatTimeoutMs] — поток помечается DISCONNECTED
+ *   (`HEARTBEAT_TIMEOUT`); клиент закрывает сессию, чтобы `execute()`
+ *   завершился и сработал reconnect. Это также триггерит State Reconciliation
+ *   (REST-портфель) ещё до того, как транспорт обнаружит обрыв.
  * - При КАЖДОМ переподключении публикуется [WsConnectionEvent] →
  *   [com.trading.bot.service.StateReconciliationService] сверяет заявки,
  *   позиции и сделки через REST (никаких торгов на «мёртвых» данных).
@@ -109,7 +116,7 @@ class AlorWebSocketClient(
     fun subscribeToOrders(portfolio: String = alorConfig.portfolio): Flow<ExecutionReport> =
         callbackFlow {
             var cancelled = false
-            var activeSession: WebSocketSession? = null
+            val active = AtomicReference<WebSocketSession?>(null)
 
             lateinit var scheduleReconnect: (Int) -> Unit
             lateinit var connect: suspend (Int) -> Unit
@@ -136,8 +143,8 @@ class AlorWebSocketClient(
                         val url = URI.create(wsUrl(token))
                         wsClient
                             .execute(url) { session ->
-                                val heartbeat = startHeartbeat(session, "alor.ws", WsStream.ORDERS)
-                                activeSession = session
+                                val heartbeat = startHeartbeat(session, "alor.ws")
+                                active.set(session)
                                 val subscribeMsg =
                                     session.textMessage(
                                         objectMapper.writeValueAsString(
@@ -190,12 +197,14 @@ class AlorWebSocketClient(
                 }
             }
 
+            val heartbeatWatcher = closeOnHeartbeatTimeout(WsStream.ORDERS, active)
             launch { connect(0) }
             awaitClose {
                 cancelled = true
+                heartbeatWatcher.cancel()
                 // Отмена коллектора обязана закрыть сокет: иначе соединение и heartbeat
                 // живут после отмены (дубли publishExecutionReport, скан-2 P2).
-                activeSession?.close()?.subscribe()
+                active.get()?.close()?.subscribe()
             }
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
@@ -216,7 +225,7 @@ class AlorWebSocketClient(
                 return@callbackFlow
             }
             var cancelled = false
-            var activeSession: WebSocketSession? = null
+            val active = AtomicReference<WebSocketSession?>(null)
 
             lateinit var scheduleReconnect: (Int) -> Unit
             lateinit var connect: suspend (Int) -> Unit
@@ -243,8 +252,8 @@ class AlorWebSocketClient(
                         val url = URI.create(wsUrl(token))
                         wsClient
                             .execute(url) { session ->
-                                val heartbeat = startHeartbeat(session, "alor.ws.quotes", WsStream.QUOTES)
-                                activeSession = session
+                                val heartbeat = startHeartbeat(session, "alor.ws.quotes")
+                                active.set(session)
                                 val subscribeMsg =
                                     session.textMessage(
                                         objectMapper.writeValueAsString(
@@ -327,14 +336,50 @@ class AlorWebSocketClient(
                 }
             }
 
+            val heartbeatWatcher = closeOnHeartbeatTimeout(WsStream.QUOTES, active)
             launch { connect(0) }
             awaitClose {
                 cancelled = true
+                heartbeatWatcher.cancel()
                 // Отмена коллектора обязана закрыть сокет: иначе соединение и heartbeat
                 // живут после отмены (дубли publishExecutionReport, скан-2 P2).
-                activeSession?.close()?.subscribe()
+                active.get()?.close()?.subscribe()
             }
         }.buffer(capacity = incomingBufferCapacity, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /**
+     * Watchdog помечает поток DISCONNECTED при отсутствии входящих кадров, но
+     * не может закрыть Netty-сессию (она принадлежит клиенту). Без этого
+     * коллектора `execute()` живёт до TCP-таймаута ОС (до 15 минут), и
+     * реконнект не запускается. Подписка стартует ДО `connect(0)`, поэтому
+     * replay-событие прошлой сессии видит `active == null` и игнорируется.
+     */
+    private fun CoroutineScope.closeOnHeartbeatTimeout(
+        stream: WsStream,
+        active: AtomicReference<WebSocketSession?>,
+    ): Job =
+        launch(start = CoroutineStart.UNDISPATCHED) {
+            webSocketManager.events.collect { event ->
+                if (event.stream == stream &&
+                    event.status == WsConnectionStatus.DISCONNECTED &&
+                    event.reason == "HEARTBEAT_TIMEOUT"
+                ) {
+                    val session = active.get()
+                    if (session != null) {
+                        logger.warn { "Alor WS ${stream.name}: heartbeat timeout — closing session to force reconnect" }
+                        meterRegistry
+                            .counter("alor.ws.heartbeat_timeout_close", Tags.of("stream", stream.name))
+                            .increment()
+                        session
+                            .close()
+                            .onErrorResume { err ->
+                                logger.warn(err) { "Alor WS ${stream.name}: close after heartbeat timeout failed" }
+                                Mono.empty()
+                            }.subscribe()
+                    }
+                }
+            }
+        }
 
     private fun wsUrl(token: String): String {
         val base = alorConfig.wsUrl.removeSuffix("/")
@@ -358,22 +403,22 @@ class AlorWebSocketClient(
     /**
      * Heartbeat: ping каждые [AlorConfig.wsHeartbeatIntervalMs].
      *
-     * Успешная отправка фиксируется как активность потока в [WebSocketManager]
-     * (liveness без зависимости от наличия входящих данных — важно в тихие
-     * периоды, например на обеденном перерыве биржи). Ошибка отправки говорит
-     * о «мёртвом» соединении → сессия закрывается, поток переподключается.
+     * Успешная отправка ping НЕ фиксируется как активность: иначе «тихий»
+     * обрыв (blackhole без RST/FIN) маскируется успешной записью в локальный
+     * сокет, и watchdog никогда не срабатывает. Активность фиксируют только
+     * входящие кадры (`session.receive()`, данные/PONG). Ошибка отправки
+     * говорит о «мёртвом» соединении → сессия закрывается, поток
+     * переподключается.
      *
      * Heartbeat привязан к жизненному циклу сессии: [Disposable] освобождается
      * в `doFinally` при завершении потока (больше нет утечки ping-корутины).
      *
      * @param session активная WebSocket-сессия
      * @param metricPrefix префикс метрик (alor.ws | alor.ws.quotes)
-     * @param stream поток для регистрации активности в менеджере
      */
-    private fun startHeartbeat(
+    internal fun startHeartbeat(
         session: WebSocketSession,
         metricPrefix: String,
-        stream: WsStream,
     ): Disposable =
         Flux
             .interval(Duration.ofMillis(alorConfig.wsHeartbeatIntervalMs))
@@ -381,7 +426,6 @@ class AlorWebSocketClient(
             .concatMap {
                 session
                     .send(Mono.just(session.pingMessage { it.allocateBuffer(1) }))
-                    .doOnSuccess { webSocketManager.onActivity(stream) }
                     .onErrorResume { err ->
                         logger.warn(err) { "$metricPrefix heartbeat ping FAILED — closing session to force reconnect" }
                         meterRegistry.counter("$metricPrefix.heartbeat_failed").increment()

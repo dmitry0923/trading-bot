@@ -15,6 +15,7 @@
 |---|---|---|
 | **P0-1** healthcheck/503 | **исправлено** | liveness/readiness probes, Docker healthcheck на `/actuator/health/liveness`, бизнес-семантика `TradingHealthIndicator`, публичный доступ к probes |
 | **P1-1** CBR TLS + funding URL | **исправлено** | HARICA-сертификаты в образе, `-Djavax.net.ssl.trustStore`, дефолтные FORTS-URL в `FundingConfig` |
+| **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
 
 ## 2. P0-1: health/liveness
@@ -71,7 +72,37 @@
   `CNYRUBF`: live и history);
 - `FundingConfig` defaults используются, если env не задан.
 
-## 4. P1-3: почему не меняли код
+## 4. P1-2: WS watchdog и принудительный reconnect
+
+### Изменения
+
+- `AlorWebSocketClient.startHeartbeat` больше **не** вызывает
+  `webSocketManager.onActivity(stream)` после успешной отправки ping:
+  успешная запись в локальный сокет не доказывает, что соединение живо.
+  Активность фиксируется только на входящих кадрах (`session.receive()` —
+  данные/PONG), которые уже вызывают `onActivity` в обоих flow.
+- `AlorWebSocketClient` подписан на `webSocketManager.events`: при
+  `HEARTBEAT_TIMEOUT` для своего потока закрывает активную Netty-сессию.
+  `execute()` завершается → срабатывает `scheduleReconnect`, а не ожидание
+  TCP-таймаута ОС (до 15 минут).
+- Watcher стартует с `CoroutineStart.UNDISPATCHED` **до** `connect(0)`,
+  поэтому replay-событие прошлой сессии видит `active == null` и не закрывает
+  новую сессию. Активная сессия хранится в `AtomicReference` (корректная
+  видимость между потоками).
+- Новый счётчик `alor.ws.heartbeat_timeout_close{stream}` — закрытие сессии
+  именно по watchdog-таймауту.
+
+### Проверка
+
+- `heartbeat ping success does not count as inbound activity` — успешная
+  отправка ping не вызывает `onActivity` (регресс на исходный дефект).
+- `heartbeat timeout event closes the active session and triggers reconnect` —
+  событие `HEARTBEAT_TIMEOUT` закрывает сессию, растёт
+  `alor.ws.quotes.reconnect` и `alor.ws.heartbeat_timeout_close`.
+- `replayed heartbeat timeout does not close a fresh session` — replay
+  прошлого события не убивает новое соединение.
+
+## 5. P1-3: почему не меняли код
 
 В текущем `196afd3`/`6e830f1`:
 
@@ -91,11 +122,10 @@
 нет). Добавлять защиту от несуществующего цикла не стали; при следующем
 аудите этот пункт нужно проверять по фактическому коду, а не по отчёту.
 
-## 5. Что осталось из аудита
+## 6. Что осталось из аудита
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
-| P1-2 WS watchdog/реконнект | высокий | следующий пакет (24/7 stability) |
 | P1-4 имена метрик/алерты/Alertmanager | высокий | следующий пакет |
 | P1-5 `.block()`/пулы БД | средний | следующий пакет |
 | P1-6 память 4 ГБ/Managed DB | высокий для 4 ГБ VM | перед SIM-деплоем |
@@ -107,10 +137,10 @@
 P0-2/P0-3 и прохождения B (forward paper) + deployment-gate + риск-ревью.
 Live-параметры не меняются: `maxC=1`, Kelly, `CNYRUBF`.
 
-## 6. Верификация
+## 7. Верификация
 
 - `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
-  **BUILD SUCCESSFUL in 22m 41s**; unit **3 389** (0 падений, 1 skipped),
+  **BUILD SUCCESSFUL in 21m 42s**; unit **3 391** (0 падений, 1 skipped),
   integration **224** (0 падений, 1 skipped), ktlint — чисто.
 - `docker build` — успешно; оба HARICA-сертификата импортированы в
   `/app/cacerts`.

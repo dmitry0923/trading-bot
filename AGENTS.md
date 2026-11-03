@@ -442,13 +442,18 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   `BuildIdentity` резолвит SHA из env; без него LIVE остаётся fail-closed.
 - **P2-3 исправлен:** runtime-стадия работает под `app` (uid 100), `/app`
   передан пользователю; truststore читается, приложение на диск не пишет.
+- **P0-3 исправлен:** JWT для Yandex IAM — `alg=PS256` (RSASSA-PSS/SHA-256,
+  MGF1/SHA-256, salt 32) + `kid` из поля `id` сервисного ключа; служебная
+  строка `PLEASE DO NOT REMOVE THIS LINE! ...` перед PEM отсекается.
+  `buildIamJwt()`/`pemBase64()` — internal, тесты проверяют подпись публичным
+  ключом. E2E с реальным SA-ключом — на VM (в `.env` ключа нет).
 - **P1-3 (ночной цикл закрытий) — ложное срабатывание аудита:** в коде нет
   `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
   входы через `TradingGate`; force-close — только
   `TradingControlService` при `forceCloseEnabled && forceCloseTime`.
-- **LIVE остаётся NO-GO** до P0-3 (Lockbox IAM), B forward paper F1–F5,
-  deployment-gate и риск-ревью. Параметры live не менялись: `maxC=1`, Kelly,
-  `CNYRUBF`.
+- **LIVE остаётся NO-GO** несмотря на закрытые код-блокеры P0-1/P0-2/P0-3:
+  до B forward paper F1–F5, deployment-gate и отдельного риск-ревью.
+  Параметры live не менялись: `maxC=1`, Kelly, `CNYRUBF`.
 - Детали и остаток аудита: `docs/54-yandex-cloud-audit-remediation-2026-11-03.md`.
 
 ## Калибровки (research-референс; НЕ production-настройки)

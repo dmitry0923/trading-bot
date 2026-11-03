@@ -9,6 +9,11 @@ import tools.jackson.module.kotlin.jacksonObjectMapper
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.security.KeyPair
+import java.security.PublicKey
+import java.security.Signature
+import java.security.spec.MGF1ParameterSpec
+import java.security.spec.PSSParameterSpec
 import java.util.Base64
 
 /**
@@ -187,19 +192,97 @@ class LockboxSecretResolverTest {
         assertTrue(ex.message!!.contains("no iamToken"), ex.message)
     }
 
-    private fun rsaKeyJson(): String {
+    @Test
+    fun `service account key without authorized key id is rejected`() {
+        val json = rsaKeyJson(keyId = null)
+
+        val ex = assertThrows<IllegalStateException> { resolverForJwt().buildIamJwt(json) }
+
+        assertTrue(ex.message!!.contains("authorized key id"), ex.message)
+    }
+
+    @Test
+    fun `iam jwt uses ps256 with kid and verifies against the public key`() {
+        val keyPair = rsaKeyPair()
+        val json = rsaKeyJson(keyPair = keyPair, keyId = "key-42")
+
+        val jwt = resolverForJwt().buildIamJwt(json, nowEpochSeconds = 1_700_000_000L)
+
+        val parts = jwt.split(".")
+        assertEquals(3, parts.size, jwt)
+        val header = String(Base64.getUrlDecoder().decode(parts[0]))
+        assertTrue(header.contains("\"alg\":\"PS256\""), header)
+        assertTrue(header.contains("\"kid\":\"key-42\""), header)
+        val payload = String(Base64.getUrlDecoder().decode(parts[1]))
+        assertTrue(payload.contains("\"iss\":\"sa-1\""), payload)
+        assertTrue(payload.contains("\"iat\":1700000000"), payload)
+        assertTrue(payload.contains("\"exp\":1700003600"), payload)
+        assertTrue(payload.contains("https://iam.api.cloud.yandex.net/iam/v1/tokens"), payload)
+        assertPs256Signature(jwt, keyPair.public)
+    }
+
+    @Test
+    fun `pem prefix added by yc iam key create is stripped`() {
+        val keyPair = rsaKeyPair()
+        val prefixed =
+            "PLEASE DO NOT REMOVE THIS LINE! Yandex.Cloud SA Key ID key-9\n" + pem(keyPair.private)
+        val json =
+            jacksonObjectMapper().writeValueAsString(
+                linkedMapOf(
+                    "id" to "key-9",
+                    "service_account_id" to "sa-1",
+                    "private_key" to prefixed,
+                ),
+            )
+
+        val body = resolverForJwt().pemBase64(prefixed)
+        assertEquals(Base64.getEncoder().encodeToString(keyPair.private.encoded), body)
+
+        val jwt = resolverForJwt().buildIamJwt(json, nowEpochSeconds = 1_700_000_000L)
+        assertPs256Signature(jwt, keyPair.public)
+    }
+
+    private fun rsaKeyJson(
+        keyPair: KeyPair = rsaKeyPair(),
+        keyId: String? = "key-id-1",
+    ): String {
+        val fields =
+            linkedMapOf(
+                "service_account_id" to "sa-1",
+                "private_key" to pem(keyPair.private),
+            )
+        if (keyId != null) fields["id"] = keyId
+        return jacksonObjectMapper().writeValueAsString(fields)
+    }
+
+    private fun rsaKeyPair(): KeyPair {
         val generator = java.security.KeyPairGenerator.getInstance("RSA")
         generator.initialize(2048)
-        val keyPair = generator.generateKeyPair()
+        return generator.generateKeyPair()
+    }
+
+    private fun pem(privateKey: java.security.PrivateKey): String {
         val encoder = Base64.getMimeEncoder(64, "\n".toByteArray())
-        val pem =
-            buildString {
-                appendLine("-----BEGIN PRIVATE KEY-----")
-                appendLine(encoder.encodeToString(keyPair.private.encoded))
-                append("-----END PRIVATE KEY-----")
-            }
-        val mapper = jacksonObjectMapper()
-        return mapper.writeValueAsString(mapOf("service_account_id" to "sa-1", "private_key" to pem))
+        return buildString {
+            appendLine("-----BEGIN PRIVATE KEY-----")
+            appendLine(encoder.encodeToString(privateKey.encoded))
+            append("-----END PRIVATE KEY-----")
+        }
+    }
+
+    private fun resolverForJwt() = LockboxSecretResolver("sec-1", "", "", http = http)
+
+    private fun assertPs256Signature(
+        jwt: String,
+        publicKey: PublicKey,
+    ) {
+        val parts = jwt.split(".")
+        assertEquals(3, parts.size, jwt)
+        val verifier = Signature.getInstance("RSASSA-PSS")
+        verifier.setParameter(PSSParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, 32, 1))
+        verifier.initVerify(publicKey)
+        verifier.update("${parts[0]}.${parts[1]}".toByteArray())
+        assertTrue(verifier.verify(Base64.getUrlDecoder().decode(parts[2])), "PS256 signature must verify")
     }
 
     @Suppress("UNCHECKED_CAST")

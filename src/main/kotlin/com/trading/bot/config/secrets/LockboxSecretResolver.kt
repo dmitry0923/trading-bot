@@ -10,7 +10,9 @@ import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.spec.MGF1ParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.PSSParameterSpec
 import java.time.Duration
 import java.time.Instant
 import java.util.Base64
@@ -76,6 +78,23 @@ class LockboxSecretResolver(
     }
 
     private fun exchangeForIamToken(keyJson: String): String {
+        val response = postJson("""{"jwt":"${buildIamJwt(keyJson)}"}""")
+        return response.get("iamToken")?.asString()
+            ?: throw IllegalStateException("IAM token endpoint returned no iamToken")
+    }
+
+    /**
+     * Формирует JWT для IAM-обмена (P0-3). Вынесено в internal-функцию, чтобы
+     * тест мог проверить заголовок и подпись, не разбирая тело HTTP-запроса.
+     *
+     * Yandex IAM требует:
+     * - `alg=PS256` (RSASSA-PSS/SHA-256, MGF1/SHA-256, salt 32), не RS256;
+     * - `kid` = id авторизованного ключа из JSON сервисного аккаунта.
+     */
+    internal fun buildIamJwt(
+        keyJson: String,
+        nowEpochSeconds: Long = Instant.now().epochSecond,
+    ): String {
         val root = objectMapper.readTree(keyJson)
         val serviceAccountId =
             root.get("service_account_id")?.asString()
@@ -83,25 +102,29 @@ class LockboxSecretResolver(
         val privateKeyPem =
             root.get("private_key")?.asString()
                 ?: throw IllegalStateException("private_key is missing in service account key")
-        val now = Instant.now().epochSecond
-        val header = base64url("""{"alg":"RS256","typ":"JWT"}""")
+        val keyId =
+            (root.get("id") ?: root.get("key_id"))?.asString()?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("id (authorized key id) is missing in service account key")
+        val header =
+            base64url(
+                objectMapper.writeValueAsString(
+                    mapOf("alg" to "PS256", "typ" to "JWT", "kid" to keyId),
+                ),
+            )
         val payload =
             base64url(
                 objectMapper.writeValueAsString(
                     mapOf(
                         "iss" to serviceAccountId,
                         "aud" to IAM_TOKENS_URL,
-                        "iat" to now,
-                        "exp" to now + 3600,
+                        "iat" to nowEpochSeconds,
+                        "exp" to nowEpochSeconds + 3600,
                         "jti" to UUID.randomUUID().toString(),
                     ),
                 ),
             )
         val signingInput = "$header.$payload"
-        val signature = signRsa256(signingInput, parsePrivateKey(privateKeyPem))
-        val response = postJson("""{"jwt":"$signingInput.$signature"}""")
-        return response.get("iamToken")?.asString()
-            ?: throw IllegalStateException("IAM token endpoint returned no iamToken")
+        return "$signingInput.${signPs256(signingInput, parsePrivateKey(privateKeyPem))}"
     }
 
     private fun fetchMetadataToken(): String {
@@ -151,22 +174,36 @@ class LockboxSecretResolver(
     }
 
     private fun parsePrivateKey(pem: String): PrivateKey {
-        val base64 =
-            pem
-                .replace("-----BEGIN PRIVATE KEY-----", "")
-                .replace("-----END PRIVATE KEY-----", "")
-                .replace("-----BEGIN RSA PRIVATE KEY-----", "")
-                .replace("-----END RSA PRIVATE KEY-----", "")
-                .replace(Regex("\\s"), "")
-        val spec = PKCS8EncodedKeySpec(Base64.getDecoder().decode(base64))
+        val spec = PKCS8EncodedKeySpec(Base64.getDecoder().decode(pemBase64(pem)))
         return KeyFactory.getInstance("RSA").generatePrivate(spec)
     }
 
-    private fun signRsa256(
+    /**
+     * Извлекает base64-тело PEM между BEGIN/END. `yc iam key create` вставляет
+     * перед `-----BEGIN PRIVATE KEY-----` строку
+     * `PLEASE DO NOT REMOVE THIS LINE! ...`; без отсечения она попадала в
+     * base64 и ломала разбор ключа (P0-3).
+     */
+    internal fun pemBase64(pem: String): String {
+        val begin = pem.indexOf("-----BEGIN")
+        val content =
+            if (begin < 0) {
+                pem
+            } else {
+                val beginEnd = pem.indexOf("-----", begin + 5)
+                val bodyStart = if (beginEnd >= 0) beginEnd + 5 else begin
+                val end = pem.indexOf("-----END", bodyStart)
+                pem.substring(bodyStart, if (end >= 0) end else pem.length)
+            }
+        return content.filterNot { it.isWhitespace() }
+    }
+
+    private fun signPs256(
         data: String,
         privateKey: PrivateKey,
     ): String {
-        val signer = Signature.getInstance("SHA256withRSA")
+        val signer = Signature.getInstance("RSASSA-PSS")
+        signer.setParameter(PSSParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, 32, 1))
         signer.initSign(privateKey)
         signer.update(data.toByteArray(StandardCharsets.UTF_8))
         return base64url(signer.sign())

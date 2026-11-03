@@ -1,21 +1,23 @@
-# Аудит перед Yandex Cloud: пакет 1.1 + 1.2 (2026-11-03)
+# Аудит перед Yandex Cloud: закрытие P0/P1 (2026-11-03)
 
 **Источник:** сессия `ses_e64686768ffejWU4rRI2KbWrCk` («Аудит торгового робота
-на Kotlin»), ревизия `196afd3`. Код с тех пор не менялся (HEAD `6e830f1`
-отличается только `artifacts/paper_momentum/*`), поэтому выводы аудита
-актуальны.
+на Kotlin»), ревизия `196afd3`. Выводы аудита актуальны; все пункты P0/P1
+ниже закрыты либо признаны ложными, кроме явно перечисленных остатков.
 
-**Вердикт аудита:** SIM/Paper — `CONDITIONAL GO` после P0-1; LIVE — `NO-GO`
-(P0-2, P0-3, funding URL). Торговое ядро (exactly-once вход, outbox,
-закрытие позиций, LIVE-guard, МСК) проверено и признано надёжным.
+**Вердикт после исправлений:** SIM/Paper — код-блокеры сняты (P0-1,
+P1-1/P1-2/P1-3/P1-4/P1-5/P1-6); LIVE — `NO-GO` до B (forward paper),
+deployment-gate и риск-ревью (код-блокеры P0-2/P0-3 закрыты). Торговое ядро
+(exactly-once вход, outbox, закрытие позиций, LIVE-guard, МСК) проверено и
+признано надёжным.
 
-## 1. Что вошло в пакет 1.1 + 1.2
+## 1. Что закрыто
 
 | Пункт | Статус | Что сделано |
 |---|---|---|
 | **P0-1** healthcheck/503 | **исправлено** | liveness/readiness probes, Docker healthcheck на `/actuator/health/liveness`, бизнес-семантика `TradingHealthIndicator`, публичный доступ к probes |
 | **P0-2** build-identity | **исправлено** | `ARG/ENV GIT_COMMIT` в образе, CI передаёт `GITHUB_SHA`, compose build-arg; `BuildIdentity` резолвит SHA |
 | **P2-3** non-root | **исправлено** | runtime-стадия под пользователем `app` (uid 100), `/app` передан ему |
+| **P0-3** Lockbox IAM | **исправлено** | JWT `PS256` + `kid`, отсечение префикса PEM; подпись проверяется публичным ключом |
 | **P1-1** CBR TLS + funding URL | **исправлено** | HARICA-сертификаты в образе, `-Djavax.net.ssl.trustStore`, дефолтные FORTS-URL в `FundingConfig` |
 | **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
@@ -223,24 +225,62 @@
 - Truststore `/app/cacerts` читается пользователем `app` (проверено живым
   запросом к ЦБ).
 
-## 9. Что осталось из аудита
+## 9. P0-3: Lockbox IAM
+
+`LockboxSecretResolver` формировал JWT, который Yandex IAM не принимает:
+
+- заголовок `{"alg":"RS256","typ":"JWT"}` **без `kid`**;
+- подпись `SHA256withRSA` вместо RSASSA-PSS;
+- строка `PLEASE DO NOT REMOVE THIS LINE! ...`, которую `yc iam key create`
+  добавляет перед PEM, попадала в base64 и ломала разбор ключа.
+
+### Исправления
+
+- Заголовок JWT: `{"alg":"PS256","typ":"JWT","kid":"<id ключа>"}`;
+  `kid` берётся из поля `id` JSON сервисного аккаунта (fallback `key_id`),
+  отсутствие — ошибка с явным сообщением.
+- Подпись: `Signature.getInstance("RSASSA-PSS")` +
+  `PSSParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, 32, 1)`.
+- `pemBase64()` извлекает тело строго между `-----BEGIN`/`-----END` —
+  служебный префикс YC отсекается, whitespace/CRLF удаляются.
+- Формирование JWT вынесено в `internal buildIamJwt()`, чтобы тест проверял
+  заголовок и подпись без разбора тела HTTP-запроса.
+
+### Тесты
+
+- `iam jwt uses ps256 with kid and verifies against the public key` —
+  `alg=PS256`, `kid` из JSON, `iss/aud/iat/exp`, подпись проверяется
+  публичным ключом тем же PSS-профилем.
+- `pem prefix added by yc iam key create is stripped` — тело PEM совпадает
+  с base64 ключа, JWT подписывается и проверяется.
+- `service account key without authorized key id is rejected`.
+
+E2E с реальным SA-ключом на этой машине не выполнялся: `LOCKBOX_SA_KEY_JSON`
+отсутствует в `.env`. Проверка на VM: включить `LOCKBOX_ENABLED=true`,
+убедиться, что контекст стартует и секреты подставлены.
+
+## 10. Что осталось из аудита
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
 | Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после SIM-деплоя |
-| P0-3 Lockbox IAM (`kid`/PS256) | блокер LIVE | перед LIVE |
 | P2-4 TLS/forwarded headers | высокий | перед публичным деплоем |
 | P2-1/P2-2/P2-5 security | высокий | перед публичным деплоем |
 
-**LIVE по-прежнему NO-GO:** не включать `TRADING_MODE=LIVE` до закрытия
-P0-3 и прохождения B (forward paper) + deployment-gate + риск-ревью.
-Live-параметры не меняются: `maxC=1`, Kelly, `CNYRUBF`.
+**LIVE по-прежнему NO-GO:** код-блокеры P0-1/P0-2/P0-3 закрыты, но LIVE
+не включается до прохождения B (forward paper, F1–F5), deployment-gate и
+отдельного риск-ревью. Live-параметры не меняются: `maxC=1`, Kelly,
+`CNYRUBF`.
 
-## 10. Верификация
+## 11. Верификация
 
 - `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
-  **BUILD SUCCESSFUL in 22m 6s**; unit **3 391** (0 падений, 1 skipped),
+  **BUILD SUCCESSFUL in 21m 50s**; unit **3 394** (0 падений, 1 skipped),
   integration **225** (0 падений, 1 skipped), ktlint — чисто.
+- Lockbox: 15 unit-тестов, включая проверку PS256-подписи публичным ключом и
+  отсечение префикса PEM.
+- `docker build --build-arg GIT_COMMIT=<sha>` — успешно; CI-образ
+  пересобран после Kotlin-правок.
 - `docker build --build-arg GIT_COMMIT=<sha>` — успешно; оба
   HARICA-сертификата импортированы в `/app/cacerts`.
 - Образ: `Config.User=app`, `uid=100(app)`, `GIT_COMMIT` == переданный SHA,

@@ -236,6 +236,11 @@ lockbox:                             # Yandex Lockbox (секреты как env
   sa-key-json: ${LOCKBOX_SA_KEY_JSON:}
 ```
 
+Для `sa-key-json` JWT подписывается **PS256** (RSASSA-PSS/SHA-256), в заголовок
+кладётся `kid` из поля `id` JSON сервисного ключа, а служебная строка
+`PLEASE DO NOT REMOVE THIS LINE! ...` перед PEM отсекается автоматически.
+Без `iam-token`/`sa-key-json` резолвер пробует metadata-сервис YC (VM с SA).
+
 ## 8.2. Таблица переменных окружения
 
 | Переменная | Default | Required | Описание | Пример |

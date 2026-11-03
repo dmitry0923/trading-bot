@@ -5,6 +5,7 @@ import com.trading.bot.event.TradingEventPublisher
 import com.trading.bot.event.TradingHaltedEvent
 import com.trading.bot.service.DrawdownProtectionService
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -14,6 +15,8 @@ import java.math.BigDecimal
 
 /**
  * Проверка circuit breaker по дневному лимиту убытка.
+ *
+ * `onPositionClosed`/`updateDailyPnl` — suspend (P1-5), поэтому вызовы в runBlocking.
  */
 class DailyLossCircuitBreakerTest {
     private val drawdownProtection: DrawdownProtectionService = Mockito.mock(DrawdownProtectionService::class.java)
@@ -28,11 +31,13 @@ class DailyLossCircuitBreakerTest {
     fun `position closed updates daily pnl in drawdown protection`() {
         Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(false)
 
-        breaker().onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS"),
-        )
+        runBlocking {
+            breaker().onPositionClosed(
+                PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS"),
+            )
 
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-1000"))
+            Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-1000"))
+        }
         assertTrue(haltedEvents.isEmpty())
         assertEquals(0.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)
     }
@@ -41,11 +46,13 @@ class DailyLossCircuitBreakerTest {
     fun `daily loss limit reached publishes trading halted event`() {
         Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
 
-        breaker().onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "LIQUIDATION_CRITICAL"),
-        )
+        runBlocking {
+            breaker().onPositionClosed(
+                PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "LIQUIDATION_CRITICAL"),
+            )
 
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-14000"))
+            Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-14000"))
+        }
         assertEquals(1, haltedEvents.size)
         assertEquals("DAILY_LOSS_LIMIT", haltedEvents.single().reason)
         assertEquals(1.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)
@@ -55,11 +62,13 @@ class DailyLossCircuitBreakerTest {
     fun `not triggered when daily loss not reached`() {
         Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(false)
 
-        breaker().onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-3000"), reason = "STOP_LOSS"),
-        )
+        runBlocking {
+            breaker().onPositionClosed(
+                PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-3000"), reason = "STOP_LOSS"),
+            )
 
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-3000"))
+            Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-3000"))
+        }
         assertTrue(haltedEvents.isEmpty())
         assertEquals(0.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)
     }
@@ -69,12 +78,14 @@ class DailyLossCircuitBreakerTest {
         Mockito.`when`(drawdownProtection.isDailyLossLimitReached()).thenReturn(true)
         val b = breaker()
 
-        b.onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "STOP_LOSS"),
-        )
-        b.onPositionClosed(
-            PositionClosedEvent(positionId = 2, ticker = "Si", pnl = BigDecimal("-2000"), reason = "STOP_LOSS"),
-        )
+        runBlocking {
+            b.onPositionClosed(
+                PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "STOP_LOSS"),
+            )
+            b.onPositionClosed(
+                PositionClosedEvent(positionId = 2, ticker = "Si", pnl = BigDecimal("-2000"), reason = "STOP_LOSS"),
+            )
+        }
 
         assertEquals(1, haltedEvents.size)
         assertEquals("DAILY_LOSS_LIMIT", haltedEvents.single().reason)
@@ -86,15 +97,17 @@ class DailyLossCircuitBreakerTest {
         Mockito.`when`(drawdownProtection.isDailyLossLimitReached(anyOrNull())).thenReturn(true)
         val b = breaker()
 
-        b.onPositionClosed(
-            PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "STOP_LOSS", accountId = 7L),
-        )
-        b.onPositionClosed(
-            PositionClosedEvent(positionId = 2, ticker = "Si", pnl = BigDecimal("-2000"), reason = "STOP_LOSS", accountId = 7L),
-        )
-        b.onPositionClosed(
-            PositionClosedEvent(positionId = 3, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS", accountId = 8L),
-        )
+        runBlocking {
+            b.onPositionClosed(
+                PositionClosedEvent(positionId = 1, ticker = "Si", pnl = BigDecimal("-14000"), reason = "STOP_LOSS", accountId = 7L),
+            )
+            b.onPositionClosed(
+                PositionClosedEvent(positionId = 2, ticker = "Si", pnl = BigDecimal("-2000"), reason = "STOP_LOSS", accountId = 7L),
+            )
+            b.onPositionClosed(
+                PositionClosedEvent(positionId = 3, ticker = "Si", pnl = BigDecimal("-1000"), reason = "STOP_LOSS", accountId = 8L),
+            )
+        }
 
         assertEquals(2, haltedEvents.size)
         assertEquals(2.0, meterRegistry.counter("circuit.daily_loss.triggered").count(), 0.001)

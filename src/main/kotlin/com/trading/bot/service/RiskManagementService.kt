@@ -256,7 +256,7 @@ class RiskManagementService(
      *
      * @param pnl прибыль/убыток сделки
      */
-    fun updateDailyPnL(
+    suspend fun updateDailyPnL(
         pnl: BigDecimal,
         accountId: Long? = null,
     ) {

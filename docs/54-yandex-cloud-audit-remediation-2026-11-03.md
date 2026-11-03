@@ -26,7 +26,7 @@ deployment-gate и риск-ревью (код-блокеры P0-2/P0-3 закр
 | **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
 | **P1-4** метрики/алерты | **исправлено** | имена метрик синхронизированы, `TradingPaused` через `rate`, Alertmanager + webhook-sink, promtool-тесты, CI job |
-| **P1-5** blocking DB/пулы | **исправлено частично** | HTTP-путь переведён на suspend (`findRecentAwait`), блокирующие event-path вызовы ограничены 5 с, R2DBC/Hikari лимиты; полный suspend-рефактор `updateDailyPnl` — отдельная задача |
+| **P1-5** blocking DB/пулы | **исправлено** | HTTP-путь и `updateDailyPnl` переведены на suspend (`findRecentAwait`, `upsertAwait`, `findByDateAwait`), блокирующие вызовы ограничены 5 с, R2DBC/Hikari лимиты |
 | **P1-6** память/Managed DB | **исправлено** | `MaxRAMPercentage=50`, убран `AlwaysPreTouch`, `mem_limit` всем сервисам, `DB_HOST`/`REDIS_HOST` из env, `TRACE_STORAGE_ENABLED=false` |
 
 ## 2. P0-1: health/liveness
@@ -152,10 +152,17 @@ deployment-gate и риск-ревью (код-блокеры P0-2/P0-3 закр
 - Liquibase JDBC/Hikari: `maximum-pool-size=2`, `minimum-idle=0`,
   `idle-timeout=30s`, `max-lifetime=30m`, `connection-timeout=5s` — на
   Managed PostgreSQL не держим 10 лишних коннектов.
-- **Остаток:** `DrawdownProtectionService.updateDailyPnl` остаётся
-  не-suspend (вызывается из `DailyLossCircuitBreaker`/`RiskManagementService`);
-  его запись ограничена 5 с, но полный перевод на `suspend` —
-  отдельный рефакторинг с проверкой порядка halt/закрытия.
+- **`updateDailyPnl` переведён на suspend полностью:** `DailyRiskGuard`
+  → `RiskManagementService` → `DrawdownProtectionService` — suspend-цепочка;
+  чтение снапшота (`findByDateAwait`) и запись (`upsertAwait`) идут вне
+  монитора сервиса, без `.block()`. `DailyLossCircuitBreaker.onPositionClosed`
+  — suspend `@EventListener` (Spring 7 поддерживает); `init()` запускает
+  восстановление/прогрев в корутине и возвращает `Job` (для тестов).
+  Мутация аккумулятора остаётся под монитором (read-modify-write), порядок
+  «update P&L → проверка лимита → halt» сохранён.
+  `isDailyLossLimitReached`/`getDailyPnl` (sync cache-геттеры) по-прежнему
+  могут лениво дочитать один снапшот через bounded `.block(5s)` на границе
+  дня — это горячий путь без корутины; сам учёт P&L больше не блокирует.
 
 ### P1-6 — память и инфраструктура
 
@@ -317,7 +324,6 @@ WebClient/Netty печатают полный URI.
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
-| Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после SIM-деплоя |
 | TLS-сертификат и DNS для реального домена | инфра | при публичном доступе |
 
 **LIVE по-прежнему NO-GO:** код-блокеры P0-1/P0-2/P0-3 закрыты, но LIVE
@@ -343,8 +349,12 @@ Runbook: `docs/55-sim-deploy-yandex-cloud.md`. Добавлены:
 ## 12. Верификация
 
 - `./gradlew test integrationTest ktlintCheck` (финальный код):
-  **BUILD SUCCESSFUL in 20m 29s**; unit **3 400** (0 падений, 1 skipped),
+  **BUILD SUCCESSFUL in 29m 17s**; unit **3 400** (0 падений, 1 skipped),
   integration **225** (0 падений, 1 skipped), ktlint — чисто.
+- P1-5: suspend-цепочка `updateDailyPnl` покрыта тестами
+  `DrawdownProtectionService*` (аккумулятор, снапшоты, конкурентный persist),
+  `DailyLossCircuitBreakerTest` (suspend listener) и интеграционным
+  `FuturesTradingBotServiceIntegrationTest` (daily loss блокирует вход).
 - Lockbox: 15 unit-тестов, включая проверку PS256-подписи публичным ключом и
   отсечение префикса PEM.
 - `docker build --build-arg GIT_COMMIT=<sha>` — успешно; CI-образ

@@ -20,8 +20,12 @@ interface DailyRiskGuard {
     /** Текущий дневной P&L (кэш, без БД). accountId = null → legacy global. */
     fun getDailyPnl(accountId: Long? = null): BigDecimal
 
-    /** Синхронный учёт P&L закрытой сделки. accountId = null → legacy global. */
-    fun updateDailyPnl(
+    /**
+     * Учёт P&L закрытой сделки. accountId = null → legacy global.
+     *
+     * `suspend`: запись снапшота идёт через R2DBC без `.block()` (P1-5).
+     */
+    suspend fun updateDailyPnl(
         pnl: BigDecimal,
         accountId: Long? = null,
     )

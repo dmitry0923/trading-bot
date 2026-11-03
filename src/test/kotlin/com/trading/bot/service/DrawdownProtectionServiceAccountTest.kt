@@ -174,34 +174,37 @@ class DrawdownProtectionServiceAccountTest {
     }
 
     @Test
-    fun `account snapshot persist failure does not break accounting`() {
-        whenever(
-            snapshotRepo.upsert(
-                anyDate(),
-                anyBigDecimal(),
-                anyBoolean(),
-                anyBigDecimal(),
-                anyNullableId(),
-                anyNullableDecimal(),
-            ),
-        ).thenThrow(IllegalStateException("db down"))
-        val drawdown = service()
+    fun `account snapshot persist failure does not break accounting`(): Unit =
+        runBlocking {
+            whenever(
+                snapshotRepo.upsertAwait(
+                    anyDate(),
+                    anyBigDecimal(),
+                    anyBoolean(),
+                    anyBigDecimal(),
+                    anyNullableId(),
+                    anyNullableDecimal(),
+                ),
+            ).thenThrow(IllegalStateException("db down"))
+            val drawdown = service()
 
-        drawdown.updateDailyPnl(BigDecimal("-100"), 7L)
+            drawdown.updateDailyPnl(BigDecimal("-100"), 7L)
 
-        assertEquals(0, BigDecimal("-100").compareTo(drawdown.getDailyPnl(7L)))
-    }
+            assertEquals(0, BigDecimal("-100").compareTo(drawdown.getDailyPnl(7L)))
+        }
 
     @Test
-    fun `startup survives daily snapshot read failure`() {
-        whenever(snapshotRepo.findByDate(anyDate(), anyNullableId()))
-            .thenThrow(IllegalStateException("db down"))
-        val drawdown = service()
+    fun `startup survives daily snapshot read failure`(): Unit =
+        runBlocking {
+            whenever(snapshotRepo.findByDateAwait(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
+                .thenThrow(IllegalStateException("db down"))
+            val drawdown = service()
 
-        drawdown.init()
+            drawdown.init()
+            drawdown.awaitInitialization()
 
-        assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl()))
-    }
+            assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl()))
+        }
 
     // ─── futures unrealized P&L ──────────────────────────────────────
 
@@ -379,16 +382,17 @@ class DrawdownProtectionServiceAccountTest {
         }
 
     @Test
-    fun `legacy snapshot persist failure does not break accounting`() {
-        whenever(
-            snapshotRepo.upsert(anyDate(), anyBigDecimal(), anyBoolean(), anyBigDecimal(), isNull(), anyNullableDecimal()),
-        ).thenThrow(IllegalStateException("db down"))
-        val drawdown = service()
+    fun `legacy snapshot persist failure does not break accounting`(): Unit =
+        runBlocking {
+            whenever(
+                snapshotRepo.upsertAwait(anyDate(), anyBigDecimal(), anyBoolean(), anyBigDecimal(), isNull(), anyNullableDecimal()),
+            ).thenThrow(IllegalStateException("db down"))
+            val drawdown = service()
 
-        drawdown.updateDailyPnl(BigDecimal("-100"))
+            drawdown.updateDailyPnl(BigDecimal("-100"))
 
-        assertEquals(0, BigDecimal("-100").compareTo(drawdown.getDailyPnl()))
-    }
+            assertEquals(0, BigDecimal("-100").compareTo(drawdown.getDailyPnl()))
+        }
 
     @Test
     fun `short stock unrealized pnl is positive when price falls`(): Unit =

@@ -19,9 +19,12 @@ import io.micrometer.core.instrument.Tags
 import jakarta.annotation.PreDestroy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.springframework.boot.context.event.ApplicationReadyEvent
 import org.springframework.context.ApplicationEventPublisher
 import org.springframework.context.event.EventListener
@@ -139,6 +142,18 @@ class DrawdownProtectionService(
     private val accountLossReached: java.util.concurrent.ConcurrentHashMap<Long, Boolean> = java.util.concurrent.ConcurrentHashMap()
     private val accountLoadedDate: java.util.concurrent.ConcurrentHashMap<Long, LocalDate> = java.util.concurrent.ConcurrentHashMap()
 
+    /**
+     * Сериализация записи снапшотов и защита от out-of-order (P1-5): состояние
+     * мутируется под `synchronized`, а R2DBC-запись выполняется suspend вне
+     * монитора — две конкурентные записи могли бы лечь в БД в обратном порядке.
+     * Каждое состояние получает монотонный [persistVersionCounter]; запись
+     * с версией не новее уже сохранённой пропускается.
+     */
+    private val persistMutex = Mutex()
+    private val persistedVersion: java.util.concurrent.ConcurrentHashMap<Long, Long> = java.util.concurrent.ConcurrentHashMap()
+    private var persistVersionCounter: Long = 0L
+    private val legacyPersistKey = -1L
+
     // Equity HWM tracking (peakEquity = max equity seen today, equity = balance + unrealized).
     // Enables drawdown breaker on unrealized losses, not just realized.
     @Volatile
@@ -161,30 +176,47 @@ class DrawdownProtectionService(
      * чтобы дневной P&L не «обнулялся» до первого стратегического цикла/закрытия позиции
      * (см. roadmap 13.7.2: при рестарте в течение дня лимит убытка должен быть восстановлен).
      */
+    @Volatile
+    private var initJob: Job? = null
+
     @EventListener(ApplicationReadyEvent::class)
     fun init() {
-        try {
-            resetDailyStateIfNewDay()
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to load daily risk state at startup" }
-        }
         // Скан-15 P1: rolling 7д/30д лимиты и Shadow-mode считались ТОЛЬКО в computeStatus,
         // который вызывается из HTTP и события закрытия. После рестарта до первого закрытия
         // кэш был пуст → `isEntryBlocked` отдавал нейтральный статус, и вход открывался при
         // уже пробитом лимите. Прогреваем кэш чтением (persist=false — ничего не пишем).
-        scope.launch {
-            try {
-                computeStatus(accountId = null, persist = false)
-                tradingAccountService.findAll().forEach { account ->
-                    computeStatus(accountId = account.id, persist = false)
+        initJob =
+            scope.launch {
+                try {
+                    restoreDailyState()
+                } catch (e: Exception) {
+                    logger.warn(e) { "Failed to load daily risk state at startup" }
                 }
-                logger.info {
-                    "Drawdown state warmed at startup: rolling 7d/30d limits and shadow mode restored from DB"
+                try {
+                    computeStatus(accountId = null, persist = false)
+                    tradingAccountService.findAll().forEach { account ->
+                        computeStatus(accountId = account.id, persist = false)
+                    }
+                    logger.info {
+                        "Drawdown state warmed at startup: rolling 7d/30d limits and shadow mode restored from DB"
+                    }
+                } catch (e: Exception) {
+                    logger.warn(e) { "Failed to warm drawdown state at startup" }
                 }
-            } catch (e: Exception) {
-                logger.warn(e) { "Failed to warm drawdown state at startup" }
             }
-        }
+    }
+
+    /**
+     * Восстановление дневного снапшота из `daily_risk_snapshot` (без recompute).
+     * Internal — используется [init] и тестами старта; suspend I/O без `.block()`.
+     */
+    internal suspend fun restoreDailyState() {
+        resetDailyStateIfNewDay()
+    }
+
+    /** Дождаться восстановления/прогрева, запущенного [init] (internal для тестов). */
+    internal suspend fun awaitInitialization() {
+        initJob?.join()
     }
 
     /**
@@ -206,11 +238,9 @@ class DrawdownProtectionService(
         accountId: Long? = null,
         persist: Boolean = true,
     ): DrawdownStatus {
-        // RISK-OPEN-3 (roadmap 13.28.3): сброс/восстановление дневного стейта
-        // сериализован тем же монитором, что и @Synchronized updateDailyPnl.
-        synchronized(this) {
-            resetDailyStateIfNewDay()
-        }
+        // RISK-OPEN-3 (roadmap 13.28.3): сброс/восстановление дневного стейта.
+        // I/O — до монитора; мутация полей синхронизирована внутри метода.
+        resetDailyStateIfNewDay()
         aumProvider.currentAum(accountId) // обновление баланса из Alor перед расчётом лимитов
         val now = LocalDateTime.now(clock)
         val todayStart = now.toLocalDate().atStartOfDay()
@@ -252,6 +282,7 @@ class DrawdownProtectionService(
                                 pnl = accountPnl[accountId] ?: BigDecimal.ZERO,
                                 lossReached = accountLossReached[accountId] ?: false,
                                 peakEquity = accountPeakEquity[accountId],
+                                version = ++persistVersionCounter,
                             )
                         }
                     if (persist) persistDailyStateAwait(snapshot, accountId)
@@ -263,7 +294,12 @@ class DrawdownProtectionService(
                                 todayPnl = dailyPnl
                                 todayDailyLossReached = dailyPnl <= effectiveDailyLossLimitRub(aum).negate()
                             }
-                            PersistedDailyState(todayPnl, todayDailyLossReached, todayPeakEquity)
+                            PersistedDailyState(
+                                todayPnl,
+                                todayDailyLossReached,
+                                todayPeakEquity,
+                                ++persistVersionCounter,
+                            )
                         }
                     if (persist) persistDailyStateAwait(snapshot, null)
                     effectiveDailyLossLimitRub(aum)
@@ -398,46 +434,53 @@ class DrawdownProtectionService(
     }
 
     /**
-     * Синхронный учёт P&L закрытой сделки. Единственный аккумулятор дневного P&L:
+     * Suspend-учёт P&L закрытой сделки. Единственный аккумулятор дневного P&L:
      * вызывается из RiskManagementService (акции) и DailyLossCircuitBreaker (фьючерсы).
      * Персистит состояние в daily_risk_snapshot (восстановление после рестарта).
      *
-     * Метод сериализован ([Synchronized]): конкурирующие вызовы из разных корутин
-     * не должны терять обновления (`todayPnl = todayPnl + pnl` — read-modify-write).
-     *
-     * I/O загрузки состояния выполняется ДО критической секции: `.block()` не должен
-     * держать монитор сервиса и останавливать обработку событий (скан-8 P1).
+     * Мутация аккумулятора сериализована монитором `this`: конкурирующие вызовы
+     * не должны терять обновления (`todayPnl = todayPnl + pnl`). Чтение снапшота
+     * и запись в БД — suspend I/O ВНЕ монитора (P1-5): `.block()` больше не
+     * удерживает монитор и не блокирует поток обработки событий.
      */
-    override fun updateDailyPnl(
+    override suspend fun updateDailyPnl(
         pnl: BigDecimal,
         accountId: Long?,
     ) {
         if (accountId != null) {
             val day = LocalDate.now(clock)
-            loadAccountDailyState(accountId, day)
-            synchronized(this) {
-                resetDailyStateIfNewDay()
-                updateAccountDailyPnl(accountId, pnl)
-            }
+            resetDailyStateIfNewDay()
+            loadAccountDailyStateAwait(accountId, day)
+            // Мутация аккумулятора — под монитором; БД-запись — suspend вне монитора.
+            val snapshot =
+                synchronized(this) {
+                    updateAccountDailyPnl(accountId, pnl)
+                }
+            persistDailyStateAwait(snapshot, accountId)
             return
         }
-        synchronized(this) {
-            resetDailyStateIfNewDay()
-            todayPnl = todayPnl.add(pnl)
-            accumulatorDirty = true
-            val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
-            val dailyLimit = effectiveDailyLossLimitRub(aum)
-            if (todayPnl <= dailyLimit.negate()) {
-                todayDailyLossReached = true
-                logger.error { "DAILY LOSS LIMIT reached: dailyPnL=$todayPnl <= -$dailyLimit (${riskConfig.maxDailyLossPercent}% of AUM)" }
+        resetDailyStateIfNewDay()
+        val snapshot =
+            synchronized(this) {
+                todayPnl = todayPnl.add(pnl)
+                accumulatorDirty = true
+                val aum = cachedStatusByAccount[key(null)]?.aum ?: aumProvider.latestAum()
+                val dailyLimit = effectiveDailyLossLimitRub(aum)
+                if (todayPnl <= dailyLimit.negate()) {
+                    todayDailyLossReached = true
+                    logger.error {
+                        "DAILY LOSS LIMIT reached: dailyPnL=$todayPnl <= -$dailyLimit " +
+                            "(${riskConfig.maxDailyLossPercent}% of AUM)"
+                    }
+                }
+                PersistedDailyState(todayPnl, todayDailyLossReached, todayPeakEquity, ++persistVersionCounter)
             }
-            persistDailyState()
-        }
-        MutableGauges.set(meterRegistry, "risk.daily.pnl", todayPnl.toDouble())
-        MutableGauges.set(meterRegistry, "risk.daily.limit.reached", if (todayDailyLossReached) 1.0 else 0.0)
+        persistDailyStateAwait(snapshot, null)
+        MutableGauges.set(meterRegistry, "risk.daily.pnl", snapshot.pnl.toDouble())
+        MutableGauges.set(meterRegistry, "risk.daily.limit.reached", if (snapshot.lossReached) 1.0 else 0.0)
         // Синхронное обновление кэша — входы блокируются немедленно, без ожидания цикла.
         cachedStatusByAccount[key(null)]?.let { s ->
-            val updated = s.copy(dailyPnlRub = todayPnl, dailyLimitBreached = todayDailyLossReached)
+            val updated = s.copy(dailyPnlRub = snapshot.pnl, dailyLimitBreached = snapshot.lossReached)
             cachedStatusByAccount[key(null)] = updated
             recordMetrics(updated, null)
         }
@@ -451,7 +494,7 @@ class DrawdownProtectionService(
     private fun updateAccountDailyPnl(
         accountId: Long,
         pnl: BigDecimal,
-    ) {
+    ): PersistedDailyState {
         // Состояние дня уже загружено вызывающим ДО критической секции (без I/O под монитором).
         val newPnl = (accountPnl[accountId] ?: BigDecimal.ZERO).add(pnl)
         accountPnl[accountId] = newPnl
@@ -462,7 +505,6 @@ class DrawdownProtectionService(
             accountLossReached[accountId] = true
             logger.error { "DAILY LOSS LIMIT reached (account=$accountId): dailyPnL=$newPnl <= -$dailyLimit" }
         }
-        persistDailyState(accountId)
         MutableGauges.set(meterRegistry, "risk.daily.pnl", newPnl.toDouble(), Tags.of("account", accountId.toString()))
         MutableGauges.set(
             meterRegistry,
@@ -476,6 +518,12 @@ class DrawdownProtectionService(
             cachedStatusByAccount[key(accountId)] = updated
             recordMetrics(updated, accountId)
         }
+        return PersistedDailyState(
+            newPnl,
+            accountLossReached[accountId] ?: false,
+            accountPeakEquity[accountId],
+            ++persistVersionCounter,
+        )
     }
 
     private fun loadAccountDailyState(
@@ -773,31 +821,35 @@ class DrawdownProtectionService(
     /**
      * Сброс/восстановление дневного состояния аккумулятора при смене календарного дня (МСК).
      * При рестарте в течение дня восстанавливает значения из daily_risk_snapshot.
+     *
+     * Suspend (P1-5): чтение снапшота выполняется ДО монитора; повторная проверка
+     * даты внутри монитора защищает от гонки двух корутин на границе дня.
      */
-    private fun resetDailyStateIfNewDay() {
+    private suspend fun resetDailyStateIfNewDay() {
         val today = LocalDate.now(clock)
         if (lastTradingDate == today) return
-        lastTradingDate = today
-        accumulatorDirty = false
-        todayPeakEquity = BigDecimal.ZERO
-        accountDirty.clear()
-        accountPeakEquity.clear()
-        autoStopTriggeredUntilByAccount.clear()
-        loadDailyState(today)
-    }
-
-    private fun loadDailyState(today: LocalDate) {
         val snapshot =
             try {
-                dailyRiskSnapshotRepo.findByDate(today)
+                dailyRiskSnapshotRepo.findByDateAwait(today)
             } catch (e: Exception) {
                 logger.warn(e) { "Daily risk snapshot load failed" }
                 null
             }
-        todayPnl = snapshot?.dailyPnl ?: BigDecimal.ZERO
-        todayDailyLossReached = snapshot?.limitReached ?: false
-        todayPeakEquity = snapshot?.peakEquity ?: BigDecimal.ZERO
-        logger.info { "Daily risk state for $today: dailyPnL=$todayPnl limitReached=$todayDailyLossReached peakEquity=$todayPeakEquity" }
+        synchronized(this) {
+            if (lastTradingDate == today) return
+            lastTradingDate = today
+            accumulatorDirty = false
+            todayPnl = snapshot?.dailyPnl ?: BigDecimal.ZERO
+            todayDailyLossReached = snapshot?.limitReached ?: false
+            todayPeakEquity = snapshot?.peakEquity ?: BigDecimal.ZERO
+            accountDirty.clear()
+            accountPeakEquity.clear()
+            autoStopTriggeredUntilByAccount.clear()
+        }
+        logger.info {
+            "Daily risk state for $today: dailyPnL=$todayPnl limitReached=$todayDailyLossReached " +
+                "peakEquity=$todayPeakEquity"
+        }
     }
 
     /**
@@ -826,66 +878,43 @@ class DrawdownProtectionService(
         }
     }
 
-    /**
-     * Персист снимка. Один короткий upsert остаётся синхронным (durability счётчика важнее
-     * неблокирующего вызова), но все ЧТЕНИЯ вынесены из-под монитора в
-     * [computeStatus]/[updateDailyPnl] (скан-8 P1).
-     */
-    private fun persistDailyState() {
-        try {
-            dailyRiskSnapshotRepo.upsert(
-                LocalDate.now(clock),
-                todayPnl,
-                todayDailyLossReached,
-                todayPnl.coerceAtMost(BigDecimal.ZERO),
-                peakEquity = todayPeakEquity,
-            )
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to persist daily risk snapshot" }
-        }
-    }
-
-    private fun persistDailyState(accountId: Long) {
-        try {
-            dailyRiskSnapshotRepo.upsert(
-                LocalDate.now(clock),
-                accountPnl[accountId] ?: BigDecimal.ZERO,
-                accountLossReached[accountId] ?: false,
-                (accountPnl[accountId] ?: BigDecimal.ZERO).coerceAtMost(BigDecimal.ZERO),
-                accountId,
-                peakEquity = accountPeakEquity[accountId],
-            )
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to persist daily risk snapshot for account=$accountId" }
-        }
-    }
-
     /** Снимок дневного состояния, зафиксированный под монитором перед записью в БД. */
     private data class PersistedDailyState(
         val pnl: BigDecimal,
         val lossReached: Boolean,
         val peakEquity: BigDecimal?,
+        val version: Long,
     )
 
     /**
      * Запись снимка suspend-путём: `Mono.block()` внутри корутины на реактивном потоке
      * бросает `IllegalStateException`, и catch молча терял запись (скан-13 P1).
+     *
+     * Запись сериализована [persistMutex] и пропускается, если в БД уже лёг
+     * более новый снимок: состояние мутируется под монитором, а R2DBC-запись
+     * выполняется вне его — иначе две конкурентные корутины могли бы перезаписать
+     * снапшот в обратном порядке (P1-5).
      */
     private suspend fun persistDailyStateAwait(
         state: PersistedDailyState,
         accountId: Long?,
     ) {
-        try {
-            dailyRiskSnapshotRepo.upsertAwait(
-                LocalDate.now(clock),
-                state.pnl,
-                state.lossReached,
-                state.pnl.coerceAtMost(BigDecimal.ZERO),
-                accountId,
-                peakEquity = state.peakEquity,
-            )
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to persist daily risk snapshot (account=$accountId)" }
+        val key = accountId ?: legacyPersistKey
+        persistMutex.withLock {
+            if (state.version <= (persistedVersion[key] ?: 0L)) return
+            try {
+                dailyRiskSnapshotRepo.upsertAwait(
+                    LocalDate.now(clock),
+                    state.pnl,
+                    state.lossReached,
+                    state.pnl.coerceAtMost(BigDecimal.ZERO),
+                    accountId,
+                    peakEquity = state.peakEquity,
+                )
+                persistedVersion[key] = state.version
+            } catch (e: Exception) {
+                logger.warn(e) { "Failed to persist daily risk snapshot (account=$accountId)" }
+            }
         }
     }
 

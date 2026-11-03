@@ -315,13 +315,14 @@ class DrawdownProtectionServiceEdgeBranchesTest {
     @Test
     fun `startup tolerates a broken snapshot repository`() {
         runBlocking {
-            whenever(snapshotRepo.findByDate(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
+            whenever(snapshotRepo.findByDateAwait(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
                 .thenThrow(IllegalStateException("db down"))
             whenever(tradingAccountService.findAll()).thenReturn(emptyList())
             stubNoOpen()
             val drawdown = service()
 
             drawdown.init()
+            drawdown.awaitInitialization()
 
             assertFalse(drawdown.isEntryBlocked())
             assertEquals(0, BigDecimal.ZERO.compareTo(drawdown.getDailyPnl(null)))
@@ -474,13 +475,13 @@ class DrawdownProtectionServiceEdgeBranchesTest {
                     maxDrawdownToday = BigDecimal("-123"),
                     peakEquity = BigDecimal("45000"),
                 )
-            whenever(snapshotRepo.findByDate(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
+            whenever(snapshotRepo.findByDateAwait(anyDate(), Mockito.nullable(Long::class.javaObjectType)))
                 .thenReturn(snapshot)
-            whenever(tradingAccountService.findAll()).thenReturn(emptyList())
-            stubNoOpen()
             val drawdown = service()
 
-            drawdown.init()
+            // Проверяем именно восстановление снапшота (без последующего recompute,
+            // который в проде заменяет снапшот фактами из БД).
+            drawdown.restoreDailyState()
 
             assertEquals(0, BigDecimal("-123").compareTo(drawdown.getDailyPnl(null)))
             assertTrue(drawdown.isDailyLossLimitReached(null), "limitReached восстанавливается из снапшота")

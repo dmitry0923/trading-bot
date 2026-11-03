@@ -530,95 +530,121 @@ class DrawdownProtectionServiceTest {
     // ===================== Дневной P&L аккумулятор =====================
 
     @Test
-    fun `updateDailyPnl accumulates and persists daily snapshot`() {
-        val s = service()
+    fun `updateDailyPnl accumulates and persists daily snapshot`() =
+        runBlocking {
+            val s = service()
 
-        s.updateDailyPnl(BigDecimal("1000"))
-        s.updateDailyPnl(BigDecimal("-400"))
+            s.updateDailyPnl(BigDecimal("1000"))
+            s.updateDailyPnl(BigDecimal("-400"))
 
-        assertEquals(0, BigDecimal("600").compareTo(s.getDailyPnl()))
-        assertFalse(s.isDailyLossLimitReached())
-        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("1000"), false, BigDecimal.ZERO, peakEquity = BigDecimal.ZERO)
-        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("600"), false, BigDecimal.ZERO, peakEquity = BigDecimal.ZERO)
-    }
-
-    @Test
-    fun `updateDailyPnl triggers limit below percent of aum`() {
-        val s = service()
-
-        s.updateDailyPnl(BigDecimal("-5001"))
-
-        // лимит = 10% от 50 000 = 5 000 (без рублёвого пола)
-        assertTrue(s.isDailyLossLimitReached())
-        assertEquals(0, BigDecimal("-5001").compareTo(s.getDailyPnl()))
-        Mockito.verify(snapshotRepo).upsert(moscowToday, BigDecimal("-5001"), true, BigDecimal("-5001"), peakEquity = BigDecimal.ZERO)
-    }
-
-    @Test
-    fun `small losses do not trigger the limit`() {
-        val s = service()
-
-        s.updateDailyPnl(BigDecimal("-500"))
-
-        assertFalse(s.isDailyLossLimitReached())
-    }
+            assertEquals(0, BigDecimal("600").compareTo(s.getDailyPnl()))
+            assertFalse(s.isDailyLossLimitReached())
+            Mockito.verify(snapshotRepo).upsertAwait(
+                moscowToday,
+                BigDecimal("1000"),
+                false,
+                BigDecimal.ZERO,
+                peakEquity = BigDecimal.ZERO,
+            )
+            Mockito.verify(snapshotRepo).upsertAwait(
+                moscowToday,
+                BigDecimal("600"),
+                false,
+                BigDecimal.ZERO,
+                peakEquity = BigDecimal.ZERO,
+            )
+        }
 
     @Test
-    fun `restores daily state from snapshot after restart`() {
-        Mockito.`when`(snapshotRepo.findByDate(moscowToday)).thenReturn(
-            DailyRiskSnapshot(
-                id = 1,
-                tradeDate = moscowToday,
-                dailyPnl = BigDecimal("-500"),
-                limitReached = false,
-                maxDrawdownToday = BigDecimal("-500"),
-            ),
-        )
-        val s = service()
+    fun `updateDailyPnl triggers limit below percent of aum`() =
+        runBlocking {
+            val s = service()
 
-        // любая точка дневного аккумулятора при первом касании дня восстанавливает снапшот
-        s.updateDailyPnl(BigDecimal.ZERO)
+            s.updateDailyPnl(BigDecimal("-5001"))
 
-        assertEquals(0, BigDecimal("-500").compareTo(s.getDailyPnl()))
-        assertFalse(s.isDailyLossLimitReached())
-    }
-
-    @Test
-    fun `restores limit reached flag from snapshot`() {
-        Mockito.`when`(snapshotRepo.findByDate(moscowToday)).thenReturn(
-            DailyRiskSnapshot(
-                id = 1,
-                tradeDate = moscowToday,
-                dailyPnl = BigDecimal("-6000"),
-                limitReached = true,
-                maxDrawdownToday = BigDecimal("-6000"),
-            ),
-        )
-        val s = service()
-
-        s.updateDailyPnl(BigDecimal.ZERO)
-
-        assertTrue(s.isDailyLossLimitReached())
-    }
+            // лимит = 10% от 50 000 = 5 000 (без рублёвого пола)
+            assertTrue(s.isDailyLossLimitReached())
+            assertEquals(0, BigDecimal("-5001").compareTo(s.getDailyPnl()))
+            Mockito.verify(snapshotRepo).upsertAwait(
+                moscowToday,
+                BigDecimal("-5001"),
+                true,
+                BigDecimal("-5001"),
+                peakEquity = BigDecimal.ZERO,
+            )
+        }
 
     @Test
-    fun `init loads today daily pnl and limit flag from snapshot on startup`() {
-        Mockito.`when`(snapshotRepo.findByDate(moscowToday)).thenReturn(
-            DailyRiskSnapshot(
-                id = 1,
-                tradeDate = moscowToday,
-                dailyPnl = BigDecimal("-6000"),
-                limitReached = true,
-                maxDrawdownToday = BigDecimal("-6000"),
-            ),
-        )
+    fun `small losses do not trigger the limit`() =
+        runBlocking {
+            val s = service()
 
-        val s = service()
-        s.init()
+            s.updateDailyPnl(BigDecimal("-500"))
 
-        assertEquals(0, BigDecimal("-6000").compareTo(s.getDailyPnl()))
-        assertTrue(s.isDailyLossLimitReached())
-    }
+            assertFalse(s.isDailyLossLimitReached())
+        }
+
+    @Test
+    fun `restores daily state from snapshot after restart`() =
+        runBlocking {
+            Mockito.`when`(snapshotRepo.findByDateAwait(moscowToday)).thenReturn(
+                DailyRiskSnapshot(
+                    id = 1,
+                    tradeDate = moscowToday,
+                    dailyPnl = BigDecimal("-500"),
+                    limitReached = false,
+                    maxDrawdownToday = BigDecimal("-500"),
+                ),
+            )
+            val s = service()
+
+            // любая точка дневного аккумулятора при первом касании дня восстанавливает снапшот
+            s.updateDailyPnl(BigDecimal.ZERO)
+
+            assertEquals(0, BigDecimal("-500").compareTo(s.getDailyPnl()))
+            assertFalse(s.isDailyLossLimitReached())
+        }
+
+    @Test
+    fun `restores limit reached flag from snapshot`() =
+        runBlocking {
+            Mockito.`when`(snapshotRepo.findByDateAwait(moscowToday)).thenReturn(
+                DailyRiskSnapshot(
+                    id = 1,
+                    tradeDate = moscowToday,
+                    dailyPnl = BigDecimal("-6000"),
+                    limitReached = true,
+                    maxDrawdownToday = BigDecimal("-6000"),
+                ),
+            )
+            val s = service()
+
+            s.updateDailyPnl(BigDecimal.ZERO)
+
+            assertTrue(s.isDailyLossLimitReached())
+        }
+
+    @Test
+    fun `init loads today daily pnl and limit flag from snapshot on startup`() =
+        runBlocking {
+            Mockito.`when`(snapshotRepo.findByDateAwait(moscowToday)).thenReturn(
+                DailyRiskSnapshot(
+                    id = 1,
+                    tradeDate = moscowToday,
+                    dailyPnl = BigDecimal("-6000"),
+                    limitReached = true,
+                    maxDrawdownToday = BigDecimal("-6000"),
+                ),
+            )
+
+            val s = service()
+            // init() запускает восстановление и прогрев в корутине; ждём завершения.
+            s.init()
+            s.awaitInitialization()
+
+            assertEquals(0, BigDecimal("-6000").compareTo(s.getDailyPnl()))
+            assertTrue(s.isDailyLossLimitReached())
+        }
 
     @Test
     fun `computeStatus reconciles daily pnl from db including open positions`() =
@@ -723,18 +749,20 @@ class DrawdownProtectionServiceTest {
             // (updateDailyPnl и computeStatus) сохраняют -1000, а не 0 (без dirty-гварда
             // второй был бы 0 — потеря инкремента в daily_risk_snapshot при рестарте).
             // computeStatus updates peakEquity to max(0, equity=50000) = 50000.
-            // Синхронный путь (updateDailyPnl) пишет upsert, suspend-путь (computeStatus) —
-            // upsertAwait (скан-13 P1: block() в корутине глушился и запись терялась).
+            // Оба пути (updateDailyPnl и computeStatus) пишут через upsertAwait (P1-5).
             Mockito
                 .verify(
                     snapshotRepo,
                     Mockito.times(1),
-                ).upsert(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal.ZERO)
+                ).upsertAwait(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal.ZERO)
             Mockito
                 .verify(
                     snapshotRepo,
                     Mockito.times(1),
                 ).upsertAwait(moscowToday, BigDecimal("-1000"), true, BigDecimal("-1000"), peakEquity = BigDecimal("50000"))
+            Mockito
+                .verify(snapshotRepo, Mockito.never())
+                .upsert(any(), any(), any(), any(), anyOrNull(), anyOrNull())
         }
 
     // ===================== Equity-based drawdown HWM regression =====================

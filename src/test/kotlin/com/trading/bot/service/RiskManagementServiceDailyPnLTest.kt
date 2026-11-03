@@ -3,6 +3,7 @@ package com.trading.bot.service
 import com.trading.bot.config.InstrumentsConfig
 import com.trading.bot.config.RiskConfig
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -32,11 +33,13 @@ class RiskManagementServiceDailyPnLTest {
     fun `updateDailyPnl delegates to drawdown protection`() {
         val s = service()
 
-        s.updateDailyPnL(BigDecimal("1000"))
-        s.updateDailyPnL(BigDecimal("-400"))
+        runBlocking {
+            s.updateDailyPnL(BigDecimal("1000"))
+            s.updateDailyPnL(BigDecimal("-400"))
 
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("1000"))
-        Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-400"))
+            Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("1000"))
+            Mockito.verify(drawdownProtection).updateDailyPnl(BigDecimal("-400"))
+        }
     }
 
     @Test

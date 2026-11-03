@@ -58,7 +58,7 @@ class DailyLossCircuitBreaker(
      */
     @Order(1)
     @EventListener
-    fun onPositionClosed(event: PositionClosedEvent) {
+    suspend fun onPositionClosed(event: PositionClosedEvent) {
         drawdownProtection.updateDailyPnl(event.pnl, event.accountId)
         if (drawdownProtection.isDailyLossLimitReached(event.accountId)) {
             val key = event.accountId ?: nullAccountKey

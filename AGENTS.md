@@ -426,16 +426,22 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   (`prom/alertmanager:v0.27.0`) и webhook-sink, `prometheus.yml` шлёт алерты
   на `alertmanager:9093`; `prometheus-alerting-rules-test.yml` (promtool test
   rules) и CI job `alerting` (`promtool` + `amtool check-config`).
-- **P1-5/P1-6 исправлены (частично P1-5):** HTTP-путь
-  `DailyRiskSnapshotRepository` переведён на `findRecentAwait`; оставшиеся
-  event-path `.block()` ограничены 5 с; R2DBC pool (`max-acquire-time=5s`,
-  `max-idle-time=10m`, `max-life-time=30m`, `validation-query`); Hikari для
-  Liquibase — 2 соединения/idle 0. `Dockerfile`: `MaxRAMPercentage=50`, без
-  `AlwaysPreTouch`; compose `mem_limit` (app 1536m, db 768m, redis 128m,
-  minio 64m, rabbit 128m, prometheus 256m, alertmanager 64m, alert-sink 16m,
-  grafana 192m, frontend 32m), `DB_HOST`/`REDIS_HOST`
-  из env, `TRACE_STORAGE_ENABLED=false`. Остаток: полный suspend-рефактор
-  `DrawdownProtectionService.updateDailyPnl`.
+- **P1-5/P1-6 исправлены (P1-5 закрыт полностью):** HTTP-путь
+  `DailyRiskSnapshotRepository` переведён на `findRecentAwait`;
+  `updateDailyPnl` — suspend-цепочка `DailyRiskGuard` →
+  `RiskManagementService` → `DrawdownProtectionService` (чтение
+  `findByDateAwait`, запись `upsertAwait` — вне монитора, без `.block()`);
+  `DailyLossCircuitBreaker.onPositionClosed` — suspend `@EventListener`
+  (Spring 7); `init()` восстанавливает состояние в корутине и возвращает
+  `Job`. Sync cache-геттеры (`isDailyLossLimitReached`/`getDailyPnl`) могут
+  лениво дочитать снапшот bounded `.block(5s)` на границе дня. R2DBC pool
+  (`max-acquire-time=5s`, `max-idle-time=10m`, `max-life-time=30m`,
+  `validation-query`); Hikari для Liquibase — 2 соединения/idle 0.
+  `Dockerfile`: `MaxRAMPercentage=50`, без `AlwaysPreTouch`; compose
+  `mem_limit` (app 1536m, db 768m, redis 128m, minio 64m, rabbit 128m,
+  prometheus 256m, alertmanager 64m, alert-sink 16m, grafana 192m,
+  frontend 32m), `DB_HOST`/`REDIS_HOST` из env,
+  `TRACE_STORAGE_ENABLED=false`.
 - **P0-2 исправлен:** `Dockerfile` объявляет `ARG/ENV GIT_COMMIT` (+ label
   `org.opencontainers.image.revision`), CI (`deploy-sim`) передаёт
   `--build-arg GIT_COMMIT="$GITHUB_SHA"`, compose — `build.args.GIT_COMMIT`.

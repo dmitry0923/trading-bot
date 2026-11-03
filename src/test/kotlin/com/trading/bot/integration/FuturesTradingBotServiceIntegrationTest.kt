@@ -262,7 +262,7 @@ class FuturesTradingBotServiceIntegrationTest : AbstractTestContainerTest() {
 
     @Test
     fun `daily loss limit blocks new entry`() {
-        drawdownProtection.updateDailyPnl(BigDecimal("-5000"))
+        runBlocking { drawdownProtection.updateDailyPnl(BigDecimal("-5000")) }
         assertTrue(drawdownProtection.isDailyLossLimitReached())
 
         // Единая точка отключения: TradingGate блокирует до попадания в риск-движок.

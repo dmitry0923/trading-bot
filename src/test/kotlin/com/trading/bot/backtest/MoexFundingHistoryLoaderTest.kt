@@ -67,7 +67,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `parses history rows with swaprate conversion`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
         // Реальный ISS history ответ: блок history с до 100 строками (TRADEDATE/SWAPRATE).
         val body =
             """{"history": {"columns": ["BOARDID", "TRADEDATE", "SECID", "SETTLEPRICE", "SWAPRATE", "SHORTNAME"],
@@ -88,7 +88,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `converts history by instrument lot size of 1`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
         val body =
             """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
                 "data": [["2026-09-21", "5.10597"]]}}"""
@@ -103,7 +103,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `converts history by instrument lot size of 10`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
         val body =
             """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
                 "data": [["2026-09-21", "1.01287"]]}}"""
@@ -117,7 +117,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `unknown ticker yields no history instead of global lot multiplier`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
         val body =
             """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
                 "data": [["2026-09-21", "1.5"]]}}"""
@@ -147,7 +147,7 @@ class MoexFundingHistoryLoaderTest {
             server.createContext("/") { exchange -> respond(exchange, body, 200) }
             server.start()
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = blankFundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
                 val saved = mutableListOf<List<FundingHistoryRecord>>()
@@ -196,7 +196,7 @@ class MoexFundingHistoryLoaderTest {
             }
             server.start()
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = blankFundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
                 val saved = mutableListOf<List<FundingHistoryRecord>>()
@@ -239,7 +239,7 @@ class MoexFundingHistoryLoaderTest {
             }
             server.start()
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = blankFundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
                 Mockito.`when`(repo.saveAll(Mockito.anyList())).thenReturn(100)
@@ -291,7 +291,7 @@ class MoexFundingHistoryLoaderTest {
             }
             server.start()
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = blankFundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
                 Mockito
@@ -310,7 +310,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `parse skips malformed history rows and keeps valid ones`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
         val body =
             """{"history": {"columns": ["TRADEDATE", "SWAPRATE"],
                 "data": [["2026-09-21", ""],
@@ -327,7 +327,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `parse without the funding column or history block yields no rows`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
 
         val noFundingColumn =
             loader.parseHistory(
@@ -362,7 +362,7 @@ class MoexFundingHistoryLoaderTest {
             }
         val loader =
             MoexFundingHistoryLoader(
-                FundingConfig(),
+                blankFundingConfig(),
                 config,
                 Mockito.mock(FundingHistoryRepository::class.java),
                 ObjectMapper(),
@@ -389,7 +389,7 @@ class MoexFundingHistoryLoaderTest {
             }
             server.start()
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = blankFundingConfig()
                 fundingConfig.moexHistoryUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}?from={from}&till={till}"
                 val repo = Mockito.mock(FundingHistoryRepository::class.java)
                 Mockito
@@ -422,7 +422,7 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `parse tolerates non array short blank and unparsable rows`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
         val body =
             """
             {"history": {"columns": ["TRADEDATE", "SWAPRATE"],
@@ -438,14 +438,19 @@ class MoexFundingHistoryLoaderTest {
 
     @Test
     fun `count raw rows is zero without the funding block`() {
-        val loader = loader(fundingConfig = FundingConfig())
+        val loader = loader(fundingConfig = blankFundingConfig())
 
         assertEquals(0, loader.countRawRows("""{"other": {"columns": ["X"], "data": [["1"]]}}"""))
         assertEquals(2, loader.countRawRows("""{"history": {"columns": ["TRADEDATE", "SWAPRATE"], "data": [["a","1"],["b","2"]]}}"""))
     }
 
+    private fun blankFundingConfig(): FundingConfig =
+        FundingConfig().apply {
+            moexHistoryUrl = null
+        }
+
     private fun loader(
-        fundingConfig: FundingConfig = FundingConfig(),
+        fundingConfig: FundingConfig = blankFundingConfig(),
         repo: FundingHistoryRepository = Mockito.mock(FundingHistoryRepository::class.java),
     ): MoexFundingHistoryLoader =
         MoexFundingHistoryLoader(

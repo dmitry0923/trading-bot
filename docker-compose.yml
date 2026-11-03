@@ -163,6 +163,8 @@ services:
       TRADING_FUNDING_VETO_LONG_THRESHOLD_RUB: ${TRADING_FUNDING_VETO_LONG_THRESHOLD_RUB:-2.0}
       TRADING_FUNDING_VETO_SHORT_THRESHOLD_RUB: ${TRADING_FUNDING_VETO_SHORT_THRESHOLD_RUB:-2.0}
       TRADING_FUNDING_VETO_BLOCK_ON_UNKNOWN: ${TRADING_FUNDING_VETO_BLOCK_ON_UNKNOWN:-true}
+      # Funding MOEX: дефолт FORTS-endpoint задан в FundingConfig; env
+      # FUNDING_MOEX_URL / FUNDING_MOEX_HISTORY_URL перекрывают при необходимости.
       AUTH_USER: ${AUTH_USER:?AUTH_USER is required}
       AUTH_PASSWORD: ${AUTH_PASSWORD:?AUTH_PASSWORD is required}
       ANALYTICS_USER: ${ANALYTICS_USER:-}
@@ -191,7 +193,7 @@ services:
     expose:
       - "8080"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health/liveness"]
       interval: 30s
       timeout: 10s
       retries: 3

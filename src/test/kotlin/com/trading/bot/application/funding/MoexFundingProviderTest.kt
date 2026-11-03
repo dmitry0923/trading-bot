@@ -114,7 +114,7 @@ class MoexFundingProviderTest {
         runBlocking {
             val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["CNYRUBF", "0.00279"]]}}""")
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = noUrlConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
                 val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
 
@@ -136,7 +136,7 @@ class MoexFundingProviderTest {
             // Реальный GLDRUBF: SWAPRATE ~5.1 ₽ за 1 г золота, контракт = 1 г → ~5.1 ₽/клиринг.
             val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["GLDRUBF", "5.10597"]]}}""")
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = noUrlConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
                 val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
 
@@ -156,7 +156,7 @@ class MoexFundingProviderTest {
             // Реальный IMOEXF: SWAPRATE ~1.01287 ₽ за 1 пункт индекса, контракт = 10 пунктов.
             val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["IMOEXF", "1.01287"]]}}""")
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = noUrlConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
                 val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
 
@@ -177,7 +177,7 @@ class MoexFundingProviderTest {
             // множитель 1000 нельзя (именно это завышало GLDRUBF/IMOEXF) → fail-closed.
             val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["NOSUCHF", "1.5"]]}}""")
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = noUrlConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
                 val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
 
@@ -192,7 +192,7 @@ class MoexFundingProviderTest {
         runBlocking {
             val server = liveServer("""{"marketdata": {"columns": ["SECID", "SWAPRATE"], "data": [["CNYRUBF", "0.00279"]]}}""")
             try {
-                val fundingConfig = FundingConfig()
+                val fundingConfig = noUrlConfig()
                 fundingConfig.moexUrl = "http://127.0.0.1:${server.address.port}/iss/{ticker}/funding"
                 val provider = MoexFundingProvider(fundingConfig, instrumentsConfig, ObjectMapper())
                 server.stop(0)
@@ -206,12 +206,17 @@ class MoexFundingProviderTest {
     @Test
     fun `blank moex url disables live source`() =
         runBlocking {
-            val provider = MoexFundingProvider(FundingConfig(), instrumentsConfig, ObjectMapper())
+            val provider = MoexFundingProvider(noUrlConfig(), instrumentsConfig, ObjectMapper())
 
             assertNull(provider.currentSnapshot("CNYRUBF"))
         }
 
-    private fun provider(): MoexFundingProvider = MoexFundingProvider(FundingConfig(), instrumentsConfig, ObjectMapper())
+    private fun noUrlConfig(): FundingConfig =
+        FundingConfig().apply {
+            moexUrl = null
+        }
+
+    private fun provider(): MoexFundingProvider = MoexFundingProvider(noUrlConfig(), instrumentsConfig, ObjectMapper())
 
     private fun liveServer(body: String): HttpServer {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)

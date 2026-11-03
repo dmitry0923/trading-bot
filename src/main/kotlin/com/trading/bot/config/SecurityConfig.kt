@@ -62,6 +62,8 @@ class SecurityConfig(
                 auth
                     .requestMatchers(
                         "/actuator/health",
+                        "/actuator/health/liveness",
+                        "/actuator/health/readiness",
                         "/actuator/prometheus",
                         "/error",
                         "/api/v1/auth/login",

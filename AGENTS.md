@@ -402,6 +402,26 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   (WARN в логе, `macro.cbr.rates.refresh{status=EMPTY}`), ставка устаревает до `status=STALE`,
   а при пустой БД торговый контур уходит на статичную `macro.cbr-rate`.
 
+## Production hardening 2026-11-03 (аудит Yandex Cloud, пакет 1.1+1.2)
+
+- **P0-1 исправлен:** `management.endpoint.health.probes.enabled=true`,
+  Docker healthcheck → `/actuator/health/liveness` (публичный),
+  `TradingHealthIndicator` в SIM/вне часов отдаёт `UP` с деталями, в LIVE
+  `DOWN` только при Redis down или отсутствии WS quotes **в торговые часы**;
+  Rabbit health выключен, если `OUTBOX_RABBITMQ_ENABLED=false`.
+- **P1-1 исправлен:** в образ добавлены HARICA Root/DV сертификаты
+  (`docker/certs/`, JVM `trustStore=/app/cacerts`); `FundingConfig` по
+  умолчанию использует FORTS live/history URL, env `FUNDING_MOEX_*`
+  перекрывает.
+- **P1-3 (ночной цикл закрытий) — ложное срабатывание аудита:** в коде нет
+  `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` — только
+  входы через `TradingGate`; force-close — только
+  `TradingControlService` при `forceCloseEnabled && forceCloseTime`.
+- **LIVE остаётся NO-GO** до P0-2 (`GIT_COMMIT`), P0-3 (Lockbox IAM),
+  B forward paper F1–F5, deployment-gate и риск-ревью. Параметры live не
+  менялись: `maxC=1`, Kelly, `CNYRUBF`.
+- Детали и остаток аудита: `docs/54-yandex-cloud-audit-remediation-2026-11-03.md`.
+
 ## Калибровки (research-референс; НЕ production-настройки)
 
 > Все параметры этого раздела — результат research-бэктестов и в LIVE **не воспроизводятся**

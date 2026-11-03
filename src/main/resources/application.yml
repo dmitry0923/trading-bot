@@ -3,6 +3,20 @@ server:
   shutdown: graceful
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState,ping
+        readiness:
+          include: readinessState
+  health:
+    # RabbitMQ — опциональный outbox-транспорт; при выключенном флаге его
+    # health-индикатор не должен ронять /actuator/health (ложный BotDown).
+    rabbit:
+      enabled: ${OUTBOX_RABBITMQ_ENABLED:false}
   endpoints:
     web:
       exposure:
@@ -993,13 +1007,13 @@ lockbox:
 
 # LIVE-funding (P0): динамическая величина MOEX для фьючерсного funding в P&L.
 # moex-url — шаблон ISS-эндпоинта, плейсхолдер {ticker} = эффективный тикер
-# инструмента (alorTicker ?? ticker). ПУСТОЙ → MOEX-источник выключен; используется
+# инструмента (alorTicker ?? ticker). Дефолт задан в FundingConfig (FORTS);
+# env FUNDING_MOEX_URL перекрывает его. ПУСТОЙ → MOEX-источник выключен; используется
 # fixing fundingRubPerContractPerDay из instruments (SIM/backtest/fallback с метрикой
 # funding.live.provider_unavailable). Поле funding — SWAPRATE (RUB за 1 единицу
 # базового актива; подтверждено по реальным данным CNYRUBF 2026-09-08..10);
 # LATESTFUNDING в MOEX ISS НЕ существует (верифицировано 2026-09-10).
 funding:
-  moex-url: ${FUNDING_MOEX_URL:}
   moex-column: ${FUNDING_MOEX_COLUMN:SWAPRATE}
   # НЕ УЧАСТВУЕТ в конвертации: RUB/контракт = raw(SWAPRATE) x lotSize ИНСТРУМЕНТА
   # (CNY/USD/EUR=1000, IMOEXF=10, GLDRUBF=1). Оставлен для совместимости старых
@@ -1007,7 +1021,8 @@ funding:
   moex-lot-multiplier: ${FUNDING_MOEX_LOT_MULTIPLIER:1000}
   moex-ttl-ms: ${FUNDING_MOEX_TTL_MS:300000}
   request-timeout-ms: ${FUNDING_REQUEST_TIMEOUT_MS:10000}
-  moex-history-url: ${FUNDING_MOEX_HISTORY_URL:}
+  # moex-history-url: дефолт в FundingConfig (FORTS history); env
+  # FUNDING_MOEX_HISTORY_URL перекрывает.
   # Дополнительные нерабочие дни MOEX (переносы производственного календаря,
   # спец-клиринги), yyyy-MM-dd через запятую. Гос. праздники РФ исключаются
   # автоматически (MoexHolidayCalendar); здесь — только переносы/спец. дни.

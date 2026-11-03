@@ -43,7 +43,13 @@ import java.time.LocalDate
 @Component
 @ConfigurationProperties(prefix = "funding")
 class FundingConfig {
-    var moexUrl: String? = null
+    /**
+     * LIVE-снапшот SWAPRATE MOEX ISS. Дефолт — FORTS-эндпоинт с `{ticker}`;
+     * `FUNDING_MOEX_URL` перекрывает через relaxed binding.
+     */
+    var moexUrl: String? =
+        "https://iss.moex.com/iss/engines/futures/markets/forts/securities/{ticker}.json?iss.meta=off"
+
     var moexColumn: String = "SWAPRATE"
 
     /**
@@ -60,7 +66,9 @@ class FundingConfig {
      * `https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/{ticker}.json?iss.meta=off&from={from}&till={till}`
      * Плейсхолдеры — `{ticker}`, `{from}` (yyyy-MM-dd), `{till}` (yyyy-MM-dd).
      */
-    var moexHistoryUrl: String? = null
+    var moexHistoryUrl: String? =
+        "https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/{ticker}.json" +
+            "?iss.meta=off&from={from}&till={till}"
 
     /**
      * Дополнительные нерабочие дни MOEX (переносы рабочего календаря, спец-клиринги),

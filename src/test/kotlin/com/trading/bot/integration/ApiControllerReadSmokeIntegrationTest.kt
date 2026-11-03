@@ -167,6 +167,21 @@ class ApiControllerReadSmokeIntegrationTest : AbstractTestContainerTest() {
         assertEquals(403, get("/api/v1/macro/rates-history?days=1", analyticsToken).statusCode())
     }
 
+    @Test
+    fun `actuator liveness and readiness probes are public`() {
+        // Docker healthcheck ходит на /actuator/health/liveness БЕЗ JWT; если
+        // security закроет пробники, `compose up --wait` снова упадёт (docs/54 P0-1).
+        for (path in listOf("/actuator/health/liveness", "/actuator/health/readiness")) {
+            val request =
+                HttpRequest
+                    .newBuilder(URI("$baseUrl$path"))
+                    .GET()
+                    .build()
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            assertEquals(200, response.statusCode(), "probe $path must be public: ${response.body()}")
+        }
+    }
+
     private fun assertOkJson(path: String): JsonNode {
         val response = get(path, adminToken())
         assertEquals(200, response.statusCode(), "GET $path failed: ${response.body()}")

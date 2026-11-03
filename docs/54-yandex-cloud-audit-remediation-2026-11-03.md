@@ -17,6 +17,7 @@
 | **P1-1** CBR TLS + funding URL | **исправлено** | HARICA-сертификаты в образе, `-Djavax.net.ssl.trustStore`, дефолтные FORTS-URL в `FundingConfig` |
 | **P1-2** WS watchdog/reconnect | **исправлено** | активность только по входящим кадрам (данные/PONG); клиент закрывает Netty-сессию по `HEARTBEAT_TIMEOUT` → reconnect |
 | **P1-3** ночной цикл закрытий | **не воспроизводится** | в текущем коде нет `OUTSIDE_TRADING_HOURS`-закрытия в мониторах; `TradingHoursGuard` используется только в `TradingGate` для входа; force-close — только `TradingControlService` при `forceCloseEnabled && forceCloseTime` |
+| **P1-4** метрики/алерты | **исправлено** | имена метрик синхронизированы, `TradingPaused` через `rate`, Alertmanager + webhook-sink, promtool-тесты, CI job |
 | **P1-5** blocking DB/пулы | **исправлено частично** | HTTP-путь переведён на suspend (`findRecentAwait`), блокирующие event-path вызовы ограничены 5 с, R2DBC/Hikari лимиты; полный suspend-рефактор `updateDailyPnl` — отдельная задача |
 | **P1-6** память/Managed DB | **исправлено** | `MaxRAMPercentage=50`, убран `AlwaysPreTouch`, `mem_limit` всем сервисам, `DB_HOST`/`REDIS_HOST` из env, `TRACE_STORAGE_ENABLED=false` |
 
@@ -153,8 +154,8 @@
 - `Dockerfile`: `-XX:MaxRAMPercentage=50.0`, убран `-XX:+AlwaysPreTouch`
   (на 4 ГБ VM pre-touch физически занимал ~3 ГБ heap до старта).
 - `docker-compose.yml`: явные `mem_limit` — app 1536m, postgres 768m,
-  redis/minio/rabbitmq 192m, prometheus 384m, grafana 192m, frontend 64m
-  (сумма ≈3.5 ГБ, остаётся запас ОС).
+  redis 128m, minio 64m, rabbitmq 128m, prometheus 256m, alertmanager 64m,
+  alert-sink 16m, grafana 192m, frontend 32m (сумма ≈3,1 ГБ, остаётся запас ОС).
 - `DB_HOST`/`DB_PORT`/`REDIS_HOST`/`REDIS_PORT` берутся из env с local-дефолтами
   (`${DB_HOST:-postgres}` и т.д.) — можно подключить Managed PostgreSQL/Redis.
 - `TRACE_STORAGE_ENABLED` по умолчанию **false** (MinIO-трейсы не пишутся без
@@ -164,12 +165,42 @@
   backtest/WFA на той же VM этого мало. Research-прогоны лучше выносить на
   отдельную VM/профиль, а не поднимать лимит на 4 ГБ инстансе.
 
-## 7. Что осталось из аудита
+## 7. P1-4: метрики и доставка алертов
+
+### Исправления правил
+
+- `DailyLossLimitReached`: `drawdown_daily_limit_reached` (не существует) →
+  `risk_daily_limit_reached == 1 or drawdown_blocked == 1`.
+- `TradingPaused`: `strategy_pause_total > 0` (Counter горел бы вечно) →
+  `rate(strategy_pause_total[10m]) > 0`.
+- `ConsecutiveLosses` использует корректное имя
+  `drawdown_consecutive_losses` (gauge появляется после первого
+  `computeStatus`; до этого алерт просто неактивен).
+
+### Доставка
+
+- Добавлен `alertmanager` (`prom/alertmanager:v0.27.0`) с
+  `alertmanager.yml`: route/grouping, webhook receiver.
+- Добавлен `alert-sink` (`hashicorp/http-echo`) — рабочий приёмник webhook
+  для проверки доставки; в production URL заменяется на Telegram/webhook-реле.
+- `prometheus.yml`: `alerting.alertmanagers` → `alertmanager:9093`.
+- Compose: сервисы `alertmanager` (64m) и `alert-sink` (32m), порт
+  Alertmanager только на `127.0.0.1:9093`.
+
+### Тесты
+
+- `prometheus-alerting-rules-test.yml`: `DailyLossLimitReached` срабатывает
+  на `risk_daily_limit_reached=1`; `TradingPaused` срабатывает на новый
+  `strategy_pause_total` и **не** горит вечно после прекращения пауз.
+- CI job `alerting`: `promtool check rules`, `promtool test rules`,
+  `amtool check-config` (Docker-образы тех же версий, что в compose).
+- Локально: `scripts/check_alerting.ps1`.
+
+## 8. Что осталось из аудита
 
 | Пункт | Приоритет | Когда |
 |---|---|---|
-| P1-4 имена метрик/алерты/Alertmanager | высокий | следующий пакет |
-| Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после P1-4 |
+| Полный suspend-рефактор `DrawdownProtectionService.updateDailyPnl` | средний | после SIM-деплоя |
 | P0-2 `GIT_COMMIT` в образе | блокер LIVE | перед LIVE |
 | P0-3 Lockbox IAM (`kid`/PS256) | блокер LIVE | перед LIVE |
 | P2-1…P2-5 | security/гигиена | перед публичным деплоем |
@@ -178,7 +209,7 @@
 P0-2/P0-3 и прохождения B (forward paper) + deployment-gate + риск-ревью.
 Live-параметры не меняются: `maxC=1`, Kelly, `CNYRUBF`.
 
-## 8. Верификация
+## 9. Верификация
 
 - `./gradlew test integrationTest ktlintCheck --rerun-tasks`:
   **BUILD SUCCESSFUL in 22m 6s**; unit **3 391** (0 падений, 1 skipped),
@@ -193,7 +224,14 @@ Live-параметры не меняются: `maxC=1`, Kelly, `CNYRUBF`.
   `keyRates=2` — TLS-цепочка ЦБ работает через образ (P1-1 подтверждён
   end-to-end).
 - `docker compose -f docker-compose.yml -f docker-compose.prod.yml config`
-  — exit 0; healthcheck указывает на `/actuator/health/liveness`.
+  — exit 0; healthcheck указывает на `/actuator/health/liveness`;
+  `alertmanager`/`alert-sink` присутствуют в конфиге.
+- `promtool check rules` — **SUCCESS: 17 rules found**;
+  `promtool test rules` — **SUCCESS** (включая отсутствие вечного
+  `TradingPaused`); `amtool check-config` — **SUCCESS** (1 receiver).
+- Alertmanager + alert-sink подняты в compose; тестовый alert принят
+  (`amtool alert query` → active), webhook-sink доступен на
+  `http://alert-sink:8080/alerts`.
 - `FundingConfig` defaults: live/history FORTS-URL; env override через
   relaxed binding (`FUNDING_MOEX_URL` / `FUNDING_MOEX_HISTORY_URL`).
 - Тесты funding обновлены: «blank URL отключает источник» теперь явно

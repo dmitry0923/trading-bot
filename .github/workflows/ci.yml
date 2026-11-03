@@ -114,6 +114,30 @@ jobs:
   # Жёстко форсирует SIMULATION: даже если в GitHub-секретах лежит TRADING_MODE=LIVE,
   # на автопушке в main бот НЕ поедет в LIVE (live-флаг переопределяется).
   # LIVE-деплой — отдельный job deploy-live (вручную, с required reviewers).
+  alerting:
+    name: Alerting (promtool + amtool)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Prometheus rules
+        run: >
+          docker run --rm --entrypoint promtool
+          -v "$PWD:/work:ro" -w /work
+          prom/prometheus:v2.48.1 check rules prometheus-alerting-rules.yml
+
+      - name: Test Prometheus rules
+        run: >
+          docker run --rm --entrypoint promtool
+          -v "$PWD:/work:ro" -w /work
+          prom/prometheus:v2.48.1 test rules prometheus-alerting-rules-test.yml
+
+      - name: Validate Alertmanager config
+        run: >
+          docker run --rm --entrypoint amtool
+          -v "$PWD:/work:ro" -w /work
+          prom/alertmanager:v0.27.0 check-config alertmanager.yml
+
   deploy-sim:
     name: Deploy SIM to Yandex Cloud
     needs: [backend, frontend]

@@ -1,0 +1,41 @@
+rule_files:
+  - prometheus-alerting-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  # DailyLossLimitReached: реальная метрика risk.daily.limit.reached (аудит P1-4).
+  - interval: 1m
+    input_series:
+      - series: "risk_daily_limit_reached"
+        values: "0 1 1"
+      - series: "drawdown_blocked"
+        values: "0 0 0"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: DailyLossLimitReached
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Daily loss limit reached"
+              description: "Drawdown protection triggered. Trading halted for the day."
+
+  # TradingPaused: counter не должен гореть вечно; rate ловит только новые паузы.
+  - interval: 1m
+    input_series:
+      - series: "strategy_pause_total{ticker=\"SBER\"}"
+        values: "0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: TradingPaused
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              ticker: SBER
+            exp_annotations:
+              summary: "Trading paused on SBER"
+              description: "Adaptive risk has paused trading for this ticker."
+      - eval_time: 20m
+        alertname: TradingPaused
+        exp_alerts: []

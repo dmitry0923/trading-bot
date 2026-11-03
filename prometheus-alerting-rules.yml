@@ -13,7 +13,9 @@ groups:
 
       # DailyLossLimitReached: дневной лимит убытка достигнут
       - alert: DailyLossLimitReached
-        expr: drawdown_daily_limit_reached == 1
+        # Реальные метрики: risk.daily.limit.reached (gauge) и drawdown.blocked.
+        # drawdown_daily_limit_reached в коде не существует (аудит P1-4).
+        expr: risk_daily_limit_reached == 1 or drawdown_blocked == 1
         for: 0m
         labels:
           severity: critical
@@ -169,9 +171,10 @@ groups:
           summary: "Futures balance cache aging for {{ $labels.portfolio }}"
           description: "Balance cache age {{ $value | printf \"%.0f\" }}ms (> 20s; fail-closed at 30s)."
 
-      # TradingPaused: тикер на паузе
+      # TradingPaused: тикер на паузе. strategy.pause — Counter, поэтому
+      # `> 0` горел бы вечно после первой паузы; алертим только новые паузы.
       - alert: TradingPaused
-        expr: strategy_pause_total > 0
+        expr: rate(strategy_pause_total[10m]) > 0
         for: 5m
         labels:
           severity: warning

@@ -420,13 +420,20 @@ SOAP-сервис ЦБ **`DailyInfoWebServ`** (`POST https://www.cbr.ru/DailyInf
   reconnect. Метрика `alor.ws.heartbeat_timeout_close{stream}`. Watcher стартует
   до `connect(0)` (`UNDISPATCHED`), replay старого события не убивает новую
   сессию.
+- **P1-4 исправлен:** `DailyLossLimitReached` использует реальные
+  `risk_daily_limit_reached`/`drawdown_blocked`; `TradingPaused` — `rate(
+  strategy_pause_total[10m])`, а не вечный counter; добавлены Alertmanager
+  (`prom/alertmanager:v0.27.0`) и webhook-sink, `prometheus.yml` шлёт алерты
+  на `alertmanager:9093`; `prometheus-alerting-rules-test.yml` (promtool test
+  rules) и CI job `alerting` (`promtool` + `amtool check-config`).
 - **P1-5/P1-6 исправлены (частично P1-5):** HTTP-путь
   `DailyRiskSnapshotRepository` переведён на `findRecentAwait`; оставшиеся
   event-path `.block()` ограничены 5 с; R2DBC pool (`max-acquire-time=5s`,
   `max-idle-time=10m`, `max-life-time=30m`, `validation-query`); Hikari для
   Liquibase — 2 соединения/idle 0. `Dockerfile`: `MaxRAMPercentage=50`, без
-  `AlwaysPreTouch`; compose `mem_limit` (app 1536m, db 768m, redis/minio/rabbit
-  192m, prometheus 384m, grafana 192m, frontend 64m), `DB_HOST`/`REDIS_HOST`
+  `AlwaysPreTouch`; compose `mem_limit` (app 1536m, db 768m, redis 128m,
+  minio 64m, rabbit 128m, prometheus 256m, alertmanager 64m, alert-sink 16m,
+  grafana 192m, frontend 32m), `DB_HOST`/`REDIS_HOST`
   из env, `TRACE_STORAGE_ENABLED=false`. Остаток: полный suspend-рефактор
   `DrawdownProtectionService.updateDailyPnl`.
 - **P1-3 (ночной цикл закрытий) — ложное срабатывание аудита:** в коде нет

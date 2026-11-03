@@ -37,7 +37,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: trading-bot-redis
-    mem_limit: ${REDIS_MEM_LIMIT:-192m}
+    mem_limit: ${REDIS_MEM_LIMIT:-128m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -57,7 +57,7 @@ services:
   minio:
     image: minio/minio:RELEASE.2024-01-16T16-07-38Z
     container_name: trading-bot-minio
-    mem_limit: ${MINIO_MEM_LIMIT:-192m}
+    mem_limit: ${MINIO_MEM_LIMIT:-64m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -83,7 +83,7 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: trading-bot-rabbitmq
-    mem_limit: ${RABBITMQ_MEM_LIMIT:-192m}
+    mem_limit: ${RABBITMQ_MEM_LIMIT:-128m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -208,7 +208,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.1
     container_name: trading-bot-prometheus
-    mem_limit: ${PROMETHEUS_MEM_LIMIT:-384m}
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-256m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -228,6 +228,38 @@ services:
       - "127.0.0.1:9090:9090"
     depends_on:
       - app
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: trading-bot-alertmanager
+    mem_limit: ${ALERTMANAGER_MEM_LIMIT:-64m}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:9093:9093"
+    depends_on:
+      - alert-sink
+
+  # Приёмник webhook для проверки доставки алертов. Для реальных уведомлений
+  # замените URL в alertmanager.yml на Telegram/webhook-реле.
+  alert-sink:
+    image: hashicorp/http-echo:1.0
+    container_name: trading-bot-alert-sink
+    mem_limit: ${ALERT_SINK_MEM_LIMIT:-16m}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    command: ["-listen=:8080", "-text=alert-received"]
 
   grafana:
     image: grafana/grafana:10.4.2
@@ -256,7 +288,7 @@ services:
     build:
       context: ./frontend
     container_name: trading-bot-frontend
-    mem_limit: ${FRONTEND_MEM_LIMIT:-64m}
+    mem_limit: ${FRONTEND_MEM_LIMIT:-32m}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -275,3 +307,4 @@ volumes:
   prometheus_data:
   grafana_data:
   rabbitmq_data:
+

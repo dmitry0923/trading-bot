@@ -1,0 +1,456 @@
+{
+  "generatedAt": "2026-11-04",
+  "purpose": "Экономика цели 100% годовых на ММВБ: пересчёт из артефактов 2026-11-02",
+  "assumptions": {
+    "contractNotionalRub": 12800.0,
+    "goConservativeRub": 850.0,
+    "goStressedRub": 2700.0,
+    "tradingDaysPerYear": 249.0,
+    "sourceEngine": "engineVersion 2026-10-26.2"
+  },
+  "candidates": {
+    "engineMomentumOos": {
+      "source": "artifacts/engine_momentum_2026-11-02_oos.csv",
+      "universe": [
+        "CNYRUBF",
+        "USDRUBF",
+        "EURRUBF",
+        "GLDRUBF",
+        "IMOEXF"
+      ],
+      "sizing": "1 контракт на инструмент, maxC=1",
+      "overall": {
+        "trades": 135,
+        "netRub": 12471.74,
+        "avgNetRub": 92.38,
+        "medianNetRub": -28.4,
+        "winRatePct": 46.7,
+        "profitFactor": 1.183,
+        "mddRub": 36645.82,
+        "returnToMdd": 0.34,
+        "years": 1.43,
+        "netRubPerYear": 8709.95,
+        "mddRubPerYear": 25592.52
+      },
+      "perTicker": {
+        "CNYRUBF": {
+          "trades": 43,
+          "netRub": -1056.98,
+          "avgNetRub": -24.58,
+          "medianNetRub": -13.03,
+          "winRatePct": 41.9,
+          "profitFactor": 0.779,
+          "mddRub": 2018.67,
+          "returnToMdd": -0.52,
+          "years": 1.43,
+          "netRubPerYear": -738.17,
+          "mddRubPerYear": 1409.79,
+          "shareOfNetPct": -8.5
+        },
+        "EURRUBF": {
+          "trades": 47,
+          "netRub": 3240.89,
+          "avgNetRub": 68.96,
+          "medianNetRub": -115.74,
+          "winRatePct": 44.7,
+          "profitFactor": 1.087,
+          "mddRub": 26156.21,
+          "returnToMdd": 0.12,
+          "years": 1.4,
+          "netRubPerYear": 2311.98,
+          "mddRubPerYear": 18659.28,
+          "shareOfNetPct": 26.0
+        },
+        "GLDRUBF": {
+          "trades": 1,
+          "netRub": 34.58,
+          "avgNetRub": 34.58,
+          "medianNetRub": 34.58,
+          "winRatePct": 100.0,
+          "profitFactor": null,
+          "mddRub": 0.0,
+          "returnToMdd": null,
+          "years": 0.1,
+          "netRubPerYear": 345.84,
+          "mddRubPerYear": 0.0,
+          "shareOfNetPct": 0.3
+        },
+        "USDRUBF": {
+          "trades": 44,
+          "netRub": 10253.25,
+          "avgNetRub": 233.03,
+          "medianNetRub": 112.66,
+          "winRatePct": 52.3,
+          "profitFactor": 1.393,
+          "mddRub": 13588.27,
+          "returnToMdd": 0.75,
+          "years": 1.41,
+          "netRubPerYear": 7257.75,
+          "mddRubPerYear": 9618.44,
+          "shareOfNetPct": 82.2
+        }
+      },
+      "perYear": {
+        "2023": {
+          "trades": 53,
+          "netRub": 14154.52
+        },
+        "2024": {
+          "trades": 82,
+          "netRub": -1682.78
+        }
+      },
+      "annualReturnOnDepositPct": {
+        "50000": 17.4,
+        "100000": 8.7,
+        "200000": 4.4
+      },
+      "mddAsShareOfDepositPct": {
+        "50000": 73.3,
+        "100000": 36.6,
+        "200000": 18.3
+      }
+    },
+    "prescreenMomentumOos": {
+      "source": "artifacts/multi_momentum_2026-11-02_oos.csv",
+      "universe": [
+        "CNYRUBF",
+        "USDRUBF",
+        "EURRUBF",
+        "GLDRUBF",
+        "IMOEXF"
+      ],
+      "sizing": "1 контракт на инструмент",
+      "overall": {
+        "trades": 161,
+        "netRub": 30862.33,
+        "avgNetRub": 191.69,
+        "medianNetRub": 72.17,
+        "winRatePct": 55.9,
+        "profitFactor": 1.384,
+        "mddRub": 38577.03,
+        "returnToMdd": 0.8,
+        "years": 1.43,
+        "netRubPerYear": 21512.34,
+        "mddRubPerYear": 26889.81
+      },
+      "perTicker": {
+        "CNYRUBF": {
+          "trades": 50,
+          "netRub": 1755.43,
+          "avgNetRub": 35.11,
+          "medianNetRub": 13.24,
+          "winRatePct": 52.0,
+          "profitFactor": 1.473,
+          "mddRub": 883.84,
+          "returnToMdd": 1.99,
+          "years": 1.43,
+          "netRubPerYear": 1228.3,
+          "mddRubPerYear": 618.43,
+          "shareOfNetPct": 5.7
+        },
+        "EURRUBF": {
+          "trades": 57,
+          "netRub": 10541.76,
+          "avgNetRub": 184.94,
+          "medianNetRub": 73.52,
+          "winRatePct": 54.4,
+          "profitFactor": 1.271,
+          "mddRub": 23461.84,
+          "returnToMdd": 0.45,
+          "years": 1.4,
+          "netRubPerYear": 7505.61,
+          "mddRubPerYear": 16704.56,
+          "shareOfNetPct": 34.2
+        },
+        "GLDRUBF": {
+          "trades": 1,
+          "netRub": 21.92,
+          "avgNetRub": 21.92,
+          "medianNetRub": 21.92,
+          "winRatePct": 100.0,
+          "profitFactor": null,
+          "mddRub": 0.0,
+          "returnToMdd": null,
+          "years": 0.1,
+          "netRubPerYear": 219.2,
+          "mddRubPerYear": 0.0,
+          "shareOfNetPct": 0.1
+        },
+        "USDRUBF": {
+          "trades": 53,
+          "netRub": 18543.22,
+          "avgNetRub": 349.87,
+          "medianNetRub": 530.17,
+          "winRatePct": 60.4,
+          "profitFactor": 1.491,
+          "mddRub": 14573.77,
+          "returnToMdd": 1.27,
+          "years": 1.43,
+          "netRubPerYear": 12925.4,
+          "mddRubPerYear": 10158.53,
+          "shareOfNetPct": 60.1
+        }
+      },
+      "perYear": {
+        "2023": {
+          "trades": 63,
+          "netRub": 15307.5
+        },
+        "2024": {
+          "trades": 98,
+          "netRub": 15554.83
+        }
+      },
+      "annualReturnOnDepositPct": {
+        "50000": 43.0,
+        "100000": 21.5,
+        "200000": 10.8
+      },
+      "mddAsShareOfDepositPct": {
+        "50000": 77.2,
+        "100000": 38.6,
+        "200000": 19.3
+      }
+    }
+  },
+  "capacity": {
+    "annualIdealProfitPerContractRub": 43253.11,
+    "avgDailyRangeRubPerContract": 173.6,
+    "tradingDays": 498,
+    "ceiling": [
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 1,
+        "ceilingAnnualPct": 86.51,
+        "requiredCaptureOfIdealPct": 115.6
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 2,
+        "ceilingAnnualPct": 173.01,
+        "requiredCaptureOfIdealPct": 57.8
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 3,
+        "ceilingAnnualPct": 259.52,
+        "requiredCaptureOfIdealPct": 38.5
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 4,
+        "ceilingAnnualPct": 346.02,
+        "requiredCaptureOfIdealPct": 28.9
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 6,
+        "ceilingAnnualPct": 519.04,
+        "requiredCaptureOfIdealPct": 19.3
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 8,
+        "ceilingAnnualPct": 692.05,
+        "requiredCaptureOfIdealPct": 14.4
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 1,
+        "ceilingAnnualPct": 43.25,
+        "requiredCaptureOfIdealPct": 231.2
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 2,
+        "ceilingAnnualPct": 86.51,
+        "requiredCaptureOfIdealPct": 115.6
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 3,
+        "ceilingAnnualPct": 129.76,
+        "requiredCaptureOfIdealPct": 77.1
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 4,
+        "ceilingAnnualPct": 173.01,
+        "requiredCaptureOfIdealPct": 57.8
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 6,
+        "ceilingAnnualPct": 259.52,
+        "requiredCaptureOfIdealPct": 38.5
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 8,
+        "ceilingAnnualPct": 346.02,
+        "requiredCaptureOfIdealPct": 28.9
+      }
+    ],
+    "requirements": [
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 1,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 1219.51,
+          "100": 500.0,
+          "250": 200.0,
+          "500": 100.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 115.7
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 2,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 1219.51,
+          "100": 500.0,
+          "250": 200.0,
+          "500": 100.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 57.8
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 3,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 1219.51,
+          "100": 500.0,
+          "250": 200.0,
+          "500": 100.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 38.6
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 4,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 1219.51,
+          "100": 500.0,
+          "250": 200.0,
+          "500": 100.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 28.9
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 6,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 1219.51,
+          "100": 500.0,
+          "250": 200.0,
+          "500": 100.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 19.3
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 8,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 1219.51,
+          "100": 500.0,
+          "250": 200.0,
+          "500": 100.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 14.5
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 1,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 2439.02,
+          "100": 1000.0,
+          "250": 400.0,
+          "500": 200.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 231.3
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 2,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 2439.02,
+          "100": 1000.0,
+          "250": 400.0,
+          "500": 200.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 115.7
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 3,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 2439.02,
+          "100": 1000.0,
+          "250": 400.0,
+          "500": 200.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 77.1
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 4,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 2439.02,
+          "100": 1000.0,
+          "250": 400.0,
+          "500": 200.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 57.8
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 6,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 2439.02,
+          "100": 1000.0,
+          "250": 400.0,
+          "500": 200.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 38.6
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 8,
+        "requiredNetRubPerTradeByTradesPerYear": {
+          "41": 2439.02,
+          "100": 1000.0,
+          "250": 400.0,
+          "500": 200.0
+        },
+        "requiredCaptureOfAvgDailyRangePct": 28.9
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario": "conservative",
+      "assumedMeanPct": 20.0,
+      "assumedVolPct": 15.0,
+      "medianReturnPct": 18.7,
+      "probabilityOf100PctOrMore": 0.0003,
+      "probabilityOfLoss": 0.127
+    },
+    {
+      "scenario": "base",
+      "assumedMeanPct": 50.0,
+      "assumedVolPct": 30.0,
+      "medianReturnPct": 43.4,
+      "probabilityOf100PctOrMore": 0.1337,
+      "probabilityOfLoss": 0.1148
+    },
+    {
+      "scenario": "aggressive",
+      "assumedMeanPct": 100.0,
+      "assumedVolPct": 60.0,
+      "medianReturnPct": 67.1,
+      "probabilityOf100PctOrMore": 0.3821,
+      "probabilityOfLoss": 0.1962
+    }
+  ]
+}

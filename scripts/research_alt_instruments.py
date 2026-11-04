@@ -27,6 +27,7 @@ import csv
 import json
 import math
 import statistics
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,18 +46,27 @@ TAX = 0.13                 # НДФЛ физлица
 # --------------------------------------------------------------------------- #
 def money_market_benchmark() -> dict:
     rows = list(csv.DictReader((ART / "cbr_rates_730d.csv").open(encoding="utf-8-sig")))
-    ruonia = [float(r["ruonia"]) for r in rows if r.get("ruonia")]
+    # Компаундинг по ФАКТИЧЕСКОМУ интервалу между наблюдениями (2026-11-04: было
+    # по одному дню на строку — занижало кумулятив, т.к. строк ~491 на 727 дней).
+    dated = [
+        (date.fromisoformat(r["rate_date"]), float(r["ruonia"]))
+        for r in rows
+        if r.get("ruonia") and r.get("rate_date")
+    ]
+    dated.sort()
+    ruonia = [rate for _, rate in dated]
     key = [float(r["key_rate"]) for r in rows if r.get("key_rate")]
     growth = 1.0
-    for rate in ruonia:
-        growth *= 1 + rate / 100 / 365
-    years = len(ruonia) / 365
+    for (d0, rate), (d1, _) in zip(dated, dated[1:]):
+        elapsed = max((d1 - d0).days, 1)
+        growth *= 1 + rate / 100 * elapsed / 365
+    years = (dated[-1][0] - dated[0][0]).days / 365.25
     annual = growth ** (1 / years) - 1
     return {
         "source": "artifacts/cbr_rates_730d.csv",
         "days": len(ruonia),
-        "firstDate": rows[0]["rate_date"],
-        "lastDate": rows[-1]["rate_date"],
+        "firstDate": dated[0][0].isoformat(),
+        "lastDate": dated[-1][0].isoformat(),
         "years": round(years, 2),
         "ruoniaMeanPct": round(statistics.mean(ruonia), 2),
         "ruoniaMinPct": min(ruonia),
@@ -137,8 +147,8 @@ def measured_sources() -> list[dict]:
         },
         {
             "name": "Денежный рынок (RUONIA)",
-            "mu": 18.93, "mdd": 0.01, "basis": "100k капитала",
-            "evidence": "фактическое компаундирование 2024-10..2026-10",
+            "mu": 18.99, "mdd": 0.01, "basis": "100k капитала",
+            "evidence": "компаундирование по фактическим интервалам, 2024-10..2026-10",
         },
     ]
     for s in sources:

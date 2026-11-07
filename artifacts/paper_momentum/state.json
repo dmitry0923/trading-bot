@@ -17,7 +17,8 @@
     "maxVolPercentile": 0.5,
     "holdBars": 5,
     "commissionPerSide": 1.5,
-    "slippageBps": 1.0
+    "slippageBps": 1.0,
+    "paperCapitalRub": 100000.0
   },
   "tickers": {
     "USDRUBF": {

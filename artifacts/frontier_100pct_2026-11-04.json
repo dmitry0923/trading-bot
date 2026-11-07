@@ -1,0 +1,404 @@
+{
+  "generatedAt": "2026-11-04",
+  "purpose": "Дюрация, обеспечение и налоги: прокси и проверяемые гипотезы",
+  "provenance": {
+    "engineVersion": "2026-10-26.2",
+    "commitSha": "a98b5be1593acd86ecfdd4cfe4d47101d92bc9b6"
+  },
+  "moneyMarket": {
+    "annualPct": 18.99,
+    "cumulativePct": 41.35,
+    "years": 1.99,
+    "meanRuoniaPct": 17.34,
+    "maxDrawdownPct": null,
+    "accrualSeriesMaxDrawdownPct": 0.0,
+    "scope": "gross RUONIA accrual benchmark, not an investable fund equity curve"
+  },
+  "duration": {
+    "model": "carry за фактические календарные дни − D·Δkey_rate; постоянная дюрация",
+    "evidenceQuality": "ПРОКСИ: реальные цены/доходности ОФЗ отсутствуют",
+    "variants": [
+      {
+        "variant": "ОФЗ 5л, D=4,2 (база)",
+        "annualPct": 30.5,
+        "mddPct": 8.3,
+        "returnToMdd": 3.69,
+        "evidence": "synthetic key-rate sensitivity proxy"
+      },
+      {
+        "variant": "ОФЗ 5л, D=4,2, спред -2 п.п.",
+        "annualPct": 29.2,
+        "mddPct": 8.3,
+        "returnToMdd": 3.53,
+        "evidence": "synthetic key-rate sensitivity proxy"
+      },
+      {
+        "variant": "ОФЗ 3л, D=2,6",
+        "annualPct": 26.4,
+        "mddPct": 5.0,
+        "returnToMdd": 5.23,
+        "evidence": "synthetic key-rate sensitivity proxy"
+      },
+      {
+        "variant": "ОФЗ 10л, D=7,0",
+        "annualPct": 38.0,
+        "mddPct": 13.9,
+        "returnToMdd": 2.75,
+        "evidence": "synthetic key-rate sensitivity proxy"
+      }
+    ],
+    "phases": [
+      {
+        "phase": "рост ставки / удержание 2024-10..2025-07",
+        "annualPct": 14.7,
+        "mddPct": 8.3
+      },
+      {
+        "phase": "снижение 2025-07..2026-10",
+        "annualPct": 32.5,
+        "mddPct": 0.0
+      },
+      {
+        "phase": "полное окно 2024-10..2026-10",
+        "annualPct": 30.5,
+        "mddPct": 8.3
+      }
+    ],
+    "stress": [
+      {
+        "windowCalendarDays": 10,
+        "maxRateIncreasePp": 2.0,
+        "increaseFromTo": [
+          "2024-10-18",
+          "2024-10-28"
+        ],
+        "pnlPctAt1x": -8.4,
+        "pnlPctAt3xBeforeFinancing": -25.2,
+        "maxRateDecreasePp": -2.0,
+        "decreaseFromTo": [
+          "2025-07-18",
+          "2025-07-28"
+        ]
+      },
+      {
+        "windowCalendarDays": 20,
+        "maxRateIncreasePp": 2.0,
+        "increaseFromTo": [
+          "2024-10-18",
+          "2024-11-07"
+        ],
+        "pnlPctAt1x": -8.4,
+        "pnlPctAt3xBeforeFinancing": -25.2,
+        "maxRateDecreasePp": -2.0,
+        "decreaseFromTo": [
+          "2025-07-08",
+          "2025-07-28"
+        ]
+      },
+      {
+        "windowCalendarDays": 60,
+        "maxRateIncreasePp": 2.0,
+        "increaseFromTo": [
+          "2024-10-18",
+          "2024-12-17"
+        ],
+        "pnlPctAt1x": -8.4,
+        "pnlPctAt3xBeforeFinancing": -25.2,
+        "maxRateDecreasePp": -3.0,
+        "decreaseFromTo": [
+          "2025-05-29",
+          "2025-07-28"
+        ]
+      }
+    ],
+    "haircuts": [
+      {
+        "haircut": 1.0,
+        "assumedMddPct": 8.3,
+        "returnToMdd": 3.69
+      },
+      {
+        "haircut": 1.25,
+        "assumedMddPct": 10.4,
+        "returnToMdd": 2.95
+      },
+      {
+        "haircut": 1.5,
+        "assumedMddPct": 12.5,
+        "returnToMdd": 2.46
+      },
+      {
+        "haircut": 2.0,
+        "assumedMddPct": 16.6,
+        "returnToMdd": 1.84
+      }
+    ],
+    "caveat": "Не учитывает реальную кривую доходностей, кредитный/ликвидностный спред, купоны конкретных выпусков, roll-down, издержки и финансирование. Точность ±2 п.п. не установлена и не утверждается."
+  },
+  "rateScenarios": {
+    "assumption": "12 мес, D=4.2, 3x через заём 2x по последней ключевой ставке; реальная ставка маржинального финансирования может быть выше",
+    "rows": [
+      {
+        "scenario": "ставка 14 → 10",
+        "priceEffectPct": 16.8,
+        "couponPct": 12.5,
+        "return1xPct": 29.3,
+        "return3xBeforeFinancingPct": 87.9,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": 59.9,
+        "adverseRateMovePnlAt3xPct": -0.0,
+        "note": "продолжение цикла снижения"
+      },
+      {
+        "scenario": "ставка 14 → 12",
+        "priceEffectPct": 8.4,
+        "couponPct": 13.0,
+        "return1xPct": 21.4,
+        "return3xBeforeFinancingPct": 64.2,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": 36.2,
+        "adverseRateMovePnlAt3xPct": -0.0,
+        "note": "условный базовый сценарий"
+      },
+      {
+        "scenario": "ставка 14 → 14",
+        "priceEffectPct": -0.0,
+        "couponPct": 13.5,
+        "return1xPct": 13.5,
+        "return3xBeforeFinancingPct": 40.5,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": 12.5,
+        "adverseRateMovePnlAt3xPct": -0.0,
+        "note": "без изменения"
+      },
+      {
+        "scenario": "ставка 14 → 16",
+        "priceEffectPct": -8.4,
+        "couponPct": 14.5,
+        "return1xPct": 6.1,
+        "return3xBeforeFinancingPct": 18.3,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": -9.7,
+        "adverseRateMovePnlAt3xPct": -25.2,
+        "note": "инфляционный шок"
+      },
+      {
+        "scenario": "ставка 14 → 18",
+        "priceEffectPct": -16.8,
+        "couponPct": 15.5,
+        "return1xPct": -1.3,
+        "return3xBeforeFinancingPct": -3.9,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": -31.9,
+        "adverseRateMovePnlAt3xPct": -50.4,
+        "note": "кризисный сценарий"
+      }
+    ]
+  },
+  "sleeveCatalog": [
+    {
+      "id": "CASH",
+      "name": "RUONIA accrual benchmark",
+      "mu": 18.99,
+      "dd": null,
+      "evidence": "ставка, не equity фонда",
+      "status": "benchmark",
+      "r": null
+    },
+    {
+      "id": "DUR",
+      "name": "Дюрация ОФЗ 5л",
+      "mu": 30.5,
+      "dd": 8.3,
+      "evidence": "синтетический прокси",
+      "status": "требует реальных цен и финансирования",
+      "r": 3.69
+    },
+    {
+      "id": "CARRY",
+      "name": "Carry CNYRUBF (H1)",
+      "mu": 2.1,
+      "dd": 2.4,
+      "evidence": "488 сделок, p=0.055",
+      "status": "NO_CANDIDATE",
+      "r": 0.88
+    },
+    {
+      "id": "CAL",
+      "name": "Календарные спреды",
+      "mu": 3.75,
+      "dd": 2.0,
+      "evidence": "произвольная модель базиса",
+      "status": "не измерено",
+      "r": 1.88
+    },
+    {
+      "id": "VOL",
+      "name": "Продажа волатильности",
+      "mu": 4.0,
+      "dd": 3.0,
+      "evidence": "допущение, не VRP-измерение",
+      "status": "не измерено",
+      "r": 1.33
+    },
+    {
+      "id": "S1",
+      "name": "S1 momentum/carry",
+      "mu": 21.5,
+      "dd": 38.6,
+      "evidence": "pre-screen OOS, p=0.0875",
+      "status": "INCONCLUSIVE",
+      "r": 0.56
+    },
+    {
+      "id": "U8",
+      "name": "U8 cross-section",
+      "mu": 26.2,
+      "dd": 16.7,
+      "evidence": "INVALID по docs/29",
+      "status": "не использовать как доказательство",
+      "r": 1.57
+    }
+  ],
+  "collateral": {
+    "mechanic": "Доходность обеспечения можно добавить только после балансовой схемы: eligible collateral, haircut, variation margin, источник и стоимость плеча. Полное R не добавляется автоматически к каждой leveraged-позиции.",
+    "verification": [
+      "риск-рейт НКЦ/брокера на LQDT",
+      "приём паёв в обеспечение конкретного типа позиции",
+      "покрытие variation margin и возможность продажи паёв",
+      "ставка финансирования/репо и применимость к ИИС"
+    ],
+    "rows": [
+      {
+        "variant": "LQDT принят как ГО без дисконта",
+        "eligibleCollateralFraction": 1.0,
+        "cashOrFundYieldPct": 18.99,
+        "totalPortfolioReturnPct": null
+      },
+      {
+        "variant": "LQDT принят с дисконтом 50%",
+        "eligibleCollateralFraction": 0.5,
+        "cashOrFundYieldPct": 18.99,
+        "totalPortfolioReturnPct": null
+      },
+      {
+        "variant": "деньги как ГО, доходности нет",
+        "eligibleCollateralFraction": 1.0,
+        "cashOrFundYieldPct": 0.0,
+        "totalPortfolioReturnPct": null
+      },
+      {
+        "variant": "деньги как ГО, брокер платит 5%",
+        "eligibleCollateralFraction": 1.0,
+        "cashOrFundYieldPct": 5.0,
+        "totalPortfolioReturnPct": null
+      }
+    ],
+    "status": "НЕ ПРОВЕРЕНО; +19 п.п. не является установленным результатом"
+  },
+  "taxLayer": {
+    "iis3": {
+      "rules": "упрощённая модель вычета 13% до 52 тыс.; правила и сроки счёта проверить",
+      "rows": [
+        {
+          "capitalRub": 100000,
+          "annualContributionRub": 100000,
+          "deductionRub": 13000,
+          "deductionPctOfCapital": 13.0,
+          "isInvestmentReturn": false
+        },
+        {
+          "capitalRub": 300000,
+          "annualContributionRub": 300000,
+          "deductionRub": 39000,
+          "deductionPctOfCapital": 13.0,
+          "isInvestmentReturn": false
+        },
+        {
+          "capitalRub": 400000,
+          "annualContributionRub": 400000,
+          "deductionRub": 52000,
+          "deductionPctOfCapital": 13.0,
+          "isInvestmentReturn": false
+        }
+      ],
+      "note": "вычет субсидирует новый взнос и требует налогооблагаемого дохода"
+    },
+    "ldv": {
+      "rule": "долгосрочное владение; лимит 3 млн ₽ × число лет, условия проверить",
+      "estimatedTaxOnAnnualGainPctAt15": 1.95,
+      "note": "это налог при реализации, а не ежегодная альфа; активная торговля не подходит"
+    }
+  },
+  "newCandidates": [
+    {
+      "id": "N1",
+      "name": "Дюрация ОФЗ / БПИФ облигаций",
+      "rEstimate": null,
+      "dataNeed": "реальные цены ОФЗ/RGBI, финансирование",
+      "verdict": "сначала данные"
+    },
+    {
+      "id": "N2",
+      "name": "Обеспечение в фонде денежного рынка",
+      "rEstimate": null,
+      "dataNeed": "условия брокера и балансовая схема",
+      "verdict": "проверить операционно"
+    },
+    {
+      "id": "N3",
+      "name": "БПИФ против индексного фьючерса",
+      "rEstimate": null,
+      "dataNeed": "NAV и стакан",
+      "verdict": "гипотеза"
+    },
+    {
+      "id": "N4",
+      "name": "Конверсии/реверсалы",
+      "rEstimate": null,
+      "dataNeed": "опционные цепочки bid/ask",
+      "verdict": "после данных"
+    },
+    {
+      "id": "N5",
+      "name": "Событийная волатильность",
+      "rEstimate": null,
+      "dataNeed": "опционы и календарь",
+      "verdict": "после данных"
+    },
+    {
+      "id": "N6",
+      "name": "Кросс-курсовой треугольник",
+      "rEstimate": null,
+      "dataNeed": "офшорные котировки",
+      "verdict": "нет данных"
+    },
+    {
+      "id": "N7",
+      "name": "Дивидендный carry с хеджем",
+      "rEstimate": null,
+      "dataNeed": "дивиденды, финансирование, налоги",
+      "verdict": "точечная гипотеза"
+    },
+    {
+      "id": "N8",
+      "name": "Репо с ЦК / свопы",
+      "rEstimate": null,
+      "dataNeed": "доступ к репо-секции",
+      "verdict": "не для текущего счёта"
+    },
+    {
+      "id": "N9",
+      "name": "ИИС-3 + ЛДВ",
+      "rEstimate": null,
+      "dataNeed": "налоговый статус",
+      "verdict": "не альфа"
+    }
+  ],
+  "portfolioLimitation": "Портфельный MDD, optimizer и вероятность достижения 100% намеренно не считаются: нет синхронных equity-рядов, реальных цен ОФЗ и условий финансирования. MDD не объединяется формулой sqrt(sum(MDD^2))."
+}

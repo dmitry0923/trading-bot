@@ -20,6 +20,7 @@ param(
     [int]$HoldBars = 5,
     [double]$CommissionPerSide = 1.5,
     [double]$SlippageBps = 1.0,
+    [double]$PaperCapitalRub = 100000.0,
     [string]$StartAfter = '2026-11-03',
     [string]$AsOf = '',
     [string]$StateDir = 'artifacts/paper_momentum',
@@ -33,6 +34,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'paper_momentum_metrics.ps1')
 $inv = [System.Globalization.CultureInfo]::InvariantCulture
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 $statePath = Join-Path $StateDir 'state.json'
@@ -61,6 +63,7 @@ function Get-FrozenParams {
         holdBars = $script:HoldBars
         commissionPerSide = $script:CommissionPerSide
         slippageBps = $script:SlippageBps
+        paperCapitalRub = $script:PaperCapitalRub
     }
 }
 
@@ -213,6 +216,8 @@ function Test-StateParams($State) {
     if ([string]$State.startAfter -ne $script:StartAfter) {
         throw "State startAfter=$($State.startAfter) != -StartAfter=$($script:StartAfter). Preregistered parameters are frozen."
     }
+    # Schema v1 создавался до явного капитала; docs/46 фиксирует его как 100k.
+    if ($null -eq $State.params.paperCapitalRub) { $State.params.paperCapitalRub = 100000.0 }
     $frozen = Get-FrozenParams
     if ((@($State.params.tickers) -join ',') -ne (@($frozen.tickers) -join ',')) {
         throw 'State universe differs from -Tickers. Preregistered parameters are frozen.'
@@ -222,55 +227,10 @@ function Test-StateParams($State) {
             throw "State param $key=$($State.params.$key) != -$key=$($frozen[$key]). Preregistered parameters are frozen."
         }
     }
-    foreach ($key in @('maxVolPercentile', 'commissionPerSide', 'slippageBps')) {
+    foreach ($key in @('maxVolPercentile', 'commissionPerSide', 'slippageBps', 'paperCapitalRub')) {
         if ([math]::Abs([double]$State.params.$key - [double]$frozen[$key]) -gt 1e-9) {
             throw "State param $key=$($State.params.$key) != -$key=$($frozen[$key]). Preregistered parameters are frozen."
         }
-    }
-}
-
-function Get-Stats($Trades) {
-    $arr = @($Trades)
-    if ($arr.Count -eq 0) {
-        return [pscustomobject]@{ trades = 0; net = 0.0; pf = 0.0; winRate = 0.0; avgNet = 0.0; medianNet = 0.0; mddPct = 0.0 }
-    }
-    $pnls = [double[]]::new($arr.Count)
-    $sumWin = 0.0
-    $sumLoss = 0.0
-    $wins = 0
-    for ($i = 0; $i -lt $arr.Count; $i++) {
-        $v = [double]$arr[$i].net
-        $pnls[$i] = $v
-        if ($v -gt 0) { $sumWin += $v; $wins++ } else { $sumLoss += [math]::Abs($v) }
-    }
-    $pf = if ($sumLoss -gt 0) { $sumWin / $sumLoss } else { if ($sumWin -gt 0) { 999.0 } else { 0.0 } }
-    $net = 0.0
-    foreach ($x in $pnls) { $net += $x }
-    $avg = $net / $arr.Count
-    $sortedPnl = @($pnls | Sort-Object)
-    $mid = [int][math]::Floor($sortedPnl.Count / 2)
-    $median = if ($sortedPnl.Count % 2 -eq 1) {
-        $sortedPnl[$mid]
-    } else {
-        ($sortedPnl[$mid - 1] + $sortedPnl[$mid]) / 2.0
-    }
-    $cum = 0.0
-    $peak = 0.0
-    $mdd = 0.0
-    foreach ($x in $pnls) {
-        $cum += $x
-        if ($cum -gt $peak) { $peak = $cum }
-        $dd = $peak - $cum
-        if ($dd -gt $mdd) { $mdd = $dd }
-    }
-    return [pscustomobject]@{
-        trades = $arr.Count
-        net = [math]::Round($net, 2)
-        pf = [math]::Round($pf, 3)
-        winRate = [math]::Round(100.0 * $wins / $arr.Count, 1)
-        avgNet = [math]::Round($avg, 2)
-        medianNet = [math]::Round($median, 2)
-        mddPct = [math]::Round($mdd / 1000.0, 2)
     }
 }
 
@@ -323,7 +283,7 @@ function Write-StateFiles($State) {
             Set-Content -LiteralPath $tradesPath -Encoding utf8
     }
 
-    $stats = Get-Stats $sorted
+    $stats = Get-PaperMomentumStats -Trades $sorted -PaperCapitalRub $PaperCapitalRub
     $block = Get-BlockNoEdge $sorted $BootstrapIterations $Seed
     $gates = [ordered]@{
         F1_closedTrades_ge_30 = $stats.trades -ge 30

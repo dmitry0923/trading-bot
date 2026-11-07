@@ -16,7 +16,8 @@
     "maxVolPercentile": 0.5,
     "holdBars": 5,
     "commissionPerSide": 1.5,
-    "slippageBps": 1.0
+    "slippageBps": 1.0,
+    "paperCapitalRub": 100000.0
   },
   "closedTrades": 0,
   "openPositions": 4,
@@ -30,7 +31,9 @@
     "winRate": 0.0,
     "avgNet": 0.0,
     "medianNet": 0.0,
-    "mddPct": 0.0
+    "mddRub": 0.0,
+    "mddPct": 0.0,
+    "mddMethod": "daily-closed-trades-by-exit-date"
   },
   "blockBootstrap": {
     "iterations": 2000,

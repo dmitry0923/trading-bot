@@ -1,0 +1,526 @@
+{
+  "generatedAt": "2026-11-04",
+  "purpose": "Экономика цели 100% годовых на ММВБ: пересчёт из артефактов 2026-11-02",
+  "assumptions": {
+    "contractNotionalRub": 12800.0,
+    "goConservativeRub": 850.0,
+    "goStressedRub": 2700.0,
+    "tradingDaysPerYear": 249.0,
+    "targetNetReturnPct": 100.0,
+    "taxRatePct": 13.0,
+    "engineVersion": "2026-10-26.2",
+    "commitSha": "a98b5be1593acd86ecfdd4cfe4d47101d92bc9b6"
+  },
+  "candidates": {
+    "engineMomentumOos": {
+      "source": "artifacts/engine_momentum_2026-11-02_oos.csv",
+      "universe": [
+        "CNYRUBF",
+        "USDRUBF",
+        "EURRUBF",
+        "GLDRUBF",
+        "IMOEXF"
+      ],
+      "sizing": "1 контракт на инструмент, maxC=1",
+      "overall": {
+        "trades": 135,
+        "tradesPerYear": 94.3,
+        "netRub": 12471.74,
+        "avgNetRub": 92.38,
+        "medianNetRub": -28.4,
+        "winRatePct": 46.7,
+        "profitFactor": 1.183,
+        "mddRub": 36645.82,
+        "mddMethod": "daily-closed-trades-by-exit-date",
+        "windowReturnToMdd": 0.34,
+        "annualReturnToMdd": 0.24,
+        "years": 1.43,
+        "netRubPerYear": 8709.95
+      },
+      "perTicker": {
+        "CNYRUBF": {
+          "trades": 43,
+          "tradesPerYear": 30.0,
+          "netRub": -1056.98,
+          "avgNetRub": -24.58,
+          "medianNetRub": -13.03,
+          "winRatePct": 41.9,
+          "profitFactor": 0.779,
+          "mddRub": 2018.67,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": -0.52,
+          "annualReturnToMdd": -0.37,
+          "years": 1.43,
+          "netRubPerYear": -738.17,
+          "shareOfNetPct": -8.5
+        },
+        "EURRUBF": {
+          "trades": 47,
+          "tradesPerYear": 33.5,
+          "netRub": 3240.89,
+          "avgNetRub": 68.96,
+          "medianNetRub": -115.74,
+          "winRatePct": 44.7,
+          "profitFactor": 1.087,
+          "mddRub": 26156.21,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": 0.12,
+          "annualReturnToMdd": 0.09,
+          "years": 1.4,
+          "netRubPerYear": 2311.98,
+          "shareOfNetPct": 26.0
+        },
+        "GLDRUBF": {
+          "trades": 1,
+          "tradesPerYear": 10.0,
+          "netRub": 34.58,
+          "avgNetRub": 34.58,
+          "medianNetRub": 34.58,
+          "winRatePct": 100.0,
+          "profitFactor": null,
+          "mddRub": 0.0,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": null,
+          "annualReturnToMdd": null,
+          "years": 0.1,
+          "netRubPerYear": 345.84,
+          "shareOfNetPct": 0.3
+        },
+        "USDRUBF": {
+          "trades": 44,
+          "tradesPerYear": 31.1,
+          "netRub": 10253.25,
+          "avgNetRub": 233.03,
+          "medianNetRub": 112.66,
+          "winRatePct": 52.3,
+          "profitFactor": 1.393,
+          "mddRub": 13588.27,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": 0.75,
+          "annualReturnToMdd": 0.53,
+          "years": 1.41,
+          "netRubPerYear": 7257.75,
+          "shareOfNetPct": 82.2
+        }
+      },
+      "perYear": {
+        "2023": {
+          "trades": 53,
+          "netRub": 14154.52
+        },
+        "2024": {
+          "trades": 82,
+          "netRub": -1682.78
+        }
+      },
+      "annualReturnOnDepositPct": {
+        "50000": 17.4,
+        "100000": 8.7,
+        "200000": 4.4
+      },
+      "mddAsShareOfDepositPct": {
+        "50000": 73.3,
+        "100000": 36.6,
+        "200000": 18.3
+      }
+    },
+    "prescreenMomentumOos": {
+      "source": "artifacts/multi_momentum_2026-11-02_oos.csv",
+      "universe": [
+        "CNYRUBF",
+        "USDRUBF",
+        "EURRUBF",
+        "GLDRUBF",
+        "IMOEXF"
+      ],
+      "sizing": "1 контракт на инструмент",
+      "overall": {
+        "trades": 161,
+        "tradesPerYear": 112.2,
+        "netRub": 30862.33,
+        "avgNetRub": 191.69,
+        "medianNetRub": 72.17,
+        "winRatePct": 55.9,
+        "profitFactor": 1.384,
+        "mddRub": 38577.03,
+        "mddMethod": "daily-closed-trades-by-exit-date",
+        "windowReturnToMdd": 0.8,
+        "annualReturnToMdd": 0.56,
+        "years": 1.43,
+        "netRubPerYear": 21512.34
+      },
+      "perTicker": {
+        "CNYRUBF": {
+          "trades": 50,
+          "tradesPerYear": 35.0,
+          "netRub": 1755.43,
+          "avgNetRub": 35.11,
+          "medianNetRub": 13.24,
+          "winRatePct": 52.0,
+          "profitFactor": 1.473,
+          "mddRub": 883.84,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": 1.99,
+          "annualReturnToMdd": 1.39,
+          "years": 1.43,
+          "netRubPerYear": 1228.3,
+          "shareOfNetPct": 5.7
+        },
+        "EURRUBF": {
+          "trades": 57,
+          "tradesPerYear": 40.6,
+          "netRub": 10541.76,
+          "avgNetRub": 184.94,
+          "medianNetRub": 73.52,
+          "winRatePct": 54.4,
+          "profitFactor": 1.271,
+          "mddRub": 23461.84,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": 0.45,
+          "annualReturnToMdd": 0.32,
+          "years": 1.4,
+          "netRubPerYear": 7505.61,
+          "shareOfNetPct": 34.2
+        },
+        "GLDRUBF": {
+          "trades": 1,
+          "tradesPerYear": 10.0,
+          "netRub": 21.92,
+          "avgNetRub": 21.92,
+          "medianNetRub": 21.92,
+          "winRatePct": 100.0,
+          "profitFactor": null,
+          "mddRub": 0.0,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": null,
+          "annualReturnToMdd": null,
+          "years": 0.1,
+          "netRubPerYear": 219.2,
+          "shareOfNetPct": 0.1
+        },
+        "USDRUBF": {
+          "trades": 53,
+          "tradesPerYear": 36.9,
+          "netRub": 18543.22,
+          "avgNetRub": 349.87,
+          "medianNetRub": 530.17,
+          "winRatePct": 60.4,
+          "profitFactor": 1.491,
+          "mddRub": 14573.77,
+          "mddMethod": "daily-closed-trades-by-exit-date",
+          "windowReturnToMdd": 1.27,
+          "annualReturnToMdd": 0.89,
+          "years": 1.43,
+          "netRubPerYear": 12925.4,
+          "shareOfNetPct": 60.1
+        }
+      },
+      "perYear": {
+        "2023": {
+          "trades": 63,
+          "netRub": 15307.5
+        },
+        "2024": {
+          "trades": 98,
+          "netRub": 15554.83
+        }
+      },
+      "annualReturnOnDepositPct": {
+        "50000": 43.0,
+        "100000": 21.5,
+        "200000": 10.8
+      },
+      "mddAsShareOfDepositPct": {
+        "50000": 77.2,
+        "100000": 38.6,
+        "200000": 19.3
+      }
+    }
+  },
+  "capacity": {
+    "annualIdealProfitPerContractRub": 43253.11,
+    "avgDailyRangeRubPerContract": 173.6,
+    "tradingDays": 498,
+    "targetNetReturnPct": 100.0,
+    "taxRatePct": 13.0,
+    "ceiling": [
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 1,
+        "targetNetProfitRub": 50000.0,
+        "targetPreTaxProfitRub": 57471.26,
+        "ceilingAnnualPctPreTax": 86.51,
+        "requiredCaptureOfIdealPctPreTax": 132.9
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 2,
+        "targetNetProfitRub": 50000.0,
+        "targetPreTaxProfitRub": 57471.26,
+        "ceilingAnnualPctPreTax": 173.01,
+        "requiredCaptureOfIdealPctPreTax": 66.4
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 3,
+        "targetNetProfitRub": 50000.0,
+        "targetPreTaxProfitRub": 57471.26,
+        "ceilingAnnualPctPreTax": 259.52,
+        "requiredCaptureOfIdealPctPreTax": 44.3
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 4,
+        "targetNetProfitRub": 50000.0,
+        "targetPreTaxProfitRub": 57471.26,
+        "ceilingAnnualPctPreTax": 346.02,
+        "requiredCaptureOfIdealPctPreTax": 33.2
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 6,
+        "targetNetProfitRub": 50000.0,
+        "targetPreTaxProfitRub": 57471.26,
+        "ceilingAnnualPctPreTax": 519.04,
+        "requiredCaptureOfIdealPctPreTax": 22.1
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 8,
+        "targetNetProfitRub": 50000.0,
+        "targetPreTaxProfitRub": 57471.26,
+        "ceilingAnnualPctPreTax": 692.05,
+        "requiredCaptureOfIdealPctPreTax": 16.6
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 1,
+        "targetNetProfitRub": 100000.0,
+        "targetPreTaxProfitRub": 114942.53,
+        "ceilingAnnualPctPreTax": 43.25,
+        "requiredCaptureOfIdealPctPreTax": 265.7
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 2,
+        "targetNetProfitRub": 100000.0,
+        "targetPreTaxProfitRub": 114942.53,
+        "ceilingAnnualPctPreTax": 86.51,
+        "requiredCaptureOfIdealPctPreTax": 132.9
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 3,
+        "targetNetProfitRub": 100000.0,
+        "targetPreTaxProfitRub": 114942.53,
+        "ceilingAnnualPctPreTax": 129.76,
+        "requiredCaptureOfIdealPctPreTax": 88.6
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 4,
+        "targetNetProfitRub": 100000.0,
+        "targetPreTaxProfitRub": 114942.53,
+        "ceilingAnnualPctPreTax": 173.01,
+        "requiredCaptureOfIdealPctPreTax": 66.4
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 6,
+        "targetNetProfitRub": 100000.0,
+        "targetPreTaxProfitRub": 114942.53,
+        "ceilingAnnualPctPreTax": 259.52,
+        "requiredCaptureOfIdealPctPreTax": 44.3
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 8,
+        "targetNetProfitRub": 100000.0,
+        "targetPreTaxProfitRub": 114942.53,
+        "ceilingAnnualPctPreTax": 346.02,
+        "requiredCaptureOfIdealPctPreTax": 33.2
+      }
+    ],
+    "requirements": [
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 1,
+        "targetPreTaxProfitRub": 57471.26,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 1401.74,
+          "100": 574.71,
+          "250": 229.89,
+          "500": 114.94
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 133.0
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 2,
+        "targetPreTaxProfitRub": 57471.26,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 700.87,
+          "100": 287.36,
+          "250": 114.94,
+          "500": 57.47
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 66.5
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 3,
+        "targetPreTaxProfitRub": 57471.26,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 467.25,
+          "100": 191.57,
+          "250": 76.63,
+          "500": 38.31
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 44.3
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 4,
+        "targetPreTaxProfitRub": 57471.26,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 350.43,
+          "100": 143.68,
+          "250": 57.47,
+          "500": 28.74
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 33.2
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 6,
+        "targetPreTaxProfitRub": 57471.26,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 233.62,
+          "100": 95.79,
+          "250": 38.31,
+          "500": 19.16
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 22.2
+      },
+      {
+        "depositRub": 50000.0,
+        "maxContracts": 8,
+        "targetPreTaxProfitRub": 57471.26,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 175.22,
+          "100": 71.84,
+          "250": 28.74,
+          "500": 14.37
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 16.6
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 1,
+        "targetPreTaxProfitRub": 114942.53,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 2803.48,
+          "100": 1149.43,
+          "250": 459.77,
+          "500": 229.89
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 265.9
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 2,
+        "targetPreTaxProfitRub": 114942.53,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 1401.74,
+          "100": 574.71,
+          "250": 229.89,
+          "500": 114.94
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 133.0
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 3,
+        "targetPreTaxProfitRub": 114942.53,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 934.49,
+          "100": 383.14,
+          "250": 153.26,
+          "500": 76.63
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 88.6
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 4,
+        "targetPreTaxProfitRub": 114942.53,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 700.87,
+          "100": 287.36,
+          "250": 114.94,
+          "500": 57.47
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 66.5
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 6,
+        "targetPreTaxProfitRub": 114942.53,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 467.25,
+          "100": 191.57,
+          "250": 76.63,
+          "500": 38.31
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 44.3
+      },
+      {
+        "depositRub": 100000.0,
+        "maxContracts": 8,
+        "targetPreTaxProfitRub": 114942.53,
+        "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+          "41": 350.43,
+          "100": 143.68,
+          "250": 57.47,
+          "500": 28.74
+        },
+        "requiredCaptureOfAvgDailyRangePctPreTax": 33.2
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "scenario": "conservative",
+      "assumedMeanPct": 20.0,
+      "assumedVolPct": 15.0,
+      "volatilityDomain": "standard deviation of arithmetic annual return",
+      "assumedLogVolPct": 12.4516,
+      "medianReturnPct": 19.1,
+      "probabilityOf100PctOrMore": 1.6e-05,
+      "probabilityOfLoss": 0.08046,
+      "probabilityScope": "terminal return only; no path, margin or liquidation model"
+    },
+    {
+      "scenario": "base",
+      "assumedMeanPct": 50.0,
+      "assumedVolPct": 30.0,
+      "volatilityDomain": "standard deviation of arithmetic annual return",
+      "assumedLogVolPct": 19.8042,
+      "medianReturnPct": 47.1,
+      "probabilityOf100PctOrMore": 0.060373,
+      "probabilityOfLoss": 0.025687,
+      "probabilityScope": "terminal return only; no path, margin or liquidation model"
+    },
+    {
+      "scenario": "aggressive",
+      "assumedMeanPct": 100.0,
+      "assumedVolPct": 60.0,
+      "volatilityDomain": "standard deviation of arithmetic annual return",
+      "assumedLogVolPct": 29.356,
+      "medianReturnPct": 91.6,
+      "probabilityOf100PctOrMore": 0.441653,
+      "probabilityOfLoss": 0.013401,
+      "probabilityScope": "terminal return only; no path, margin or liquidation model"
+    }
+  ]
+}

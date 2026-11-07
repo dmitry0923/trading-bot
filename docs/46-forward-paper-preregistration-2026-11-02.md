@@ -19,6 +19,8 @@ D3, но post-hoc WFA folds=3 — **PF 3,01, block p=0,002** на 75 OOS-сде�
   без пирамидинга; сигналы во время удержания игнорируются.
 - Размер: **1 контракт на инструмент**; издержки: комиссия 1,5 ₽/сторона,
   slippage 1 bp, funding по фактическому `funding_history` за клиринги.
+- Капитал для нормировки риска: **100 000 ₽** (`paperCapitalRub`). Это не сайзинг
+  и не изменение правил, а знаменатель зарегистрированного гейта F5.
 - Live-ордера **не выставляются**; LIVE-контур не меняется (`maxC=1`,
   Kelly, allowlist CNYRUBF).
 
@@ -35,7 +37,7 @@ D3, но post-hoc WFA folds=3 — **PF 3,01, block p=0,002** на 75 OOS-сде�
   исторические сделки не создаются. Без `-Init` при отсутствии state скрипт
   падает, а не начинает с исторического бэкфилла.
 - Состояние: `artifacts/paper_momentum/state.json` (schema v1: `startAfter`,
-  `params`, `tickers.{lastProcessedDate,position,pending}`, `trades`); журнал —
+  `params` включая `paperCapitalRub`, `tickers.{lastProcessedDate,position,pending}`, `trades`); журнал —
   `artifacts/paper_momentum/trades.csv`; сводка — `summary.json`.
 - **Параметры заморожены:** state хранит `params`; несовпадение с аргументами
   запуска (юниверс, 20/20/252/0,50/hold 5, издержки) → ошибка, а не тихое
@@ -58,13 +60,16 @@ D3, но post-hoc WFA folds=3 — **PF 3,01, block p=0,002** на 75 OOS-сде�
 | F2 | Profit Factor | **≥ 1,30** |
 | F3 | Блочный P(noEdge) по датам выхода (2 000, seed 42) | **< 0,05** |
 | F4 | CI95 блочного среднего | **не содержит 0** |
-| F5 | Max Drawdown | **≤ 40 %** (от 100k) |
+| F5 | Max Drawdown | **≤ 40 %** от `paperCapitalRub=100k`; дневная closed-trade equity по датам выхода |
 
 Дополнительно: оценка в контрольных точках 30 и 60 сделок; параметры не
 меняются; при F2/F5 fail — кандидат закрывается; при F3/F4 fail —
 INCONCLUSIVE, продолжается сбор до 60 сделок (без изменения правил).
 Гейты и вердикт автоматически пишутся в `summary.json` после каждого запуска
-(до 30 сделок — `COLLECTING`, `evaluated=false`).
+(до 30 сделок — `COLLECTING`, `evaluated=false`). `stats.mddRub` хранит абсолютную
+просадку, `stats.mddPct` — `100 × mddRub / paperCapitalRub`. Сделки одного дня сначала
+суммируются, поэтому результат не зависит от их порядка. Это просадка по закрытым
+сделкам, а не mark-to-market просадка с открытыми позициями.
 
 ## 4. Анти-подбор
 
@@ -77,6 +82,7 @@ INCONCLUSIVE, продолжается сбор до 60 сделок (без и�
 ## 5. Артефакты
 
 - `scripts/paper_momentum_daily.ps1`
+- `scripts/paper_momentum_metrics.ps1` и `scripts/paper_momentum_metrics_test.ps1`
 - `artifacts/paper_momentum/state.json`
 - `artifacts/paper_momentum/trades.csv`
 - `artifacts/paper_momentum/summary.json` (обновляется каждый запуск; гейты — после ≥ 30 сделок)

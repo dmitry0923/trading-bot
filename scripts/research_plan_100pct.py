@@ -5,7 +5,7 @@
 `artifacts/*.csv|json`, полученные предрегистрированными прогонами
 2026-11-02, и считает то, чего в них нет:
 
-  * MDD по датам выхода (а не по порядку строк) и return/MDD;
+  * дневной closed-trade MDD по датам выхода и annualized return/MDD;
   * вклад каждого инструмента в OOS-прибыль (концентрация);
   * годовую доходность на депозитах 50k/100k при 1 контракте;
   * требуемый захват дневного диапазона и требуемый net на сделку
@@ -24,6 +24,8 @@ import math
 import statistics
 from pathlib import Path
 
+from research_metadata import provenance
+
 ROOT = Path(__file__).resolve().parent.parent
 ART = ROOT / "artifacts"
 OUT = ART / "plan_100pct_2026-11-04.json"
@@ -34,6 +36,9 @@ CNY_PRICE = 12.8  # ориентир 2026, для notional
 CONTRACT_NOTIONAL = CNY_LOT * CNY_PRICE  # ≈ 12 800 ₽
 GO_CONSERVATIVE = 850.0
 GO_STRESSED = 2700.0
+TAX_RATE = 0.13
+TARGET_NET_RETURN = 1.0
+ENGINE_VERSION = "2026-10-26.2"
 
 
 def _num(value: str) -> float:
@@ -69,28 +74,39 @@ def load_trades(path: Path, pnl_column: str) -> list[dict]:
 def stats(trades: list[dict]) -> dict:
     if not trades:
         return {"trades": 0}
-    ordered = sorted(trades, key=lambda t: t["exit"])
+    ordered = sorted(trades, key=lambda t: (t["exit"], t["ticker"], t["entry"]))
     pnls = [t["pnl"] for t in ordered]
+    daily_pnl: dict[str, float] = {}
+    for trade in ordered:
+        day = trade["exit"][:10]
+        daily_pnl[day] = daily_pnl.get(day, 0.0) + trade["pnl"]
+
+    # Closed-trade daily equity: одинаковый день не должен зависеть от порядка строк.
+    # Это не mark-to-market MDD открытых позиций.
     cum = peak = mdd = 0.0
-    for pnl in pnls:
-        cum += pnl
+    for day in sorted(daily_pnl):
+        cum += daily_pnl[day]
         peak = max(peak, cum)
         mdd = max(mdd, peak - cum)
+    total = sum(pnls)
     gains = sum(p for p in pnls if p > 0)
     losses = -sum(p for p in pnls if p < 0)
     years = _years(ordered)
+    annual = total / years
     return {
         "trades": len(pnls),
-        "netRub": round(cum, 2),
+        "tradesPerYear": round(len(pnls) / years, 1),
+        "netRub": round(total, 2),
         "avgNetRub": round(statistics.mean(pnls), 2),
         "medianNetRub": round(statistics.median(pnls), 2),
         "winRatePct": round(100 * sum(1 for p in pnls if p > 0) / len(pnls), 1),
         "profitFactor": round(gains / losses, 3) if losses else None,
         "mddRub": round(mdd, 2),
-        "returnToMdd": round(cum / mdd, 2) if mdd else None,
+        "mddMethod": "daily-closed-trades-by-exit-date",
+        "windowReturnToMdd": round(total / mdd, 2) if mdd else None,
+        "annualReturnToMdd": round(annual / mdd, 2) if mdd else None,
         "years": round(years, 2),
-        "netRubPerYear": round(cum / years, 2),
-        "mddRubPerYear": round(mdd / years, 2),
+        "netRubPerYear": round(annual, 2),
     }
 
 
@@ -136,33 +152,36 @@ def capacity_block() -> dict:
     annual_per_contract = data["annualMaxProfitPerContractRub"]
     avg_daily_range = data["avgDailyRangeRubPerUnit"]
     rows = []
+    requirement = []
     for deposit in (50_000.0, 100_000.0):
+        target_net = deposit * TARGET_NET_RETURN
+        target_pre_tax = target_net / (1 - TAX_RATE)
         for max_c in (1, 2, 3, 4, 6, 8):
             ceiling = 100 * annual_per_contract * max_c / deposit
             rows.append(
                 {
                     "depositRub": deposit,
                     "maxContracts": max_c,
-                    "ceilingAnnualPct": round(ceiling, 2),
-                    "requiredCaptureOfIdealPct": round(
-                        100.0 * deposit / (annual_per_contract * max_c), 1
+                    "targetNetProfitRub": round(target_net, 2),
+                    "targetPreTaxProfitRub": round(target_pre_tax, 2),
+                    "ceilingAnnualPctPreTax": round(ceiling, 2),
+                    "requiredCaptureOfIdealPctPreTax": round(
+                        100.0 * target_pre_tax / (annual_per_contract * max_c), 1
                     ),
                 }
             )
-    # требуемый net на сделку = 100% * депозит / (сделок за год)
-    requirement = []
-    for deposit in (50_000.0, 100_000.0):
-        for max_c in (1, 2, 3, 4, 6, 8):
             requirement.append(
                 {
                     "depositRub": deposit,
                     "maxContracts": max_c,
-                    "requiredNetRubPerTradeByTradesPerYear": {
-                        str(n): round(deposit / n, 2) for n in (41, 100, 250, 500)
+                    "targetPreTaxProfitRub": round(target_pre_tax, 2),
+                    "requiredPreTaxRubPerContractTradeByTradesPerYear": {
+                        str(n): round(target_pre_tax / (n * max_c), 2)
+                        for n in (41, 100, 250, 500)
                     },
-                    "requiredCaptureOfAvgDailyRangePct": round(
+                    "requiredCaptureOfAvgDailyRangePctPreTax": round(
                         100
-                        * (deposit / TRADING_DAYS_PER_YEAR)
+                        * (target_pre_tax / TRADING_DAYS_PER_YEAR)
                         / (max_c * avg_daily_range * CNY_LOT),
                         1,
                     ),
@@ -172,15 +191,24 @@ def capacity_block() -> dict:
         "annualIdealProfitPerContractRub": annual_per_contract,
         "avgDailyRangeRubPerContract": round(avg_daily_range * CNY_LOT, 2),
         "tradingDays": data["tradingDays"],
+        "targetNetReturnPct": TARGET_NET_RETURN * 100,
+        "taxRatePct": TAX_RATE * 100,
         "ceiling": rows,
         "requirements": requirement,
     }
 
 
 def scenario(name: str, mean_pct: float, vol_pct: float) -> dict:
-    """Логнормальное приближение: P(return >= 100%) при заданных mean/vol."""
-    mu = math.log(1 + mean_pct / 100) - 0.5 * (vol_pct / 100) ** 2
-    sigma = vol_pct / 100
+    """Терминальный lognormal-return при заданных arithmetic mean/vol.
+
+    Вероятность не моделирует путь счёта, маржин-колл или ликвидацию.
+    """
+    arithmetic_mean = 1 + mean_pct / 100
+    arithmetic_vol = vol_pct / 100
+    if arithmetic_mean <= 0 or arithmetic_vol <= 0:
+        raise ValueError("scenario requires positive mean wealth ratio and volatility")
+    sigma = math.sqrt(math.log(1 + (arithmetic_vol / arithmetic_mean) ** 2))
+    mu = math.log(arithmetic_mean) - 0.5 * sigma**2
     z = (math.log(2.0) - mu) / sigma
     p_100 = 0.5 * math.erfc(z / math.sqrt(2))
     median = 100 * (math.exp(mu) - 1)
@@ -188,11 +216,12 @@ def scenario(name: str, mean_pct: float, vol_pct: float) -> dict:
         "scenario": name,
         "assumedMeanPct": mean_pct,
         "assumedVolPct": vol_pct,
+        "volatilityDomain": "standard deviation of arithmetic annual return",
+        "assumedLogVolPct": round(sigma * 100, 4),
         "medianReturnPct": round(median, 1),
-        "probabilityOf100PctOrMore": round(p_100, 4),
-        "probabilityOfLoss": round(
-            0.5 * math.erfc(mu / (sigma * math.sqrt(2))), 4
-        ),
+        "probabilityOf100PctOrMore": round(p_100, 6),
+        "probabilityOfLoss": round(0.5 * math.erfc(mu / (sigma * math.sqrt(2))), 6),
+        "probabilityScope": "terminal return only; no path, margin or liquidation model",
     }
 
 
@@ -208,7 +237,9 @@ def main() -> None:
             "goConservativeRub": GO_CONSERVATIVE,
             "goStressedRub": GO_STRESSED,
             "tradingDaysPerYear": TRADING_DAYS_PER_YEAR,
-            "sourceEngine": "engineVersion 2026-10-26.2",
+            "targetNetReturnPct": TARGET_NET_RETURN * 100,
+            "taxRatePct": TAX_RATE * 100,
+            **provenance(ENGINE_VERSION),
         },
         "candidates": {
             "engineMomentumOos": {
@@ -253,7 +284,7 @@ def main() -> None:
         o = candidate["overall"]
         print(
             f"{key}: trades={o['trades']} net={o['netRub']} avg={o['avgNetRub']} "
-            f"pf={o['profitFactor']} mdd={o['mddRub']} ret/dd={o['returnToMdd']} "
+            f"pf={o['profitFactor']} mdd={o['mddRub']} annual_ret/dd={o['annualReturnToMdd']} "
             f"net/yr={o['netRubPerYear']} annual%={candidate['annualReturnOnDepositPct']}"
         )
     for s in result["scenarios"]:

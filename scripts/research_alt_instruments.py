@@ -30,6 +30,8 @@ import statistics
 from datetime import date
 from pathlib import Path
 
+from research_metadata import provenance
+
 ROOT = Path(__file__).resolve().parent.parent
 ART = ROOT / "artifacts"
 OUT = ART / "alt_instruments_2026-11-04.json"
@@ -39,6 +41,9 @@ MARGIN_CAP = 0.60          # RiskConfig.maxMarginUsagePercent
 STRESS_MULTIPLIER = 1.5    # RiskConfig.stressedMarginMultiplier
 KEY_RATE = 0.14            # ключевая ставка 2026 (docs/35)
 TAX = 0.13                 # НДФЛ физлица
+TARGET_NET_RETURN = 1.0
+TARGET_PRETAX_PCT = 100 * TARGET_NET_RETURN / (1 - TAX)
+ENGINE_VERSION = "2026-10-26.2"
 
 
 # --------------------------------------------------------------------------- #
@@ -75,11 +80,13 @@ def money_market_benchmark() -> dict:
         "keyRateLastPct": key[-1],
         "cumulativePct": round((growth - 1) * 100, 2),
         "annualPct": round(annual * 100, 2),
-        "annualVolPct": 0.0,
-        "maxDrawdownPct": 0.0,
+        "annualVolPct": None,
+        "maxDrawdownPct": None,
+        "accrualSeriesMaxDrawdownPct": 0.0,
         "comment": (
-            "Денежный рынок даёт почти бесрисковую доходность с нулевой просадкой; "
-            "это планка, а не «ноль». Штраф за попытку: альфа должна превышать её."
+            "Это gross benchmark индекса ставки, а не доходность конкретного фонда. "
+            "Нулевая просадка относится только к искусственно монотонному ряду накопления; "
+            "для БПИФ нужны цены паёв, комиссии, налоги и спред."
         ),
     }
 
@@ -88,17 +95,19 @@ def money_market_benchmark() -> dict:
 # 2. Закон плеча
 # --------------------------------------------------------------------------- #
 def leverage_law() -> list[dict]:
+    """Линейная иллюстрация масштабирования, а не прогноз выживаемости счёта.
+
+    По одному r=mu/MDD нельзя определить плечо: для него отдельно нужна mu.
+    """
     out = []
     for ratio in (0.2, 0.35, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0):
         out.append(
             {
                 "annualReturnToMdd": ratio,
-                "leverageFor100Pct": round(1.0 / ratio, 1) if ratio else None,
-                "drawdownAt100Pct": round(100.0 / ratio, 1) if ratio else None,
+                "drawdownAt100PctNet": round(TARGET_PRETAX_PCT / ratio, 1),
                 "verdict": (
-                    "приемлемо (DD<=50%)" if ratio >= 2.0
-                    else "погранично" if ratio >= 1.5
-                    else "разорение раньше цели"
+                    "DD<=35% в линейной модели" if ratio >= TARGET_PRETAX_PCT / 35
+                    else "DD>35% в линейной модели"
                 ),
             }
         )
@@ -145,16 +154,11 @@ def measured_sources() -> list[dict]:
             "mu": 0.0, "mdd": 0.5, "basis": "100k капитала, maxC=1",
             "evidence": "PF 1,012; p=0,486; edge нет",
         },
-        {
-            "name": "Денежный рынок (RUONIA)",
-            "mu": 18.99, "mdd": 0.01, "basis": "100k капитала",
-            "evidence": "компаундирование по фактическим интервалам, 2024-10..2026-10",
-        },
     ]
     for s in sources:
         s["returnToMdd"] = round(s["mu"] / s["mdd"], 2) if s["mdd"] else None
-        s["drawdownAt100Pct"] = (
-            round(100.0 / s["returnToMdd"], 1) if s["returnToMdd"] else None
+        s["drawdownAt100PctNet"] = (
+            round(TARGET_PRETAX_PCT / s["returnToMdd"], 1) if s["returnToMdd"] else None
         )
     return sources
 
@@ -164,7 +168,8 @@ def measured_sources() -> list[dict]:
 # --------------------------------------------------------------------------- #
 SPECS = [
     # ticker, type, lotSize, price, go
-    ("CNYRUBF", "FUTURES", 1000, 12.63, 850.0),
+    # Для CNYRUBF берём наблюдавшийся верхний live-GO 2700, а не устаревший spec.go=850.
+    ("CNYRUBF", "FUTURES", 1000, 12.63, 2700.0),
     ("USDRUBF", "FUTURES", 1000, 91.61, 12630.0),
     ("EURRUBF", "FUTURES", 1000, 99.05, 14474.0),
     ("GLDRUBF", "FUTURES", 1, 8840.55, 1292.0),
@@ -190,11 +195,14 @@ def instrument_capacity() -> list[dict]:
             # акции: маржинальное требование ~20% нотионала (брокерский риск-рейт)
             go = notional * 0.20
             go_basis = "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
+        elif ticker == "CNYRUBF":
+            go_basis = "верх наблюдаемого live GO 850–2700 ₽; стресс ×1.5 дополнительно"
         else:
             go_basis = "InstrumentsConfig (provisional, сверять с live GO)"
         for capital in (50_000.0, 100_000.0):
             affordable = (capital * MARGIN_CAP) / (go * STRESS_MULTIPLIER)
-            notional_max = affordable * notional
+            whole_contracts = math.floor(affordable)
+            notional_max = whole_contracts * notional
             out.append(
                 {
                     "ticker": ticker,
@@ -205,7 +213,8 @@ def instrument_capacity() -> list[dict]:
                     "goRub": round(go, 2),
                     "goToNotionalPct": round(100 * go / notional, 2),
                     "capitalRub": capital,
-                    "maxContractsAtStress": round(affordable, 2),
+                    "maxContractsAtStress": whole_contracts,
+                    "fractionalContractCapacity": round(affordable, 2),
                     "maxNotionalRub": round(notional_max, 0),
                     "maxNotionalLeverage": round(notional_max / capital, 2),
                     "goBasis": go_basis,
@@ -281,24 +290,6 @@ def short_vol_model() -> dict:
                     "pnlPctOfMargin20": round(100 * worst / (0.20 * f), 0),
                 }
             )
-    # реалистичная оценка через премию за риск волатильности (IV^2 − RV^2)
-    vrp = []
-    for iv, rv_mult in ((0.20, 0.85), (0.25, 0.85), (0.25, 0.90)):
-        rv = iv * rv_mult
-        # приближение дельта-хеджированной короткой волатильности:
-        # EV ≈ 0.2 · S · (σ_iv² − σ_rv²) · √T / σ_iv на месяц
-        ev_month = 0.2 * f * (iv * iv - rv * rv) * math.sqrt(t) / iv
-        vrp.append(
-            {
-                "ivPct": round(iv * 100, 1),
-                "rvPct": round(rv * 100, 1),
-                "ivMinusRvVolPoints": round((iv - rv) * 100, 1),
-                "expectedRubPerMonth": round(ev_month, 0),
-                "expectedPctOfNotionalPerMonth": round(100 * ev_month / f, 2),
-                "expectedAnnualOnNotionalPct": round(1200 * ev_month / f, 1),
-                "expectedAnnualOnMargin20Pct": round(6000 * ev_month / f, 1),
-            }
-        )
     return {
         "underlyingNotionalRub": f,
         "days": 30,
@@ -306,7 +297,6 @@ def short_vol_model() -> dict:
         "structure": "продажа 15Δ стрэнгла (put и call вне денег)",
         "grid": rows,
         "tail": tail,
-        "varianceRiskPremium": vrp,
         "note": (
             "Модель Black-76 на допущениях. Ожидаемая доходность = премия минус "
             "реализованные убытки; знак определяется разницей IV−RV, которую без "
@@ -375,73 +365,18 @@ def calendar_model() -> dict:
     }
 
 
-# --------------------------------------------------------------------------- #
-# 6. Диверсификация: сколько сливов нужно
-# --------------------------------------------------------------------------- #
-def diversification() -> dict:
-    rows = []
-    for r_single in (0.4, 0.6, 0.8, 1.0, 1.5):
-        for n in (1, 3, 5, 8, 13):
-            r_port = r_single * math.sqrt(n)
-            rows.append(
-                {
-                    "singleReturnToMdd": r_single,
-                    "sleeves": n,
-                    "portfolioReturnToMdd": round(r_port, 2),
-                    "drawdownAt100Pct": round(100 / r_port, 1),
-                    "reaches100WithAcceptableDd": r_port >= 2.0,
-                }
-            )
-    return {"assumption": "сливы некоррелированы, r_portfolio ≈ r·√N", "rows": rows}
-
-
-def available_portfolio() -> dict:
-    """Что даёт портфель ВСЕХ найденных источников при нулевой корреляции."""
-    sleeves = [
-        ("S1 momentum/carry", 0.56),
-        ("Carry H1", 0.88),
-        ("U8 cross-section (полная история)", 0.37),
-    ]
-    rows = []
-    for n in (1, 2, 3):
-        chosen = sleeves[:n]
-        r_port = math.sqrt(sum(r * r for _, r in chosen))
-        rows.append(
-            {
-                "sleeves": [name for name, _ in chosen],
-                "portfolioReturnToMdd": round(r_port, 2),
-                "drawdownAt100Pct": round(100 / r_port, 1),
-                "reaches100WithDdUnder50": r_port >= 2.0,
-            }
-        )
-    return {
-        "assumption": "равные риск-веса, нулевая корреляция, r_portfolio = sqrt(Σ r_i²)",
-        "rows": rows,
-        "upperBoundIfU8HoldoutIsReal": {
-            "portfolioReturnToMdd": round(
-                math.sqrt(0.56 ** 2 + 0.88 ** 2 + 1.57 ** 2), 2
-            ),
-            "drawdownAt100Pct": round(
-                100 / math.sqrt(0.56 ** 2 + 0.88 ** 2 + 1.57 ** 2), 1
-            ),
-            "note": "только если holdout-оценка U8 (r=1,57) устойчива; dev-гейт её не подтверждает",
-        },
-        "note": (
-            "Даже объединение всех трёх независимых источников даёт r ≈ 1,1: просадка при "
-            "100% около 90%. Для DD ≤ 35% нужен r ≈ 2,9 — этого в доступном наборе нет."
-        ),
-    }
-
-
 def main() -> None:
     result = {
         "generatedAt": "2026-11-04",
         "purpose": "Скрининг альтернативных инструментов/классов под цель 100% годовых",
+        "provenance": provenance(ENGINE_VERSION),
         "constraints": {
             "capitalRub": [50_000, 100_000],
             "marginCapPct": MARGIN_CAP * 100,
             "stressMultiplier": STRESS_MULTIPLIER,
             "taxPct": TAX * 100,
+            "targetNetReturnPct": TARGET_NET_RETURN * 100,
+            "targetPreTaxReturnPct": TARGET_PRETAX_PCT,
             "keyRatePct": KEY_RATE * 100,
             "note": (
                 "В окружении нет ценовых рядов (только торговые логи артефактов), "
@@ -456,8 +391,10 @@ def main() -> None:
         "shortVolModel": short_vol_model(),
         "dividendModel": dividend_model(),
         "calendarModel": calendar_model(),
-        "diversification": diversification(),
-        "availablePortfolio": available_portfolio(),
+        "portfolioLimitation": (
+            "MDD разных сливов не объединяется через sqrt(sum(MDD^2)) или корреляционную "
+            "формулу волатильности. Нужны синхронные daily equity/P&L ряды, которых нет."
+        ),
     }
     OUT.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"written {OUT}")
@@ -466,7 +403,7 @@ def main() -> None:
           f"RUONIA mean {mm['ruoniaMeanPct']}%")
     for s in result["measuredSources"]:
         print(f"  {s['name'][:55]:55s} mu={s['mu']:6.2f}% D={s['mdd']:6.2f}% "
-              f"r={s['returnToMdd']} DD@100={s['drawdownAt100Pct']}%")
+              f"r={s['returnToMdd']} DD@100net={s['drawdownAt100PctNet']}%")
     print("instrument capacity (50k):")
     for row in result["instrumentCapacity"]:
         if row["capitalRub"] == 50_000:

@@ -1,6 +1,10 @@
 {
   "generatedAt": "2026-11-04",
   "purpose": "Скрининг альтернативных инструментов/классов под цель 100% годовых",
+  "provenance": {
+    "engineVersion": "2026-10-26.2",
+    "commitSha": "a98b5be1593acd86ecfdd4cfe4d47101d92bc9b6"
+  },
   "constraints": {
     "capitalRub": [
       50000,
@@ -9,6 +13,8 @@
     "marginCapPct": 60.0,
     "stressMultiplier": 1.5,
     "taxPct": 13.0,
+    "targetNetReturnPct": 100.0,
+    "targetPreTaxReturnPct": 114.94252873563218,
     "keyRatePct": 14.000000000000002,
     "note": "В окружении нет ценовых рядов (только торговые логи артефактов), поэтому измеряемые блоки — из существующих артефактов, а модельные (опционы, дивиденды, календарные спреды) явно помечены как модель."
   },
@@ -25,64 +31,56 @@
     "keyRateLastPct": 14.0,
     "cumulativePct": 41.35,
     "annualPct": 18.99,
-    "annualVolPct": 0.0,
-    "maxDrawdownPct": 0.0,
-    "comment": "Денежный рынок даёт почти бесрисковую доходность с нулевой просадкой; это планка, а не «ноль». Штраф за попытку: альфа должна превышать её."
+    "annualVolPct": null,
+    "maxDrawdownPct": null,
+    "accrualSeriesMaxDrawdownPct": 0.0,
+    "comment": "Это gross benchmark индекса ставки, а не доходность конкретного фонда. Нулевая просадка относится только к искусственно монотонному ряду накопления; для БПИФ нужны цены паёв, комиссии, налоги и спред."
   },
   "leverageLaw": [
     {
       "annualReturnToMdd": 0.2,
-      "leverageFor100Pct": 5.0,
-      "drawdownAt100Pct": 500.0,
-      "verdict": "разорение раньше цели"
+      "drawdownAt100PctNet": 574.7,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 0.35,
-      "leverageFor100Pct": 2.9,
-      "drawdownAt100Pct": 285.7,
-      "verdict": "разорение раньше цели"
+      "drawdownAt100PctNet": 328.4,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 0.5,
-      "leverageFor100Pct": 2.0,
-      "drawdownAt100Pct": 200.0,
-      "verdict": "разорение раньше цели"
+      "drawdownAt100PctNet": 229.9,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 0.75,
-      "leverageFor100Pct": 1.3,
-      "drawdownAt100Pct": 133.3,
-      "verdict": "разорение раньше цели"
+      "drawdownAt100PctNet": 153.3,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 1.0,
-      "leverageFor100Pct": 1.0,
-      "drawdownAt100Pct": 100.0,
-      "verdict": "разорение раньше цели"
+      "drawdownAt100PctNet": 114.9,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 1.5,
-      "leverageFor100Pct": 0.7,
-      "drawdownAt100Pct": 66.7,
-      "verdict": "погранично"
+      "drawdownAt100PctNet": 76.6,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 2.0,
-      "leverageFor100Pct": 0.5,
-      "drawdownAt100Pct": 50.0,
-      "verdict": "приемлемо (DD<=50%)"
+      "drawdownAt100PctNet": 57.5,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 2.5,
-      "leverageFor100Pct": 0.4,
-      "drawdownAt100Pct": 40.0,
-      "verdict": "приемлемо (DD<=50%)"
+      "drawdownAt100PctNet": 46.0,
+      "verdict": "DD>35% в линейной модели"
     },
     {
       "annualReturnToMdd": 3.0,
-      "leverageFor100Pct": 0.3,
-      "drawdownAt100Pct": 33.3,
-      "verdict": "приемлемо (DD<=50%)"
+      "drawdownAt100PctNet": 38.3,
+      "verdict": "DD>35% в линейной модели"
     }
   ],
   "measuredSources": [
@@ -93,7 +91,7 @@
       "basis": "100k капитала, 1 контракт/инструмент",
       "evidence": "p=0,0875; 161 сделка; INCONCLUSIVE",
       "returnToMdd": 0.56,
-      "drawdownAt100Pct": 178.6
+      "drawdownAt100PctNet": 205.3
     },
     {
       "name": "S1 то же, формальный engine (OOS 2022-2024)",
@@ -102,7 +100,7 @@
       "basis": "100k капитала, 1 контракт/инструмент",
       "evidence": "p=0,2795; 135 сделок; REJECTED dev-гейтом",
       "returnToMdd": 0.24,
-      "drawdownAt100Pct": 416.7
+      "drawdownAt100PctNet": 478.9
     },
     {
       "name": "Carry H1 CNYRUBF (2024-2026, 488 сделок)",
@@ -111,7 +109,7 @@
       "basis": "100k капитала, 1 контракт",
       "evidence": "p=0,0545; NO_CANDIDATE (малая величина)",
       "returnToMdd": 0.88,
-      "drawdownAt100Pct": 113.6
+      "drawdownAt100PctNet": 130.6
     },
     {
       "name": "U8 cross-section 12-0: holdout-сегмент (2024-07..2026-10)",
@@ -120,7 +118,7 @@
       "basis": "100k капитала, 1 позиция",
       "evidence": "p=0,042, CI95 содержит 0, robust=false, dev PF 1,065",
       "returnToMdd": 1.57,
-      "drawdownAt100Pct": 63.7
+      "drawdownAt100PctNet": 73.2
     },
     {
       "name": "U8 cross-section 12-0: полная история 2018-2026",
@@ -129,7 +127,7 @@
       "basis": "100k капитала, 1 позиция",
       "evidence": "INCONCLUSIVE, consistency 0,75, p=0,075",
       "returnToMdd": 0.37,
-      "drawdownAt100Pct": 270.3
+      "drawdownAt100PctNet": 310.7
     },
     {
       "name": "Baseline CNYRUBF MINUTE_10 730д",
@@ -138,16 +136,7 @@
       "basis": "100k капитала, maxC=1",
       "evidence": "PF 1,012; p=0,486; edge нет",
       "returnToMdd": 0.0,
-      "drawdownAt100Pct": null
-    },
-    {
-      "name": "Денежный рынок (RUONIA)",
-      "mu": 18.99,
-      "mdd": 0.01,
-      "basis": "100k капитала",
-      "evidence": "компаундирование по фактическим интервалам, 2024-10..2026-10",
-      "returnToMdd": 1899.0,
-      "drawdownAt100Pct": 0.1
+      "drawdownAt100PctNet": null
     }
   ],
   "instrumentCapacity": [
@@ -157,13 +146,14 @@
       "lotSize": 1000,
       "price": 12.63,
       "notionalRub": 12630.0,
-      "goRub": 850.0,
-      "goToNotionalPct": 6.73,
+      "goRub": 2700.0,
+      "goToNotionalPct": 21.38,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 23.53,
-      "maxNotionalRub": 297176.0,
-      "maxNotionalLeverage": 5.94,
-      "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
+      "maxContractsAtStress": 7,
+      "fractionalContractCapacity": 7.41,
+      "maxNotionalRub": 88410.0,
+      "maxNotionalLeverage": 1.77,
+      "goBasis": "верх наблюдаемого live GO 850–2700 ₽; стресс ×1.5 дополнительно"
     },
     {
       "ticker": "CNYRUBF",
@@ -171,13 +161,14 @@
       "lotSize": 1000,
       "price": 12.63,
       "notionalRub": 12630.0,
-      "goRub": 850.0,
-      "goToNotionalPct": 6.73,
+      "goRub": 2700.0,
+      "goToNotionalPct": 21.38,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 47.06,
-      "maxNotionalRub": 594353.0,
-      "maxNotionalLeverage": 5.94,
-      "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
+      "maxContractsAtStress": 14,
+      "fractionalContractCapacity": 14.81,
+      "maxNotionalRub": 176820.0,
+      "maxNotionalLeverage": 1.77,
+      "goBasis": "верх наблюдаемого live GO 850–2700 ₽; стресс ×1.5 дополнительно"
     },
     {
       "ticker": "USDRUBF",
@@ -188,9 +179,10 @@
       "goRub": 12630.0,
       "goToNotionalPct": 13.79,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 1.58,
-      "maxNotionalRub": 145067.0,
-      "maxNotionalLeverage": 2.9,
+      "maxContractsAtStress": 1,
+      "fractionalContractCapacity": 1.58,
+      "maxNotionalRub": 91610.0,
+      "maxNotionalLeverage": 1.83,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -202,9 +194,10 @@
       "goRub": 12630.0,
       "goToNotionalPct": 13.79,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 3.17,
-      "maxNotionalRub": 290135.0,
-      "maxNotionalLeverage": 2.9,
+      "maxContractsAtStress": 3,
+      "fractionalContractCapacity": 3.17,
+      "maxNotionalRub": 274830.0,
+      "maxNotionalLeverage": 2.75,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -216,9 +209,10 @@
       "goRub": 14474.0,
       "goToNotionalPct": 14.61,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 1.38,
-      "maxNotionalRub": 136866.0,
-      "maxNotionalLeverage": 2.74,
+      "maxContractsAtStress": 1,
+      "fractionalContractCapacity": 1.38,
+      "maxNotionalRub": 99050.0,
+      "maxNotionalLeverage": 1.98,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -230,9 +224,10 @@
       "goRub": 14474.0,
       "goToNotionalPct": 14.61,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 2.76,
-      "maxNotionalRub": 273732.0,
-      "maxNotionalLeverage": 2.74,
+      "maxContractsAtStress": 2,
+      "fractionalContractCapacity": 2.76,
+      "maxNotionalRub": 198100.0,
+      "maxNotionalLeverage": 1.98,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -244,9 +239,10 @@
       "goRub": 1292.0,
       "goToNotionalPct": 14.61,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 15.48,
-      "maxNotionalRub": 136851.0,
-      "maxNotionalLeverage": 2.74,
+      "maxContractsAtStress": 15,
+      "fractionalContractCapacity": 15.48,
+      "maxNotionalRub": 132608.0,
+      "maxNotionalLeverage": 2.65,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -258,9 +254,10 @@
       "goRub": 1292.0,
       "goToNotionalPct": 14.61,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 30.96,
-      "maxNotionalRub": 273701.0,
-      "maxNotionalLeverage": 2.74,
+      "maxContractsAtStress": 30,
+      "fractionalContractCapacity": 30.96,
+      "maxNotionalRub": 265216.0,
+      "maxNotionalLeverage": 2.65,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -272,9 +269,10 @@
       "goRub": 2264.0,
       "goToNotionalPct": 8.22,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 8.83,
-      "maxNotionalRub": 243242.0,
-      "maxNotionalLeverage": 4.86,
+      "maxContractsAtStress": 8,
+      "fractionalContractCapacity": 8.83,
+      "maxNotionalRub": 220280.0,
+      "maxNotionalLeverage": 4.41,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -286,9 +284,10 @@
       "goRub": 2264.0,
       "goToNotionalPct": 8.22,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 17.67,
-      "maxNotionalRub": 486484.0,
-      "maxNotionalLeverage": 4.86,
+      "maxContractsAtStress": 17,
+      "fractionalContractCapacity": 17.67,
+      "maxNotionalRub": 468095.0,
+      "maxNotionalLeverage": 4.68,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -300,9 +299,10 @@
       "goRub": 4901.15,
       "goToNotionalPct": 16.09,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 4.08,
-      "maxNotionalRub": 124293.0,
-      "maxNotionalLeverage": 2.49,
+      "maxContractsAtStress": 4,
+      "fractionalContractCapacity": 4.08,
+      "maxNotionalRub": 121836.0,
+      "maxNotionalLeverage": 2.44,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -314,9 +314,10 @@
       "goRub": 4901.15,
       "goToNotionalPct": 16.09,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 8.16,
-      "maxNotionalRub": 248587.0,
-      "maxNotionalLeverage": 2.49,
+      "maxContractsAtStress": 8,
+      "fractionalContractCapacity": 8.16,
+      "maxNotionalRub": 243672.0,
+      "maxNotionalLeverage": 2.44,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -328,9 +329,10 @@
       "goRub": 1828.06,
       "goToNotionalPct": 14.24,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 10.94,
-      "maxNotionalRub": 140455.0,
-      "maxNotionalLeverage": 2.81,
+      "maxContractsAtStress": 10,
+      "fractionalContractCapacity": 10.94,
+      "maxNotionalRub": 128380.0,
+      "maxNotionalLeverage": 2.57,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -342,9 +344,10 @@
       "goRub": 1828.06,
       "goToNotionalPct": 14.24,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 21.88,
-      "maxNotionalRub": 280910.0,
-      "maxNotionalLeverage": 2.81,
+      "maxContractsAtStress": 21,
+      "fractionalContractCapacity": 21.88,
+      "maxNotionalRub": 269598.0,
+      "maxNotionalLeverage": 2.7,
       "goBasis": "InstrumentsConfig (provisional, сверять с live GO)"
     },
     {
@@ -356,9 +359,10 @@
       "goRub": 609.18,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 32.83,
-      "maxNotionalRub": 100000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 32,
+      "fractionalContractCapacity": 32.83,
+      "maxNotionalRub": 97469.0,
+      "maxNotionalLeverage": 1.95,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -370,9 +374,10 @@
       "goRub": 609.18,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 65.66,
-      "maxNotionalRub": 200000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 65,
+      "fractionalContractCapacity": 65.66,
+      "maxNotionalRub": 197983.0,
+      "maxNotionalLeverage": 1.98,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -384,9 +389,10 @@
       "goRub": 256.76,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 77.89,
-      "maxNotionalRub": 100000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 77,
+      "fractionalContractCapacity": 77.89,
+      "maxNotionalRub": 98853.0,
+      "maxNotionalLeverage": 1.98,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -398,9 +404,10 @@
       "goRub": 256.76,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 155.79,
-      "maxNotionalRub": 200000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 155,
+      "fractionalContractCapacity": 155.79,
+      "maxNotionalRub": 198989.0,
+      "maxNotionalLeverage": 1.99,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -412,9 +419,10 @@
       "goRub": 1183.55,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 16.9,
-      "maxNotionalRub": 100000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 16,
+      "fractionalContractCapacity": 16.9,
+      "maxNotionalRub": 94684.0,
+      "maxNotionalLeverage": 1.89,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -426,9 +434,10 @@
       "goRub": 1183.55,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 33.8,
-      "maxNotionalRub": 200000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 33,
+      "fractionalContractCapacity": 33.8,
+      "maxNotionalRub": 195286.0,
+      "maxNotionalLeverage": 1.95,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -440,9 +449,10 @@
       "goRub": 228.92,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 87.37,
-      "maxNotionalRub": 100000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 87,
+      "fractionalContractCapacity": 87.37,
+      "maxNotionalRub": 99580.0,
+      "maxNotionalLeverage": 1.99,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -454,9 +464,10 @@
       "goRub": 228.92,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 174.73,
-      "maxNotionalRub": 200000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 174,
+      "fractionalContractCapacity": 174.73,
+      "maxNotionalRub": 199160.0,
+      "maxNotionalLeverage": 1.99,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -468,8 +479,9 @@
       "goRub": 391.72,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 51.06,
-      "maxNotionalRub": 100000.0,
+      "maxContractsAtStress": 51,
+      "fractionalContractCapacity": 51.06,
+      "maxNotionalRub": 99889.0,
       "maxNotionalLeverage": 2.0,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
@@ -482,8 +494,9 @@
       "goRub": 391.72,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 102.11,
-      "maxNotionalRub": 200000.0,
+      "maxContractsAtStress": 102,
+      "fractionalContractCapacity": 102.11,
+      "maxNotionalRub": 199777.0,
       "maxNotionalLeverage": 2.0,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
@@ -496,9 +509,10 @@
       "goRub": 88.98,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 224.77,
-      "maxNotionalRub": 100000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 224,
+      "fractionalContractCapacity": 224.77,
+      "maxNotionalRub": 99658.0,
+      "maxNotionalLeverage": 1.99,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -510,8 +524,9 @@
       "goRub": 88.98,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 449.54,
-      "maxNotionalRub": 200000.0,
+      "maxContractsAtStress": 449,
+      "fractionalContractCapacity": 449.54,
+      "maxNotionalRub": 199760.0,
       "maxNotionalLeverage": 2.0,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
@@ -524,8 +539,9 @@
       "goRub": 127.28,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 157.13,
-      "maxNotionalRub": 100000.0,
+      "maxContractsAtStress": 157,
+      "fractionalContractCapacity": 157.13,
+      "maxNotionalRub": 99915.0,
       "maxNotionalLeverage": 2.0,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
@@ -538,8 +554,9 @@
       "goRub": 127.28,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 314.27,
-      "maxNotionalRub": 200000.0,
+      "maxContractsAtStress": 314,
+      "fractionalContractCapacity": 314.27,
+      "maxNotionalRub": 199830.0,
       "maxNotionalLeverage": 2.0,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
@@ -552,9 +569,10 @@
       "goRub": 734.4,
       "goToNotionalPct": 20.0,
       "capitalRub": 50000.0,
-      "maxContractsAtStress": 27.23,
-      "maxNotionalRub": 100000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 27,
+      "fractionalContractCapacity": 27.23,
+      "maxNotionalRub": 99144.0,
+      "maxNotionalLeverage": 1.98,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     },
     {
@@ -566,9 +584,10 @@
       "goRub": 734.4,
       "goToNotionalPct": 20.0,
       "capitalRub": 100000.0,
-      "maxContractsAtStress": 54.47,
-      "maxNotionalRub": 200000.0,
-      "maxNotionalLeverage": 2.0,
+      "maxContractsAtStress": 54,
+      "fractionalContractCapacity": 54.47,
+      "maxNotionalRub": 198288.0,
+      "maxNotionalLeverage": 1.98,
       "goBasis": "оценка 20% нотионала (риск-рейт брокера), требуется сверка"
     }
   ],
@@ -693,35 +712,6 @@
         "pnlRub": 1410.0,
         "pnlPctOfNotional": 11.2,
         "pnlPctOfMargin20": 56.0
-      }
-    ],
-    "varianceRiskPremium": [
-      {
-        "ivPct": 20.0,
-        "rvPct": 17.0,
-        "ivMinusRvVolPoints": 3.0,
-        "expectedRubPerMonth": 40.0,
-        "expectedPctOfNotionalPerMonth": 0.32,
-        "expectedAnnualOnNotionalPct": 3.8,
-        "expectedAnnualOnMargin20Pct": 19.1
-      },
-      {
-        "ivPct": 25.0,
-        "rvPct": 21.2,
-        "ivMinusRvVolPoints": 3.8,
-        "expectedRubPerMonth": 50.0,
-        "expectedPctOfNotionalPerMonth": 0.4,
-        "expectedAnnualOnNotionalPct": 4.8,
-        "expectedAnnualOnMargin20Pct": 23.9
-      },
-      {
-        "ivPct": 25.0,
-        "rvPct": 22.5,
-        "ivMinusRvVolPoints": 2.5,
-        "expectedRubPerMonth": 34.0,
-        "expectedPctOfNotionalPerMonth": 0.27,
-        "expectedAnnualOnNotionalPct": 3.3,
-        "expectedAnnualOnMargin20Pct": 16.3
       }
     ],
     "note": "Модель Black-76 на допущениях. Ожидаемая доходность = премия минус реализованные убытки; знак определяется разницей IV−RV, которую без истории опционов измерить нельзя. Здесь показан ТОЛЬКО верхний предел (все месяцы без убытка) и tail-сценарий."
@@ -930,222 +920,5 @@
     ],
     "note": "Модель. Требует склейки срочных контрактов (в репозитории её нет) и проверки неттинга ГО на спред у брокера/биржи."
   },
-  "diversification": {
-    "assumption": "сливы некоррелированы, r_portfolio ≈ r·√N",
-    "rows": [
-      {
-        "singleReturnToMdd": 0.4,
-        "sleeves": 1,
-        "portfolioReturnToMdd": 0.4,
-        "drawdownAt100Pct": 250.0,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.4,
-        "sleeves": 3,
-        "portfolioReturnToMdd": 0.69,
-        "drawdownAt100Pct": 144.3,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.4,
-        "sleeves": 5,
-        "portfolioReturnToMdd": 0.89,
-        "drawdownAt100Pct": 111.8,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.4,
-        "sleeves": 8,
-        "portfolioReturnToMdd": 1.13,
-        "drawdownAt100Pct": 88.4,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.4,
-        "sleeves": 13,
-        "portfolioReturnToMdd": 1.44,
-        "drawdownAt100Pct": 69.3,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.6,
-        "sleeves": 1,
-        "portfolioReturnToMdd": 0.6,
-        "drawdownAt100Pct": 166.7,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.6,
-        "sleeves": 3,
-        "portfolioReturnToMdd": 1.04,
-        "drawdownAt100Pct": 96.2,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.6,
-        "sleeves": 5,
-        "portfolioReturnToMdd": 1.34,
-        "drawdownAt100Pct": 74.5,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.6,
-        "sleeves": 8,
-        "portfolioReturnToMdd": 1.7,
-        "drawdownAt100Pct": 58.9,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.6,
-        "sleeves": 13,
-        "portfolioReturnToMdd": 2.16,
-        "drawdownAt100Pct": 46.2,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 0.8,
-        "sleeves": 1,
-        "portfolioReturnToMdd": 0.8,
-        "drawdownAt100Pct": 125.0,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.8,
-        "sleeves": 3,
-        "portfolioReturnToMdd": 1.39,
-        "drawdownAt100Pct": 72.2,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.8,
-        "sleeves": 5,
-        "portfolioReturnToMdd": 1.79,
-        "drawdownAt100Pct": 55.9,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 0.8,
-        "sleeves": 8,
-        "portfolioReturnToMdd": 2.26,
-        "drawdownAt100Pct": 44.2,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 0.8,
-        "sleeves": 13,
-        "portfolioReturnToMdd": 2.88,
-        "drawdownAt100Pct": 34.7,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.0,
-        "sleeves": 1,
-        "portfolioReturnToMdd": 1.0,
-        "drawdownAt100Pct": 100.0,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 1.0,
-        "sleeves": 3,
-        "portfolioReturnToMdd": 1.73,
-        "drawdownAt100Pct": 57.7,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 1.0,
-        "sleeves": 5,
-        "portfolioReturnToMdd": 2.24,
-        "drawdownAt100Pct": 44.7,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.0,
-        "sleeves": 8,
-        "portfolioReturnToMdd": 2.83,
-        "drawdownAt100Pct": 35.4,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.0,
-        "sleeves": 13,
-        "portfolioReturnToMdd": 3.61,
-        "drawdownAt100Pct": 27.7,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.5,
-        "sleeves": 1,
-        "portfolioReturnToMdd": 1.5,
-        "drawdownAt100Pct": 66.7,
-        "reaches100WithAcceptableDd": false
-      },
-      {
-        "singleReturnToMdd": 1.5,
-        "sleeves": 3,
-        "portfolioReturnToMdd": 2.6,
-        "drawdownAt100Pct": 38.5,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.5,
-        "sleeves": 5,
-        "portfolioReturnToMdd": 3.35,
-        "drawdownAt100Pct": 29.8,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.5,
-        "sleeves": 8,
-        "portfolioReturnToMdd": 4.24,
-        "drawdownAt100Pct": 23.6,
-        "reaches100WithAcceptableDd": true
-      },
-      {
-        "singleReturnToMdd": 1.5,
-        "sleeves": 13,
-        "portfolioReturnToMdd": 5.41,
-        "drawdownAt100Pct": 18.5,
-        "reaches100WithAcceptableDd": true
-      }
-    ]
-  },
-  "availablePortfolio": {
-    "assumption": "равные риск-веса, нулевая корреляция, r_portfolio = sqrt(Σ r_i²)",
-    "rows": [
-      {
-        "sleeves": [
-          "S1 momentum/carry"
-        ],
-        "portfolioReturnToMdd": 0.56,
-        "drawdownAt100Pct": 178.6,
-        "reaches100WithDdUnder50": false
-      },
-      {
-        "sleeves": [
-          "S1 momentum/carry",
-          "Carry H1"
-        ],
-        "portfolioReturnToMdd": 1.04,
-        "drawdownAt100Pct": 95.9,
-        "reaches100WithDdUnder50": false
-      },
-      {
-        "sleeves": [
-          "S1 momentum/carry",
-          "Carry H1",
-          "U8 cross-section (полная история)"
-        ],
-        "portfolioReturnToMdd": 1.11,
-        "drawdownAt100Pct": 90.4,
-        "reaches100WithDdUnder50": false
-      }
-    ],
-    "upperBoundIfU8HoldoutIsReal": {
-      "portfolioReturnToMdd": 1.88,
-      "drawdownAt100Pct": 53.1,
-      "note": "только если holdout-оценка U8 (r=1,57) устойчива; dev-гейт её не подтверждает"
-    },
-    "note": "Даже объединение всех трёх независимых источников даёт r ≈ 1,1: просадка при 100% около 90%. Для DD ≤ 35% нужен r ≈ 2,9 — этого в доступном наборе нет."
-  }
+  "portfolioLimitation": "MDD разных сливов не объединяется через sqrt(sum(MDD^2)) или корреляционную формулу волатильности. Нужны синхронные daily equity/P&L ряды, которых нет."
 }

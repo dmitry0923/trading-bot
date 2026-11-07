@@ -1,460 +1,153 @@
 {
   "generatedAt": "2026-11-04",
-  "purpose": "Что ещё можно придумать под 100%: риск-бюджет, дюрация, обеспечение, налоги",
+  "purpose": "Дюрация, обеспечение и налоги: прокси и проверяемые гипотезы",
+  "provenance": {
+    "engineVersion": "2026-10-26.2",
+    "commitSha": "a98b5be1593acd86ecfdd4cfe4d47101d92bc9b6"
+  },
   "moneyMarket": {
     "annualPct": 18.99,
     "cumulativePct": 41.35,
     "years": 1.99,
-    "meanRuoniaPct": 17.34
-  },
-  "cashFloor": {
-    "formulaPerSleeve": "r_total = r_i + R/(L*D_i);  mu_max = R + DD_cap*sqrt(sum r_i^2)",
-    "riskFreePct": 18.99,
-    "perSleeve": [
-      {
-        "sleeve": "carry CNYRUBF (измерено)",
-        "leverage": 1.0,
-        "rOfSleeve": 0.88,
-        "totalReturnPct": 21.1,
-        "totalDrawdownPct": 2.4,
-        "totalR": 8.79,
-        "drawdownAt100Pct": 11.4,
-        "cashTermInR": 7.91,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "carry CNYRUBF (измерено)",
-        "leverage": 2.0,
-        "rOfSleeve": 0.88,
-        "totalReturnPct": 23.2,
-        "totalDrawdownPct": 4.8,
-        "totalR": 4.83,
-        "drawdownAt100Pct": 20.7,
-        "cashTermInR": 3.96,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "carry CNYRUBF (измерено)",
-        "leverage": 3.0,
-        "rOfSleeve": 0.88,
-        "totalReturnPct": 25.3,
-        "totalDrawdownPct": 7.2,
-        "totalR": 3.51,
-        "drawdownAt100Pct": 28.5,
-        "cashTermInR": 2.64,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "carry CNYRUBF (измерено)",
-        "leverage": 5.94,
-        "rOfSleeve": 0.88,
-        "totalReturnPct": 31.5,
-        "totalDrawdownPct": 14.3,
-        "totalR": 2.21,
-        "drawdownAt100Pct": 45.3,
-        "cashTermInR": 1.33,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "календарный спред (модель)",
-        "leverage": 1.0,
-        "rOfSleeve": 1.88,
-        "totalReturnPct": 22.7,
-        "totalDrawdownPct": 2.0,
-        "totalR": 11.37,
-        "drawdownAt100Pct": 8.8,
-        "cashTermInR": 9.49,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "календарный спред (модель)",
-        "leverage": 2.0,
-        "rOfSleeve": 1.88,
-        "totalReturnPct": 26.5,
-        "totalDrawdownPct": 4.0,
-        "totalR": 6.62,
-        "drawdownAt100Pct": 15.1,
-        "cashTermInR": 4.75,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "календарный спред (модель)",
-        "leverage": 3.0,
-        "rOfSleeve": 1.88,
-        "totalReturnPct": 30.2,
-        "totalDrawdownPct": 6.0,
-        "totalR": 5.04,
-        "drawdownAt100Pct": 19.8,
-        "cashTermInR": 3.16,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "календарный спред (модель)",
-        "leverage": 5.94,
-        "rOfSleeve": 1.88,
-        "totalReturnPct": 41.3,
-        "totalDrawdownPct": 11.9,
-        "totalR": 3.47,
-        "drawdownAt100Pct": 28.8,
-        "cashTermInR": 1.6,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "дюрация ОФЗ 5л (прокси)",
-        "leverage": 1.0,
-        "rOfSleeve": 3.07,
-        "totalReturnPct": 44.5,
-        "totalDrawdownPct": 8.3,
-        "totalR": 5.36,
-        "drawdownAt100Pct": 18.7,
-        "cashTermInR": 2.29,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "дюрация ОФЗ 5л (прокси)",
-        "leverage": 2.0,
-        "rOfSleeve": 3.07,
-        "totalReturnPct": 70.0,
-        "totalDrawdownPct": 16.6,
-        "totalR": 4.22,
-        "drawdownAt100Pct": 23.7,
-        "cashTermInR": 1.14,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "дюрация ОФЗ 5л (прокси)",
-        "leverage": 3.0,
-        "rOfSleeve": 3.07,
-        "totalReturnPct": 95.5,
-        "totalDrawdownPct": 24.9,
-        "totalR": 3.83,
-        "drawdownAt100Pct": 26.1,
-        "cashTermInR": 0.76,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      },
-      {
-        "sleeve": "дюрация ОФЗ 5л (прокси)",
-        "leverage": 5.94,
-        "rOfSleeve": 3.07,
-        "totalReturnPct": 170.5,
-        "totalDrawdownPct": 49.3,
-        "totalR": 3.46,
-        "drawdownAt100Pct": 28.9,
-        "cashTermInR": 0.39,
-        "note": "кэш добавляет к r слива слагаемое R/(L*D_i)"
-      }
-    ],
-    "returnByRiskBudget": [
-      {
-        "ddBudgetPct": 20,
-        "sleeveQualitySqrtSumR2": 1.0,
-        "maxReturnPct": 39.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 20,
-        "sleeveQualitySqrtSumR2": 1.5,
-        "maxReturnPct": 49.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 20,
-        "sleeveQualitySqrtSumR2": 2.0,
-        "maxReturnPct": 59.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 20,
-        "sleeveQualitySqrtSumR2": 2.32,
-        "maxReturnPct": 65.4,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 20,
-        "sleeveQualitySqrtSumR2": 3.0,
-        "maxReturnPct": 79.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 20,
-        "sleeveQualitySqrtSumR2": 3.23,
-        "maxReturnPct": 83.6,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 25,
-        "sleeveQualitySqrtSumR2": 1.0,
-        "maxReturnPct": 44.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 25,
-        "sleeveQualitySqrtSumR2": 1.5,
-        "maxReturnPct": 56.5,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 25,
-        "sleeveQualitySqrtSumR2": 2.0,
-        "maxReturnPct": 69.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 25,
-        "sleeveQualitySqrtSumR2": 2.32,
-        "maxReturnPct": 77.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 25,
-        "sleeveQualitySqrtSumR2": 3.0,
-        "maxReturnPct": 94.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 25,
-        "sleeveQualitySqrtSumR2": 3.23,
-        "maxReturnPct": 99.7,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 30,
-        "sleeveQualitySqrtSumR2": 1.0,
-        "maxReturnPct": 49.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 30,
-        "sleeveQualitySqrtSumR2": 1.5,
-        "maxReturnPct": 64.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 30,
-        "sleeveQualitySqrtSumR2": 2.0,
-        "maxReturnPct": 79.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 30,
-        "sleeveQualitySqrtSumR2": 2.32,
-        "maxReturnPct": 88.6,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 30,
-        "sleeveQualitySqrtSumR2": 3.0,
-        "maxReturnPct": 109.0,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 30,
-        "sleeveQualitySqrtSumR2": 3.23,
-        "maxReturnPct": 115.9,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 35,
-        "sleeveQualitySqrtSumR2": 1.0,
-        "maxReturnPct": 54.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 35,
-        "sleeveQualitySqrtSumR2": 1.5,
-        "maxReturnPct": 71.5,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 35,
-        "sleeveQualitySqrtSumR2": 2.0,
-        "maxReturnPct": 89.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 35,
-        "sleeveQualitySqrtSumR2": 2.32,
-        "maxReturnPct": 100.2,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 35,
-        "sleeveQualitySqrtSumR2": 3.0,
-        "maxReturnPct": 124.0,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 35,
-        "sleeveQualitySqrtSumR2": 3.23,
-        "maxReturnPct": 132.0,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 50,
-        "sleeveQualitySqrtSumR2": 1.0,
-        "maxReturnPct": 69.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 50,
-        "sleeveQualitySqrtSumR2": 1.5,
-        "maxReturnPct": 94.0,
-        "reaches100": false
-      },
-      {
-        "ddBudgetPct": 50,
-        "sleeveQualitySqrtSumR2": 2.0,
-        "maxReturnPct": 119.0,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 50,
-        "sleeveQualitySqrtSumR2": 2.32,
-        "maxReturnPct": 135.0,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 50,
-        "sleeveQualitySqrtSumR2": 3.0,
-        "maxReturnPct": 169.0,
-        "reaches100": true
-      },
-      {
-        "ddBudgetPct": 50,
-        "sleeveQualitySqrtSumR2": 3.23,
-        "maxReturnPct": 180.5,
-        "reaches100": true
-      }
-    ],
-    "requiredQuality": {
-      "dd_20": 4.05,
-      "dd_25": 3.24,
-      "dd_30": 2.7,
-      "dd_35": 2.31,
-      "dd_50": 1.62
-    },
-    "insight": "Плечо масштабирует прибыль И просадку линейно и не меняет r слива. Меняют r только две вещи: качество слива (r_i) и денежная нога R/(L*D). Поэтому цель 100% — это не вопрос плеча, а вопрос бюджета просадки и качества сливов."
+    "meanRuoniaPct": 17.34,
+    "maxDrawdownPct": null,
+    "accrualSeriesMaxDrawdownPct": 0.0,
+    "scope": "gross RUONIA accrual benchmark, not an investable fund equity curve"
   },
   "duration": {
-    "haircuts": [
-      {
-        "haircut": 1.0,
-        "assumedMddPct": 8.4,
-        "returnToMdd": 2.87
-      },
-      {
-        "haircut": 1.25,
-        "assumedMddPct": 10.5,
-        "returnToMdd": 2.3
-      },
-      {
-        "haircut": 1.5,
-        "assumedMddPct": 12.6,
-        "returnToMdd": 1.91
-      },
-      {
-        "haircut": 2.0,
-        "assumedMddPct": 16.8,
-        "returnToMdd": 1.43
-      }
-    ],
-    "model": "постоянная срочность, y = key_rate + spread, дневная доходность y/365 - D*dy",
-    "evidenceQuality": "ПРОКСИ: реальных цен ОФЗ в песочнице нет",
+    "model": "carry за фактические календарные дни − D·Δkey_rate; постоянная дюрация",
+    "evidenceQuality": "ПРОКСИ: реальные цены/доходности ОФЗ отсутствуют",
     "variants": [
       {
         "variant": "ОФЗ 5л, D=4,2 (база)",
-        "annualPct": 24.1,
-        "mddPct": 8.4,
-        "returnToMdd": 2.89,
-        "drawdownAt100Pct": 34.6
+        "annualPct": 30.5,
+        "mddPct": 8.3,
+        "returnToMdd": 3.69,
+        "evidence": "synthetic key-rate sensitivity proxy"
       },
       {
         "variant": "ОФЗ 5л, D=4,2, спред -2 п.п.",
-        "annualPct": 23.2,
-        "mddPct": 8.4,
-        "returnToMdd": 2.78,
-        "drawdownAt100Pct": 35.9
+        "annualPct": 29.2,
+        "mddPct": 8.3,
+        "returnToMdd": 3.53,
+        "evidence": "synthetic key-rate sensitivity proxy"
       },
       {
         "variant": "ОФЗ 3л, D=2,6",
-        "annualPct": 20.0,
-        "mddPct": 5.1,
-        "returnToMdd": 3.89,
-        "drawdownAt100Pct": 25.7
+        "annualPct": 26.4,
+        "mddPct": 5.0,
+        "returnToMdd": 5.23,
+        "evidence": "synthetic key-rate sensitivity proxy"
       },
       {
         "variant": "ОФЗ 10л, D=7,0",
-        "annualPct": 31.5,
-        "mddPct": 14.0,
-        "returnToMdd": 2.26,
-        "drawdownAt100Pct": 44.3
+        "annualPct": 38.0,
+        "mddPct": 13.9,
+        "returnToMdd": 2.75,
+        "evidence": "synthetic key-rate sensitivity proxy"
       }
     ],
     "phases": [
       {
         "phase": "рост ставки / удержание 2024-10..2025-07",
-        "annualPct": 8.0,
-        "mddPct": 8.4
+        "annualPct": 14.7,
+        "mddPct": 8.3
       },
       {
         "phase": "снижение 2025-07..2026-10",
-        "annualPct": 27.0,
+        "annualPct": 32.5,
         "mddPct": 0.0
       },
       {
         "phase": "полное окно 2024-10..2026-10",
-        "annualPct": 24.1,
-        "mddPct": 8.4
+        "annualPct": 30.5,
+        "mddPct": 8.3
       }
     ],
     "stress": [
       {
-        "windowDays": 10,
-        "worstRateMovePp": 2.0,
-        "fromTo": [
+        "windowCalendarDays": 10,
+        "maxRateIncreasePp": 2.0,
+        "increaseFromTo": [
           "2024-10-18",
-          "2024-11-01"
+          "2024-10-28"
         ],
         "pnlPctAt1x": -8.4,
-        "pnlPctAt3x": -25.2,
-        "verdict": "это и есть режимный риск"
-      },
-      {
-        "windowDays": 20,
-        "worstRateMovePp": 2.0,
-        "fromTo": [
-          "2024-10-18",
-          "2024-11-15"
-        ],
-        "pnlPctAt1x": -8.4,
-        "pnlPctAt3x": -25.2,
-        "verdict": "это и есть режимный риск"
-      },
-      {
-        "windowDays": 60,
-        "worstRateMovePp": -3.0,
-        "fromTo": [
-          "2025-04-30",
+        "pnlPctAt3xBeforeFinancing": -25.2,
+        "maxRateDecreasePp": -2.0,
+        "decreaseFromTo": [
+          "2025-07-18",
           "2025-07-28"
+        ]
+      },
+      {
+        "windowCalendarDays": 20,
+        "maxRateIncreasePp": 2.0,
+        "increaseFromTo": [
+          "2024-10-18",
+          "2024-11-07"
         ],
-        "pnlPctAt1x": 12.6,
-        "pnlPctAt3x": 37.8,
-        "verdict": "хуже просадки нет"
+        "pnlPctAt1x": -8.4,
+        "pnlPctAt3xBeforeFinancing": -25.2,
+        "maxRateDecreasePp": -2.0,
+        "decreaseFromTo": [
+          "2025-07-08",
+          "2025-07-28"
+        ]
+      },
+      {
+        "windowCalendarDays": 60,
+        "maxRateIncreasePp": 2.0,
+        "increaseFromTo": [
+          "2024-10-18",
+          "2024-12-17"
+        ],
+        "pnlPctAt1x": -8.4,
+        "pnlPctAt3xBeforeFinancing": -25.2,
+        "maxRateDecreasePp": -3.0,
+        "decreaseFromTo": [
+          "2025-05-29",
+          "2025-07-28"
+        ]
       }
     ],
-    "caveat": "Прокси воспроизводит ставку, а не рынок: не учитывает кредитный/ликвидностный спред, купонную структуру и roll-down. Знак и масштаб реакции на ставку верны, точность уровня — ±2 п.п./год. Это единственный измеренный слив с r > 2, но он описывает ОДИН цикл снижения ставки (2025-07..2026-10), а не повторяемую премию."
+    "haircuts": [
+      {
+        "haircut": 1.0,
+        "assumedMddPct": 8.3,
+        "returnToMdd": 3.69
+      },
+      {
+        "haircut": 1.25,
+        "assumedMddPct": 10.4,
+        "returnToMdd": 2.95
+      },
+      {
+        "haircut": 1.5,
+        "assumedMddPct": 12.5,
+        "returnToMdd": 2.46
+      },
+      {
+        "haircut": 2.0,
+        "assumedMddPct": 16.6,
+        "returnToMdd": 1.84
+      }
+    ],
+    "caveat": "Не учитывает реальную кривую доходностей, кредитный/ликвидностный спред, купоны конкретных выпусков, roll-down, издержки и финансирование. Точность ±2 п.п. не установлена и не утверждается."
   },
   "rateScenarios": {
-    "assumption": "горизонт 12 мес, D=4,2, плечо 3x, купон по средней ставке",
+    "assumption": "12 мес, D=4.2, 3x через заём 2x по последней ключевой ставке; реальная ставка маржинального финансирования может быть выше",
     "rows": [
       {
         "scenario": "ставка 14 → 10",
         "priceEffectPct": 16.8,
         "couponPct": 12.5,
         "return1xPct": 29.3,
-        "return3xPct": 87.9,
-        "return3xWithCashPct": 106.9,
-        "worstIntraDrawdown3xPct": -50.4,
+        "return3xBeforeFinancingPct": 87.9,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": 59.9,
+        "adverseRateMovePnlAt3xPct": -0.0,
         "note": "продолжение цикла снижения"
       },
       {
@@ -462,39 +155,47 @@
         "priceEffectPct": 8.4,
         "couponPct": 13.0,
         "return1xPct": 21.4,
-        "return3xPct": 64.2,
-        "return3xWithCashPct": 83.2,
-        "worstIntraDrawdown3xPct": -25.2,
-        "note": "базовый консенсус"
+        "return3xBeforeFinancingPct": 64.2,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": 36.2,
+        "adverseRateMovePnlAt3xPct": -0.0,
+        "note": "условный базовый сценарий"
       },
       {
-        "scenario": "ставка 14 → 14 (на месте)",
+        "scenario": "ставка 14 → 14",
         "priceEffectPct": -0.0,
         "couponPct": 13.5,
         "return1xPct": 13.5,
-        "return3xPct": 40.5,
-        "return3xWithCashPct": 59.5,
-        "worstIntraDrawdown3xPct": -0.0,
-        "note": "стагнация дезинфляции"
+        "return3xBeforeFinancingPct": 40.5,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": 12.5,
+        "adverseRateMovePnlAt3xPct": -0.0,
+        "note": "без изменения"
       },
       {
         "scenario": "ставка 14 → 16",
         "priceEffectPct": -8.4,
         "couponPct": 14.5,
         "return1xPct": 6.1,
-        "return3xPct": 18.3,
-        "return3xWithCashPct": 37.3,
-        "worstIntraDrawdown3xPct": -25.2,
-        "note": "разворот, инфляционный шок"
+        "return3xBeforeFinancingPct": 18.3,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": -9.7,
+        "adverseRateMovePnlAt3xPct": -25.2,
+        "note": "инфляционный шок"
       },
       {
         "scenario": "ставка 14 → 18",
         "priceEffectPct": -16.8,
         "couponPct": 15.5,
         "return1xPct": -1.3,
-        "return3xPct": -3.9,
-        "return3xWithCashPct": 15.1,
-        "worstIntraDrawdown3xPct": -50.4,
+        "return3xBeforeFinancingPct": -3.9,
+        "assumedFinancingRatePct": 14.0,
+        "financingCostAt3xPct": 28.0,
+        "return3xAfterFinancingPct": -31.9,
+        "adverseRateMovePnlAt3xPct": -50.4,
         "note": "кризисный сценарий"
       }
     ]
@@ -502,649 +203,202 @@
   "sleeveCatalog": [
     {
       "id": "CASH",
-      "name": "Денежный рынок (LQDT / RUONIA)",
+      "name": "RUONIA accrual benchmark",
       "mu": 18.99,
-      "dd": 0.01,
-      "maxLeverage": 1.0,
-      "evidence": "измерено, 2,0 года, 491 наблюдение",
-      "status": "работает",
-      "r": 1899.0,
-      "ddAt100Pct": 0.1,
-      "capacityNotionalPctOfEquity": 100
+      "dd": null,
+      "evidence": "ставка, не equity фонда",
+      "status": "benchmark",
+      "r": null
     },
     {
       "id": "DUR",
       "name": "Дюрация ОФЗ 5л",
-      "mu": 24.1,
-      "dd": 8.4,
-      "maxLeverage": 3.0,
-      "evidence": "прокси по ставке ЦБ (реальных цен ОФЗ нет)",
-      "status": "требует данных и сверки ГО",
-      "r": 2.87,
-      "ddAt100Pct": 34.8,
-      "capacityNotionalPctOfEquity": 300
+      "mu": 30.5,
+      "dd": 8.3,
+      "evidence": "синтетический прокси",
+      "status": "требует реальных цен и финансирования",
+      "r": 3.69
     },
     {
       "id": "CARRY",
       "name": "Carry CNYRUBF (H1)",
       "mu": 2.1,
       "dd": 2.4,
-      "maxLeverage": 5.94,
-      "evidence": "измерено, 488 сделок, p=0,055",
-      "status": "кандидат",
-      "r": 0.88,
-      "ddAt100Pct": 113.6,
-      "capacityNotionalPctOfEquity": 594
+      "evidence": "488 сделок, p=0.055",
+      "status": "NO_CANDIDATE",
+      "r": 0.88
     },
     {
       "id": "CAL",
-      "name": "Календарные спреды Si/RI/CNY",
+      "name": "Календарные спреды",
       "mu": 3.75,
       "dd": 2.0,
-      "maxLeverage": 5.94,
-      "evidence": "модель базиса (docs/59 §5.1)",
-      "status": "не начато",
-      "r": 1.88,
-      "ddAt100Pct": 53.2,
-      "capacityNotionalPctOfEquity": 594
+      "evidence": "произвольная модель базиса",
+      "status": "не измерено",
+      "r": 1.88
     },
     {
       "id": "VOL",
-      "name": "Продажа волатильности с хеджем хвоста",
+      "name": "Продажа волатильности",
       "mu": 4.0,
       "dd": 3.0,
-      "maxLeverage": 4.0,
-      "evidence": "модель VRP (docs/59 §5.2)",
-      "status": "не начато",
-      "r": 1.33,
-      "ddAt100Pct": 75.2,
-      "capacityNotionalPctOfEquity": 400
+      "evidence": "допущение, не VRP-измерение",
+      "status": "не измерено",
+      "r": 1.33
     },
     {
       "id": "S1",
-      "name": "S1 momentum/carry 5 перпетуалов",
+      "name": "S1 momentum/carry",
       "mu": 21.5,
       "dd": 38.6,
-      "maxLeverage": 2.0,
-      "evidence": "pre-screen OOS, p=0,0875, INCONCLUSIVE",
-      "status": "не прошёл гейты",
-      "r": 0.56,
-      "ddAt100Pct": 178.6,
-      "capacityNotionalPctOfEquity": 200
+      "evidence": "pre-screen OOS, p=0.0875",
+      "status": "INCONCLUSIVE",
+      "r": 0.56
     },
     {
       "id": "U8",
-      "name": "U8 cross-section 8 акций (holdout)",
+      "name": "U8 cross-section",
       "mu": 26.2,
       "dd": 16.7,
-      "maxLeverage": 2.0,
-      "evidence": "p=0,042, но движок до фикса → по docs/29 INVALID",
-      "status": "недействительно как доказательство",
-      "r": 1.57,
-      "ddAt100Pct": 63.7,
-      "capacityNotionalPctOfEquity": 200
-    }
-  ],
-  "optimizer": {
-    "measuredOnly": {
-      "ddBudgetPct": 35,
-      "allocation": [
-        {
-          "id": "DUR",
-          "leverage": 3.0,
-          "riskContributionPct": 25.2,
-          "returnContributionPct": 72.3,
-          "capacityBinding": true
-        },
-        {
-          "id": "CARRY",
-          "leverage": 5.94,
-          "riskContributionPct": 14.3,
-          "returnContributionPct": 12.5,
-          "capacityBinding": true
-        }
-      ],
-      "totalReturnPct": 103.8,
-      "totalDrawdownPct": 29.0,
-      "portfolioR": 3.58,
-      "drawdownAt100Pct": 27.9,
-      "capacityBindingSleeves": [
-        "DUR",
-        "CARRY"
-      ]
-    },
-    "measuredPlusModels": {
-      "ddBudgetPct": 35,
-      "allocation": [
-        {
-          "id": "DUR",
-          "leverage": 3.0,
-          "riskContributionPct": 25.2,
-          "returnContributionPct": 72.3,
-          "capacityBinding": true
-        },
-        {
-          "id": "CARRY",
-          "leverage": 5.94,
-          "riskContributionPct": 14.3,
-          "returnContributionPct": 12.5,
-          "capacityBinding": true
-        },
-        {
-          "id": "CAL",
-          "leverage": 5.94,
-          "riskContributionPct": 11.9,
-          "returnContributionPct": 22.3,
-          "capacityBinding": true
-        },
-        {
-          "id": "VOL",
-          "leverage": 4.0,
-          "riskContributionPct": 12.0,
-          "returnContributionPct": 16.0,
-          "capacityBinding": true
-        }
-      ],
-      "totalReturnPct": 142.1,
-      "totalDrawdownPct": 33.5,
-      "portfolioR": 4.24,
-      "drawdownAt100Pct": 23.6,
-      "capacityBindingSleeves": [
-        "DUR",
-        "CAL",
-        "VOL",
-        "CARRY"
-      ]
-    },
-    "withS1": {
-      "ddBudgetPct": 35,
-      "allocation": [
-        {
-          "id": "DUR",
-          "leverage": 3.0,
-          "riskContributionPct": 25.2,
-          "returnContributionPct": 72.3,
-          "capacityBinding": true
-        },
-        {
-          "id": "CARRY",
-          "leverage": 5.94,
-          "riskContributionPct": 14.3,
-          "returnContributionPct": 12.5,
-          "capacityBinding": true
-        },
-        {
-          "id": "CAL",
-          "leverage": 5.94,
-          "riskContributionPct": 11.9,
-          "returnContributionPct": 22.3,
-          "capacityBinding": true
-        },
-        {
-          "id": "VOL",
-          "leverage": 4.0,
-          "riskContributionPct": 12.0,
-          "returnContributionPct": 16.0,
-          "capacityBinding": true
-        },
-        {
-          "id": "S1",
-          "leverage": 0.26,
-          "riskContributionPct": 10.1,
-          "returnContributionPct": 5.6,
-          "capacityBinding": false
-        }
-      ],
-      "totalReturnPct": 147.7,
-      "totalDrawdownPct": 35.0,
-      "portfolioR": 4.22,
-      "drawdownAt100Pct": 23.7,
-      "capacityBindingSleeves": [
-        "DUR",
-        "CAL",
-        "VOL",
-        "CARRY"
-      ]
-    },
-    "budgets": [
-      {
-        "ddBudgetPct": 20,
-        "allocation": [
-          {
-            "id": "DUR",
-            "leverage": 1.81,
-            "riskContributionPct": 15.2,
-            "returnContributionPct": 43.5,
-            "capacityBinding": false
-          },
-          {
-            "id": "CARRY",
-            "leverage": 1.94,
-            "riskContributionPct": 4.7,
-            "returnContributionPct": 4.1,
-            "capacityBinding": false
-          },
-          {
-            "id": "CAL",
-            "leverage": 4.97,
-            "riskContributionPct": 9.9,
-            "returnContributionPct": 18.7,
-            "capacityBinding": false
-          },
-          {
-            "id": "VOL",
-            "leverage": 2.34,
-            "riskContributionPct": 7.0,
-            "returnContributionPct": 9.4,
-            "capacityBinding": false
-          }
-        ],
-        "totalReturnPct": 94.7,
-        "totalDrawdownPct": 20.0,
-        "portfolioR": 4.73,
-        "drawdownAt100Pct": 21.1,
-        "capacityBindingSleeves": []
-      },
-      {
-        "ddBudgetPct": 25,
-        "allocation": [
-          {
-            "id": "DUR",
-            "leverage": 2.29,
-            "riskContributionPct": 19.2,
-            "returnContributionPct": 55.2,
-            "capacityBinding": false
-          },
-          {
-            "id": "CARRY",
-            "leverage": 2.46,
-            "riskContributionPct": 5.9,
-            "returnContributionPct": 5.2,
-            "capacityBinding": false
-          },
-          {
-            "id": "CAL",
-            "leverage": 5.94,
-            "riskContributionPct": 11.9,
-            "returnContributionPct": 22.3,
-            "capacityBinding": true
-          },
-          {
-            "id": "VOL",
-            "leverage": 2.97,
-            "riskContributionPct": 8.9,
-            "returnContributionPct": 11.9,
-            "capacityBinding": false
-          }
-        ],
-        "totalReturnPct": 113.6,
-        "totalDrawdownPct": 25.0,
-        "portfolioR": 4.55,
-        "drawdownAt100Pct": 22.0,
-        "capacityBindingSleeves": [
-          "CAL"
-        ]
-      },
-      {
-        "ddBudgetPct": 30,
-        "allocation": [
-          {
-            "id": "DUR",
-            "leverage": 2.87,
-            "riskContributionPct": 24.1,
-            "returnContributionPct": 69.1,
-            "capacityBinding": false
-          },
-          {
-            "id": "CARRY",
-            "leverage": 3.08,
-            "riskContributionPct": 7.4,
-            "returnContributionPct": 6.5,
-            "capacityBinding": false
-          },
-          {
-            "id": "CAL",
-            "leverage": 5.94,
-            "riskContributionPct": 11.9,
-            "returnContributionPct": 22.3,
-            "capacityBinding": true
-          },
-          {
-            "id": "VOL",
-            "leverage": 3.72,
-            "riskContributionPct": 11.2,
-            "returnContributionPct": 14.8,
-            "capacityBinding": false
-          }
-        ],
-        "totalReturnPct": 131.7,
-        "totalDrawdownPct": 30.0,
-        "portfolioR": 4.38,
-        "drawdownAt100Pct": 22.8,
-        "capacityBindingSleeves": [
-          "CAL"
-        ]
-      },
-      {
-        "ddBudgetPct": 35,
-        "allocation": [
-          {
-            "id": "DUR",
-            "leverage": 3.0,
-            "riskContributionPct": 25.2,
-            "returnContributionPct": 72.3,
-            "capacityBinding": true
-          },
-          {
-            "id": "CARRY",
-            "leverage": 5.94,
-            "riskContributionPct": 14.3,
-            "returnContributionPct": 12.5,
-            "capacityBinding": true
-          },
-          {
-            "id": "CAL",
-            "leverage": 5.94,
-            "riskContributionPct": 11.9,
-            "returnContributionPct": 22.3,
-            "capacityBinding": true
-          },
-          {
-            "id": "VOL",
-            "leverage": 4.0,
-            "riskContributionPct": 12.0,
-            "returnContributionPct": 16.0,
-            "capacityBinding": true
-          }
-        ],
-        "totalReturnPct": 142.1,
-        "totalDrawdownPct": 33.5,
-        "portfolioR": 4.24,
-        "drawdownAt100Pct": 23.6,
-        "capacityBindingSleeves": [
-          "DUR",
-          "CAL",
-          "VOL",
-          "CARRY"
-        ]
-      },
-      {
-        "ddBudgetPct": 45,
-        "allocation": [
-          {
-            "id": "DUR",
-            "leverage": 3.0,
-            "riskContributionPct": 25.2,
-            "returnContributionPct": 72.3,
-            "capacityBinding": true
-          },
-          {
-            "id": "CARRY",
-            "leverage": 5.94,
-            "riskContributionPct": 14.3,
-            "returnContributionPct": 12.5,
-            "capacityBinding": true
-          },
-          {
-            "id": "CAL",
-            "leverage": 5.94,
-            "riskContributionPct": 11.9,
-            "returnContributionPct": 22.3,
-            "capacityBinding": true
-          },
-          {
-            "id": "VOL",
-            "leverage": 4.0,
-            "riskContributionPct": 12.0,
-            "returnContributionPct": 16.0,
-            "capacityBinding": true
-          }
-        ],
-        "totalReturnPct": 142.1,
-        "totalDrawdownPct": 33.5,
-        "portfolioR": 4.24,
-        "drawdownAt100Pct": 23.6,
-        "capacityBindingSleeves": [
-          "DUR",
-          "CAL",
-          "VOL",
-          "CARRY"
-        ]
-      }
-    ]
-  },
-  "correlationSensitivity": [
-    {
-      "pairwiseCorrelation": 0.0,
-      "effectiveDrawdownPct": 33.5,
-      "returnPct": 142.1,
-      "portfolioR": 4.24,
-      "drawdownAt100Pct": 23.6
-    },
-    {
-      "pairwiseCorrelation": 0.3,
-      "effectiveDrawdownPct": 44.6,
-      "returnPct": 142.1,
-      "portfolioR": 3.18,
-      "drawdownAt100Pct": 31.4
-    },
-    {
-      "pairwiseCorrelation": 0.6,
-      "effectiveDrawdownPct": 53.5,
-      "returnPct": 142.1,
-      "portfolioR": 2.66,
-      "drawdownAt100Pct": 37.6
-    },
-    {
-      "pairwiseCorrelation": 0.8,
-      "effectiveDrawdownPct": 58.7,
-      "returnPct": 142.1,
-      "portfolioR": 2.42,
-      "drawdownAt100Pct": 41.3
+      "evidence": "INVALID по docs/29",
+      "status": "не использовать как доказательство",
+      "r": 1.57
     }
   ],
   "collateral": {
-    "mechanic": "Одна и та же сумма работает дважды: как обеспечение фьючерсной/биржевой позиции и как пай фонда денежного рынка, приносящий RUONIA. Это не альфа, а устранение потери 19 п.п. на неработающем обеспечении.",
+    "mechanic": "Доходность обеспечения можно добавить только после балансовой схемы: eligible collateral, haircut, variation margin, источник и стоимость плеча. Полное R не добавляется автоматически к каждой leveraged-позиции.",
     "verification": [
-      "риск-рейт НКЦ/брокера на LQDT (какой процент стоимости идёт в ГО)",
-      "принимает ли брокер паи БПИФ денежного рынка в обеспечение",
-      "не блокируется ли вывод/покупка паёв при маржинальной позиции",
-      "применимо ли к ИИС (там брокерское обеспечение часто уже)"
+      "риск-рейт НКЦ/брокера на LQDT",
+      "приём паёв в обеспечение конкретного типа позиции",
+      "покрытие variation margin и возможность продажи паёв",
+      "ставка финансирования/репо и применимость к ИИС"
     ],
     "rows": [
       {
-        "variant": "LQDT принят как ГО, доходность начисляется",
-        "cashYieldPct": 19.0,
-        "returnAt3xDurationPct": 91.3,
-        "lossVsBestPp": 0.0
+        "variant": "LQDT принят как ГО без дисконта",
+        "eligibleCollateralFraction": 1.0,
+        "cashOrFundYieldPct": 18.99,
+        "totalPortfolioReturnPct": null
       },
       {
-        "variant": "LQDT принят с дисконтом 50%, доходность идёт",
-        "cashYieldPct": 19.0,
-        "returnAt3xDurationPct": 91.3,
-        "lossVsBestPp": 0.0
+        "variant": "LQDT принят с дисконтом 50%",
+        "eligibleCollateralFraction": 0.5,
+        "cashOrFundYieldPct": 18.99,
+        "totalPortfolioReturnPct": null
       },
       {
         "variant": "деньги как ГО, доходности нет",
-        "cashYieldPct": 0.0,
-        "returnAt3xDurationPct": 72.3,
-        "lossVsBestPp": 19.0
+        "eligibleCollateralFraction": 1.0,
+        "cashOrFundYieldPct": 0.0,
+        "totalPortfolioReturnPct": null
       },
       {
-        "variant": "деньги как ГО, брокер платит 5% на остаток",
-        "cashYieldPct": 5.0,
-        "returnAt3xDurationPct": 77.3,
-        "lossVsBestPp": 14.0
+        "variant": "деньги как ГО, брокер платит 5%",
+        "eligibleCollateralFraction": 1.0,
+        "cashOrFundYieldPct": 5.0,
+        "totalPortfolioReturnPct": null
       }
     ],
-    "status": "НЕ ПРОВЕРЕНО: ключевое допущение всей конструкции"
+    "status": "НЕ ПРОВЕРЕНО; +19 п.п. не является установленным результатом"
   },
   "taxLayer": {
     "iis3": {
-      "rules": "взнос до 400 тыс ₽/год, вычет 13% (до 52 тыс ₽), доход внутри счёта не облагается",
+      "rules": "упрощённая модель вычета 13% до 52 тыс.; правила и сроки счёта проверить",
       "rows": [
         {
           "capitalRub": 100000,
           "annualContributionRub": 100000,
-          "deductionPctOfContribution": 13.0,
           "deductionRub": 13000,
           "deductionPctOfCapital": 13.0,
-          "amortizedOver3yPp": 4.3
+          "isInvestmentReturn": false
         },
         {
           "capitalRub": 300000,
           "annualContributionRub": 300000,
-          "deductionPctOfContribution": 13.0,
           "deductionRub": 39000,
           "deductionPctOfCapital": 13.0,
-          "amortizedOver3yPp": 4.3
+          "isInvestmentReturn": false
         },
         {
           "capitalRub": 400000,
           "annualContributionRub": 400000,
-          "deductionPctOfContribution": 13.0,
           "deductionRub": 52000,
           "deductionPctOfCapital": 13.0,
-          "amortizedOver3yPp": 4.3
+          "isInvestmentReturn": false
         }
       ],
-      "note": "Вычет — субсидия взносу, а не доходности: он требует нового капитала. Для счёта 100 тыс ₽ максимальный вычет (52 тыс) возможен только при взносе 400 тыс, то есть при капитале, вчетверо большем. Обещать «+52% к доходности» нельзя."
+      "note": "вычет субсидирует новый взнос и требует налогооблагаемого дохода"
     },
     "ldv": {
-      "rule": "3 года владения: освобождение прибыли до 3 млн ₽ × число лет",
-      "effectPp": "при доходности 15%/год — ~1,95 п.п./год экономии на НДФЛ",
-      "limit": "не работает для активной торговли (нужно держать бумагу, а не торговать ею)"
-    },
-    "combinedHonest": {
-      "annualBoostPp": "3–6 п.п. в год на горизонте 3 лет при регулярных взносах",
-      "caveat": "к цели 100% это добавляет единицы процентов, а не десятки"
+      "rule": "долгосрочное владение; лимит 3 млн ₽ × число лет, условия проверить",
+      "estimatedTaxOnAnnualGainPctAt15": 1.95,
+      "note": "это налог при реализации, а не ежегодная альфа; активная торговля не подходит"
     }
   },
   "newCandidates": [
     {
       "id": "N1",
       "name": "Дюрация ОФЗ / БПИФ облигаций",
-      "mechanism": "премия за срочность: купон + переоценка при снижении ставки",
-      "counterparty": "Минфин и банки, продающие дюрацию; вы покупаете риск ставки",
-      "rEstimate": "3,0 (прокси, один цикл)",
-      "capacity": "не ограничена: рынок ОФЗ 10+ трлн ₽",
-      "dataNeed": "цены/доходности ОФЗ, индекс RGBI",
-      "verdict": "ПРИОРИТЕТ 1"
+      "rEstimate": null,
+      "dataNeed": "реальные цены ОФЗ/RGBI, финансирование",
+      "verdict": "сначала данные"
     },
     {
       "id": "N2",
       "name": "Обеспечение в фонде денежного рынка",
-      "mechanism": "одна сумма — и ГО, и RUONIA одновременно",
-      "counterparty": "брокер/НКЦ принимает паи в обеспечение",
-      "rEstimate": "+19 п.п. к любой leveraged-позиции",
-      "capacity": "зависит от риск-рейта",
-      "dataNeed": "условия брокера",
-      "verdict": "ПРИОРИТЕТ 1 (проверка за 1 день)"
+      "rEstimate": null,
+      "dataNeed": "условия брокера и балансовая схема",
+      "verdict": "проверить операционно"
     },
     {
       "id": "N3",
       "name": "БПИФ против индексного фьючерса",
-      "mechanism": "премия/дисконт пая к NAV при одинаковом риске",
-      "counterparty": "маркет-мейкер фонда и арбитражёры",
-      "rEstimate": "1,5–3,0 (оценка)",
-      "capacity": "десятки млн ₽",
-      "dataNeed": "NAV фонда и стакан",
-      "verdict": "исследовать"
+      "rEstimate": null,
+      "dataNeed": "NAV и стакан",
+      "verdict": "гипотеза"
     },
     {
       "id": "N4",
-      "name": "Конверсии/реверсалы (паритет пут-колл)",
-      "mechanism": "синтетическая позиция из опционов против фьючерса при расхождении",
-      "counterparty": "маркет-мейкеры опционов",
-      "rEstimate": "высокий, но редко > 0 после спреда",
-      "capacity": "мала",
-      "dataNeed": "опционные цепочки, bid/ask",
-      "verdict": "исследовать после N1–N2"
+      "name": "Конверсии/реверсалы",
+      "rEstimate": null,
+      "dataNeed": "опционные цепочки bid/ask",
+      "verdict": "после данных"
     },
     {
       "id": "N5",
-      "name": "Событийная волатильность (ЦБ, CPI)",
-      "mechanism": "премия за риск события: продажа стрэнгла перед заседанием",
-      "counterparty": "покупатели страховки перед событием",
-      "rEstimate": "1,0–2,0, но хвост",
-      "capacity": "средняя",
-      "dataNeed": "опционы, календарь ЦБ",
-      "verdict": "после N1–N2"
+      "name": "Событийная волатильность",
+      "rEstimate": null,
+      "dataNeed": "опционы и календарь",
+      "verdict": "после данных"
     },
     {
       "id": "N6",
-      "name": "Кросс-курсовой треугольник USDRUB/CNYRUB",
-      "mechanism": "отклонение CIP между парами",
-      "counterparty": "участники двух рынков",
-      "rEstimate": "не оценить без офшорных данных",
-      "capacity": "мала",
-      "dataNeed": "CNH/офшорные котировки",
-      "verdict": "нет доступа к данным"
+      "name": "Кросс-курсовой треугольник",
+      "rEstimate": null,
+      "dataNeed": "офшорные котировки",
+      "verdict": "нет данных"
     },
     {
       "id": "N7",
-      "name": "Дивидендный carry с фьючерсным хеджем",
-      "mechanism": "дивиденд минус ставка финансирования",
-      "counterparty": "продавцы дивидендного риска",
-      "rEstimate": "0,5–1,2; при ставке 14% часто отрицателен",
-      "capacity": "средняя",
-      "dataNeed": "дивидендный календарь",
-      "verdict": "только точечно"
+      "name": "Дивидендный carry с хеджем",
+      "rEstimate": null,
+      "dataNeed": "дивиденды, финансирование, налоги",
+      "verdict": "точечная гипотеза"
     },
     {
       "id": "N8",
       "name": "Репо с ЦК / свопы",
-      "mechanism": "ставка денежного рынка под залог бумаг",
-      "counterparty": "НКЦ",
-      "rEstimate": "≈ RUONIA, без плеча",
-      "capacity": "не ограничена",
+      "rEstimate": null,
       "dataNeed": "доступ к репо-секции",
-      "verdict": "не для розничного счёта"
+      "verdict": "не для текущего счёта"
     },
     {
       "id": "N9",
       "name": "ИИС-3 + ЛДВ",
-      "mechanism": "налоговая субсидия, а не рынок",
-      "counterparty": "государство",
-      "rEstimate": "3–6 п.п./год",
-      "capacity": "400 тыс ₽ взноса/год",
-      "dataNeed": "статус счёта",
-      "verdict": "делать, но это не альфа"
+      "rEstimate": null,
+      "dataNeed": "налоговый статус",
+      "verdict": "не альфа"
     }
   ],
-  "scenarios": [
-    {
-      "scenario": "Консервативный",
-      "composition": "carry CNYRUBF 2.0x",
-      "returnPct": 23.2,
-      "drawdownPct": 4.8,
-      "r": 4.83,
-      "drawdownAt100Pct": 20.7,
-      "probability": "высокая (8/10)",
-      "note": "кэш целиком в денежном рынке, один проверенный слив",
-      "whenBreaks": "ставка уходит ниже 10% — кэш-нога перестаёт быть двигателем, остаётся 4–6% carry"
-    },
-    {
-      "scenario": "Базовый",
-      "composition": "дюрация ОФЗ 5л 2.0x, carry CNYRUBF 3.0x, календарные спреды 2.0x",
-      "returnPct": 76.8,
-      "drawdownPct": 25.4,
-      "r": 3.03,
-      "drawdownAt100Pct": 33.0,
-      "probability": "средняя (5/10)",
-      "note": "дюрация с реалистичной просадкой 12% и плечом 2x + два малых слива",
-      "whenBreaks": "разворот ставки +2 п.п. за квартал: −16,8% от дюрации на 2x при сохранении кэша"
-    },
-    {
-      "scenario": "Агрессивный",
-      "composition": "дюрация ОФЗ 5л 3.0x, carry CNYRUBF 5.94x, календарные спреды 5.0x, короткая вола 3.0x",
-      "returnPct": 128.2,
-      "drawdownPct": 41.0,
-      "r": 3.13,
-      "drawdownAt100Pct": 32.0,
-      "probability": "низкая (3/10)",
-      "note": "все сливы на пределе ёмкости, кэш начисляется на обеспечение",
-      "whenBreaks": "любая ошибка в оценке: непринятый LQDT −19 п.п., разворот ставки −36% на 3x, хвост волатильности −50% маржи за день"
-    }
-  ]
+  "portfolioLimitation": "Портфельный MDD, optimizer и вероятность достижения 100% намеренно не считаются: нет синхронных equity-рядов, реальных цен ОФЗ и условий финансирования. MDD не объединяется формулой sqrt(sum(MDD^2))."
 }

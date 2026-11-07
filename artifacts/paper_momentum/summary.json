@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-11-03T23:55:11.2649952+03:00",
-  "asOf": "2026-11-03",
+  "generatedAt": "2026-11-06T23:55:14.0473580+03:00",
+  "asOf": "2026-11-06",
   "startAfter": "2026-11-03",
   "params": {
     "tickers": [
@@ -19,7 +19,7 @@
     "slippageBps": 1.0
   },
   "closedTrades": 0,
-  "openPositions": 0,
+  "openPositions": 4,
   "pendingEntries": 0,
   "firstSignalDate": null,
   "lastExitDate": null,

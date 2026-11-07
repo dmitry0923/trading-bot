@@ -1,4 +1,5 @@
 # Daily wrapper для forward paper B (docs/46): гарантирует postgres/redis,
+# донакачивает DAY_1-свечи и funding с MOEX ISS (load_paper_data_daily.ps1),
 # запускает paper_momentum_daily.ps1 и пишет лог. Ставится в планировщик
 # на 23:55 МСК (после закрытия; DAY_1-бар считается завершённым).
 #
@@ -33,7 +34,17 @@ try {
     if ($db -ne 'healthy' -or $redis -ne 'healthy') {
         throw "containers not healthy (db=$db redis=$redis)"
     }
-    Log 'containers healthy; running paper_momentum_daily'
+    Log 'containers healthy; loading fresh candles/funding'
+    try {
+        & (Join-Path $PSScriptRoot 'load_paper_data_daily.ps1') *>> $log
+        if ($LASTEXITCODE -ne 0) { throw "load_paper_data_daily exit=$LASTEXITCODE" }
+    } catch {
+        # Не блокируем раннер: он идемпотентен, следующий запуск догонит.
+        # Но строка FAILED обязана быть видна в логе — молчаливый простой
+        # 2026-11-03..05 случился именно из-за отсутствия этого шага.
+        Log "DATA LOAD FAILED (continuing): $($_.Exception.Message)"
+    }
+    Log 'running paper_momentum_daily'
     & (Join-Path $PSScriptRoot 'paper_momentum_daily.ps1') *>> $log
     if ($LASTEXITCODE -ne 0) { throw "paper_momentum_daily exit=$LASTEXITCODE" }
     Log 'cron done'

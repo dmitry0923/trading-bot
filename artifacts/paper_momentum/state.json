@@ -1,7 +1,7 @@
 {
   "version": 1,
   "createdAt": "2026-11-02T07:57:36.5621657+03:00",
-  "updatedAt": "2026-11-03T23:55:11.2126008+03:00",
+  "updatedAt": "2026-11-06T23:55:13.9873485+03:00",
   "startAfter": "2026-11-03",
   "params": {
     "tickers": [
@@ -21,28 +21,52 @@
   },
   "tickers": {
     "USDRUBF": {
-      "position": null,
-      "lastProcessedDate": "2026-11-03",
+      "position": {
+        "entryDate": "2026-11-06",
+        "entryPrice": 81.71,
+        "signalDate": "2026-11-05",
+        "barsHeld": 1,
+        "direction": -1
+      },
+      "lastProcessedDate": "2026-11-06",
       "pending": null
     },
     "CNYRUBF": {
-      "position": null,
-      "lastProcessedDate": "2026-11-03",
+      "position": {
+        "entryDate": "2026-11-06",
+        "entryPrice": 12.219,
+        "signalDate": "2026-11-05",
+        "barsHeld": 1,
+        "direction": -1
+      },
+      "lastProcessedDate": "2026-11-06",
       "pending": null
     },
     "EURRUBF": {
-      "position": null,
-      "lastProcessedDate": "2026-11-03",
+      "position": {
+        "entryDate": "2026-11-06",
+        "entryPrice": 91.61,
+        "signalDate": "2026-11-05",
+        "barsHeld": 1,
+        "direction": -1
+      },
+      "lastProcessedDate": "2026-11-06",
       "pending": null
     },
     "GLDRUBF": {
-      "position": null,
-      "lastProcessedDate": "2026-11-03",
+      "position": {
+        "entryDate": "2026-11-06",
+        "entryPrice": 10663.0,
+        "signalDate": "2026-11-05",
+        "barsHeld": 1,
+        "direction": -1
+      },
+      "lastProcessedDate": "2026-11-06",
       "pending": null
     },
     "IMOEXF": {
       "position": null,
-      "lastProcessedDate": "2026-11-03",
+      "lastProcessedDate": "2026-11-06",
       "pending": null
     }
   },
